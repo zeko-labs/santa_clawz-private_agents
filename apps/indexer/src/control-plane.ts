@@ -1952,6 +1952,8 @@ export class ClawzControlPlane {
     };
 
     remember(state.currentSessionId);
+    Object.keys(state.profilesBySession).forEach((sessionId) => remember(sessionId));
+    Object.keys(state.agentIdsBySession).forEach((sessionId) => remember(sessionId));
     events.forEach((event) => {
       const payload = event.payload as Record<string, unknown>;
       remember(asString(payload.sessionId), event.occurredAtIso);

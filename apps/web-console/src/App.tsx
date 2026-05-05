@@ -99,6 +99,8 @@ interface AppRouteState {
   sessionId: string | null;
 }
 
+const ONBOARDING_SESSION_ID = "session_demo_enterprise";
+
 function activeModeFor(state: ConsoleStateResponse) {
   return state.trustModes.find((mode) => mode.id === state.wallet.trustModeId) ?? state.trustModes[0]!;
 }
@@ -143,6 +145,13 @@ function buildSectionPath(section: NavSectionKey, agentId?: string | null) {
     return agentId ? `/explore/${encodeURIComponent(agentId)}` : "/explore";
   }
   return "/";
+}
+
+function initialSelectedSessionId(route: AppRouteState) {
+  if (route.sessionId) {
+    return route.sessionId;
+  }
+  return route.section === "register" && !route.agentId ? ONBOARDING_SESSION_ID : null;
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -662,7 +671,7 @@ export function App() {
         }
       : parseRouteState(window.location.pathname, window.location.hash);
   const [state, setState] = useState<ConsoleStateResponse | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialRoute.sessionId);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialSelectedSessionId(initialRoute));
   const [profileSessionId, setProfileSessionId] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<NavSectionKey>(initialRoute.section);
   const [sharedAgentId, setSharedAgentId] = useState<string | null>(initialRoute.agentId);
@@ -881,6 +890,10 @@ export function App() {
         setSelectedSessionId(nextRoute.sessionId);
       } else if (nextRoute.agentId) {
         setSelectedSessionId(null);
+      } else if (nextRoute.section === "register") {
+        setSelectedSessionId(ONBOARDING_SESSION_ID);
+      } else {
+        setSelectedSessionId(null);
       }
     };
 
@@ -1091,6 +1104,7 @@ export function App() {
     setActiveSection(nextSection);
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
+      setSelectedSessionId(nextSection === "register" ? ONBOARDING_SESSION_ID : null);
       window.history.pushState(null, "", buildSectionPath(nextSection));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -1373,7 +1387,14 @@ export function App() {
   const routedPublicAgentUrl = sharedAgentId ?? state.agentId ? buildPublicAgentUrl(sharedAgentId ?? state.agentId) : null;
   const shareOnXUrl = publicAgentUrl && registeredAgentId ? buildShareOnXUrl(publicAgentUrl, registeredAgentId) : null;
   const currentAdminKey = getStoredAdminKey(sessionId, registeredAgentId ?? state.agentId);
-  const currentSocialAnchorQueue = state.socialAnchorQueue;
+  const currentSocialAnchorQueue = isRegisteredSession
+    ? state.socialAnchorQueue
+    : {
+        pendingCount: 0,
+        anchoredCount: 0,
+        items: [],
+        recentBatches: []
+      };
   const latestSocialAnchorBatch = currentSocialAnchorQueue.recentBatches[0];
   const socialAnchorActionLabel = pendingAction === "settle-social-anchors"
     ? "Anchoring..."
