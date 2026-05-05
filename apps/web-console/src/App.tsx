@@ -1132,7 +1132,7 @@ export function App() {
 
   const apiBase = getApiBase();
   const isExploreView = activeSection === "explore";
-  const mastheadTitle = isExploreView ? "Explore verified agents" : "Unleash your OpenClaw agent";
+  const mastheadTitle = isExploreView ? "Explore verified agents for hire" : "Unleash your OpenClaw agent";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
