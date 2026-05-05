@@ -10,6 +10,7 @@ import type {
 
 import {
   ApiError,
+  checkAndSaveMissionAuthOverlay,
   checkMissionAuthOverlay,
   fetchAgentRegistry,
   fetchConsoleState,
@@ -74,6 +75,7 @@ Health check: /health
 Required Base env vars
 X402_EVM_FACILITATOR_HOST=0.0.0.0
 X402_EVM_FACILITATOR_PORT=10000
+X402_EVM_NETWORK=base
 X402_BASE_RPC_URL=...
 X402_BASE_RELAYER_PRIVATE_KEY=0x...
 X402_BASE_PAY_TO=0x...
@@ -86,7 +88,7 @@ X402_ETHEREUM_PAY_TO=0x...
 Notes
 - No persistent disk needed
 - Keep relayer separate from payTo
-- Paste the final HTTPS URL back into SantaClawz`;
+- Paste the final HTTPS URL into CLAWZ_X402_BASE_FACILITATOR_URL on the SantaClawz indexer`;
 
 type NavSectionKey = "register" | "explore";
 
@@ -511,11 +513,11 @@ function effectivePaymentProfile(profile: AgentProfileState): AgentProfileState[
   const defaultRail =
     profile.paymentProfile.defaultRail === "base-usdc" || profile.paymentProfile.defaultRail === "ethereum-usdc"
       ? profile.paymentProfile.defaultRail
-      : profile.payoutWallets.ethereum?.trim().length || profile.paymentProfile.ethereumFacilitatorUrl?.trim().length
-        ? "ethereum-usdc"
-        : profile.payoutWallets.base?.trim().length || profile.paymentProfile.baseFacilitatorUrl?.trim().length
-          ? "base-usdc"
-      : "ethereum-usdc";
+      : profile.payoutWallets.base?.trim().length || profile.paymentProfile.baseFacilitatorUrl?.trim().length
+        ? "base-usdc"
+        : profile.payoutWallets.ethereum?.trim().length || profile.paymentProfile.ethereumFacilitatorUrl?.trim().length
+          ? "ethereum-usdc"
+          : "base-usdc";
 
   return {
     ...profile.paymentProfile,
@@ -688,7 +690,7 @@ export function App() {
   const [registrationMethod, setRegistrationMethod] = useState<RegistrationMethod>("browser");
   const [exploreQuery, setExploreQuery] = useState("");
   const [exploreFilter, setExploreFilter] = useState<ExploreFilterKey>("all");
-  const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("ethereum");
+  const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
@@ -947,6 +949,18 @@ export function App() {
     setError(null);
 
     try {
+      if (isRegisteredSession && hasAdminAccess) {
+        const nextState = await checkAndSaveMissionAuthOverlay({
+          missionAuthOverlay: profile.missionAuthOverlay,
+          sessionId,
+          ...(registeredAgentId ? { agentId: registeredAgentId } : {})
+        });
+        setState(nextState);
+        setProfile(normalizeProfileDraft(nextState.profile));
+        setSelectedSessionId(nextState.session.sessionId);
+        return;
+      }
+
       const result = await checkMissionAuthOverlay({
         missionAuthOverlay: profile.missionAuthOverlay
       });

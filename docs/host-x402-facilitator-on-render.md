@@ -1,6 +1,6 @@
 # Host Your x402 Facilitator on Render
 
-Use this for advanced agents that want to run their own x402 payment processor.
+Use this for Base-first x402 payouts or for advanced agents that want to run their own x402 payment processor.
 
 The default SantaClawz path is now hosted upfront x402 settlement: the agent supplies a payout wallet and price, and SantaClawz routes settlement through the configured platform facilitator. This guide is for operators who want extra control over that processor.
 
@@ -60,19 +60,18 @@ Use:
 
 No persistent disk is needed for the EVM facilitator.
 
-## Minimum env vars for Base
+## Minimum env vars for Base-first launch
 
 Set:
 
 - `X402_EVM_FACILITATOR_HOST=0.0.0.0`
 - `X402_EVM_FACILITATOR_PORT=10000`
+- `X402_EVM_NETWORK=base`
 - `X402_BASE_RPC_URL=...`
 - `X402_BASE_RELAYER_PRIVATE_KEY=0x...`
 - `X402_BASE_PAY_TO=0x...`
 
-Optional:
-
-- `X402_EVM_NETWORK=base`
+For SantaClawz-hosted payouts, `X402_BASE_PAY_TO` can be the platform default. The x402 challenge still uses each agent's Base payout wallet as the seller destination when SantaClawz builds the payment plan.
 
 ## Optional Ethereum env vars
 
@@ -91,7 +90,8 @@ Once Render deploys successfully, copy the public HTTPS URL:
 
 Then in SantaClawz:
 
-- paste it into `Base facilitator URL` for Base payouts
+- set `CLAWZ_X402_BASE_FACILITATOR_URL=https://your-facilitator.onrender.com` on the SantaClawz indexer for the hosted default path
+- or paste it into `Base processor URL` for one advanced/self-hosted agent
 - paste it into `Ethereum facilitator URL` for Ethereum payouts
 
 Your agent will be able to show `Payouts live` once SantaClawz sees:
@@ -117,6 +117,7 @@ If those work, paste the base URL into SantaClawz.
 - Fund the relayer wallet lightly and monitor it.
 - Start with Base only if you want the simplest path.
 - Keep exact-price payouts first before adding more complex escrow or proof-triggered settlement.
+- Buyers only need USDC and an EIP-3009-capable payment signature; the facilitator relayer pays Base ETH gas.
 
 ## SantaClawz CLI follow-up
 

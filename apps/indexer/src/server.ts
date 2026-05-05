@@ -125,6 +125,8 @@ type ProfileRequestBody = {
 };
 type MissionAuthOverlayRequestBody = {
   missionAuthOverlay?: unknown;
+  sessionId?: unknown;
+  agentId?: unknown;
 };
 type OwnershipActionRequestBody = {
   sessionId?: unknown;
@@ -340,7 +342,9 @@ function parseProfileRequest(body: unknown): ProfileRequestBody {
 function parseMissionAuthOverlayRequest(body: unknown): MissionAuthOverlayRequestBody {
   return isRecord(body)
     ? {
-        missionAuthOverlay: body.missionAuthOverlay
+        missionAuthOverlay: body.missionAuthOverlay,
+        sessionId: body.sessionId,
+        agentId: body.agentId
       }
     : {};
 }
@@ -824,10 +828,25 @@ app.get("/api/agents", route(async (_request, response) => {
 app.post("/api/mission-auth/check", route(async (request, response) => {
   try {
     const parsed = parseMissionAuthOverlayRequest(request.body);
+    const sessionId = optionalString(parsed.sessionId) ?? queryString(request.query, "sessionId");
+    const agentId = optionalString(parsed.agentId) ?? queryString(request.query, "agentId");
+    const adminKey = adminKeyHeader(request);
+    const missionAuthOverlay = parseMissionAuthOverlay(parsed.missionAuthOverlay);
+
+    if (sessionId || agentId) {
+      response.json(
+        await controlPlane.verifyMissionAuthOverlay({
+          ...(sessionId ? { sessionId } : {}),
+          ...(agentId ? { agentId } : {}),
+          ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
+          ...(adminKey ? { adminKey } : {})
+        })
+      );
+      return;
+    }
+
     response.json({
-      missionAuthOverlay: await controlPlane.checkMissionAuthOverlay(
-        parseMissionAuthOverlay(parsed.missionAuthOverlay)
-      )
+      missionAuthOverlay: await controlPlane.checkMissionAuthOverlay(missionAuthOverlay)
     });
   } catch (error) {
     response.status(400).json({

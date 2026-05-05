@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -114,6 +115,70 @@ async function stopProcess(child) {
 
     child.kill("SIGTERM");
     setTimeout(finish, 1000);
+  });
+}
+
+async function startMissionAuthAuthority(port) {
+  const server = createServer((request, response) => {
+    const url = request.url ?? "/";
+    response.setHeader("content-type", "application/json");
+
+    if (url === "/.well-known/agent-authorization.json") {
+      response.end(
+        JSON.stringify({
+          protocol: "zk-mission-auth",
+          name: "Local Mission Authority",
+          endpoints: {
+            missionAuthorityJwks: `http://127.0.0.1:${port}/.well-known/mission-authority-jwks.json`,
+            oauthProviders: `http://127.0.0.1:${port}/providers.json`,
+            verifyCheckpoint: `http://127.0.0.1:${port}/verify`,
+            exportBundle: `http://127.0.0.1:${port}/bundle`
+          }
+        })
+      );
+      return;
+    }
+
+    if (url === "/.well-known/mission-authority-jwks.json") {
+      response.end(
+        JSON.stringify({
+          keys: [
+            {
+              kty: "OKP",
+              crv: "Ed25519",
+              kid: "local-test-key",
+              x: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            }
+          ]
+        })
+      );
+      return;
+    }
+
+    if (url === "/providers.json") {
+      response.end(
+        JSON.stringify({
+          providers: ["auth0", "custom-oidc"]
+        })
+      );
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+
+  return server;
+}
+
+async function stopHttpServer(server) {
+  await new Promise((resolve) => {
+    server.close(resolve);
   });
 }
 
@@ -809,12 +874,98 @@ async function testPublicOnboardingApiAuth() {
   }
 }
 
+async function testMissionAuthVerificationPersists() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mission-auth-test-"));
+  const port = await reservePort();
+  const authorityPort = await reservePort();
+  const server = startServer(workspaceDir, port);
+  const authority = await startMissionAuthAuthority(authorityPort);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Mission Auth Agent",
+        headline: "Verifies mission-bound Web2 receipts.",
+        openClawUrl: "http://127.0.0.1:49999/agent"
+      })
+    });
+    assert.equal(registered.status, 200);
+    assert.equal(registered.payload.profile.missionAuthOverlay.status, "disabled");
+    assert.equal(typeof registered.payload.adminAccess.issuedAdminKey, "string");
+
+    const sessionId = registered.payload.session.sessionId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+    const authorityBaseUrl = `http://127.0.0.1:${authorityPort}`;
+    const checked = await requestJson(`${baseUrl}/api/mission-auth/check`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        sessionId,
+        missionAuthOverlay: {
+          enabled: true,
+          status: "configured",
+          authorityBaseUrl,
+          providerHint: "custom-oidc",
+          scopeHints: ["github:repo"]
+        }
+      })
+    });
+    assert.equal(checked.status, 200);
+    assert.equal(checked.payload.profile.missionAuthOverlay.status, "verified");
+    assert.equal(checked.payload.profile.missionAuthOverlay.protocol, "zk-mission-auth");
+    assert.equal(checked.payload.profile.missionAuthOverlay.authorityName, "Local Mission Authority");
+    assert.deepEqual(checked.payload.profile.missionAuthOverlay.supportedProviders, ["auth0", "custom-oidc"]);
+
+    const persisted = await requestJson(`${baseUrl}/api/console/state?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "GET",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      }
+    });
+    assert.equal(persisted.status, 200);
+    assert.equal(persisted.payload.profile.missionAuthOverlay.status, "verified");
+    assert.equal(persisted.payload.profile.missionAuthOverlay.authorityBaseUrl, authorityBaseUrl);
+
+    const forged = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        missionAuthOverlay: {
+          enabled: true,
+          status: "verified",
+          authorityBaseUrl: "http://127.0.0.1:49998",
+          protocol: "zk-mission-auth",
+          authorityName: "Forged"
+        }
+      })
+    });
+    assert.equal(forged.status, 200);
+    assert.equal(forged.payload.profile.missionAuthOverlay.status, "configured");
+    assert.equal(forged.payload.profile.missionAuthOverlay.authorityName, undefined);
+
+    console.log("ok - mission auth verification persists only through the server-validated check path");
+  } finally {
+    await stopHttpServer(authority);
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await testPersistenceFlow();
   await testMalformedEventFlow();
   await testFocusedInteropSessionFlow();
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
+  await testMissionAuthVerificationPersists();
 }
 
 try {

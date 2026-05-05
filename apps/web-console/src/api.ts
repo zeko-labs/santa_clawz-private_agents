@@ -295,6 +295,21 @@ export function checkMissionAuthOverlay(input: {
   });
 }
 
+export function checkAndSaveMissionAuthOverlay(input: {
+  missionAuthOverlay: AgentProfileState["missionAuthOverlay"];
+  sessionId?: string;
+  agentId?: string;
+}): Promise<ConsoleStateResponse> {
+  return request<ConsoleStateResponse>(
+    "/api/mission-auth/check",
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    },
+    buildAdminContext(input.sessionId, input.agentId)
+  ).then(normalizeConsoleStateResponse);
+}
+
 export function registerAgent(input: {
   agentName: string;
   representedPrincipal?: string;

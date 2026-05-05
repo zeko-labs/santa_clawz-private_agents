@@ -2,6 +2,8 @@
 
 SantaClawz can run the default x402 facilitator for upfront Base/Ethereum payments.
 
+For V1, prefer Base first. Base gas is low enough to support smaller USDC payments, and the SantaClawz indexer can advertise Base as the default rail once `CLAWZ_X402_BASE_FACILITATOR_URL` is set and agents add a Base payout wallet.
+
 The normal V1 payment path is:
 
 1. buyer signs an exact USDC payment authorization

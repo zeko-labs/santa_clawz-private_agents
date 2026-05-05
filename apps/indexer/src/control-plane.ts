@@ -886,7 +886,8 @@ function sanitizeMissionScopeHints(input: unknown, fallback: string[] = []): str
 
 function sanitizeMissionAuthOverlay(
   input: Partial<AgentProfileState["missionAuthOverlay"]> | undefined,
-  fallback: AgentProfileState["missionAuthOverlay"]
+  fallback: AgentProfileState["missionAuthOverlay"],
+  options: { trustVerifiedInput?: boolean } = {}
 ): AgentProfileState["missionAuthOverlay"] {
   const enabled = typeof input?.enabled === "boolean" ? input.enabled : fallback.enabled;
   const authorityBaseUrl = sanitizeUrl(input?.authorityBaseUrl) ?? sanitizeUrl(fallback.authorityBaseUrl);
@@ -897,7 +898,14 @@ function sanitizeMissionAuthOverlay(
   const scopeHints = sanitizeMissionScopeHints(input?.scopeHints, fallback.scopeHints);
   const authorityChanged = authorityBaseUrl !== sanitizeUrl(fallback.authorityBaseUrl);
   const enabledChanged = enabled !== fallback.enabled;
-  const preserveVerifiedState = !authorityChanged && !enabledChanged && fallback.status === "verified";
+  const trustVerifiedInput =
+    Boolean(options.trustVerifiedInput) &&
+    enabled &&
+    input?.status === "verified" &&
+    input.protocol === "zk-mission-auth" &&
+    Boolean(authorityBaseUrl);
+  const preserveVerifiedState = trustVerifiedInput || (!authorityChanged && !enabledChanged && fallback.status === "verified");
+  const verifiedSource = trustVerifiedInput ? input : fallback;
 
   return {
     enabled,
@@ -905,17 +913,17 @@ function sanitizeMissionAuthOverlay(
     ...(authorityBaseUrl ? { authorityBaseUrl } : {}),
     ...(providerHint ? { providerHint } : {}),
     scopeHints,
-    ...(preserveVerifiedState && fallback.protocol ? { protocol: fallback.protocol } : {}),
-    ...(preserveVerifiedState && fallback.authorityName ? { authorityName: fallback.authorityName } : {}),
-    ...(preserveVerifiedState && fallback.discoveryUrl ? { discoveryUrl: fallback.discoveryUrl } : {}),
-    ...(preserveVerifiedState && fallback.jwksUrl ? { jwksUrl: fallback.jwksUrl } : {}),
-    ...(preserveVerifiedState && fallback.providersUrl ? { providersUrl: fallback.providersUrl } : {}),
-    ...(preserveVerifiedState && fallback.verifyCheckpointUrl
-      ? { verifyCheckpointUrl: fallback.verifyCheckpointUrl }
+    ...(preserveVerifiedState && verifiedSource.protocol ? { protocol: verifiedSource.protocol } : {}),
+    ...(preserveVerifiedState && verifiedSource.authorityName ? { authorityName: verifiedSource.authorityName } : {}),
+    ...(preserveVerifiedState && verifiedSource.discoveryUrl ? { discoveryUrl: verifiedSource.discoveryUrl } : {}),
+    ...(preserveVerifiedState && verifiedSource.jwksUrl ? { jwksUrl: verifiedSource.jwksUrl } : {}),
+    ...(preserveVerifiedState && verifiedSource.providersUrl ? { providersUrl: verifiedSource.providersUrl } : {}),
+    ...(preserveVerifiedState && verifiedSource.verifyCheckpointUrl
+      ? { verifyCheckpointUrl: verifiedSource.verifyCheckpointUrl }
       : {}),
-    ...(preserveVerifiedState && fallback.exportBundleUrl ? { exportBundleUrl: fallback.exportBundleUrl } : {}),
-    ...(preserveVerifiedState && fallback.supportedProviders ? { supportedProviders: fallback.supportedProviders } : {}),
-    ...(preserveVerifiedState && fallback.lastVerifiedAtIso ? { lastVerifiedAtIso: fallback.lastVerifiedAtIso } : {})
+    ...(preserveVerifiedState && verifiedSource.exportBundleUrl ? { exportBundleUrl: verifiedSource.exportBundleUrl } : {}),
+    ...(preserveVerifiedState && verifiedSource.supportedProviders ? { supportedProviders: verifiedSource.supportedProviders } : {}),
+    ...(preserveVerifiedState && verifiedSource.lastVerifiedAtIso ? { lastVerifiedAtIso: verifiedSource.lastVerifiedAtIso } : {})
   };
 }
 
@@ -1461,7 +1469,12 @@ export class ClawzControlPlane {
   }
 
   private profileForSession(state: ConsolePersistenceState, sessionId: string, trustModeId = state.activeMode): AgentProfileState {
-    return this.sanitizeProfileInput(trustModeId, state.profilesBySession[sessionId] ?? {}, buildDefaultProfile(trustModeId));
+    return this.sanitizeProfileInput(
+      trustModeId,
+      state.profilesBySession[sessionId] ?? {},
+      buildDefaultProfile(trustModeId),
+      { trustVerifiedMissionAuthInput: true }
+    );
   }
 
   private agentIdForSession(state: ConsolePersistenceState, sessionId: string, trustModeId = state.activeMode): string {
@@ -1862,7 +1875,8 @@ export class ClawzControlPlane {
   private sanitizeProfileInput(
     trustModeId: TrustModeId,
     input: AgentProfileInput,
-    fallback: AgentProfileState
+    fallback: AgentProfileState,
+    options: { trustVerifiedMissionAuthInput?: boolean } = {}
   ): AgentProfileState {
     const trustMode = TRUST_MODE_PRESETS.find((mode) => mode.id === trustModeId) ?? TRUST_MODE_PRESETS[0]!;
     const preferredProvingLocation =
@@ -1890,7 +1904,9 @@ export class ClawzControlPlane {
       availability,
       ...(archivedAtIso ? { archivedAtIso } : {}),
       payoutWallets: sanitizePayoutWallets(input.payoutWallets, fallback.payoutWallets, legacyPayoutAddress),
-      missionAuthOverlay: sanitizeMissionAuthOverlay(input.missionAuthOverlay, fallback.missionAuthOverlay),
+      missionAuthOverlay: sanitizeMissionAuthOverlay(input.missionAuthOverlay, fallback.missionAuthOverlay, {
+        ...(options.trustVerifiedMissionAuthInput ? { trustVerifiedInput: true } : {})
+      }),
       paymentProfile: sanitizePaymentProfile(input.paymentProfile, fallback.paymentProfile),
       socialAnchorPolicy: sanitizeSocialAnchorPolicy(input.socialAnchorPolicy, fallback.socialAnchorPolicy),
       preferredProvingLocation
@@ -4162,6 +4178,48 @@ export class ClawzControlPlane {
       });
     }
     return this.getConsoleState({ sessionId: focus.sessionId, ...(adminKey ? { adminKey } : {}) });
+  }
+
+  async verifyMissionAuthOverlay(options: {
+    sessionId?: string;
+    agentId?: string;
+    missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
+    adminKey?: string;
+  }): Promise<ConsoleStateResponse> {
+    const state = await this.loadState();
+    const events = await this.loadEvents();
+    const sessionId = this.resolveOwnedSessionId(state, options);
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
+    const currentProfile = this.profileForSession(state, sessionId, trustModeId);
+    const missionAuthOverlay = await this.checkMissionAuthOverlay(
+      options.missionAuthOverlay ?? currentProfile.missionAuthOverlay
+    );
+    const nextProfile: AgentProfileState = {
+      ...currentProfile,
+      missionAuthOverlay
+    };
+
+    await this.assertAgentProfileIsValid(state, nextProfile, sessionId);
+
+    const nextState: ConsolePersistenceState = {
+      ...this.applyFocusedSession(state, sessionId, trustModeId),
+      profilesBySession: {
+        ...state.profilesBySession,
+        [sessionId]: nextProfile
+      }
+    };
+
+    await this.saveState(nextState);
+    await this.appendEvent("SessionCheckpointed", {
+      sessionId,
+      missionAuthVerified: true
+    });
+
+    return this.getConsoleState({
+      sessionId,
+      ...(options.adminKey ? { adminKey: options.adminKey } : {})
+    });
   }
 
   async setAgentArchiveStatus(options: AgentArchiveOptions): Promise<ConsoleStateResponse> {
