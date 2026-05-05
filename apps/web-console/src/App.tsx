@@ -43,7 +43,7 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "all" | "payouts-live" | "new-on-zeko" | "private-research" | "dev-tools" | "coordination";
+type ExploreFilterKey = "all" | "payouts-live" | "owner-verified" | "mission-auth-verified" | "published-on-zeko";
 
 type ValueInputEvent = { target: { value: string } };
 
@@ -55,10 +55,9 @@ const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "all", label: "All agents" },
   { key: "payouts-live", label: "Payouts live" },
-  { key: "new-on-zeko", label: "New on Zeko" },
-  { key: "private-research", label: "Private research" },
-  { key: "dev-tools", label: "Dev tools" },
-  { key: "coordination", label: "Coordination" }
+  { key: "owner-verified", label: "Owner verified" },
+  { key: "mission-auth-verified", label: "Mission auth verified" },
+  { key: "published-on-zeko", label: "Published on Zeko" }
 ];
 const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
@@ -248,17 +247,6 @@ function formatRelativeTime(value?: string) {
   return new Date(timestamp).toLocaleDateString();
 }
 
-function deriveExploreTopic(agent: Pick<AgentRegistryEntry, "headline">): ExploreFilterKey {
-  const headline = agent.headline.toLowerCase();
-  if (/(research|analysis|investigat|intel|due diligence|market map)/.test(headline)) {
-    return "private-research";
-  }
-  if (/(dev|code|sdk|tool|build|deploy|automation|infra|engineering)/.test(headline)) {
-    return "dev-tools";
-  }
-  return "coordination";
-}
-
 function matchesExploreFilter(agent: AgentRegistryEntry, filter: ExploreFilterKey) {
   if (filter === "all") {
     return true;
@@ -266,10 +254,16 @@ function matchesExploreFilter(agent: AgentRegistryEntry, filter: ExploreFilterKe
   if (filter === "payouts-live") {
     return agent.paidJobsEnabled;
   }
-  if (filter === "new-on-zeko") {
+  if (filter === "owner-verified") {
+    return agent.ownershipVerified;
+  }
+  if (filter === "mission-auth-verified") {
+    return agent.missionAuthVerified;
+  }
+  if (filter === "published-on-zeko") {
     return agent.published;
   }
-  return deriveExploreTopic(agent) === filter;
+  return false;
 }
 
 function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
@@ -282,8 +276,10 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.headline,
     agent.trustModeLabel,
     agent.paymentRail ? railLabel(agent.paymentRail) : "",
-    agent.missionAuthVerified ? "mission auth oauth enterprise web2" : "",
-    deriveExploreTopic(agent).replace(/-/g, " ")
+    agent.ownershipVerified ? "owner ownership verified control" : "",
+    agent.missionAuthVerified ? "mission auth oauth enterprise web2 verified" : "",
+    agent.published ? "published zeko live" : "",
+    agent.paidJobsEnabled ? "payouts live hire paid jobs" : ""
   ].some((value) => value.toLowerCase().includes(query));
 }
 
@@ -2959,7 +2955,7 @@ export function App() {
                     placeholder="Search by agent, operator, rail, or capability"
                   />
                 </label>
-                <div className="explore-chip-row" role="tablist" aria-label="Explore categories">
+                <div className="explore-chip-row" role="tablist" aria-label="Explore verified status filters">
                   {EXPLORE_FILTERS.map((filter) => (
                     <button
                       key={filter.key}
@@ -2989,7 +2985,7 @@ export function App() {
                     <strong>No agents match this view</strong>
                     <span className="subtle-pill">Try another chip</span>
                   </div>
-                  <p className="panel-copy">Reset the category filter or broaden your search to pull more live agents back into the feed.</p>
+                  <p className="panel-copy">Reset the status filter or broaden your search to pull more live agents back into the feed.</p>
                 </article>
               ) : (
                 <>
@@ -3015,10 +3011,11 @@ export function App() {
                             <p className="explore-card-quote">“{highlightAgent.headline}”</p>
                             <p className="panel-copy">{socialProofLineForAgent(highlightAgent)}</p>
                             <div className="explore-tag-row">
-                              <span className="explore-tag">{deriveExploreTopic(highlightAgent).replace(/-/g, " ")}</span>
+                              <span className="explore-tag">{exploreStatusLabel(highlightAgent)}</span>
                               <span className="explore-tag">{highlightAgent.proofLevel}</span>
+                              {highlightAgent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
                               {highlightAgent.paymentRail ? <span className="explore-tag">{railLabel(highlightAgent.paymentRail)}</span> : null}
-                              {highlightAgent.missionAuthVerified ? <span className="explore-tag">mission auth</span> : null}
+                              {highlightAgent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}
                             </div>
                             <div className="explore-action-row">
                               <button
@@ -3076,10 +3073,9 @@ export function App() {
                               <p className="panel-copy explore-story-proof">{socialProofLineForAgent(agent)}</p>
                               <div className="explore-tag-row">
                                 <span className="explore-tag">{exploreStatusLabel(agent)}</span>
-                                <span className="explore-tag">{deriveExploreTopic(agent).replace(/-/g, " ")}</span>
                                 {agent.paymentRail ? <span className="explore-tag">{railLabel(agent.paymentRail)}</span> : null}
-                                {agent.ownershipVerified ? <span className="explore-tag">ownership verified</span> : null}
-                                {agent.missionAuthVerified ? <span className="explore-tag">mission auth</span> : null}
+                                {agent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
+                                {agent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}
                               </div>
                               <div className="explore-card-foot">
                                 <span>{activityLineForAgent(agent)}</span>
@@ -3146,10 +3142,10 @@ export function App() {
                       <section className="explore-section-block explore-rail-card">
                         <div className="section-head compact-head">
                           <div>
-                            <p className="eyebrow">Popular lanes</p>
-                            <h3 className="explore-section-title">Browse by type of work</h3>
+                            <p className="eyebrow">Verified filters</p>
+                            <h3 className="explore-section-title">Browse by live status</h3>
                           </div>
-                          <span className="subtle-pill">Curated</span>
+                          <span className="subtle-pill">Programmatic</span>
                         </div>
                         <div className="explore-sidebar-list">
                           {EXPLORE_FILTERS.filter((filter) => filter.key !== "all").map((filter) => {
