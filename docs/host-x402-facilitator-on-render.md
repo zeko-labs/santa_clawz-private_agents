@@ -102,7 +102,7 @@ Your agent will be able to show `Payouts live` once SantaClawz sees:
 - a payout wallet for the selected rail
 - payments enabled
 - pricing configured
-- a fixed price high enough to generate at least `$0.001` of SantaClawz network facilitation value; at the default 1% fee this means `$0.10` or higher
+- a fixed price high enough to generate at least `$0.002` of SantaClawz network facilitation value; at the default 1% fee this means `$0.20` or higher
 - a matching facilitator URL
 - a published agent
 
@@ -137,7 +137,7 @@ pnpm register:agent -- \
   --base-facilitator-url "https://your-facilitator.onrender.com" \
   --default-rail "base-usdc" \
   --pricing-mode fixed-exact \
-  --fixed-price-usd "0.10"
+  --fixed-price-usd "0.20"
 ```
 
 ## Current product scope

@@ -1345,7 +1345,7 @@ export function App() {
   const paymentFeeDisclosure =
     protocolFeeAppliesToDefaultRail && paymentProfile.enabled
       ? paymentProfile.settlementTrigger === "upfront"
-        ? `Buyers pay the listed price up front. Hosted Base payments must be at least $0.10 so SantaClawz can cover relay gas and abuse controls.`
+        ? `Buyers pay the listed price up front. Hosted Base payments must be at least $0.20 so SantaClawz can cover relay gas and abuse controls.`
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
   const mainPricingLabel =
@@ -1365,7 +1365,7 @@ export function App() {
       ? "https://agent.example.com/payments"
       : paymentProfile.pricingMode === "capped-exact"
         ? "0.25"
-        : "0.10";
+        : "0.20";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
@@ -1545,7 +1545,7 @@ export function App() {
         profile.paymentProfile.pricingMode === "agent-negotiated" ||
         profile.paymentProfile.pricingMode === "capped-exact"
           ? {}
-          : { fixedAmountUsd: "0.10" })
+          : { fixedAmountUsd: "0.20" })
       }
     });
     setError(null);

@@ -19,7 +19,7 @@ The relayer still needs native ETH for gas on Base and Ethereum.
 
 If the relayer or fee wallet holds USDC, SantaClawz can top up native gas by swapping USDC to WETH through Uniswap V3 and unwrapping WETH to native ETH.
 
-Payment floors are enforced for the SantaClawz-hosted path. By default, each hosted transaction must generate at least `$0.001` in network facilitation value for SantaClawz. With the default 1% protocol owner fee, that means hosted Base payments below `$0.10` stay in preview/not-ready mode.
+Payment floors are enforced for the SantaClawz-hosted path. By default, each hosted transaction must generate at least `$0.002` in network facilitation value for SantaClawz. With the default 1% protocol owner fee, that means hosted Base payments below `$0.20` stay in preview/not-ready mode.
 
 The repo includes an ops script:
 
@@ -65,7 +65,7 @@ Optional shared knobs:
 ```bash
 CLAWZ_FACILITATOR_GAS_TOPUP_SLIPPAGE_BPS=100
 CLAWZ_FACILITATOR_GAS_TOPUP_POOL_FEE=500
-CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.001
+CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002
 # Optional hard gross floor if ops wants something higher than the fee-derived floor.
 CLAWZ_X402_HOSTED_FACILITATOR_MIN_PAYMENT_USD=
 ```
