@@ -959,6 +959,47 @@ async function testMissionAuthVerificationPersists() {
   }
 }
 
+async function testLegacyDemoProfileCanEnableBasePayments() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-legacy-payment-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const updated = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
+      method: "POST",
+      body: JSON.stringify({
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "fixed-exact",
+          fixedAmountUsd: "0.01",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.payload.profile.openClawUrl, "");
+    assert.equal(updated.payload.profile.payoutWallets.base, "0x1908217952D7117f5aeFBbd91AeBf04566D286f9");
+    assert.equal(updated.payload.profile.paymentProfile.enabled, true);
+    assert.equal(updated.payload.profile.paymentProfile.fixedAmountUsd, "0.01");
+
+    const ready = await requestJson(`${baseUrl}/ready`);
+    assert.equal(ready.status, 200);
+
+    console.log("ok - legacy demo profile can enable Base payments without a registered OpenClaw URL");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await testPersistenceFlow();
   await testMalformedEventFlow();
@@ -966,6 +1007,7 @@ async function main() {
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
   await testMissionAuthVerificationPersists();
+  await testLegacyDemoProfileCanEnableBasePayments();
 }
 
 try {

@@ -1570,27 +1570,29 @@ export class ClawzControlPlane {
     profile: AgentProfileState,
     sessionIdToIgnore?: string
   ) {
-    const normalizedOpenClawUrl = this.validateOpenClawUrl(profile.openClawUrl);
-    for (const [knownSessionId, knownProfile] of Object.entries(state.profilesBySession)) {
-      if (knownSessionId === sessionIdToIgnore || knownProfile.openClawUrl.trim().length === 0) {
-        continue;
-      }
-      let normalizedKnownUrl: string;
-      try {
-        normalizedKnownUrl = normalizeComparableUrl(knownProfile.openClawUrl);
-      } catch (error) {
-        continue;
-      }
-      if (normalizedKnownUrl === normalizedOpenClawUrl) {
-        const existingAgentId = state.agentIdsBySession[knownSessionId] ?? knownSessionId;
-        const ownership = this.ownershipRecordForSession(state, knownSessionId);
-        throw new DuplicateOpenClawUrlError(
-          ownership.status === "verified"
-            ? "That OpenClaw agent URL is already registered and ownership has already been verified."
-            : "That OpenClaw agent URL is already registered. Verify control of the existing agent record to reclaim it.",
-          existingAgentId,
-          ownership.status !== "verified"
-        );
+    if (profile.openClawUrl.trim().length > 0) {
+      const normalizedOpenClawUrl = this.validateOpenClawUrl(profile.openClawUrl);
+      for (const [knownSessionId, knownProfile] of Object.entries(state.profilesBySession)) {
+        if (knownSessionId === sessionIdToIgnore || knownProfile.openClawUrl.trim().length === 0) {
+          continue;
+        }
+        let normalizedKnownUrl: string;
+        try {
+          normalizedKnownUrl = normalizeComparableUrl(knownProfile.openClawUrl);
+        } catch (error) {
+          continue;
+        }
+        if (normalizedKnownUrl === normalizedOpenClawUrl) {
+          const existingAgentId = state.agentIdsBySession[knownSessionId] ?? knownSessionId;
+          const ownership = this.ownershipRecordForSession(state, knownSessionId);
+          throw new DuplicateOpenClawUrlError(
+            ownership.status === "verified"
+              ? "That OpenClaw agent URL is already registered and ownership has already been verified."
+              : "That OpenClaw agent URL is already registered. Verify control of the existing agent record to reclaim it.",
+            existingAgentId,
+            ownership.status !== "verified"
+          );
+        }
       }
     }
 

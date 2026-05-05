@@ -72,11 +72,25 @@ function route<
     response: IndexerResponse
   ) => void | Promise<void>
 ) {
-  return (request: unknown, response: unknown) =>
-    handler(
-      request as IndexerRequest<Params, ReqBody, ReqQuery>,
-      response as IndexerResponse
-    );
+  return (request: unknown, response: unknown, next?: (error: unknown) => void) => {
+    const typedResponse = response as IndexerResponse & { headersSent?: boolean };
+    Promise.resolve(
+      handler(
+        request as IndexerRequest<Params, ReqBody, ReqQuery>,
+        typedResponse
+      )
+    ).catch((error) => {
+      if (typedResponse.headersSent) {
+        if (typeof next === "function") {
+          next(error);
+        }
+        return;
+      }
+      typedResponse.status(400).json({
+        error: error instanceof Error ? error.message : "Request failed."
+      });
+    });
+  };
 }
 
 app.use(securityMiddleware(securityConfig));
