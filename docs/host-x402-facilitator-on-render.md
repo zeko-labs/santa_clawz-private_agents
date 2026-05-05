@@ -69,9 +69,12 @@ Set:
 - `X402_EVM_NETWORK=base`
 - `X402_BASE_RPC_URL=...`
 - `X402_BASE_RELAYER_PRIVATE_KEY=0x...`
+
+Optional smoke/default value:
+
 - `X402_BASE_PAY_TO=0x...`
 
-For SantaClawz-hosted payouts, `X402_BASE_PAY_TO` can be the platform default. The x402 challenge still uses each agent's Base payout wallet as the seller destination when SantaClawz builds the payment plan.
+The facilitator server does not need a global seller wallet for normal SantaClawz-hosted payouts. SantaClawz builds each agent's Base payout wallet into that agent's x402 challenge. `X402_BASE_PAY_TO` is useful for `zeko-x402` smoke tests and examples.
 
 ## Optional Ethereum env vars
 
