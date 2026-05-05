@@ -7,4 +7,6 @@ dist/
 .env
 .env.local
 .env.*.local
+.clawz-secrets/
 deploy/spaceship/*.zip
+packages/contracts/deployments/*.private.json

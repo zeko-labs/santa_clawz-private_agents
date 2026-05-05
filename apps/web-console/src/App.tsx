@@ -37,7 +37,7 @@ type HireDraft = {
   requesterContact: string;
 };
 type RegistrationMethod = "browser" | "cli";
-type PayoutWalletKey = "zeko" | "base" | "ethereum";
+type PayoutWalletKey = "base" | "ethereum";
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
 type DuplicateClaimTarget = {
   agentId: string;
@@ -159,33 +159,30 @@ function isLikelyEvmAddress(value: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 }
 
-function isLikelyZekoAddress(value: string) {
-  return /^B62[a-zA-Z0-9]{20,}$/.test(value.trim());
-}
-
 function payoutWalletLabel(walletKey: PayoutWalletKey) {
-  if (walletKey === "zeko") {
-    return "Zeko";
-  }
   if (walletKey === "base") {
     return "Base";
   }
   return "Ethereum";
 }
 
-function payoutWalletPlaceholder(walletKey: PayoutWalletKey) {
-  return walletKey === "zeko" ? "B62..." : "0x...";
+function payoutWalletPlaceholder(_walletKey: PayoutWalletKey) {
+  return "0x...";
 }
 
-function nextPayoutWalletKey(wallets: AgentProfileState["payoutWallets"]) {
+function hasAdvancedEthereumPayout(profile: Pick<AgentProfileState, "payoutWallets" | "paymentProfile">) {
+  return Boolean(profile.paymentProfile.ethereumFacilitatorUrl?.trim() || profile.payoutWallets.ethereum?.trim());
+}
+
+function nextPayoutWalletKey(
+  wallets: AgentProfileState["payoutWallets"],
+  allowEthereum: boolean
+): PayoutWalletKey {
   if (!wallets.base?.trim().length) {
     return "base";
   }
-  if (!wallets.ethereum?.trim().length) {
+  if (allowEthereum && !wallets.ethereum?.trim().length) {
     return "ethereum";
-  }
-  if (!wallets.zeko?.trim().length) {
-    return "zeko";
   }
   return "base";
 }
@@ -369,17 +366,11 @@ function featuredAgentScore(agent: AgentRegistryEntry) {
   return score + Math.round(timestampValue(agent.lastUpdatedAtIso) / 100000000);
 }
 
-function formatConfiguredPayoutWallets(wallets: AgentProfileState["payoutWallets"]) {
-  const labels = [
-    ...(wallets.zeko ? [`Zeko: ${wallets.zeko}`] : []),
-    ...(wallets.base ? [`Base: ${wallets.base}`] : []),
-    ...(wallets.ethereum ? [`Ethereum: ${wallets.ethereum}`] : [])
-  ];
-  return labels.length > 0 ? labels.join(" • ") : "No payout wallets configured yet.";
-}
-
-function derivedSupportedRails(wallets: AgentProfileState["payoutWallets"]) {
-  return ["base-usdc", "ethereum-usdc"] as const;
+function derivedSupportedRails(profile: Pick<AgentProfileState, "payoutWallets" | "paymentProfile">) {
+  return [
+    "base-usdc",
+    ...(hasAdvancedEthereumPayout(profile) ? ["ethereum-usdc" as const] : [])
+  ] as AgentProfileState["paymentProfile"]["supportedRails"];
 }
 
 function railLabel(rail: AgentProfileState["paymentProfile"]["supportedRails"][number]) {
@@ -511,13 +502,14 @@ function paymentProfileDraftReady(
 }
 
 function effectivePaymentProfile(profile: AgentProfileState): AgentProfileState["paymentProfile"] {
-  const supportedRails: AgentProfileState["paymentProfile"]["supportedRails"] = [...derivedSupportedRails(profile.payoutWallets)];
+  const supportedRails = derivedSupportedRails(profile);
   const defaultRail =
-    profile.paymentProfile.defaultRail === "base-usdc" || profile.paymentProfile.defaultRail === "ethereum-usdc"
+    profile.paymentProfile.defaultRail && supportedRails.includes(profile.paymentProfile.defaultRail)
       ? profile.paymentProfile.defaultRail
       : profile.payoutWallets.base?.trim().length || profile.paymentProfile.baseFacilitatorUrl?.trim().length
         ? "base-usdc"
-        : profile.payoutWallets.ethereum?.trim().length || profile.paymentProfile.ethereumFacilitatorUrl?.trim().length
+        : supportedRails.includes("ethereum-usdc") &&
+            (profile.payoutWallets.ethereum?.trim().length || profile.paymentProfile.ethereumFacilitatorUrl?.trim().length)
           ? "ethereum-usdc"
           : "base-usdc";
 
@@ -697,6 +689,7 @@ export function App() {
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
+  const ethereumPayoutAllowed = hasAdvancedEthereumPayout(profile);
 
   useEffect(() => {
     let cancelled = false;
@@ -842,9 +835,14 @@ export function App() {
   }, [
     profile.payoutWallets.base,
     profile.payoutWallets.ethereum,
-    profile.payoutWallets.zeko,
     selectedPayoutWalletKey
   ]);
+
+  useEffect(() => {
+    if (!ethereumPayoutAllowed && selectedPayoutWalletKey === "ethereum") {
+      setSelectedPayoutWalletKey("base");
+    }
+  }, [ethereumPayoutAllowed, selectedPayoutWalletKey]);
 
   useEffect(() => {
     if (!state) {
@@ -1308,8 +1306,7 @@ export function App() {
   const escrowConfiguredOutsideConsole = paymentProfile.settlementTrigger === "on-proof";
   const configuredPayoutWallets = ([
     ["base", profile.payoutWallets.base],
-    ["ethereum", profile.payoutWallets.ethereum],
-    ["zeko", profile.payoutWallets.zeko]
+    ...(ethereumPayoutAllowed ? [["ethereum", profile.payoutWallets.ethereum] as const] : [])
   ] as Array<[PayoutWalletKey, string | undefined]>).filter(([, value]) => value?.trim().length);
   const walletsReady = configuredPayoutWallets.length > 0;
   const profileForSave = {
@@ -1442,13 +1439,10 @@ export function App() {
     ...(profile.representedPrincipal.trim().length > 0
       ? [`--represented-principal ${shellQuote(profile.representedPrincipal)}`]
       : []),
-    ...(profile.payoutWallets.zeko?.trim().length
-      ? [`--zeko-payout-address ${shellQuote(profile.payoutWallets.zeko)}`]
-      : []),
     ...(profile.payoutWallets.base?.trim().length
       ? [`--base-payout-address ${shellQuote(profile.payoutWallets.base)}`]
       : []),
-    ...(profile.payoutWallets.ethereum?.trim().length
+    ...(ethereumPayoutAllowed && profile.payoutWallets.ethereum?.trim().length
       ? [`--ethereum-payout-address ${shellQuote(profile.payoutWallets.ethereum)}`]
       : []),
     ...(paymentProfile.enabled ? ["--payments-enabled"] : []),
@@ -1503,12 +1497,8 @@ export function App() {
       return;
     }
 
-    if ((selectedPayoutWalletKey === "base" || selectedPayoutWalletKey === "ethereum") && !isLikelyEvmAddress(trimmedValue)) {
+    if (!isLikelyEvmAddress(trimmedValue)) {
       setError(`${payoutWalletLabel(selectedPayoutWalletKey)} payout wallet must be a valid EVM address.`);
-      return;
-    }
-    if (selectedPayoutWalletKey === "zeko" && !isLikelyZekoAddress(trimmedValue)) {
-      setError("Zeko payout wallet must look like a valid Mina address.");
       return;
     }
 
@@ -1517,7 +1507,11 @@ export function App() {
       [selectedPayoutWalletKey]: trimmedValue
     };
 
-    const nextWalletKey = nextPayoutWalletKey(nextWallets);
+    const nextProfile = {
+      ...profile,
+      payoutWallets: nextWallets
+    };
+    const nextWalletKey = nextPayoutWalletKey(nextWallets, hasAdvancedEthereumPayout(nextProfile));
     setProfile({
       ...profile,
       payoutWallets: nextWallets
@@ -2385,8 +2379,7 @@ export function App() {
                         }}
                       >
                         <option value="base">Base</option>
-                        <option value="ethereum">Ethereum</option>
-                        <option value="zeko">Zeko</option>
+                        {ethereumPayoutAllowed ? <option value="ethereum">Ethereum self-hosted</option> : null}
                       </select>
                     </label>
                     <label className="field wallet-builder-field">
