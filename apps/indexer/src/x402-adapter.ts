@@ -1088,10 +1088,10 @@ export function buildAgentX402Headers(input: {
   return paymentHeaders(input);
 }
 
-export async function verifyAgentX402Payment(input: {
+function verifyAgentX402PaymentLocally(input: {
   runtime: AgentX402RuntimeContext;
   paymentPayload: JsonRecord;
-}): Promise<AgentX402VerificationResult> {
+}): AgentX402VerificationResult {
   const rail = matchingRuntimeRail(input.runtime, input.paymentPayload);
   if (!rail) {
     return {
@@ -1129,16 +1129,31 @@ export async function verifyAgentX402Payment(input: {
     };
   }
 
-  const facilitator = facilitatorClientForRail(rail);
+  return {
+    ok: true,
+    paymentRequired: input.runtime.paymentRequired,
+    paymentPayload: input.paymentPayload,
+    rail,
+    localVerification,
+    headers
+  };
+}
+
+export async function verifyAgentX402Payment(input: {
+  runtime: AgentX402RuntimeContext;
+  paymentPayload: JsonRecord;
+}): Promise<AgentX402VerificationResult> {
+  const verification = verifyAgentX402PaymentLocally(input);
+  if (!verification.ok) {
+    return verification;
+  }
+
+  const facilitator = facilitatorClientForRail(verification.rail);
   if (!facilitator) {
     return {
+      ...verification,
       ok: false,
-      paymentRequired: input.runtime.paymentRequired,
-      paymentPayload: input.paymentPayload,
-      rail,
-      localVerification,
-      headers,
-      error: `No live facilitator is configured for ${rail.rail}.`
+      error: `No live facilitator is configured for ${verification.rail.rail}.`
     };
   }
 
@@ -1149,12 +1164,12 @@ export async function verifyAgentX402Payment(input: {
 
   return {
     ok: remoteVerificationOk(remoteVerification),
-    paymentRequired: input.runtime.paymentRequired,
-    paymentPayload: input.paymentPayload,
-    rail,
-    localVerification,
+    paymentRequired: verification.paymentRequired,
+    paymentPayload: verification.paymentPayload,
+    rail: verification.rail,
+    localVerification: verification.localVerification,
     remoteVerification,
-    headers,
+    headers: verification.headers,
     ...(!remoteVerificationOk(remoteVerification) && resultError(remoteVerification)
       ? { error: resultError(remoteVerification)! }
       : {})
@@ -1165,8 +1180,8 @@ export async function settleAgentX402Payment(input: {
   runtime: AgentX402RuntimeContext;
   paymentPayload: JsonRecord;
 }): Promise<AgentX402SettlementResult> {
-  const verification = await verifyAgentX402Payment(input);
-  if (!verification.ok || !verification.remoteVerification) {
+  const verification = verifyAgentX402PaymentLocally(input);
+  if (!verification.ok) {
     throw new Error(verification.error ?? "Unable to verify x402 payment.");
   }
 
@@ -1184,6 +1199,14 @@ export async function settleAgentX402Payment(input: {
     throw new Error(resultError(remoteSettlement) ?? "Facilitator failed to settle the x402 payment.");
   }
 
+  const remoteVerification = isRecord(remoteSettlement.verification)
+    ? remoteSettlement.verification
+    : {
+        ok: true,
+        isValid: true,
+        source: "facilitator-settle",
+        note: "The hosted facilitator settle path verifies the payment before broadcasting."
+      };
   const settlementReference = [
     remoteSettlement.transaction,
     remoteSettlement.txHash,
@@ -1217,13 +1240,14 @@ export async function settleAgentX402Payment(input: {
     evm: {
       networkId: verification.rail.networkId,
       facilitatorUrl: buildRemoteFacilitatorNote(verification.rail),
-      verification: verification.remoteVerification,
+      verification: remoteVerification,
       settlement: remoteSettlement
     }
   }) as JsonRecord;
 
   return {
     ...verification,
+    remoteVerification,
     remoteSettlement,
     paymentResponse,
     headers: paymentHeaders({
