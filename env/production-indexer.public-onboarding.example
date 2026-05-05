@@ -24,3 +24,12 @@ CLAWZ_KMS_API_KEY=replace_with_long_random_gateway_token
 CLAWZ_BLOB_STORE_MODE=http-object-store
 CLAWZ_BLOB_STORE_ENDPOINT=https://privacy.santaclawz.ai
 CLAWZ_BLOB_STORE_API_KEY=replace_with_long_random_gateway_token
+
+# Base-first hosted x402 payouts.
+CLAWZ_X402_BASE_FACILITATOR_URL=https://x402-zeko.onrender.com
+CLAWZ_PROTOCOL_OWNER_FEE_ENABLED=true
+CLAWZ_PROTOCOL_OWNER_FEE_BPS=100
+CLAWZ_PROTOCOL_OWNER_FEE_APPLIES_TO=santaclawz-marketplace
+CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT=0x...
+# Default is 0.001; at 1% this requires hosted Base fixed prices >= $0.10.
+CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.001

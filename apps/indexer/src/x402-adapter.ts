@@ -19,6 +19,7 @@ const X402_PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 const X402_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
 const X402_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 const USD_SCALE = 1_000_000n;
+const DEFAULT_MIN_NETWORK_FACILITATION_FEE_USD = "0.001";
 
 const BASE_MAINNET = {
   networkId: "eip155:8453",
@@ -210,6 +211,28 @@ function parseUsdAtomic(value: string | undefined): bigint | null {
   return BigInt(match[1] ?? "0") * USD_SCALE + BigInt((match[2] ?? "").padEnd(6, "0"));
 }
 
+function formatUsdAtomic(value: bigint, minFractionDigits = 0): string {
+  const whole = value / USD_SCALE;
+  const fraction = value % USD_SCALE;
+  if (fraction === 0n && minFractionDigits === 0) {
+    return whole.toString();
+  }
+  const fractionText = fraction
+    .toString()
+    .padStart(6, "0")
+    .replace(/0+$/, "")
+    .padEnd(minFractionDigits, "0");
+  return `${whole}.${fractionText}`;
+}
+
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  if (denominator <= 0n) {
+    throw new Error("denominator must be positive.");
+  }
+
+  return (numerator + denominator - 1n) / denominator;
+}
+
 function minHostedFacilitatorPaymentUsd(rail: AgentPaymentRail): string | undefined {
   if (rail === "ethereum-usdc") {
     return (
@@ -226,6 +249,13 @@ function minHostedFacilitatorPaymentUsd(rail: AgentPaymentRail): string | undefi
   );
 }
 
+function minNetworkFacilitationFeeUsd(): string {
+  return (
+    process.env.CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD?.trim() ||
+    DEFAULT_MIN_NETWORK_FACILITATION_FEE_USD
+  );
+}
+
 function hasBaseCdpFacilitatorCredentials(): boolean {
   return Boolean(
     process.env.CLAWZ_X402_BASE_FACILITATOR_BEARER_TOKEN?.trim() ||
@@ -237,6 +267,7 @@ function hasBaseCdpFacilitatorCredentials(): boolean {
 function pushHostedFacilitatorFloor(input: {
   rail: AgentPaymentRail;
   profile: ConsoleStateResponse["profile"];
+  policy: ConsoleStateResponse["protocolOwnerFeePolicy"];
   hostedFacilitator: boolean;
   missing: string[];
   notes: string[];
@@ -245,25 +276,37 @@ function pushHostedFacilitatorFloor(input: {
     return;
   }
 
-  const minPaymentUsd = minHostedFacilitatorPaymentUsd(input.rail);
-  if (!minPaymentUsd) {
+  const minFeeUsd = minNetworkFacilitationFeeUsd();
+  const minFeeAtomic = parseUsdAtomic(minFeeUsd);
+  const configuredMinAtomic = parseUsdAtomic(minHostedFacilitatorPaymentUsd(input.rail));
+  const amountAtomic = parseUsdAtomic(input.profile.paymentProfile.fixedAmountUsd);
+  const feeApplies = protocolOwnerFeeAppliesToRail(input.policy, input.rail);
+  if (minFeeAtomic === null || amountAtomic === null) {
+    return;
+  }
+
+  if (!feeApplies || input.policy.feeBps <= 0) {
+    input.missing.push(
+      `Enable the SantaClawz protocol owner fee for ${input.rail === "ethereum-usdc" ? "Ethereum" : "Base"} hosted facilitation.`
+    );
     input.notes.push(
-      `SantaClawz hosted facilitation is configured without a minimum payment floor on ${input.rail === "ethereum-usdc" ? "Ethereum" : "Base"}.`
+      `SantaClawz hosted facilitation needs at least $${formatUsdAtomic(minFeeAtomic)} in network facilitation value per transaction.`
     );
     return;
   }
 
-  const minAtomic = parseUsdAtomic(minPaymentUsd);
-  const amountAtomic = parseUsdAtomic(input.profile.paymentProfile.fixedAmountUsd);
-  if (minAtomic === null || amountAtomic === null) {
-    return;
-  }
+  const feeDerivedMinAtomic = ceilDiv(minFeeAtomic * 10_000n, BigInt(input.policy.feeBps));
+  const minAtomic =
+    configuredMinAtomic !== null && configuredMinAtomic > feeDerivedMinAtomic
+      ? configuredMinAtomic
+      : feeDerivedMinAtomic;
+  const generatedFeeAtomic = (amountAtomic * BigInt(input.policy.feeBps)) / 10_000n;
 
   input.notes.push(
-    `SantaClawz hosted facilitation requires at least $${minPaymentUsd} on ${input.rail === "ethereum-usdc" ? "Ethereum" : "Base"} to cover relay gas and abuse controls.`
+    `SantaClawz hosted facilitation requires at least $${formatUsdAtomic(minFeeAtomic)} in network facilitation value; at ${input.policy.feeBps / 100}% the minimum fixed price is $${formatUsdAtomic(minAtomic, 2)}.`
   );
-  if (amountAtomic < minAtomic) {
-    input.missing.push(`Set the fixed price to at least $${minPaymentUsd} for hosted facilitator settlement.`);
+  if (amountAtomic < minAtomic || generatedFeeAtomic < minFeeAtomic) {
+    input.missing.push(`Set the fixed price to at least $${formatUsdAtomic(minAtomic, 2)} for hosted facilitator settlement.`);
   }
 }
 
@@ -344,6 +387,7 @@ function buildBaseRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
   pushHostedFacilitatorFloor({
     rail: "base-usdc",
     profile,
+    policy: consoleState.protocolOwnerFeePolicy,
     hostedFacilitator,
     missing,
     notes
@@ -445,6 +489,7 @@ function buildEthereumRailPlan(consoleState: ConsoleStateResponse): AgentX402Rai
   pushHostedFacilitatorFloor({
     rail: "ethereum-usdc",
     profile,
+    policy: consoleState.protocolOwnerFeePolicy,
     hostedFacilitator,
     missing,
     notes

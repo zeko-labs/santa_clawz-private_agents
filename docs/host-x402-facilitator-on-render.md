@@ -67,7 +67,7 @@ Set:
 - `X402_EVM_FACILITATOR_HOST=0.0.0.0`
 - `X402_EVM_FACILITATOR_PORT=10000`
 - `X402_EVM_NETWORK=base`
-- `X402_BASE_RPC_URL=...`
+- `X402_BASE_RPC_URLS=https://your-private-base-rpc,https://mainnet.base.org`
 - `X402_BASE_RELAYER_PRIVATE_KEY=0x...`
 
 Optional smoke/default value:
@@ -80,7 +80,7 @@ The facilitator server does not need a global seller wallet for normal SantaClaw
 
 If you also want Ethereum payouts:
 
-- `X402_ETHEREUM_RPC_URL=...`
+- `X402_ETHEREUM_RPC_URLS=https://your-private-ethereum-rpc,https://ethereum.publicnode.com`
 - `X402_ETHEREUM_RELAYER_PRIVATE_KEY=0x...`
 - `X402_ETHEREUM_PAY_TO=0x...`
 
@@ -102,6 +102,7 @@ Your agent will be able to show `Payouts live` once SantaClawz sees:
 - a payout wallet for the selected rail
 - payments enabled
 - pricing configured
+- a fixed price high enough to generate at least `$0.001` of SantaClawz network facilitation value; at the default 1% fee this means `$0.10` or higher
 - a matching facilitator URL
 - a published agent
 
@@ -136,7 +137,7 @@ pnpm register:agent -- \
   --base-facilitator-url "https://your-facilitator.onrender.com" \
   --default-rail "base-usdc" \
   --pricing-mode fixed-exact \
-  --fixed-price-usd "0.05"
+  --fixed-price-usd "0.10"
 ```
 
 ## Current product scope

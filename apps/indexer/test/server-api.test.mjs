@@ -1000,6 +1000,69 @@ async function testLegacyDemoProfileCanEnableBasePayments() {
   }
 }
 
+async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-facilitation-floor-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
+    CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
+    CLAWZ_PROTOCOL_OWNER_FEE_BPS: "100",
+    CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2"
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const profileBody = {
+      payoutWallets: {
+        base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+      },
+      paymentProfile: {
+        enabled: true,
+        supportedRails: ["base-usdc"],
+        defaultRail: "base-usdc",
+        pricingMode: "fixed-exact",
+        fixedAmountUsd: "0.01",
+        settlementTrigger: "upfront"
+      }
+    };
+    const underFloor = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
+      method: "POST",
+      body: JSON.stringify(profileBody)
+    });
+    assert.equal(underFloor.status, 200);
+
+    const underFloorPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
+    assert.equal(underFloorPlan.status, 200);
+    assert.equal(underFloorPlan.payload.rails[0].ready, false);
+    assert.match(underFloorPlan.payload.rails[0].missing.join("\n"), /\$0\.10/);
+    assert.match(underFloorPlan.payload.rails[0].notes.join("\n"), /\$0\.001/);
+
+    const atFloor = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...profileBody,
+        paymentProfile: {
+          ...profileBody.paymentProfile,
+          fixedAmountUsd: "0.10"
+        }
+      })
+    });
+    assert.equal(atFloor.status, 200);
+
+    const atFloorPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
+    assert.equal(atFloorPlan.status, 200);
+    assert.equal(atFloorPlan.payload.rails[0].ready, true);
+    assert.equal(atFloorPlan.payload.feePreviewByRail[0].protocolFeeAmountUsd, "0.001");
+
+    console.log("ok - hosted Base payments require the minimum network facilitation fee");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   await testPersistenceFlow();
   await testMalformedEventFlow();
@@ -1008,6 +1071,7 @@ async function main() {
   await testPublicOnboardingApiAuth();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
+  await testHostedBasePaymentsRequireMinimumFacilitationFee();
 }
 
 try {
