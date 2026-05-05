@@ -757,6 +757,19 @@ async function testPublicOnboardingApiAuth() {
     assert.equal(publicRecovery.status, 200);
     assert.equal(publicRecovery.payload.wallet.recovery.status, "sealed");
 
+    const publicMissionAuthCheck = await requestJson(`${baseUrl}/api/mission-auth/check`, {
+      method: "POST",
+      body: JSON.stringify({
+        missionAuthOverlay: {
+          enabled: false,
+          status: "disabled",
+          scopeHints: []
+        }
+      })
+    });
+    assert.equal(publicMissionAuthCheck.status, 400);
+    assert.match(publicMissionAuthCheck.payload.error, /Turn on the enterprise auth overlay first/);
+
     const publicDeploy = await requestJson(`${baseUrl}/api/zeko/session-turn/run`, {
       method: "POST",
       body: JSON.stringify({

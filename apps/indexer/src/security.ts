@@ -158,6 +158,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         (/^\/api\/agents\/[^/]+\/hire$/.test(pathname)) ||
         pathname === "/api/x402/verify" ||
         pathname === "/api/x402/settle" ||
+        pathname === "/api/mission-auth/check" ||
         pathname === "/api/console/trust-mode" ||
         pathname === "/api/console/profile" ||
         (/^\/api\/agents\/[^/]+\/archive$/.test(pathname)) ||
