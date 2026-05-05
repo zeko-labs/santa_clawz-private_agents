@@ -714,10 +714,21 @@ pre,
   border: 1px solid var(--line);
   border-radius: 20px;
   background: rgba(246, 250, 253, 0.72);
+  min-width: 0;
+}
+
+.action-row > div {
+  min-width: 0;
 }
 
 .action-row-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   align-items: start;
+}
+
+.action-row-form .panel-copy {
+  overflow-wrap: anywhere;
 }
 
 .action-row strong {
@@ -999,6 +1010,7 @@ pre,
   gap: 10px;
   width: min(100%, 420px);
   min-width: min(100%, 360px);
+  justify-self: end;
 }
 
 .wide-action-form-stack {
@@ -1007,7 +1019,12 @@ pre,
 }
 
 .hire-form-stack {
-  width: min(100%, 520px);
+  width: 100%;
+  min-width: 0;
+}
+
+.hire-form-stack .action-side {
+  width: 100%;
 }
 
 .status-note {
@@ -1565,6 +1582,18 @@ h3 {
   align-items: start;
 }
 
+.profile-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.profile-back-button {
+  min-height: 38px;
+}
+
 .compact-head {
   margin-bottom: 0;
 }
@@ -1625,6 +1654,7 @@ h3 {
 .field {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .field-wide {
@@ -2189,6 +2219,15 @@ button:disabled {
   .explore-feed-grid,
   .dispatch-grid {
     grid-template-columns: 1fr;
+  }
+
+  .action-row-form {
+    grid-template-columns: 1fr;
+  }
+
+  .action-row-form .action-form-stack {
+    width: 100%;
+    justify-self: stretch;
   }
 }
 

@@ -2684,9 +2684,22 @@ export function App() {
               <p className="eyebrow">Explore</p>
               <h2>{sharedAgentId ? "Agent profile" : "Browse live agents"}</h2>
             </div>
-            <span className="subtle-pill">
-              {sharedAgentId ? "Shared profile" : `${filteredRegistry.length} of ${registry.length} agents`}
-            </span>
+            <div className="profile-head-actions">
+              {sharedAgentId ? (
+                <button
+                  type="button"
+                  className="secondary-button profile-back-button"
+                  onClick={() => {
+                    showSection("explore");
+                  }}
+                >
+                  Back to directory
+                </button>
+              ) : null}
+              <span className="subtle-pill">
+                {sharedAgentId ? "Shared profile" : `${filteredRegistry.length} of ${registry.length} agents`}
+              </span>
+            </div>
           </div>
 
           {sharedAgentId ? (
@@ -2737,21 +2750,16 @@ export function App() {
                       >
                         {copiedKey === "shared-public-agent-url" ? "Copied" : "Copy"}
                       </button>
-                      <button
-                        className="secondary-button"
-                        onClick={() => {
-                          showSection("explore");
-                        }}
-                      >
-                        Back to directory
-                      </button>
                     </div>
                   </div>
 
                   {!ownershipVerified ? (
                     <div className="action-row">
                       <div>
-                        <strong>{state.ownership.canReclaim && !hasAdminAccess ? "Claim control of this OpenClaw agent" : "Verify control of this OpenClaw URL"}</strong>
+                        <strong>{state.ownership.canReclaim && !hasAdminAccess ? "Owner claim for this OpenClaw agent" : "Owner verification for this OpenClaw URL"}</strong>
+                        <p className="panel-copy">
+                          For the agent operator, not the buyer. SantaClawz checks that the seller controls the OpenClaw runtime before publishing, reclaiming, or marking this profile verified.
+                        </p>
                         <p className="panel-copy">{ownershipStatusCopy}</p>
                         {ownershipChallengePreview ? (
                           <div className="ownership-challenge-stack">
@@ -2787,8 +2795,8 @@ export function App() {
                           {pendingAction === "issue-ownership-challenge"
                             ? "Issuing..."
                             : issuedOwnershipChallenge || state.ownership.status === "challenge-issued"
-                              ? "Refresh challenge"
-                              : "Issue challenge"}
+                              ? "Refresh owner challenge"
+                              : "Issue owner challenge"}
                         </button>
                         <button
                           className="primary-button"
@@ -2801,7 +2809,7 @@ export function App() {
                             ? "Verifying..."
                             : state.ownership.canReclaim && !hasAdminAccess
                               ? "Verify and claim"
-                              : "Verify control"}
+                              : "Verify owner control"}
                         </button>
                       </div>
                     </div>
