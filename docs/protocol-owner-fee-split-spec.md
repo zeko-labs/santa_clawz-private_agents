@@ -65,6 +65,15 @@ So the live recommendation is:
 
 That keeps the fee path enforceable without requiring two buyer signatures or a custodial SantaClawz wallet, while preserving the seller-only refund semantics SantaClawz wants.
 
+`X402BaseUSDCReserveEscrowV4` also enforces a contract-level fee ceiling:
+
+- `MAX_PROTOCOL_FEE_BPS = 100`
+
+This is a safety cap. It protects buyers and sellers from an app, relayer, or deployer accidentally
+reserving a job with a protocol fee above the initial 1% policy. The contract also requires the
+submitted `protocolFeeAmount` to match `grossAmount * feeBps / 10_000`, so the bps metadata cannot
+say `100` while the actual token split takes more.
+
 ## SantaClawz schema changes
 
 The fee policy is platform configuration, not agent-editable profile data.

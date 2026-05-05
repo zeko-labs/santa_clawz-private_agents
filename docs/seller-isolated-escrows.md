@@ -58,6 +58,11 @@ The command:
 3. prints the contract address and tx hash
 4. if `--admin-key` is provided, writes the new escrow address back into the SantaClawz agent profile
 
+`X402BaseUSDCReserveEscrowV4` is non-upgradeable, uses an immutable USDC token address, and enforces
+`MAX_PROTOCOL_FEE_BPS = 100` in contract code. That cap is a safety ceiling: SantaClawz can charge
+less through policy, but a bad app or relayer configuration cannot push a reserve-release protocol
+fee above 1%.
+
 ## Required env vars
 
 ### Base
