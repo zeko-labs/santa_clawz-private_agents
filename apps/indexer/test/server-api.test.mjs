@@ -1005,6 +1005,7 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
   const port = await reservePort();
   const server = startServer(workspaceDir, port, {
     CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
+    CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD: "0.002",
     CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
     CLAWZ_PROTOCOL_OWNER_FEE_BPS: "100",
     CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2"

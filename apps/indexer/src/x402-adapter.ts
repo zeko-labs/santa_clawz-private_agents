@@ -19,7 +19,7 @@ const X402_PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 const X402_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
 const X402_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 const USD_SCALE = 1_000_000n;
-const DEFAULT_MIN_NETWORK_FACILITATION_FEE_USD = "0.002";
+const DEV_MIN_NETWORK_FACILITATION_FEE_USD = "0.001";
 
 const BASE_MAINNET = {
   networkId: "eip155:8453",
@@ -250,10 +250,12 @@ function minHostedFacilitatorPaymentUsd(rail: AgentPaymentRail): string | undefi
 }
 
 function minNetworkFacilitationFeeUsd(): string {
-  return (
-    process.env.CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD?.trim() ||
-    DEFAULT_MIN_NETWORK_FACILITATION_FEE_USD
-  );
+  const configured = process.env.CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  return process.env.NODE_ENV === "production" ? "" : DEV_MIN_NETWORK_FACILITATION_FEE_USD;
 }
 
 function hasBaseCdpFacilitatorCredentials(): boolean {
@@ -281,7 +283,13 @@ function pushHostedFacilitatorFloor(input: {
   const configuredMinAtomic = parseUsdAtomic(minHostedFacilitatorPaymentUsd(input.rail));
   const amountAtomic = parseUsdAtomic(input.profile.paymentProfile.fixedAmountUsd);
   const feeApplies = protocolOwnerFeeAppliesToRail(input.policy, input.rail);
-  if (minFeeAtomic === null || amountAtomic === null) {
+  if (!minFeeUsd.trim() || minFeeAtomic === null) {
+    input.missing.push("Set CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD for hosted facilitator settlement.");
+    input.notes.push("Hosted facilitator settlement needs an operator-configured network facilitation floor.");
+    return;
+  }
+
+  if (amountAtomic === null) {
     return;
   }
 
