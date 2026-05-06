@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -54,6 +55,8 @@ function startIndexer(workspaceDir, port) {
 
 function startMockOpenClaw() {
   let challengePayload = null;
+  let expectedIngressToken = "";
+  const seenHireRequestIds = new Set();
   const server = createServer((request, response) => {
     if (request.method === "GET" && request.url === "/.well-known/santaclawz-agent-challenge.json") {
       if (!challengePayload) {
@@ -63,6 +66,45 @@ function startMockOpenClaw() {
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(challengePayload));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/hire") {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const requestId = request.headers["x-santaclawz-request-id"];
+        const timestamp = request.headers["x-santaclawz-timestamp"];
+        const bodyDigest = request.headers["x-santaclawz-body-sha256"];
+        const signature = request.headers["x-santaclawz-signature"];
+        const authorization = request.headers.authorization;
+        const expectedDigest = createHash("sha256").update(body).digest("hex");
+        const expectedSignature =
+          typeof timestamp === "string" && typeof requestId === "string"
+            ? `v1=${createHmac("sha256", expectedIngressToken).update(`${timestamp}.${requestId}.${expectedDigest}`).digest("hex")}`
+            : "";
+
+        if (!expectedIngressToken || authorization !== `Bearer ${expectedIngressToken}`) {
+          response.writeHead(401, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "missing ingress token" }));
+          return;
+        }
+        if (typeof requestId !== "string" || seenHireRequestIds.has(requestId)) {
+          response.writeHead(409, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "duplicate request id" }));
+          return;
+        }
+        if (bodyDigest !== expectedDigest || signature !== expectedSignature) {
+          response.writeHead(401, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "invalid signature" }));
+          return;
+        }
+
+        seenHireRequestIds.add(requestId);
+        response.writeHead(202, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true, accepted: true, requestId }));
+      });
       return;
     }
 
@@ -82,6 +124,9 @@ function startMockOpenClaw() {
         baseUrl: `http://127.0.0.1:${address.port}`,
         setChallengePayload(nextPayload) {
           challengePayload = nextPayload;
+        },
+        setExpectedIngressToken(nextToken) {
+          expectedIngressToken = nextToken;
         },
         close() {
           return new Promise((closeResolve) => server.close(closeResolve));
@@ -212,6 +257,7 @@ async function main() {
     const agentId = registered.payload.agentId;
     const sessionId = registered.payload.session.sessionId;
     const adminKey = registered.payload.adminAccess.issuedAdminKey;
+    mockOpenClaw.setExpectedIngressToken(registered.payload.ingressAccess.issuedIngressToken);
 
     const challenge = await requestJson(`${baseUrl}/api/ownership/challenge`, {
       method: "POST",

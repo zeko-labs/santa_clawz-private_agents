@@ -1,4 +1,5 @@
 import express from "express";
+import { createHash } from "node:crypto";
 
 import {
   type AgentProfileState,
@@ -42,6 +43,9 @@ import {
 
 const app = express();
 const securityConfig = resolveSecurityConfig();
+const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
+const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
+const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 
 interface IndexerRequest<
   Params extends Record<string, string> = Record<string, string>,
@@ -103,7 +107,7 @@ app.options(
   })
 );
 app.use(apiAuthMiddleware(securityConfig));
-app.use(express.json());
+app.use(express.json({ limit: "64kb" }));
 
 const controlPlane = await ClawzControlPlane.boot(process.env.CLAWZ_DATA_DIR?.trim() || undefined);
 controlPlane.startSharedSocialAnchorDrainer();
@@ -152,6 +156,7 @@ type HireRequestBody = {
   taskPrompt?: unknown;
   budgetMina?: unknown;
   requesterContact?: unknown;
+  paymentPayload?: unknown;
 };
 type AgentHeartbeatRequestBody = {
   sessionId?: unknown;
@@ -385,7 +390,8 @@ function parseHireRequest(body: unknown): HireRequestBody {
     ? {
         taskPrompt: body.taskPrompt,
         budgetMina: body.budgetMina,
-        requesterContact: body.requesterContact
+        requesterContact: body.requesterContact,
+        paymentPayload: body.paymentPayload
       }
     : {};
 }
@@ -530,6 +536,10 @@ function setHeaders(response: IndexerResponse, headers: Record<string, string>) 
   for (const [name, value] of Object.entries(headers)) {
     response.set(name, value);
   }
+}
+
+function jsonDigestSha256(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
 async function buildX402PlanFromQuery(request: IndexerRequest) {
@@ -1539,12 +1549,112 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
 
   const body = parseHireRequest(request.body ?? null);
   try {
+    if (Buffer.byteLength(JSON.stringify(request.body ?? {}), "utf8") > HIRE_REQUEST_BODY_MAX_BYTES) {
+      response.status(413).json({ error: "Hire request body is too large." });
+      return;
+    }
+    const taskPrompt = typeof body.taskPrompt === "string" ? body.taskPrompt.trim() : "";
+    const requesterContact = typeof body.requesterContact === "string" ? body.requesterContact.trim() : "";
+    if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
+      response.status(400).json({ error: `taskPrompt must be ${HIRE_TASK_PROMPT_MAX_LENGTH} characters or less.` });
+      return;
+    }
+    if (requesterContact.length > HIRE_REQUESTER_CONTACT_MAX_LENGTH) {
+      response.status(400).json({ error: `requesterContact must be ${HIRE_REQUESTER_CONTACT_MAX_LENGTH} characters or less.` });
+      return;
+    }
+
+    const { consoleState, plan } = await buildX402PlanFromOptions(getBaseUrl(request), { agentId });
+    const published = consoleState.liveFlowTargets.turns.some((target) => target.sessionId === consoleState.session.sessionId);
+    if (consoleState.profile.availability === "archived") {
+      response.status(400).json({ error: "This agent is archived on SantaClawz and is not accepting new hire requests." });
+      return;
+    }
+    if (consoleState.ownership.status !== "verified") {
+      response.status(400).json({ error: "This agent must verify control of its OpenClaw runtime before it can accept public hire requests." });
+      return;
+    }
+    if (!published) {
+      response.status(400).json({ error: "This agent needs to publish on Zeko before it can accept hire requests." });
+      return;
+    }
+    if (!consoleState.profile.openClawUrl.trim()) {
+      response.status(400).json({ error: "This agent has no OpenClaw callback URL configured yet." });
+      return;
+    }
+    let paymentAuthorization:
+      | {
+          status: "settled";
+          rail?: string;
+          amountUsd?: string;
+          authorizationId?: string;
+          settlementReference?: string;
+          paymentPayloadDigestSha256?: string;
+          paymentResponseDigestSha256?: string;
+        }
+      | undefined;
+
+    if (consoleState.paymentsEnabled) {
+      const runtime = buildAgentX402RuntimeContext({
+        baseUrl: getBaseUrl(request),
+        plan,
+        serviceNetworkId: consoleState.deployment.networkId
+      });
+      if (!consoleState.paidJobsEnabled || !runtime) {
+        response.status(402).json({
+          ok: false,
+          paymentRequested: false,
+          error: "This agent has payments turned on, but paid jobs are not live yet.",
+          plan
+        });
+        return;
+      }
+      if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
+        return;
+      }
+
+      const paymentHeaderValue = request.header("payment-signature");
+      const paymentPayload = parseAgentX402PaymentPayload({
+        ...(paymentHeaderValue ? { headerValue: paymentHeaderValue } : {}),
+        body: request.body ?? null
+      });
+
+      if (!paymentPayload) {
+        setHeaders(response, buildAgentX402Headers({ paymentRequired: runtime.paymentRequired }));
+        response.status(402).json(runtime.paymentRequired);
+        return;
+      }
+
+      const settlement = await settleAgentX402Payment({
+        runtime,
+        paymentPayload
+      });
+      setHeaders(response, settlement.headers);
+      const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
+      const settlementReference = [
+        settlement.paymentResponse?.settlementReference,
+        remoteSettlement.transaction,
+        remoteSettlement.txHash,
+        remoteSettlement.transactionHash,
+        remoteSettlement.id
+      ].find((value): value is string => typeof value === "string" && value.length > 0);
+      paymentAuthorization = {
+        status: "settled",
+        rail: settlement.rail.rail,
+        ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+        ...(settlementReference ? { settlementReference, authorizationId: settlementReference } : {}),
+        paymentPayloadDigestSha256: jsonDigestSha256(paymentPayload),
+        paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
+      };
+    }
+
     response.json(
       await controlPlane.submitHireRequest({
         agentId,
-        taskPrompt: typeof body.taskPrompt === "string" ? body.taskPrompt : "",
-        requesterContact: typeof body.requesterContact === "string" ? body.requesterContact : "",
-        ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {})
+        taskPrompt,
+        requesterContact,
+        ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {}),
+        ...(paymentAuthorization ? { paymentAuthorization } : {})
       })
     );
   } catch (error) {

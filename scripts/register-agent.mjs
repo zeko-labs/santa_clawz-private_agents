@@ -107,6 +107,7 @@ function buildAgentEnvFile(result, issuedAdminKey) {
     `CLAWZ_AGENT_ID=${envQuote(result.agentId)}`,
     `CLAWZ_AGENT_SESSION_ID=${envQuote(result.sessionId)}`,
     `CLAWZ_AGENT_ADMIN_KEY=${envQuote(issuedAdminKey ?? "")}`,
+    `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(result.ingressToken ?? "")}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(result.publicAgentUrl)}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(result.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(result.verifyUrl)}`
@@ -279,6 +280,8 @@ const issuedAdminKey =
 if (!issuedAdminKey) {
   throw new Error("Registration succeeded but response was missing the SantaClawz agent admin key.");
 }
+const issuedIngressToken =
+  typeof state.ingressAccess?.issuedIngressToken === "string" ? state.ingressAccess.issuedIngressToken : undefined;
 let ownershipChallenge = null;
 
 try {
@@ -308,6 +311,7 @@ const result = {
   agentId,
   sessionId,
   ...(issuedAdminKey ? { adminKey: issuedAdminKey } : {}),
+  ...(issuedIngressToken ? { ingressToken: issuedIngressToken } : {}),
   networkId: state.deployment?.networkId,
   trustModeId: state.wallet?.trustModeId,
   provingLocation: state.profile?.preferredProvingLocation,
@@ -353,6 +357,10 @@ if (args.json) {
   if (issuedAdminKey) {
     console.log(`Admin key: ${issuedAdminKey}`);
     console.log("Important: store this key in the OpenClaw runtime secret store or the generated .env.santaclawz file. SantaClawz cannot recover it later.");
+  }
+  if (issuedIngressToken) {
+    console.log(`Ingress token: ${issuedIngressToken}`);
+    console.log("Important: configure the public hire ingress with this token so it can verify SantaClawz-signed hire requests.");
   }
   for (const file of writtenFiles) {
     console.log(`Wrote ${file.label}: ${file.path}`);

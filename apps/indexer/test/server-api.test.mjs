@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -174,6 +175,92 @@ async function startMissionAuthAuthority(port) {
   });
 
   return server;
+}
+
+async function startHireIngress(port) {
+  let challengePayload = null;
+  let expectedIngressToken = "";
+  const receivedHireRequestIds = new Set();
+  const server = createServer((request, response) => {
+    const url = request.url ?? "/";
+
+    if (request.method === "GET" && url === "/.well-known/santaclawz-agent-challenge.json") {
+      response.setHeader("content-type", "application/json");
+      if (!challengePayload) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "challenge not set" }));
+        return;
+      }
+      response.end(JSON.stringify(challengePayload));
+      return;
+    }
+
+    if (request.method === "POST" && url === "/hire") {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const requestId = request.headers["x-santaclawz-request-id"];
+        const timestamp = request.headers["x-santaclawz-timestamp"];
+        const bodyDigest = request.headers["x-santaclawz-body-sha256"];
+        const signature = request.headers["x-santaclawz-signature"];
+        const authorization = request.headers.authorization;
+        const expectedBodyDigest = createHash("sha256").update(body).digest("hex");
+        const expectedSignature =
+          typeof timestamp === "string" && typeof requestId === "string"
+            ? `v1=${createHmac("sha256", expectedIngressToken).update(`${timestamp}.${requestId}.${expectedBodyDigest}`).digest("hex")}`
+            : "";
+
+        response.setHeader("content-type", "application/json");
+        if (!expectedIngressToken || authorization !== `Bearer ${expectedIngressToken}`) {
+          response.statusCode = 401;
+          response.end(JSON.stringify({ error: "missing ingress token" }));
+          return;
+        }
+        if (typeof requestId !== "string" || receivedHireRequestIds.has(requestId)) {
+          response.statusCode = 409;
+          response.end(JSON.stringify({ error: "duplicate request id" }));
+          return;
+        }
+        if (bodyDigest !== expectedBodyDigest || signature !== expectedSignature) {
+          response.statusCode = 401;
+          response.end(JSON.stringify({ error: "invalid signature" }));
+          return;
+        }
+        const parsed = JSON.parse(body);
+        if (parsed.schema_version !== "santaclawz-request/1.0") {
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "bad schema" }));
+          return;
+        }
+        receivedHireRequestIds.add(requestId);
+        response.statusCode = 202;
+        response.end(JSON.stringify({ ok: true, requestId }));
+      });
+      return;
+    }
+
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ ok: true, runtime: "hire-ingress" }));
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+
+  return {
+    setChallengePayload(nextPayload) {
+      challengePayload = nextPayload;
+    },
+    setExpectedIngressToken(nextToken) {
+      expectedIngressToken = nextToken;
+    },
+    receivedHireRequestIds,
+    close() {
+      return stopHttpServer(server);
+    }
+  };
 }
 
 async function stopHttpServer(server) {
@@ -944,6 +1031,208 @@ async function testOperatorCanDeleteLostKeyRegistration() {
   }
 }
 
+async function testHireRouteRequiresSafeIngressAndPaymentState() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-hire-gating-test-"));
+  const port = await reservePort();
+  const ingressPort = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example"
+  });
+  const ingress = await startHireIngress(ingressPort);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const ingressUrl = `http://127.0.0.1:${ingressPort}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Hire Gating Agent",
+        headline: "Receives signed SantaClawz hire requests.",
+        openClawUrl: ingressUrl
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+    const ingressToken = registered.payload.ingressAccess.issuedIngressToken;
+    assert.equal(typeof ingressToken, "string");
+    ingress.setExpectedIngressToken(ingressToken);
+
+    const unverifiedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should be rejected until ownership is verified.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(unverifiedHire.status, 400);
+    assert.match(unverifiedHire.payload.error, /verify control/i);
+
+    const challenge = await requestJson(`${baseUrl}/api/ownership/challenge`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId })
+    });
+    assert.equal(challenge.status, 200);
+    ingress.setChallengePayload(JSON.parse(challenge.payload.issuedOwnershipChallenge.challengeResponseJson));
+
+    const verified = await requestJson(`${baseUrl}/api/ownership/verify`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId })
+    });
+    assert.equal(verified.status, 200);
+
+    const unpublishedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should be rejected until published.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(unpublishedHire.status, 400);
+    assert.match(unpublishedHire.payload.error, /publish on Zeko/i);
+
+    const published = await requestJson(`${baseUrl}/api/events/ingest`, {
+      method: "POST",
+      body: JSON.stringify({
+        id: "evt_hire_gating_published",
+        type: "TurnFinalized",
+        occurredAtIso: new Date().toISOString(),
+        payload: { sessionId, turnId: "turn_hire_gating_001" }
+      })
+    });
+    assert.equal(published.status, 202);
+
+    const oversizedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "x".repeat(2001),
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(oversizedHire.status, 400);
+    assert.match(oversizedHire.payload.error, /taskPrompt/);
+
+    const archived = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/archive`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, archived: true })
+    });
+    assert.equal(archived.status, 200);
+
+    const archivedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should be rejected while archived.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(archivedHire.status, 400);
+    assert.match(archivedHire.payload.error, /archived/i);
+
+    const restored = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/archive`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, archived: false })
+    });
+    assert.equal(restored.status, 200);
+
+    const paymentEnabledButNotReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "fixed-exact",
+          fixedAmountUsd: "0.20",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(paymentEnabledButNotReady.status, 200);
+
+    const notReadyHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should be rejected because payment setup is incomplete.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(notReadyHire.status, 402);
+    assert.equal(notReadyHire.payload.paymentRequested, false);
+
+    const paidReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "fixed-exact",
+          fixedAmountUsd: "0.20",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(paidReady.status, 200);
+    assert.equal(paidReady.payload.paidJobsEnabled, true);
+
+    const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should require x402 payment.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(unpaidPaidHire.status, 402);
+    assert.equal(typeof unpaidPaidHire.payload, "object");
+
+    const freeAgain = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        paymentProfile: {
+          enabled: false,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "fixed-exact",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(freeAgain.status, 200);
+
+    const accepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Accept this signed hire request.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.payload.status, "submitted");
+    assert.equal(accepted.payload.deliveryStatus, "forwarded");
+    assert.equal(accepted.payload.ingress.signatureHeader, "X-SantaClawz-Signature");
+    assert.equal(ingress.receivedHireRequestIds.has(accepted.payload.requestId), true);
+
+    console.log("ok - hire route gates ownership, publish, archive, payment readiness, and signed ingress delivery");
+  } finally {
+    await ingress.close();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testMissionAuthVerificationPersists() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mission-auth-test-"));
   const port = await reservePort();
@@ -1189,6 +1478,7 @@ async function main() {
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
   await testOperatorCanDeleteLostKeyRegistration();
+  await testHireRouteRequiresSafeIngressAndPaymentState();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();

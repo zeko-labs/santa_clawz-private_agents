@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -61,6 +61,10 @@ const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
 const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
 const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
 const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
+const HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0";
+const HIRE_INGRESS_TIMEOUT_MS = 10_000;
+const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
+const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
@@ -98,7 +102,7 @@ const ALL_LIVE_FLOW_METHODS = Array.from(
 );
 
 interface ConsolePersistenceState {
-  schemaVersion: 3;
+  schemaVersion: 4;
   currentSessionId: string;
   activeMode: TrustModeId;
   wallet: ShadowWalletState;
@@ -106,6 +110,7 @@ interface ConsolePersistenceState {
   agentIdsBySession: Record<string, string>;
   profilesBySession: Record<string, AgentProfileState>;
   adminKeysBySession: Record<string, SessionAdminAccessRecord>;
+  ingressSecretsBySession: Record<string, SessionIngressSecretRecord>;
   ownershipBySession: Record<string, SessionOwnershipRecord>;
   deletedAgentRegistrationsBySession: Record<string, DeletedAgentRegistrationRecord>;
 }
@@ -120,6 +125,12 @@ interface DeletedAgentRegistrationRecord {
   agentId: string;
   deletedAtIso: string;
   reason: string;
+}
+
+interface SessionIngressSecretRecord {
+  token: string;
+  tokenHint: string;
+  issuedAtIso: string;
 }
 
 interface SessionOwnershipChallengeRecord extends AgentOwnershipChallengeState {
@@ -360,6 +371,17 @@ interface SubmitHireRequestOptions {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  paymentAuthorization?: HirePaymentAuthorization;
+}
+
+interface HirePaymentAuthorization {
+  status: "not-required" | "authorized" | "settled";
+  rail?: string;
+  amountUsd?: string;
+  authorizationId?: string;
+  settlementReference?: string;
+  paymentPayloadDigestSha256?: string;
+  paymentResponseDigestSha256?: string;
 }
 
 interface AgentRuntimeAvailabilityOptions {
@@ -403,6 +425,7 @@ interface ConsoleStateOptions {
   sessionId?: string;
   agentId?: string;
   exposeIssuedAdminKey?: string;
+  exposeIssuedIngressToken?: string;
 }
 
 interface EventListOptions {
@@ -445,6 +468,9 @@ interface HireRequestRecord {
   budgetMina?: string;
   requesterContact: string;
   deliveryTarget: string;
+  deliveryStatus?: "forwarded" | "recorded";
+  ingressBodyDigestSha256?: string;
+  payment?: HirePaymentAuthorization;
 }
 
 interface HireRequestFile {
@@ -601,7 +627,7 @@ function buildPrivacyExceptions(nowIso: string): PrivacyExceptionQueueItem[] {
 
 function buildDefaultState(nowIso: string): ConsolePersistenceState {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     currentSessionId: DEFAULT_SESSION_ID,
     activeMode: "private",
     wallet: buildWalletState(nowIso),
@@ -613,6 +639,7 @@ function buildDefaultState(nowIso: string): ConsolePersistenceState {
       [DEFAULT_SESSION_ID]: buildDefaultProfile("private")
     },
     adminKeysBySession: {},
+    ingressSecretsBySession: {},
     ownershipBySession: {
       [DEFAULT_SESSION_ID]: buildDefaultOwnershipRecord(true)
     },
@@ -637,12 +664,24 @@ function buildAdminKey() {
   return `sck_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 }
 
+function buildIngressToken() {
+  return `sc_ing_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+}
+
 function adminKeyHash(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
 function adminKeyHint(value: string) {
   return `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+function ingressTokenHint(value: string) {
+  return `${value.slice(0, 10)}...${value.slice(-6)}`;
+}
+
+function sha256Hex(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function timingSafeEqualHex(left: string, right: string) {
@@ -1267,7 +1306,7 @@ export class ClawzControlPlane {
             };
       const migratedState: ConsolePersistenceState = {
         ...state,
-        schemaVersion: 3,
+        schemaVersion: 4,
         agentIdsBySession:
           state.agentIdsBySession && Object.keys(state.agentIdsBySession).length > 0
             ? state.agentIdsBySession
@@ -1276,6 +1315,7 @@ export class ClawzControlPlane {
               ),
         profilesBySession: resolvedProfiles,
         adminKeysBySession: state.adminKeysBySession ?? {},
+        ingressSecretsBySession: state.ingressSecretsBySession ?? {},
         ownershipBySession:
           state.ownershipBySession && Object.keys(state.ownershipBySession).length > 0
             ? Object.fromEntries(
@@ -1290,12 +1330,13 @@ export class ClawzControlPlane {
         deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {}
       };
       if (
-        state.schemaVersion !== 3 ||
+        state.schemaVersion !== 4 ||
         !state.agentIdsBySession ||
         Object.keys(state.agentIdsBySession).length === 0 ||
         !state.profilesBySession ||
         Object.keys(state.profilesBySession).length === 0 ||
         !state.adminKeysBySession ||
+        !state.ingressSecretsBySession ||
         !state.ownershipBySession ||
         !state.deletedAgentRegistrationsBySession
       ) {
@@ -1699,6 +1740,19 @@ export class ClawzControlPlane {
     };
   }
 
+  private buildIngressAccessState(
+    state: ConsolePersistenceState,
+    sessionId: string,
+    issuedIngressToken?: string
+  ): NonNullable<ConsoleStateResponse["ingressAccess"]> {
+    const record = state.ingressSecretsBySession[sessionId];
+    return {
+      hasIngressToken: Boolean(record),
+      ...(record?.tokenHint ? { tokenHint: record.tokenHint } : {}),
+      ...(issuedIngressToken ? { issuedIngressToken } : {})
+    };
+  }
+
   private assertAdminAccess(state: ConsolePersistenceState, sessionId: string, adminKey?: string) {
     const record = state.adminKeysBySession[sessionId];
     if (!record) {
@@ -2033,6 +2087,132 @@ export class ClawzControlPlane {
     throw new Error(
       `This agent appears offline. SantaClawz will not request payment or submit a hire until the OpenClaw endpoint is reachable. ${availability.reason ?? ""}`.trim()
     );
+  }
+
+  private hireIngressUrlFor(openClawUrl: string): string {
+    const url = new URL(openClawUrl);
+    const normalizedPath = url.pathname.replace(/\/+$/, "");
+    url.pathname = normalizedPath.endsWith("/hire")
+      ? normalizedPath
+      : `${normalizedPath.length > 0 ? normalizedPath : ""}/hire`;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  }
+
+  private buildSignedHireIngressRequest(input: {
+    ingressRecord: SessionIngressSecretRecord;
+    sessionId: string;
+    agentId: string;
+    profile: AgentProfileState;
+    requestId: string;
+    submittedAtIso: string;
+    taskPrompt: string;
+    requesterContact: string;
+    budgetMina?: string;
+    paymentAuthorization: HirePaymentAuthorization;
+  }) {
+    const ingressUrl = this.hireIngressUrlFor(input.profile.openClawUrl);
+    const envelope = {
+      schema_version: HIRE_REQUEST_SCHEMA_VERSION,
+      request_id: input.requestId,
+      agent_id: input.agentId,
+      session_id: input.sessionId,
+      caller_type: "human",
+      service: "agent_job_pack",
+      verification_required: true,
+      return_channel: "santaclawz",
+      paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
+      payment: {
+        status: input.paymentAuthorization.status,
+        ...(input.paymentAuthorization.rail ? { rail: input.paymentAuthorization.rail } : {}),
+        ...(input.paymentAuthorization.amountUsd ? { amount_usd: input.paymentAuthorization.amountUsd } : {}),
+        ...(input.paymentAuthorization.authorizationId ? { authorization_id: input.paymentAuthorization.authorizationId } : {}),
+        ...(input.paymentAuthorization.settlementReference ? { settlement_reference: input.paymentAuthorization.settlementReference } : {}),
+        ...(input.paymentAuthorization.paymentPayloadDigestSha256
+          ? { payment_payload_digest_sha256: input.paymentAuthorization.paymentPayloadDigestSha256 }
+          : {}),
+        ...(input.paymentAuthorization.paymentResponseDigestSha256
+          ? { payment_response_digest_sha256: input.paymentAuthorization.paymentResponseDigestSha256 }
+          : {})
+      },
+      input: {
+        title: input.taskPrompt.split(/\r?\n/)[0]?.trim().slice(0, 120) || "SantaClawz hire request",
+        client_request: input.taskPrompt,
+        requester_contact: input.requesterContact,
+        provided_inputs: [],
+        requested_deliverables: [],
+        ...(input.budgetMina ? { budget: input.budgetMina } : {})
+      }
+    };
+    const body = JSON.stringify(envelope);
+    const bodyDigestSha256 = sha256Hex(body);
+    const signaturePayload = `${input.submittedAtIso}.${input.requestId}.${bodyDigestSha256}`;
+    const signature = createHmac("sha256", input.ingressRecord.token).update(signaturePayload).digest("hex");
+
+    return {
+      ingressUrl,
+      body,
+      bodyDigestSha256,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${input.ingressRecord.token}`,
+        "x-santaclawz-request-id": input.requestId,
+        "x-santaclawz-timestamp": input.submittedAtIso,
+        "x-santaclawz-body-sha256": bodyDigestSha256,
+        "x-santaclawz-signature": `v1=${signature}`
+      }
+    };
+  }
+
+  private ingressSecretRecordForSession(state: ConsolePersistenceState, sessionId: string): SessionIngressSecretRecord {
+    const record = state.ingressSecretsBySession[sessionId];
+    if (record) {
+      return record;
+    }
+    throw new Error("This agent is missing a SantaClawz ingress token. Re-enroll or rotate ingress credentials before accepting public hires.");
+  }
+
+  private async forwardHireRequestToIngress(input: {
+    ingressRecord: SessionIngressSecretRecord;
+    sessionId: string;
+    agentId: string;
+    profile: AgentProfileState;
+    requestId: string;
+    submittedAtIso: string;
+    taskPrompt: string;
+    requesterContact: string;
+    budgetMina?: string;
+    paymentAuthorization: HirePaymentAuthorization;
+  }) {
+    const signedRequest = this.buildSignedHireIngressRequest(input);
+    if (process.env.CLAWZ_HIRE_FORWARDING_ENABLED === "false") {
+      return {
+        deliveryStatus: "recorded" as const,
+        ingressUrl: signedRequest.ingressUrl,
+        bodyDigestSha256: signedRequest.bodyDigestSha256
+      };
+    }
+
+    const response = await fetch(signedRequest.ingressUrl, {
+      method: "POST",
+      headers: signedRequest.headers,
+      body: signedRequest.body,
+      signal: AbortSignal.timeout(HIRE_INGRESS_TIMEOUT_MS)
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => "");
+      throw new Error(
+        `Public hire ingress rejected the signed request with ${response.status}${responseText ? `: ${responseText.slice(0, 240)}` : ""}`
+      );
+    }
+
+    return {
+      deliveryStatus: "forwarded" as const,
+      ingressUrl: signedRequest.ingressUrl,
+      bodyDigestSha256: signedRequest.bodyDigestSha256
+    };
   }
 
   private buildOwnershipChallengeRecord(openClawUrl: string, issuedAtIso: string): SessionOwnershipChallengeRecord {
@@ -3789,6 +3969,11 @@ export class ClawzControlPlane {
       options.adminKey,
       options.exposeIssuedAdminKey
     );
+    const ingressAccess = this.buildIngressAccessState(
+      state,
+      focus.sessionId,
+      options.exposeIssuedIngressToken
+    );
 
     return {
       agentId,
@@ -3798,6 +3983,7 @@ export class ClawzControlPlane {
       paidJobsEnabled,
       protocolOwnerFeePolicy,
       adminAccess,
+      ingressAccess,
       wallet: {
         ...state.wallet,
         trustModeId: focus.trustModeId
@@ -4062,6 +4248,7 @@ export class ClawzControlPlane {
 
     const agentId = buildStableAgentId(profile.agentName, sessionId);
     const adminKey = buildAdminKey();
+    const ingressToken = buildIngressToken();
     const nextState: ConsolePersistenceState = {
       ...this.applyFocusedSession(state, sessionId, trustModeId),
       agentIdsBySession: {
@@ -4077,6 +4264,14 @@ export class ClawzControlPlane {
         [sessionId]: {
           keyHash: adminKeyHash(adminKey),
           keyHint: adminKeyHint(adminKey),
+          issuedAtIso: registeredAtIso
+        }
+      },
+      ingressSecretsBySession: {
+        ...state.ingressSecretsBySession,
+        [sessionId]: {
+          token: ingressToken,
+          tokenHint: ingressTokenHint(ingressToken),
           issuedAtIso: registeredAtIso
         }
       },
@@ -4134,7 +4329,8 @@ export class ClawzControlPlane {
     return this.getConsoleState({
       sessionId,
       adminKey,
-      exposeIssuedAdminKey: adminKey
+      exposeIssuedAdminKey: adminKey,
+      exposeIssuedIngressToken: ingressToken
     });
   }
 
@@ -4327,6 +4523,10 @@ export class ClawzControlPlane {
     if (isArchivedProfile(profile)) {
       throw new Error("This agent is archived on SantaClawz and is not accepting new hire requests.");
     }
+    const ownership = this.ownershipForSession(state, sessionId);
+    if (ownership.status !== "verified") {
+      throw new Error("This agent must verify control of its OpenClaw runtime before it can accept public hire requests.");
+    }
     const published = liveFlowTargets.turns.some((target) => target.sessionId === sessionId);
     if (!published) {
       throw new Error("This agent needs to publish on Zeko before it can accept hire requests.");
@@ -4334,8 +4534,16 @@ export class ClawzControlPlane {
     if (!profile.openClawUrl.trim()) {
       throw new Error("This agent has no OpenClaw callback URL configured yet.");
     }
-    if (options.taskPrompt.trim().length === 0 || options.requesterContact.trim().length === 0) {
+    const taskPrompt = options.taskPrompt.trim();
+    const requesterContact = options.requesterContact.trim();
+    if (taskPrompt.length === 0 || requesterContact.length === 0) {
       throw new Error("taskPrompt and requesterContact are required.");
+    }
+    if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
+      throw new Error(`taskPrompt must be ${HIRE_TASK_PROMPT_MAX_LENGTH} characters or less.`);
+    }
+    if (requesterContact.length > HIRE_REQUESTER_CONTACT_MAX_LENGTH) {
+      throw new Error(`requesterContact must be ${HIRE_REQUESTER_CONTACT_MAX_LENGTH} characters or less.`);
     }
     this.assertAgentRuntimeReachable(
       await this.checkOpenClawAgentReachability({
@@ -4346,9 +4554,34 @@ export class ClawzControlPlane {
       })
     );
     const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
+    const paymentAuthorization = options.paymentAuthorization ?? { status: "not-required" as const };
+    if (profile.paymentProfile.enabled && !paidJobsEnabled) {
+      throw new Error("This agent has payments turned on, but paid jobs are not live yet.");
+    }
+    if (paidJobsEnabled && paymentAuthorization.status === "not-required") {
+      throw new Error("Paid agents require verified x402 payment before SantaClawz submits a hire request.");
+    }
 
     const submittedAtIso = new Date().toISOString();
     const requestId = `hire_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    if (hireRequests.requests.some((request) => request.requestId === requestId)) {
+      throw new Error("Duplicate hire request id rejected.");
+    }
+    const ingressRecord = this.ingressSecretRecordForSession(state, sessionId);
+    const ingressDelivery = await this.forwardHireRequestToIngress({
+      ingressRecord,
+      sessionId,
+      agentId: options.agentId,
+      profile,
+      requestId,
+      submittedAtIso,
+      taskPrompt,
+      requesterContact,
+      ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
+        ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
+        : {}),
+      paymentAuthorization
+    });
     const nextRecord: HireRequestRecord = {
       requestId,
       agentId: options.agentId,
@@ -4356,12 +4589,15 @@ export class ClawzControlPlane {
       networkId: deployment.networkId,
       submittedAtIso,
       status: "submitted",
-      taskPrompt: options.taskPrompt.trim().slice(0, 2000),
+      taskPrompt,
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
         : {}),
-      requesterContact: options.requesterContact.trim().slice(0, 240),
-      deliveryTarget: profile.openClawUrl
+      requesterContact,
+      deliveryTarget: ingressDelivery.ingressUrl,
+      deliveryStatus: ingressDelivery.deliveryStatus,
+      ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
+      payment: paymentAuthorization
     };
 
     await this.saveHireRequestFile({
@@ -4386,7 +4622,22 @@ export class ClawzControlPlane {
       networkId: deployment.networkId,
       submittedAtIso,
       status: "submitted",
-      deliveryTarget: profile.openClawUrl,
+      deliveryTarget: ingressDelivery.ingressUrl,
+      deliveryStatus: ingressDelivery.deliveryStatus,
+      ingress: {
+        url: ingressDelivery.ingressUrl,
+        requestId,
+        timestamp: submittedAtIso,
+        bodyDigestSha256: ingressDelivery.bodyDigestSha256,
+        signatureHeader: "X-SantaClawz-Signature"
+      },
+      payment: {
+        status: paymentAuthorization.status,
+        ...(paymentAuthorization.rail ? { rail: paymentAuthorization.rail } : {}),
+        ...(paymentAuthorization.amountUsd ? { amountUsd: paymentAuthorization.amountUsd } : {}),
+        ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),
+        ...(paymentAuthorization.settlementReference ? { settlementReference: paymentAuthorization.settlementReference } : {})
+      },
       paidJobsEnabled
     };
   }
@@ -4645,10 +4896,12 @@ export class ClawzControlPlane {
     const nextAgentIdsBySession = { ...state.agentIdsBySession };
     const nextProfilesBySession = { ...state.profilesBySession };
     const nextAdminKeysBySession = { ...state.adminKeysBySession };
+    const nextIngressSecretsBySession = { ...state.ingressSecretsBySession };
     const nextOwnershipBySession = { ...state.ownershipBySession };
     delete nextAgentIdsBySession[sessionId];
     delete nextProfilesBySession[sessionId];
     delete nextAdminKeysBySession[sessionId];
+    delete nextIngressSecretsBySession[sessionId];
     delete nextOwnershipBySession[sessionId];
 
     const nextState: ConsolePersistenceState = {
@@ -4657,6 +4910,7 @@ export class ClawzControlPlane {
       agentIdsBySession: nextAgentIdsBySession,
       profilesBySession: nextProfilesBySession,
       adminKeysBySession: nextAdminKeysBySession,
+      ingressSecretsBySession: nextIngressSecretsBySession,
       ownershipBySession: nextOwnershipBySession,
       deletedAgentRegistrationsBySession: {
         ...state.deletedAgentRegistrationsBySession,

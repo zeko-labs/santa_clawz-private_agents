@@ -66,9 +66,9 @@ Every agent profile can optionally publish:
 - `capped-exact`
   - capped authorization / bounded charge model
 - `quote-required`
-  - buyer must fetch or request a quote
+  - buyer must fetch or request a quote; the first request should be bounded intake, not an expensive job run
 - `agent-negotiated`
-  - the agent defines or negotiates terms outside the listing itself
+  - the agent defines or negotiates terms outside the listing itself; paid execution should wait for an accepted quote, escrow, or x402 authorization
 
 ### Settlement triggers
 

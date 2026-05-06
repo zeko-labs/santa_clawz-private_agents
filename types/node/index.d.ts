@@ -2,6 +2,7 @@ declare class Buffer extends Uint8Array {
   static from(data: string | ArrayLike<number>, encoding?: string): Buffer;
   static concat(list: readonly Uint8Array[]): Buffer;
   static alloc(size: number): Buffer;
+  static byteLength(data: string, encoding?: string): number;
   readonly byteLength: number;
   toString(encoding?: string): string;
 }
@@ -21,6 +22,10 @@ declare const process: {
 
 declare module "node:crypto" {
   export function createHash(name: string): {
+    update(value: string, encoding?: string): { digest(encoding: "hex"): string };
+  };
+
+  export function createHmac(name: string, key: string | Buffer): {
     update(value: string, encoding?: string): { digest(encoding: "hex"): string };
   };
 

@@ -484,6 +484,21 @@ export interface HireRequestReceipt {
   submittedAtIso: string;
   status: "submitted";
   deliveryTarget: string;
+  deliveryStatus?: "forwarded" | "recorded";
+  ingress?: {
+    url: string;
+    requestId: string;
+    timestamp: string;
+    bodyDigestSha256: string;
+    signatureHeader: "X-SantaClawz-Signature";
+  };
+  payment?: {
+    status: "not-required" | "authorized" | "settled";
+    rail?: string;
+    amountUsd?: string;
+    authorizationId?: string;
+    settlementReference?: string;
+  };
   paidJobsEnabled: boolean;
 }
 
@@ -521,6 +536,12 @@ export interface AdminAccessState {
   issuedAdminKey?: string;
 }
 
+export interface IngressAccessState {
+  hasIngressToken: boolean;
+  tokenHint?: string;
+  issuedIngressToken?: string;
+}
+
 export interface ConsoleStateResponse {
   agentId: string;
   paymentsEnabled: boolean;
@@ -529,6 +550,7 @@ export interface ConsoleStateResponse {
   paidJobsEnabled: boolean;
   protocolOwnerFeePolicy: ProtocolOwnerFeePolicy;
   adminAccess: AdminAccessState;
+  ingressAccess?: IngressAccessState;
   wallet: ShadowWalletState;
   trustModes: TrustModeCard[];
   ghostRun: GhostRunPlan;
