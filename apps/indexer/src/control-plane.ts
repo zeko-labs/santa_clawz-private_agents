@@ -98,7 +98,7 @@ const ALL_LIVE_FLOW_METHODS = Array.from(
 );
 
 interface ConsolePersistenceState {
-  schemaVersion: 2;
+  schemaVersion: 3;
   currentSessionId: string;
   activeMode: TrustModeId;
   wallet: ShadowWalletState;
@@ -107,12 +107,19 @@ interface ConsolePersistenceState {
   profilesBySession: Record<string, AgentProfileState>;
   adminKeysBySession: Record<string, SessionAdminAccessRecord>;
   ownershipBySession: Record<string, SessionOwnershipRecord>;
+  deletedAgentRegistrationsBySession: Record<string, DeletedAgentRegistrationRecord>;
 }
 
 interface SessionAdminAccessRecord {
   keyHash: string;
   keyHint: string;
   issuedAtIso: string;
+}
+
+interface DeletedAgentRegistrationRecord {
+  agentId: string;
+  deletedAtIso: string;
+  reason: string;
 }
 
 interface SessionOwnershipChallengeRecord extends AgentOwnershipChallengeState {
@@ -333,6 +340,12 @@ interface AgentArchiveOptions {
   agentId?: string;
   archived: boolean;
   adminKey?: string;
+}
+
+interface DeleteAgentRegistrationOptions {
+  sessionId?: string;
+  agentId?: string;
+  reason?: string;
 }
 
 type AgentProfileInput = Partial<Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay">> & {
@@ -588,7 +601,7 @@ function buildPrivacyExceptions(nowIso: string): PrivacyExceptionQueueItem[] {
 
 function buildDefaultState(nowIso: string): ConsolePersistenceState {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     currentSessionId: DEFAULT_SESSION_ID,
     activeMode: "private",
     wallet: buildWalletState(nowIso),
@@ -602,7 +615,8 @@ function buildDefaultState(nowIso: string): ConsolePersistenceState {
     adminKeysBySession: {},
     ownershipBySession: {
       [DEFAULT_SESSION_ID]: buildDefaultOwnershipRecord(true)
-    }
+    },
+    deletedAgentRegistrationsBySession: {}
   };
 }
 
@@ -1253,7 +1267,7 @@ export class ClawzControlPlane {
             };
       const migratedState: ConsolePersistenceState = {
         ...state,
-        schemaVersion: 2,
+        schemaVersion: 3,
         agentIdsBySession:
           state.agentIdsBySession && Object.keys(state.agentIdsBySession).length > 0
             ? state.agentIdsBySession
@@ -1272,16 +1286,18 @@ export class ClawzControlPlane {
               )
             : Object.fromEntries(
                 Object.entries(resolvedProfiles).map(([sessionId]) => [sessionId, buildDefaultOwnershipRecord(true)])
-              )
+              ),
+        deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {}
       };
       if (
-        state.schemaVersion !== 2 ||
+        state.schemaVersion !== 3 ||
         !state.agentIdsBySession ||
         Object.keys(state.agentIdsBySession).length === 0 ||
         !state.profilesBySession ||
         Object.keys(state.profilesBySession).length === 0 ||
         !state.adminKeysBySession ||
-        !state.ownershipBySession
+        !state.ownershipBySession ||
+        !state.deletedAgentRegistrationsBySession
       ) {
         await this.saveState(migratedState);
       }
@@ -1626,7 +1642,9 @@ export class ClawzControlPlane {
   }
 
   private resolveSessionIdFromAgentId(state: ConsolePersistenceState, agentId: string): string | undefined {
-    return Object.entries(state.agentIdsBySession).find(([, value]) => value === agentId)?.[0];
+    return Object.entries(state.agentIdsBySession).find(
+      ([sessionId, value]) => !state.deletedAgentRegistrationsBySession[sessionId] && value === agentId
+    )?.[0];
   }
 
   private resolveOwnedSessionId(
@@ -2167,6 +2185,9 @@ export class ClawzControlPlane {
     const recency = new Map<string, string>();
     const remember = (sessionId: string | undefined, occurredAtIso?: string) => {
       if (!sessionId) {
+        return;
+      }
+      if (state.deletedAgentRegistrationsBySession[sessionId]) {
         return;
       }
 
@@ -4587,6 +4608,81 @@ export class ClawzControlPlane {
       nextArchivedAtIso ?? new Date().toISOString()
     );
     return this.getConsoleState({ sessionId: focus.sessionId, ...(options.adminKey ? { adminKey: options.adminKey } : {}) });
+  }
+
+  async deleteAgentRegistration(options: DeleteAgentRegistrationOptions): Promise<{
+    deleted: true;
+    sessionId: string;
+    agentId: string;
+    deletedAtIso: string;
+    reason: string;
+  }> {
+    const state = await this.loadState();
+    const sessionId =
+      typeof options.sessionId === "string" && options.sessionId.trim().length > 0
+        ? options.sessionId.trim()
+        : typeof options.agentId === "string" && options.agentId.trim().length > 0
+          ? this.resolveSessionIdFromAgentId(state, options.agentId.trim())
+          : undefined;
+
+    if (!sessionId) {
+      throw new Error("Provide a known agentId or sessionId to delete.");
+    }
+    if (!sessionId.startsWith("session_agent_")) {
+      throw new Error("Only registered OpenClaw agent sessions can be deleted through this cleanup path.");
+    }
+
+    const agentId = this.agentIdForSession(state, sessionId);
+    if (options.agentId && options.agentId.trim() !== agentId) {
+      throw new Error("The provided agentId does not match the resolved session.");
+    }
+
+    const deletedAtIso = new Date().toISOString();
+    const reason =
+      typeof options.reason === "string" && options.reason.trim().length > 0
+        ? options.reason.trim().slice(0, 240)
+        : "Operator cleanup";
+    const nextAgentIdsBySession = { ...state.agentIdsBySession };
+    const nextProfilesBySession = { ...state.profilesBySession };
+    const nextAdminKeysBySession = { ...state.adminKeysBySession };
+    const nextOwnershipBySession = { ...state.ownershipBySession };
+    delete nextAgentIdsBySession[sessionId];
+    delete nextProfilesBySession[sessionId];
+    delete nextAdminKeysBySession[sessionId];
+    delete nextOwnershipBySession[sessionId];
+
+    const nextState: ConsolePersistenceState = {
+      ...state,
+      currentSessionId: state.currentSessionId === sessionId ? DEFAULT_SESSION_ID : state.currentSessionId,
+      agentIdsBySession: nextAgentIdsBySession,
+      profilesBySession: nextProfilesBySession,
+      adminKeysBySession: nextAdminKeysBySession,
+      ownershipBySession: nextOwnershipBySession,
+      deletedAgentRegistrationsBySession: {
+        ...state.deletedAgentRegistrationsBySession,
+        [sessionId]: {
+          agentId,
+          deletedAtIso,
+          reason
+        }
+      }
+    };
+
+    await this.saveState(nextState);
+    await this.appendEvent("SessionCheckpointed", {
+      sessionId,
+      agentId,
+      agentRegistrationDeleted: true,
+      operatorReason: reason
+    }, deletedAtIso);
+
+    return {
+      deleted: true,
+      sessionId,
+      agentId,
+      deletedAtIso,
+      reason
+    };
   }
 
   async sponsorWallet(options: SponsorWalletOptions = {}): Promise<ConsoleStateResponse> {

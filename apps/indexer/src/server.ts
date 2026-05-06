@@ -1580,6 +1580,33 @@ app.post("/api/agents/:agentId/archive", route(async (request, response) => {
   }
 }));
 
+app.delete("/api/admin/agents/:agentId", route(async (request, response) => {
+  const agentId = request.params.agentId;
+  if (!agentId) {
+    response.status(400).json({ error: "agentId is required." });
+    return;
+  }
+
+  const body = isRecord(request.body) ? request.body : {};
+  try {
+    response.json(
+      await controlPlane.deleteAgentRegistration({
+        agentId,
+        ...(typeof body.sessionId === "string" && body.sessionId.trim().length > 0
+          ? { sessionId: body.sessionId.trim() }
+          : {}),
+        ...(typeof body.reason === "string" && body.reason.trim().length > 0
+          ? { reason: body.reason.trim() }
+          : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to delete agent registration."
+    });
+  }
+}));
+
 app.get("/api/social/anchors", route(async (request, response) => {
   const sessionId = queryString(request.query, "sessionId");
   const agentId = queryString(request.query, "agentId");

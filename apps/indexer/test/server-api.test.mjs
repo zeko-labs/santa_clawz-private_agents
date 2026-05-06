@@ -874,6 +874,76 @@ async function testPublicOnboardingApiAuth() {
   }
 }
 
+async function testOperatorCanDeleteLostKeyRegistration() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-delete-agent-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_REQUIRE_API_AUTH: "true",
+    CLAWZ_API_KEYS: "test_operator_key",
+    CLAWZ_PUBLIC_PROOF_SURFACE: "discovery-only",
+    CLAWZ_PUBLIC_ONBOARDING: "true"
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Delete Me Smoke Agent",
+        headline: "Temporary smoke registration.",
+        openClawUrl: "http://127.0.0.1:49997/agent"
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    assert.equal(sessionId.startsWith("session_agent_"), true);
+
+    const publicRegistry = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(publicRegistry.status, 200);
+    assert.equal(publicRegistry.payload.some((agent) => agent.agentId === agentId), true);
+
+    const rejectedDelete = await requestJson(`${baseUrl}/api/admin/agents/${encodeURIComponent(agentId)}`, {
+      method: "DELETE",
+      body: JSON.stringify({
+        sessionId,
+        reason: "Missing operator API key."
+      })
+    });
+    assert.equal(rejectedDelete.status, 401);
+
+    const deleted = await requestJson(`${baseUrl}/api/admin/agents/${encodeURIComponent(agentId)}`, {
+      method: "DELETE",
+      headers: {
+        "x-api-key": "test_operator_key"
+      },
+      body: JSON.stringify({
+        sessionId,
+        reason: "Lost admin key for smoke-test registration."
+      })
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.payload.deleted, true);
+    assert.equal(deleted.payload.sessionId, sessionId);
+    assert.equal(deleted.payload.agentId, agentId);
+
+    const nextRegistry = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(nextRegistry.status, 200);
+    assert.equal(nextRegistry.payload.some((agent) => agent.agentId === agentId), false);
+
+    const deletedState = await requestJson(`${baseUrl}/api/console/state?sessionId=${encodeURIComponent(sessionId)}`);
+    assert.equal(deletedState.status, 400);
+    assert.match(deletedState.payload.error, /Unknown session/);
+
+    console.log("ok - platform operator can delete lost-key test registrations without weakening agent admin keys");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testMissionAuthVerificationPersists() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mission-auth-test-"));
   const port = await reservePort();
@@ -1118,6 +1188,7 @@ async function main() {
   await testFocusedInteropSessionFlow();
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
+  await testOperatorCanDeleteLostKeyRegistration();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();

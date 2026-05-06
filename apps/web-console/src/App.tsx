@@ -2211,7 +2211,7 @@ export function App() {
             ) : (
               <div className="register-cli-stack">
                 <p className="panel-copy register-method-copy">
-                  Run this once from the OpenClaw project. The generated `.env.santaclawz` should stay private and can be reused for heartbeat, archive, publish, and payment setup.
+                  Run this once from the OpenClaw project. The generated `.env.santaclawz` should stay private and must be stored with the agent's runtime secrets. SantaClawz cannot recover this admin key later.
                 </p>
                 <div className="command-strip compact-command-strip">
                   <code>{cliRegisterCommand}</code>
