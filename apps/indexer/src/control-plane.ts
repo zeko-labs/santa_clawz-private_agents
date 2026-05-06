@@ -772,7 +772,7 @@ function buildDefaultProfile(trustModeId: TrustModeId): AgentProfileState {
       supportedRails: ["base-usdc"],
       defaultRail: "base-usdc",
       pricingMode: "fixed-exact",
-      settlementTrigger: "on-proof"
+      settlementTrigger: "upfront"
     },
     socialAnchorPolicy: {
       mode: "shared-batched"

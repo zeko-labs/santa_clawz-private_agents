@@ -68,6 +68,8 @@ const PUBLIC_HIRE_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
+const OPENCLAW_HEARTBEAT_GUIDE_URL =
+  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
 Repo: https://github.com/zeko-labs/x402-zeko
 Build: corepack enable && pnpm install --frozen-lockfile
@@ -551,7 +553,7 @@ function effectivePaymentProfile(profile: AgentProfileState): AgentProfileState[
     ...profile.paymentProfile,
     supportedRails,
     defaultRail,
-    settlementTrigger: profile.paymentProfile.settlementTrigger === "on-proof" ? "on-proof" : "upfront"
+    settlementTrigger: "upfront"
   };
 }
 
@@ -665,10 +667,7 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
       ...(typeof input?.paymentProfile?.quoteUrl === "string" && input.paymentProfile.quoteUrl.trim().length > 0
         ? { quoteUrl: input.paymentProfile.quoteUrl }
         : {}),
-      settlementTrigger:
-        input?.paymentProfile?.settlementTrigger === "upfront" || input?.paymentProfile?.settlementTrigger === "on-proof"
-          ? input.paymentProfile.settlementTrigger
-          : "upfront",
+      settlementTrigger: "upfront",
       ...(typeof input?.paymentProfile?.baseFacilitatorUrl === "string" && input.paymentProfile.baseFacilitatorUrl.trim().length > 0
         ? { baseFacilitatorUrl: input.paymentProfile.baseFacilitatorUrl }
         : {}),
@@ -1376,7 +1375,6 @@ export function App() {
   const paymentProfile = effectivePaymentProfile(profile);
   const paymentsEnabled = paymentProfile.enabled;
   const paymentProfileReady = paymentProfileDraftReady(published, profile);
-  const escrowConfiguredOutsideConsole = paymentProfile.settlementTrigger === "on-proof";
   const configuredPayoutWallets = ([
     ["base", profile.payoutWallets.base],
     ...(ethereumPayoutAllowed ? [["ethereum", profile.payoutWallets.ethereum] as const] : [])
@@ -1449,7 +1447,20 @@ export function App() {
   const publicAgentUrl = registeredAgentId ? buildPublicAgentUrl(registeredAgentId) : null;
   const routedPublicAgentUrl = sharedAgentId ?? state.agentId ? buildPublicAgentUrl(sharedAgentId ?? state.agentId) : null;
   const shareOnXUrl = publicAgentUrl && registeredAgentId ? buildShareOnXUrl(publicAgentUrl, registeredAgentId) : null;
-  const currentAdminKey = getStoredAdminKey(sessionId, registeredAgentId ?? state.agentId);
+  const heartbeatAgentId = registeredAgentId ?? sharedAgentId ?? state.agentId;
+  const currentAdminKey = getStoredAdminKey(sessionId, heartbeatAgentId);
+  const heartbeatSenderCommand = [
+    `CLAWZ_API_BASE=${shellQuote(getApiBase())}`,
+    `CLAWZ_AGENT_ID=${shellQuote(heartbeatAgentId)}`,
+    `CLAWZ_AGENT_ADMIN_KEY=${shellQuote(currentAdminKey || "sck_...")}`,
+    "pnpm heartbeat:agent"
+  ].join(" \\\n");
+  const heartbeatCurlCommand = [
+    `curl -X POST ${shellQuote(`${getApiBase()}/api/agents/${encodeURIComponent(heartbeatAgentId)}/heartbeat`)} \\`,
+    `  -H ${shellQuote("content-type: application/json")} \\`,
+    `  -H ${shellQuote(`x-clawz-admin-key: ${currentAdminKey || "sck_..."}`)} \\`,
+    `  -d ${shellQuote(JSON.stringify({ status: "live", ttlSeconds: 30, note: "Local OpenClaw gateway heartbeat" }))}`
+  ].join("\n");
   const currentSocialAnchorQueue = isRegisteredSession
     ? state.socialAnchorQueue
     : {
@@ -2133,6 +2144,50 @@ export function App() {
                 </div>
               </div>
             ) : null}
+
+            {isRegisteredSession ? (
+              <div className="ownership-panel heartbeat-setup-panel">
+                <div>
+                  <span className="metric">OpenClaw heartbeat</span>
+                  <p className="panel-copy">
+                    Run this beside the OpenClaw runtime every 10-20 seconds so Explore can show Live. If it stops, the profile falls back to Waiting; if the runtime URL cannot be reached, hire and payment stay disabled.
+                  </p>
+                </div>
+                <div className="command-strip compact-command-strip">
+                  <code>{heartbeatSenderCommand}</code>
+                  <button
+                    className="copy-button"
+                    disabled={!currentAdminKey}
+                    onClick={() => {
+                      void copyValue("heartbeat-sender-command", heartbeatSenderCommand);
+                    }}
+                  >
+                    {copiedKey === "heartbeat-sender-command" ? "Copied" : currentAdminKey ? "Copy" : "Unlock first"}
+                  </button>
+                </div>
+                <details className="advanced-payment-details heartbeat-curl-details">
+                  <summary>Use raw curl instead</summary>
+                  <div className="command-strip compact-command-strip">
+                    <code>{heartbeatCurlCommand}</code>
+                    <button
+                      className="copy-button"
+                      disabled={!currentAdminKey}
+                      onClick={() => {
+                        void copyValue("heartbeat-curl-command", heartbeatCurlCommand);
+                      }}
+                    >
+                      {copiedKey === "heartbeat-curl-command" ? "Copied" : currentAdminKey ? "Copy" : "Unlock first"}
+                    </button>
+                  </div>
+                </details>
+                <div className="ownership-actions">
+                  <a className="secondary-button" href={OPENCLAW_HEARTBEAT_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Heartbeat guide
+                  </a>
+                  <span className="subtle-pill">Shows on Explore profile</span>
+                </div>
+              </div>
+            ) : null}
           </div>
           </section>
 
@@ -2734,11 +2789,6 @@ export function App() {
                         </p>
                         {paymentFeeDisclosure ? (
                           <p className="panel-copy payment-fee-disclosure">{paymentFeeDisclosure}</p>
-                        ) : null}
-                        {escrowConfiguredOutsideConsole ? (
-                          <p className="panel-copy payment-fee-disclosure">
-                            Escrow settlement is configured outside the web console. This page keeps the public payout and price terms in sync while the backend or CLI manages the reserve-release flow.
-                          </p>
                         ) : null}
                       </div>
 

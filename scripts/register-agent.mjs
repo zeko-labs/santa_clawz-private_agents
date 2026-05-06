@@ -37,7 +37,7 @@ function printUsage() {
 Advanced:
     [--supported-rails "base-usdc,ethereum-usdc"] \\
     [--max-price-usd "0.25"] \\
-    [--settlement-trigger on-proof]
+    [--settlement-trigger upfront]
 `);
 }
 
@@ -45,6 +45,9 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
+    if (token === "--") {
+      continue;
+    }
     if (!token.startsWith("--")) {
       continue;
     }
@@ -93,10 +96,7 @@ const payoutWallets = {
     ? { ethereum: args["ethereum-payout-address"].trim() }
     : {})
 };
-const derivedSupportedRails = [
-  "base-usdc",
-  "ethereum-usdc"
-];
+const derivedSupportedRails = ["base-usdc"];
 const supportedRails =
   typeof args["supported-rails"] === "string"
     ? args["supported-rails"]
@@ -121,7 +121,7 @@ const paymentProfile = {
   ...(typeof args["max-price-usd"] === "string" ? { maxAmountUsd: args["max-price-usd"].trim() } : {}),
   ...(typeof args["quote-url"] === "string" ? { quoteUrl: args["quote-url"].trim() } : {}),
   settlementTrigger:
-    typeof args["settlement-trigger"] === "string" ? args["settlement-trigger"].trim() : "on-proof",
+    typeof args["settlement-trigger"] === "string" ? args["settlement-trigger"].trim() : "upfront",
   ...(typeof args["payment-notes"] === "string" ? { paymentNotes: args["payment-notes"].trim() } : {})
 };
 const trustModeId = typeof args["trust-mode"] === "string" ? args["trust-mode"].trim() : "private";

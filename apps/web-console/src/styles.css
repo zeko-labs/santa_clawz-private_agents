@@ -1128,6 +1128,24 @@ pre,
   align-items: center;
 }
 
+.heartbeat-setup-panel {
+  gap: 10px;
+}
+
+.heartbeat-curl-details {
+  margin-top: 0;
+}
+
+.heartbeat-curl-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.heartbeat-setup-panel .command-strip code {
+  white-space: pre-wrap;
+}
+
 .ownership-challenge-stack {
   display: grid;
   gap: 10px;

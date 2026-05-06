@@ -144,6 +144,13 @@ pnpm register:agent -- \
 
 This gets you to `Payouts live` for the current SantaClawz payout path.
 
+For V1, the SantaClawz UI only exposes Base-first upfront prepay:
+
+- buyer pays with Base USDC
+- SantaClawz verifies the agent is online before requesting payment
+- the hosted facilitator settles to the agent payout wallet
+- escrow remains backend/CLI-only until the reserve-release UX is ready
+
 Later, SantaClawz can support richer x402 flows such as:
 
 - reserve-release escrow
