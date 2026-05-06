@@ -55,6 +55,9 @@ const MASTHEAD_COPY =
 const MASTHEAD_STEPS = "1) Connect agent, 2) Deploy, 3) Get paid";
 const EXPLORE_COPY = "See which OpenClaw agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
+const MANAGE_COPY =
+  "Manage registered OpenClaw agents, publish updates, archive listings, heartbeats, and payout settings.";
+const MANAGE_STEPS = "1) Select agent, 2) Verify, 3) Operate";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "all", label: "All agents" },
   { key: "payouts-live", label: "Payouts live" },
@@ -96,7 +99,7 @@ Notes
 - Keep relayer separate from payTo
 - Paste the final HTTPS URL into CLAWZ_X402_BASE_FACILITATOR_URL on the SantaClawz indexer`;
 
-type NavSectionKey = "register" | "explore";
+type NavSectionKey = "register" | "manage" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
@@ -118,11 +121,29 @@ function shorten(value: string, head = 8, tail = 6) {
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
+  if (hash === "#manage" || hash === "#manage-agents") {
+    return "manage";
+  }
   return hash === "#explore" || hash === "#explore-agents" ? "explore" : "register";
 }
 
 function parseRouteState(pathname: string, hash: string): AppRouteState {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/";
+  if (normalizedPath === "/manage") {
+    return {
+      agentId: null,
+      section: "manage",
+      sessionId: null
+    };
+  }
+  if (normalizedPath.startsWith("/manage/")) {
+    const sessionId = decodeURIComponent(normalizedPath.slice("/manage/".length));
+    return {
+      agentId: null,
+      section: "manage",
+      sessionId
+    };
+  }
   if (normalizedPath === "/explore") {
     return {
       agentId: null,
@@ -146,6 +167,9 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
 }
 
 function buildSectionPath(section: NavSectionKey, agentId?: string | null) {
+  if (section === "manage") {
+    return agentId ? `/manage/${encodeURIComponent(agentId)}` : "/manage";
+  }
   if (section === "explore") {
     return agentId ? `/explore/${encodeURIComponent(agentId)}` : "/explore";
   }
@@ -1084,6 +1108,7 @@ export function App() {
           );
         }
       }
+      showManageSession(nextState.session.sessionId);
     } catch (nextError) {
       if (nextError instanceof ApiError) {
         const duplicateAgentId =
@@ -1172,6 +1197,16 @@ export function App() {
     }
   }
 
+  function showManageSession(nextSessionId?: string | null) {
+    setSharedAgentId(null);
+    setActiveSection("manage");
+    setSelectedSessionId(nextSessionId ?? null);
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", buildSectionPath("manage", nextSessionId));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
   function showAgentProfile(agentId: string, focus: "profile" | "hire" = "profile") {
     setSharedAgentId(agentId);
     setSelectedSessionId(null);
@@ -1204,9 +1239,14 @@ export function App() {
 
   const apiBase = getApiBase();
   const isExploreView = activeSection === "explore";
-  const mastheadTitle = isExploreView ? "Explore verified agents for hire" : "Unleash your OpenClaw agent";
-  const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
-  const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const isManageView = activeSection === "manage";
+  const mastheadTitle = isExploreView
+    ? "Explore verified agents for hire"
+    : isManageView
+      ? "Manage your OpenClaw agent"
+      : "Unleash your OpenClaw agent";
+  const mastheadCopy = isExploreView ? EXPLORE_COPY : isManageView ? MANAGE_COPY : MASTHEAD_COPY;
+  const mastheadSteps = isExploreView ? EXPLORE_STEPS : isManageView ? MANAGE_STEPS : MASTHEAD_STEPS;
 
   if (!state) {
     return (
@@ -1227,6 +1267,17 @@ export function App() {
               }}
             >
               Register
+            </button>
+            <button
+              type="button"
+              className={`site-nav-link${activeSection === "manage" ? " active" : ""}`}
+              aria-selected={activeSection === "manage"}
+              role="tab"
+              onClick={() => {
+                showSection("manage");
+              }}
+            >
+              Manage
             </button>
             <button
               type="button"
@@ -1261,7 +1312,7 @@ export function App() {
           {error ?? "Connecting to the SantaClawz onboarding backend."}
         </p>
 
-        {activeSection === "register" ? (
+        {activeSection !== "explore" ? (
           <section className="step-stack">
             <section className="panel step-card">
               <div className="step-head">
@@ -1346,6 +1397,7 @@ export function App() {
 
   const sessionId = selectedSessionId ?? state.session.sessionId;
   const sessionIds = Array.from(new Set(state.session.knownSessionIds ?? [state.session.sessionId]));
+  const registeredSessionIds = sessionIds.filter((knownSessionId) => knownSessionId.startsWith("session_agent_"));
   const launchTarget = state.liveFlowTargets.turns.find(
     (target) => target.sessionId === sessionId && target.canStartNextTurn
   );
@@ -1716,6 +1768,17 @@ export function App() {
           </button>
           <button
             type="button"
+            className={`site-nav-link${activeSection === "manage" ? " active" : ""}`}
+            aria-selected={activeSection === "manage"}
+            role="tab"
+            onClick={() => {
+              showSection("manage");
+            }}
+          >
+            Manage
+          </button>
+          <button
+            type="button"
             className={`site-nav-link${activeSection === "explore" ? " active" : ""}`}
             aria-selected={activeSection === "explore"}
             role="tab"
@@ -1757,26 +1820,6 @@ export function App() {
               </div>
             </div>
           </div>
-
-          {sessionIds.length > 1 ? (
-            <div className="session-picker">
-              <span className="metric">Session</span>
-              <select
-                className="session-select"
-                value={sessionId}
-                onChange={(event: ValueInputEvent) => {
-                  setError(null);
-                  setSelectedSessionId(event.target.value);
-                }}
-              >
-                {sessionIds.map((knownSessionId) => (
-                  <option key={knownSessionId} value={knownSessionId}>
-                    {knownSessionId}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
 
           <div className="field-grid compact-field-grid">
             <label className="field">
@@ -2095,6 +2138,55 @@ export function App() {
               </div>
             )}
 
+          </div>
+          </section>
+
+        </section>
+      ) : activeSection === "manage" ? (
+        <section id="manage" className="step-stack manage-stack">
+          <section className="panel step-card manage-selector-card">
+            <div className="step-head">
+              <div className="step-title">
+                <span className="step-number manage-step-number">M</span>
+                <div>
+                  <h2>Manage agent</h2>
+                  <p className="panel-copy">
+                    Select an existing SantaClawz registration to update profile details, publish, archive, heartbeat, and payouts.
+                  </p>
+                </div>
+              </div>
+              <span className="subtle-pill">{isRegisteredSession ? "Agent selected" : "No agent selected"}</span>
+            </div>
+
+            {registeredSessionIds.length > 0 ? (
+              <div className="session-picker manage-session-picker">
+                <div>
+                  <span className="metric">Agent registration</span>
+                  <p className="panel-copy manage-session-note">
+                    This is the internal registration record that binds the admin key, public profile, proof history, heartbeat, and payment settings.
+                  </p>
+                </div>
+                <select
+                  className="session-select"
+                  value={isRegisteredSession ? sessionId : registeredSessionIds[0] ?? ""}
+                  onChange={(event: ValueInputEvent) => {
+                    setError(null);
+                    showManageSession(event.target.value);
+                  }}
+                >
+                  {registeredSessionIds.map((knownSessionId) => (
+                    <option key={knownSessionId} value={knownSessionId}>
+                      {knownSessionId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="status-note">
+                No registered agents yet. Register an OpenClaw agent first, then manage its listing and payouts here.
+              </div>
+            )}
+
             {isRegisteredSession ? (
               <div className="ownership-panel">
                 <div>
@@ -2188,9 +2280,10 @@ export function App() {
                 </div>
               </div>
             ) : null}
-          </div>
           </section>
 
+          {isRegisteredSession ? (
+            <>
           <section className="panel step-card">
           <div className="step-head">
             <div className="step-title">
@@ -2825,6 +2918,8 @@ export function App() {
               </div>
             </div>
           </section>
+            </>
+          ) : null}
         </section>
       ) : (
         <section id="explore" className="panel explore-panel">

@@ -1951,6 +1951,33 @@ h3 {
   margin-top: 18px;
 }
 
+.manage-session-picker {
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.manage-session-picker > div {
+  flex: 1 1 280px;
+}
+
+.manage-session-picker .session-select {
+  flex: 0 1 420px;
+  align-self: center;
+}
+
+.manage-session-note {
+  margin-top: 6px;
+  max-width: 760px;
+}
+
+.manage-step-number {
+  font-size: 1.35rem;
+}
+
 .listing-top {
   margin-bottom: 18px;
 }
