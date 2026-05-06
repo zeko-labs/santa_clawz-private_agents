@@ -11,6 +11,7 @@ const VALID_PAYMENT_RAILS = new Set(["base-usdc", "ethereum-usdc", "zeko-native"
 const VALID_PRICING_MODES = new Set(["fixed-exact", "capped-exact", "quote-required", "agent-negotiated"]);
 const VALID_SETTLEMENT_TRIGGERS = new Set(["upfront", "on-proof"]);
 const VALID_SOCIAL_ANCHOR_MODES = new Set(["shared-batched", "priority-self-funded"]);
+const VALID_MISSION_AUTH_PROVIDERS = new Set(["custom-oidc", "auth0", "okta"]);
 
 function printUsage() {
   console.error(`Usage:
@@ -30,6 +31,9 @@ function printUsage() {
     [--fixed-price-usd "0.05"] \\
     [--quote-url "https://agent.example.com/payments"] \\
     [--payment-notes "Custom quotes available for larger jobs."] \\
+    [--mission-auth-url "https://auth-sidecar.example.com"] \\
+    [--mission-auth-provider custom-oidc] \\
+    [--mission-auth-scopes "drive.readonly,github:repo"] \\
     [--anchor-mode shared-batched] \\
     [--trust-mode private] \\
     [--proving-location client] \\
@@ -170,6 +174,26 @@ const trustModeId = typeof args["trust-mode"] === "string" ? args["trust-mode"].
 const socialAnchorPolicy = {
   mode: typeof args["anchor-mode"] === "string" ? args["anchor-mode"].trim() : "shared-batched"
 };
+const missionAuthUrl =
+  typeof args["mission-auth-url"] === "string" ? args["mission-auth-url"].trim() : undefined;
+const missionAuthProvider =
+  typeof args["mission-auth-provider"] === "string" ? args["mission-auth-provider"].trim() : "custom-oidc";
+const missionAuthScopes =
+  typeof args["mission-auth-scopes"] === "string"
+    ? args["mission-auth-scopes"]
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    : [];
+const missionAuthOverlay = missionAuthUrl
+  ? {
+      enabled: true,
+      status: "configured",
+      authorityBaseUrl: missionAuthUrl,
+      providerHint: missionAuthProvider,
+      scopeHints: missionAuthScopes
+    }
+  : undefined;
 const preferredProvingLocation =
   typeof args["proving-location"] === "string" ? args["proving-location"].trim() : undefined;
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);
@@ -213,6 +237,10 @@ if (!VALID_SOCIAL_ANCHOR_MODES.has(socialAnchorPolicy.mode)) {
   throw new Error(`Unsupported anchor mode: ${socialAnchorPolicy.mode}`);
 }
 
+if (missionAuthOverlay && !VALID_MISSION_AUTH_PROVIDERS.has(missionAuthProvider)) {
+  throw new Error(`Unsupported mission auth provider: ${missionAuthProvider}`);
+}
+
 const response = await fetch(`${apiBase}/api/console/register`, {
   method: "POST",
   headers: {
@@ -225,6 +253,7 @@ const response = await fetch(`${apiBase}/api/console/register`, {
     ...(Object.keys(payoutWallets).length > 0 ? { payoutWallets } : {}),
     paymentProfile,
     socialAnchorPolicy,
+    ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(representedPrincipal ? { representedPrincipal } : {}),
     trustModeId,
     ...(preferredProvingLocation ? { preferredProvingLocation } : {})

@@ -51,13 +51,10 @@ type ExploreFilterKey = "all" | "payouts-live" | "owner-verified" | "mission-aut
 type ValueInputEvent = { target: { value: string } };
 
 const MASTHEAD_COPY =
-  "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
-const MASTHEAD_STEPS = "1) Connect agent, 2) Deploy, 3) Get paid";
+  "Configure the public details, payout policy, and enrollment command your OpenClaw agent needs to join SantaClawz.";
+const MASTHEAD_STEPS = "1) Configure, 2) Enroll, 3) Operate";
 const EXPLORE_COPY = "See which OpenClaw agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
-const MANAGE_COPY =
-  "Manage registered OpenClaw agents, publish updates, archive listings, heartbeats, and payout settings.";
-const MANAGE_STEPS = "1) Select agent, 2) Verify, 3) Operate";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "all", label: "All agents" },
   { key: "payouts-live", label: "Payouts live" },
@@ -101,7 +98,7 @@ Notes
 - Keep relayer separate from payTo
 - Paste the final HTTPS URL into CLAWZ_X402_BASE_FACILITATOR_URL on the SantaClawz indexer`;
 
-type NavSectionKey = "register" | "manage" | "explore";
+type NavSectionKey = "configure" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
@@ -123,26 +120,24 @@ function shorten(value: string, head = 8, tail = 6) {
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
-  if (hash === "#manage" || hash === "#manage-agents") {
-    return "manage";
-  }
-  return hash === "#explore" || hash === "#explore-agents" ? "explore" : "register";
+  return hash === "#explore" || hash === "#explore-agents" ? "explore" : "configure";
 }
 
 function parseRouteState(pathname: string, hash: string): AppRouteState {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/";
-  if (normalizedPath === "/manage") {
+  if (normalizedPath === "/configure" || normalizedPath === "/manage") {
     return {
       agentId: null,
-      section: "manage",
+      section: "configure",
       sessionId: null
     };
   }
-  if (normalizedPath.startsWith("/manage/")) {
-    const sessionId = decodeURIComponent(normalizedPath.slice("/manage/".length));
+  if (normalizedPath.startsWith("/configure/") || normalizedPath.startsWith("/manage/")) {
+    const prefix = normalizedPath.startsWith("/configure/") ? "/configure/" : "/manage/";
+    const sessionId = decodeURIComponent(normalizedPath.slice(prefix.length));
     return {
       agentId: null,
-      section: "manage",
+      section: "configure",
       sessionId
     };
   }
@@ -169,8 +164,8 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
 }
 
 function buildSectionPath(section: NavSectionKey, agentId?: string | null) {
-  if (section === "manage") {
-    return agentId ? `/manage/${encodeURIComponent(agentId)}` : "/manage";
+  if (section === "configure") {
+    return agentId ? `/configure/${encodeURIComponent(agentId)}` : "/configure";
   }
   if (section === "explore") {
     return agentId ? `/explore/${encodeURIComponent(agentId)}` : "/explore";
@@ -182,7 +177,7 @@ function initialSelectedSessionId(route: AppRouteState) {
   if (route.sessionId) {
     return route.sessionId;
   }
-  return route.section === "register" && !route.agentId ? ONBOARDING_SESSION_ID : null;
+  return route.section === "configure" && !route.agentId ? ONBOARDING_SESSION_ID : null;
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -719,8 +714,8 @@ export function App() {
   const initialRoute =
     typeof window === "undefined"
       ? {
-          agentId: null,
-          section: "register" as const,
+        agentId: null,
+          section: "configure" as const,
           sessionId: null
         }
       : parseRouteState(window.location.pathname, window.location.hash);
@@ -978,7 +973,7 @@ export function App() {
         setSelectedSessionId(nextRoute.sessionId);
       } else if (nextRoute.agentId) {
         setSelectedSessionId(null);
-      } else if (nextRoute.section === "register") {
+      } else if (nextRoute.section === "configure") {
         setSelectedSessionId(ONBOARDING_SESSION_ID);
       } else {
         setSelectedSessionId(null);
@@ -1110,7 +1105,7 @@ export function App() {
           );
         }
       }
-      showManageSession(nextState.session.sessionId);
+      showConfigureSession(nextState.session.sessionId);
     } catch (nextError) {
       if (nextError instanceof ApiError) {
         const duplicateAgentId =
@@ -1193,18 +1188,18 @@ export function App() {
     setActiveSection(nextSection);
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
-      setSelectedSessionId(nextSection === "register" ? ONBOARDING_SESSION_ID : null);
+      setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
       window.history.pushState(null, "", buildSectionPath(nextSection));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
 
-  function showManageSession(nextSessionId?: string | null) {
+  function showConfigureSession(nextSessionId?: string | null) {
     setSharedAgentId(null);
-    setActiveSection("manage");
+    setActiveSection("configure");
     setSelectedSessionId(nextSessionId ?? null);
     if (typeof window !== "undefined") {
-      window.history.pushState(null, "", buildSectionPath("manage", nextSessionId));
+      window.history.pushState(null, "", buildSectionPath("configure", nextSessionId));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
@@ -1241,14 +1236,11 @@ export function App() {
 
   const apiBase = getApiBase();
   const isExploreView = activeSection === "explore";
-  const isManageView = activeSection === "manage";
   const mastheadTitle = isExploreView
     ? "Explore verified agents for hire"
-    : isManageView
-      ? "Manage your OpenClaw agent"
-      : "Unleash your OpenClaw agent";
-  const mastheadCopy = isExploreView ? EXPLORE_COPY : isManageView ? MANAGE_COPY : MASTHEAD_COPY;
-  const mastheadSteps = isExploreView ? EXPLORE_STEPS : isManageView ? MANAGE_STEPS : MASTHEAD_STEPS;
+    : "Configure your OpenClaw agent";
+  const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
+  const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
   if (!state) {
     return (
@@ -1261,25 +1253,14 @@ export function App() {
           <nav className="site-nav" aria-label="Primary" role="tablist">
             <button
               type="button"
-              className={`site-nav-link${activeSection === "register" ? " active" : ""}`}
-              aria-selected={activeSection === "register"}
+              className={`site-nav-link${activeSection === "configure" ? " active" : ""}`}
+              aria-selected={activeSection === "configure"}
               role="tab"
               onClick={() => {
-                showSection("register");
+                showSection("configure");
               }}
             >
-              Register
-            </button>
-            <button
-              type="button"
-              className={`site-nav-link${activeSection === "manage" ? " active" : ""}`}
-              aria-selected={activeSection === "manage"}
-              role="tab"
-              onClick={() => {
-                showSection("manage");
-              }}
-            >
-              Manage
+              Configure
             </button>
             <button
               type="button"
@@ -1611,6 +1592,16 @@ export function App() {
     ...(paymentProfile.paymentNotes?.trim().length
       ? [`--payment-notes ${shellQuote(paymentProfile.paymentNotes)}`]
       : []),
+    ...(missionAuthEnabled && missionAuthOverlay.authorityBaseUrl?.trim().length
+      ? [`--mission-auth-url ${shellQuote(missionAuthOverlay.authorityBaseUrl)}`]
+      : []),
+    ...(missionAuthEnabled && missionAuthOverlay.providerHint?.trim().length
+      ? [`--mission-auth-provider ${shellQuote(missionAuthOverlay.providerHint)}`]
+      : []),
+    ...(missionAuthEnabled && missionAuthOverlay.scopeHints.length > 0
+      ? [`--mission-auth-scopes ${shellQuote(missionAuthOverlay.scopeHints.join(","))}`]
+      : []),
+    `--proving-location ${shellQuote(profile.preferredProvingLocation)}`,
     "--write-env .env.santaclawz",
     "--write-challenge .well-known/santaclawz-agent-challenge.json"
   ].join(" ");
@@ -1762,25 +1753,14 @@ export function App() {
         <nav className="site-nav" aria-label="Primary" role="tablist">
           <button
             type="button"
-            className={`site-nav-link${activeSection === "register" ? " active" : ""}`}
-            aria-selected={activeSection === "register"}
+            className={`site-nav-link${activeSection === "configure" ? " active" : ""}`}
+            aria-selected={activeSection === "configure"}
             role="tab"
             onClick={() => {
-              showSection("register");
+              showSection("configure");
             }}
           >
-            Register
-          </button>
-          <button
-            type="button"
-            className={`site-nav-link${activeSection === "manage" ? " active" : ""}`}
-            aria-selected={activeSection === "manage"}
-            role="tab"
-            onClick={() => {
-              showSection("manage");
-            }}
-          >
-            Manage
+            Configure
           </button>
           <button
             type="button"
@@ -1813,8 +1793,8 @@ export function App() {
 
       {error ? <p className="status-banner">{error}</p> : null}
 
-      {activeSection === "register" ? (
-        <section id="register" className="step-stack">
+      {activeSection !== "explore" ? (
+        <section id="configure" className="step-stack configure-stack">
           <section className="panel step-card">
           <div className="step-head">
             <div className="step-title">
@@ -1890,6 +1870,123 @@ export function App() {
                 }}
                 placeholder="Private research, governed execution, and verifiable delivery."
               />
+            </label>
+
+            <label className="field">
+              <span>Base payout wallet</span>
+              <input
+                className="text-input"
+                value={profile.payoutWallets.base ?? ""}
+                onChange={(event: ValueInputEvent) => {
+                  setProfile({
+                    ...profile,
+                    payoutWallets: {
+                      ...profile.payoutWallets,
+                      base: event.target.value
+                    }
+                  });
+                }}
+                placeholder="0x..."
+              />
+            </label>
+
+            <label className="field">
+              <span>Payment policy</span>
+              <select
+                className="text-input"
+                value={paymentProfile.enabled ? paymentProfile.pricingMode : "off"}
+                onChange={(event: ValueInputEvent) => {
+                  const nextPolicy = event.target.value;
+                  if (nextPolicy === "off") {
+                    setProfile({
+                      ...profile,
+                      paymentProfile: {
+                        ...profile.paymentProfile,
+                        enabled: false
+                      }
+                    });
+                    return;
+                  }
+                  setProfile({
+                    ...profile,
+                    paymentProfile: {
+                      ...profile.paymentProfile,
+                      enabled: true,
+                      defaultRail: "base-usdc",
+                      supportedRails: ["base-usdc"],
+                      pricingMode: nextPolicy as AgentProfileState["paymentProfile"]["pricingMode"]
+                    }
+                  });
+                }}
+              >
+                <option value="off">Not accepting paid jobs yet</option>
+                <option value="fixed-exact">Fixed price</option>
+                <option value="quote-required">Quote required</option>
+                <option value="capped-exact">Capped price</option>
+                <option value="agent-negotiated">Negotiated by agent</option>
+              </select>
+            </label>
+
+            {paymentProfile.enabled ? (
+              <label className="field">
+                <span>{mainPricingLabel}</span>
+                <input
+                  className="text-input"
+                  value={mainPricingValue}
+                  onChange={(event: ValueInputEvent) => {
+                    if (
+                      paymentProfile.pricingMode === "quote-required" ||
+                      paymentProfile.pricingMode === "agent-negotiated"
+                    ) {
+                      setProfile({
+                        ...profile,
+                        paymentProfile: {
+                          ...profile.paymentProfile,
+                          quoteUrl: event.target.value
+                        }
+                      });
+                      return;
+                    }
+
+                    if (paymentProfile.pricingMode === "capped-exact") {
+                      setProfile({
+                        ...profile,
+                        paymentProfile: {
+                          ...profile.paymentProfile,
+                          maxAmountUsd: event.target.value
+                        }
+                      });
+                      return;
+                    }
+
+                    setProfile({
+                      ...profile,
+                      paymentProfile: {
+                        ...profile.paymentProfile,
+                        fixedAmountUsd: event.target.value
+                      }
+                    });
+                  }}
+                  placeholder={mainPricingPlaceholder}
+                />
+              </label>
+            ) : null}
+
+            <label className="field">
+              <span>Proving preference</span>
+              <select
+                className="text-input"
+                value={profile.preferredProvingLocation}
+                onChange={(event: ValueInputEvent) => {
+                  setProfile({
+                    ...profile,
+                    preferredProvingLocation: event.target.value as PrivacyProvingLocation
+                  });
+                }}
+              >
+                <option value="client">Client/local proving</option>
+                <option value="sovereign-rollup">Sovereign rollup proving</option>
+              </select>
             </label>
 
           </div>
@@ -2162,18 +2259,14 @@ export function App() {
 
           </div>
           </section>
-
-        </section>
-      ) : activeSection === "manage" ? (
-        <section id="manage" className="step-stack manage-stack">
           <section className="panel step-card manage-selector-card">
             <div className="step-head">
               <div className="step-title">
                 <span className="step-number manage-step-number">M</span>
                 <div>
-                  <h2>Manage agent</h2>
+                  <h2>Existing registrations</h2>
                   <p className="panel-copy">
-                    Select an existing SantaClawz registration to update profile details, publish, archive, heartbeat, and payouts.
+                    Select a registered SantaClawz agent to update, publish, archive, heartbeat, or inspect proof history.
                   </p>
                 </div>
               </div>
@@ -2193,7 +2286,7 @@ export function App() {
                   value={isRegisteredSession ? sessionId : registeredSessionIds[0] ?? ""}
                   onChange={(event: ValueInputEvent) => {
                     setError(null);
-                    showManageSession(event.target.value);
+                    showConfigureSession(event.target.value);
                   }}
                 >
                   {registeredSessionIds.map((knownSessionId) => (
@@ -2205,7 +2298,7 @@ export function App() {
               </div>
             ) : (
               <div className="status-note">
-                No registered agents yet. Register an OpenClaw agent first, then manage its listing and payouts here.
+                No registered agents yet. Run the enrollment command above, then this area will show the agent for ongoing operations.
               </div>
             )}
 

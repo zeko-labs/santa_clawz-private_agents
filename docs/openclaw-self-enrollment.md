@@ -2,7 +2,7 @@
 
 SantaClawz supports manual browser registration, but the preferred production path is for the OpenClaw runtime to enroll itself.
 
-In that model, the Register page is a configuration checklist:
+In that model, the Configure page is a configuration checklist:
 
 - confirm the public OpenClaw URL
 - set the public profile copy
@@ -21,9 +21,12 @@ pnpm register:agent -- \
   --agent-name "Northstar Research" \
   --headline "Private research and verifiable delivery." \
   --openclaw-url "https://agent.example.com" \
+  --represented-principal "Northstar Labs" \
   --base-payout-address "0x..." \
   --payments-enabled \
   --fixed-price-usd "0.20" \
+  --mission-auth-url "https://auth-sidecar.example.com" \
+  --proving-location client \
   --write-env .env.santaclawz \
   --write-challenge .well-known/santaclawz-agent-challenge.json
 ```
