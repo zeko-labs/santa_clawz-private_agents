@@ -58,6 +58,23 @@ export interface SocialAnchorFeeQuote {
   source: string;
 }
 
+export function assertSocialAnchorSigningKeys(input: {
+  submitterPublicKey: string;
+  socialAnchorPublicKey: string;
+  socialAnchorSignerPublicKey: string;
+}) {
+  if (input.socialAnchorPublicKey !== input.socialAnchorSignerPublicKey) {
+    throw new Error(
+      `SocialAnchorKernel key mismatch: configured public key ${input.socialAnchorPublicKey} does not match SOCIAL_ANCHOR_PRIVATE_KEY public key ${input.socialAnchorSignerPublicKey}.`
+    );
+  }
+  if (input.socialAnchorPublicKey === input.submitterPublicKey) {
+    throw new Error(
+      "SocialAnchorKernel key mismatch: CLAWZ_SOCIAL_ANCHOR_PUBLIC_KEY resolves to the fee submitter. Use a dedicated SocialAnchorKernel zkApp key, not the submitter/deployer key."
+    );
+  }
+}
+
 function digestToField(value: unknown): Field {
   const digest = canonicalDigest(value);
   const chunks = digest.fieldChunks.map((chunk) => Field.fromJSON(chunk));
@@ -254,6 +271,11 @@ export async function submitSocialAnchorBatchOnZeko(
     ? PublicKey.fromBase58(input.socialAnchorPublicKey)
     : socialAnchorKey.toPublicKey();
   const contractAddressBase58 = contractAddress.toBase58();
+  assertSocialAnchorSigningKeys({
+    submitterPublicKey: submitter.toPublicKey().toBase58(),
+    socialAnchorPublicKey: contractAddressBase58,
+    socialAnchorSignerPublicKey: socialAnchorKey.toPublicKey().toBase58()
+  });
   const contractAccount = await fetchAccount({ publicKey: contractAddress });
   if (contractAccount.error) {
     throw new Error(

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assertSocialAnchorSigningKeys,
   buildSocialAnchorFeeAttemptPlan,
   estimateSocialAnchorFeeQuote,
   isRetryableSocialAnchorError
@@ -26,4 +27,34 @@ test("social anchor retry classifier catches known nonce and gateway failures", 
   assert.equal(isRetryableSocialAnchorError(new Error("Gateway Timeout")), true);
   assert.equal(isRetryableSocialAnchorError(new Error("graphql_http_503")), true);
   assert.equal(isRetryableSocialAnchorError(new Error("proof verification failed permanently")), false);
+});
+
+test("social anchor signing keys must target a dedicated kernel account", () => {
+  assert.doesNotThrow(() =>
+    assertSocialAnchorSigningKeys({
+      submitterPublicKey: "B62qsubmitter111111111111111111111111111111111111111111111111",
+      socialAnchorPublicKey: "B62qanchor111111111111111111111111111111111111111111111111",
+      socialAnchorSignerPublicKey: "B62qanchor111111111111111111111111111111111111111111111111"
+    })
+  );
+
+  assert.throws(
+    () =>
+      assertSocialAnchorSigningKeys({
+        submitterPublicKey: "B62qsubmitter111111111111111111111111111111111111111111111111",
+        socialAnchorPublicKey: "B62qanchor111111111111111111111111111111111111111111111111",
+        socialAnchorSignerPublicKey: "B62qother1111111111111111111111111111111111111111111111111"
+      }),
+    /does not match SOCIAL_ANCHOR_PRIVATE_KEY/
+  );
+
+  assert.throws(
+    () =>
+      assertSocialAnchorSigningKeys({
+        submitterPublicKey: "B62qsubmitter111111111111111111111111111111111111111111111111",
+        socialAnchorPublicKey: "B62qsubmitter111111111111111111111111111111111111111111111111",
+        socialAnchorSignerPublicKey: "B62qsubmitter111111111111111111111111111111111111111111111111"
+      }),
+    /fee submitter/
+  );
 });
