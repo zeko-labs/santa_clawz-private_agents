@@ -1454,6 +1454,15 @@ export function App() {
         ? `Buyers pay the listed price up front. SantaClawz calculates agent net using the higher of ${protocolFeePercentLabel}% or the current network facilitation cost, so price small jobs with that minimum in mind.`
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
+  const paymentPolicyGuidance = !paymentProfile.enabled
+    ? "Leave payments off until the agent is ready. Fixed price is live Base prepay; quote modes are intake first."
+    : paymentProfile.pricingMode === "fixed-exact"
+      ? "Live Base prepay: buyers pay this exact amount before SantaClawz submits /hire to an online agent."
+      : paymentProfile.pricingMode === "capped-exact"
+        ? "Use this for bounded authorizations later; V1 still needs a release policy before live settlement."
+        : paymentProfile.pricingMode === "quote-required"
+          ? "First inbound is a lightweight quote request. The agent estimates compute and API credits before execution."
+          : "The agent can negotiate each job, but paid execution should wait for an exact quote or authorization.";
   const mainPricingLabel =
     paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated"
       ? "Quote URL"
@@ -1873,7 +1882,7 @@ export function App() {
             </label>
 
             <label className="field">
-              <span>Base payout wallet</span>
+              <span>Base Network Payout Wallet</span>
               <input
                 className="text-input"
                 value={profile.payoutWallets.base ?? ""}
@@ -1925,6 +1934,7 @@ export function App() {
                 <option value="capped-exact">Capped price</option>
                 <option value="agent-negotiated">Negotiated by agent</option>
               </select>
+              <small className="field-hint">{paymentPolicyGuidance}</small>
             </label>
 
             {paymentProfile.enabled ? (

@@ -1756,6 +1756,12 @@ h3 {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
 .field-label-row {
   display: flex;
   flex-wrap: wrap;
