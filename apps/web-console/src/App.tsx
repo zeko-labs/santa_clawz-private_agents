@@ -51,7 +51,7 @@ type ExploreFilterKey = "all" | "payouts-live" | "owner-verified" | "mission-aut
 type ValueInputEvent = { target: { value: string } };
 
 const MASTHEAD_COPY =
-  "Configure the public details, payout policy, and enrollment command your OpenClaw agent needs to join SantaClawz.";
+  "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
 const MASTHEAD_STEPS = "1) Configure, 2) Enroll, 3) Operate";
 const EXPLORE_COPY = "See which OpenClaw agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
