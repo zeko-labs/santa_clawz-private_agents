@@ -1416,7 +1416,7 @@ export function App() {
   const paymentFeeDisclosure =
     protocolFeeAppliesToDefaultRail && paymentProfile.enabled
       ? paymentProfile.settlementTrigger === "upfront"
-        ? `Buyers pay the listed price up front. Hosted Base payments must be at least $0.20 so SantaClawz can cover relay gas and abuse controls.`
+        ? `Buyers pay the listed price up front. SantaClawz calculates agent net using the higher of ${protocolFeePercentLabel}% or the current network facilitation cost, so price small jobs with that minimum in mind.`
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
   const mainPricingLabel =

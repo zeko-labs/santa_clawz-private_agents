@@ -10,6 +10,11 @@ const USD_SCALE = 1_000_000n;
 const DEFAULT_FEE_BPS = 100;
 const DEFAULT_APPLIES_TO: ProtocolOwnerFeeApplicability[] = ["santaclawz-marketplace"];
 
+export interface NetworkFacilitationFeeEstimate {
+  amountUsd: string;
+  gasEstimate?: NonNullable<AgentFeePreview["gasEstimate"]>;
+}
+
 function truthy(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
 }
@@ -108,6 +113,7 @@ export function protocolOwnerFeeAppliesToRail(policy: ProtocolOwnerFeePolicy, ra
 export function buildProtocolOwnerFeePreviews(input: {
   policy: ProtocolOwnerFeePolicy;
   profile: AgentProfileState;
+  networkFacilitationFeeByRail?: Partial<Record<AgentPaymentRail, NetworkFacilitationFeeEstimate>>;
 }): AgentFeePreview[] {
   const { policy, profile } = input;
   if (!policy.appliesTo.includes("santaclawz-marketplace")) {
@@ -139,15 +145,31 @@ export function buildProtocolOwnerFeePreviews(input: {
       ];
     }
 
+    const networkFacilitationEstimate = input.networkFacilitationFeeByRail?.[rail];
+    const networkFacilitationAtomic = parseUsdAtomic(networkFacilitationEstimate?.amountUsd);
     const protocolFeeAtomic = (grossAtomic * BigInt(policy.feeBps)) / 10_000n;
-    const sellerNetAtomic = grossAtomic - protocolFeeAtomic;
+    const effectiveFeeAtomic =
+      networkFacilitationAtomic !== null && networkFacilitationAtomic > protocolFeeAtomic
+        ? networkFacilitationAtomic
+        : protocolFeeAtomic;
+    const sellerNetAtomic = grossAtomic > effectiveFeeAtomic ? grossAtomic - effectiveFeeAtomic : 0n;
+    const feeBasis: AgentFeePreview["feeBasis"] =
+      effectiveFeeAtomic > protocolFeeAtomic ? "network-facilitation-minimum" : "protocol-bps";
 
     return [
       {
         rail,
         grossAmountUsd: grossAmountUsd!,
         sellerNetAmountUsd: formatUsdAtomic(sellerNetAtomic),
-        protocolFeeAmountUsd: formatUsdAtomic(protocolFeeAtomic),
+        protocolFeeAmountUsd: formatUsdAtomic(effectiveFeeAtomic),
+        nominalProtocolFeeAmountUsd: formatUsdAtomic(protocolFeeAtomic),
+        ...(networkFacilitationAtomic !== null
+          ? { networkFacilitationFeeAmountUsd: formatUsdAtomic(networkFacilitationAtomic) }
+          : {}),
+        feeBasis,
+        ...(networkFacilitationEstimate?.gasEstimate
+          ? { gasEstimate: networkFacilitationEstimate.gasEstimate }
+          : {}),
         sellerPayTo,
         protocolFeeRecipient: recipient,
         feeBps: policy.feeBps

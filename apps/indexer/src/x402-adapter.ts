@@ -7,6 +7,7 @@ import type {
 } from "@clawz/protocol";
 import {
   buildProtocolOwnerFeePreviews,
+  type NetworkFacilitationFeeEstimate,
   protocolOwnerFeeAppliesToRail
 } from "./protocol-owner-fee.js";
 
@@ -19,7 +20,13 @@ const X402_PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 const X402_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
 const X402_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 const USD_SCALE = 1_000_000n;
+const WEI_PER_ETH = 1_000_000_000_000_000_000n;
 const DEV_MIN_NETWORK_FACILITATION_FEE_USD = "0.001";
+const DEFAULT_BASE_SETTLEMENT_GAS_UNITS = 90_000n;
+const DEFAULT_ETHEREUM_SETTLEMENT_GAS_UNITS = 110_000n;
+const BASE_ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70";
+const ETHEREUM_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
+const ETH_USD_FEED_LATEST_ROUND_DATA = "0xfeaf968c";
 
 const BASE_MAINNET = {
   networkId: "eip155:8453",
@@ -258,6 +265,235 @@ function minNetworkFacilitationFeeUsd(): string {
   return process.env.NODE_ENV === "production" ? "" : DEV_MIN_NETWORK_FACILITATION_FEE_USD;
 }
 
+function envList(names: string[]): string[] {
+  return names.flatMap((name) =>
+    (process.env[name]?.trim() ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+  );
+}
+
+function rpcUrlsForRail(rail: AgentPaymentRail): string[] {
+  if (rail === "ethereum-usdc") {
+    return envList([
+      "CLAWZ_X402_ETHEREUM_RPC_URLS",
+      "CLAWZ_X402_ETHEREUM_RPC_URL",
+      "X402_ETHEREUM_RPC_URLS",
+      "X402_ETHEREUM_RPC_URL",
+      "ETHEREUM_RPC_URL",
+      "ETHEREUM_MAINNET_RPC_URL"
+    ]);
+  }
+
+  if (rail === "base-usdc") {
+    return envList([
+      "CLAWZ_X402_BASE_RPC_URLS",
+      "CLAWZ_X402_BASE_RPC_URL",
+      "X402_BASE_RPC_URLS",
+      "X402_BASE_RPC_URL",
+      "BASE_RPC_URL",
+      "BASE_MAINNET_RPC_URL"
+    ]);
+  }
+
+  return [];
+}
+
+async function jsonRpc(url: string, method: string, params: unknown[] = []): Promise<unknown> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params
+    }),
+    signal: AbortSignal.timeout(2500)
+  });
+  if (!response.ok) {
+    throw new Error(`RPC request failed with HTTP ${response.status}.`);
+  }
+  const payload = (await response.json()) as JsonRecord;
+  if (payload.error) {
+    throw new Error("RPC request returned an error.");
+  }
+  return payload.result;
+}
+
+function parseRpcHex(value: unknown): bigint | null {
+  if (typeof value !== "string" || !value.startsWith("0x")) {
+    return null;
+  }
+  return BigInt(value);
+}
+
+async function firstRpcResult<T>(urls: string[], request: (url: string) => Promise<T | null>): Promise<T | null> {
+  for (const url of urls) {
+    try {
+      const result = await request(url);
+      if (result !== null) {
+        return result;
+      }
+    } catch {
+      // Try the next configured RPC. The plan will fall back to the static floor if every RPC fails.
+    }
+  }
+  return null;
+}
+
+function gasUnitsForRail(rail: AgentPaymentRail): bigint {
+  const configured =
+    rail === "ethereum-usdc"
+      ? process.env.CLAWZ_X402_ETHEREUM_SETTLEMENT_GAS_UNITS?.trim()
+      : process.env.CLAWZ_X402_BASE_SETTLEMENT_GAS_UNITS?.trim();
+  try {
+    const parsed = configured ? BigInt(configured) : null;
+    if (parsed !== null && parsed > 0n) {
+      return parsed;
+    }
+  } catch {
+    // Ignore malformed overrides and use the measured default.
+  }
+  return rail === "ethereum-usdc" ? DEFAULT_ETHEREUM_SETTLEMENT_GAS_UNITS : DEFAULT_BASE_SETTLEMENT_GAS_UNITS;
+}
+
+function chainlinkEthUsdFeedForRail(rail: AgentPaymentRail): string | null {
+  if (rail === "ethereum-usdc") {
+    return process.env.CLAWZ_X402_ETHEREUM_ETH_USD_FEED?.trim() || ETHEREUM_ETH_USD_FEED;
+  }
+  if (rail === "base-usdc") {
+    return process.env.CLAWZ_X402_BASE_ETH_USD_FEED?.trim() || BASE_ETH_USD_FEED;
+  }
+  return null;
+}
+
+function decimalScale(decimals: bigint): bigint {
+  let scale = 1n;
+  for (let index = 0n; index < decimals; index += 1n) {
+    scale *= 10n;
+  }
+  return scale;
+}
+
+function scalePriceToUsdAtomic(value: bigint, decimals: bigint): bigint {
+  if (decimals === 6n) {
+    return value;
+  }
+  if (decimals > 6n) {
+    return value / decimalScale(decimals - 6n);
+  }
+  return value * decimalScale(6n - decimals);
+}
+
+function signedInt256FromWord(word: string): bigint {
+  const value = BigInt(`0x${word}`);
+  const signBit = 1n << 255n;
+  return value >= signBit ? value - (1n << 256n) : value;
+}
+
+async function readEthUsdAtomicFromChainlink(urls: string[], rail: AgentPaymentRail): Promise<{
+  priceAtomic: bigint;
+  source: string;
+} | null> {
+  const feedAddress = chainlinkEthUsdFeedForRail(rail);
+  if (!feedAddress) {
+    return null;
+  }
+
+  return firstRpcResult(urls, async (url) => {
+    const [decimalsResult, latestRoundResult] = await Promise.all([
+      jsonRpc(url, "eth_call", [{ to: feedAddress, data: "0x313ce567" }, "latest"]),
+      jsonRpc(url, "eth_call", [{ to: feedAddress, data: ETH_USD_FEED_LATEST_ROUND_DATA }, "latest"])
+    ]);
+    const decimals = parseRpcHex(decimalsResult);
+    if (decimals === null || decimals < 0n || decimals > 36n) {
+      return null;
+    }
+    if (typeof latestRoundResult !== "string" || !latestRoundResult.startsWith("0x")) {
+      return null;
+    }
+
+    const encoded = latestRoundResult.slice(2).padStart(64 * 5, "0");
+    const answerWord = encoded.slice(64, 128);
+    const answer = signedInt256FromWord(answerWord);
+    if (answer <= 0n) {
+      return null;
+    }
+
+    return {
+      priceAtomic: scalePriceToUsdAtomic(answer, decimals),
+      source: `chainlink:${feedAddress}`
+    };
+  });
+}
+
+function formatEthFromWei(value: bigint): string {
+  const whole = value / WEI_PER_ETH;
+  const fraction = value % WEI_PER_ETH;
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+  return `${whole}.${fraction.toString().padStart(18, "0").replace(/0+$/, "")}`;
+}
+
+const networkFacilitationFeeCache = new Map<string, {
+  expiresAt: number;
+  value: NetworkFacilitationFeeEstimate | undefined;
+}>();
+
+async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<NetworkFacilitationFeeEstimate | undefined> {
+  if (rail !== "base-usdc" && rail !== "ethereum-usdc") {
+    return undefined;
+  }
+
+  const cacheKey = rail;
+  const cached = networkFacilitationFeeCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const configuredFloorAtomic = parseUsdAtomic(minNetworkFacilitationFeeUsd());
+  const rpcUrls = rpcUrlsForRail(rail);
+  const gasUnits = gasUnitsForRail(rail);
+  const gasPriceWei = await firstRpcResult(rpcUrls, async (url) => parseRpcHex(await jsonRpc(url, "eth_gasPrice")));
+  const ethUsd = gasPriceWei !== null ? await readEthUsdAtomicFromChainlink(rpcUrls, rail) : null;
+  const nativeAmountWei = gasPriceWei !== null ? gasPriceWei * gasUnits : null;
+  const gasUsdAtomic =
+    nativeAmountWei !== null && ethUsd !== null
+      ? ceilDiv(nativeAmountWei * ethUsd.priceAtomic, WEI_PER_ETH)
+      : null;
+  const amountAtomic =
+    gasUsdAtomic !== null && (configuredFloorAtomic === null || gasUsdAtomic > configuredFloorAtomic)
+      ? gasUsdAtomic
+      : configuredFloorAtomic;
+
+  const value =
+    amountAtomic !== null
+      ? {
+          amountUsd: formatUsdAtomic(amountAtomic),
+          ...(gasPriceWei !== null && nativeAmountWei !== null
+            ? {
+                gasEstimate: {
+                  gasUnits: gasUnits.toString(),
+                  gasPriceWei: gasPriceWei.toString(),
+                  nativeAmount: formatEthFromWei(nativeAmountWei),
+                  nativeSymbol: "ETH" as const,
+                  ...(ethUsd ? { nativeUsdPrice: formatUsdAtomic(ethUsd.priceAtomic), source: ethUsd.source } : { source: "rpc-gas-price" })
+                }
+              }
+            : {})
+        }
+      : undefined;
+
+  networkFacilitationFeeCache.set(cacheKey, {
+    expiresAt: Date.now() + 10_000,
+    value
+  });
+  return value;
+}
+
 function hasBaseCdpFacilitatorCredentials(): boolean {
   return Boolean(
     process.env.CLAWZ_X402_BASE_FACILITATOR_BEARER_TOKEN?.trim() ||
@@ -270,6 +506,7 @@ function pushHostedFacilitatorFloor(input: {
   rail: AgentPaymentRail;
   profile: ConsoleStateResponse["profile"];
   policy: ConsoleStateResponse["protocolOwnerFeePolicy"];
+  networkFacilitationFee?: NetworkFacilitationFeeEstimate;
   hostedFacilitator: boolean;
   missing: string[];
   notes: string[];
@@ -278,14 +515,13 @@ function pushHostedFacilitatorFloor(input: {
     return;
   }
 
-  const minFeeUsd = minNetworkFacilitationFeeUsd();
-  const minFeeAtomic = parseUsdAtomic(minFeeUsd);
+  const minFeeAtomic = parseUsdAtomic(input.networkFacilitationFee?.amountUsd);
   const configuredMinAtomic = parseUsdAtomic(minHostedFacilitatorPaymentUsd(input.rail));
   const amountAtomic = parseUsdAtomic(input.profile.paymentProfile.fixedAmountUsd);
   const feeApplies = protocolOwnerFeeAppliesToRail(input.policy, input.rail);
-  if (!minFeeUsd.trim() || minFeeAtomic === null) {
+  if (minFeeAtomic === null) {
     input.missing.push("Set CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD for hosted facilitator settlement.");
-    input.notes.push("Hosted facilitator settlement needs an operator-configured network facilitation floor.");
+    input.notes.push("Hosted facilitator settlement needs an operator-configured network facilitation floor or a live RPC gas estimate.");
     return;
   }
 
@@ -303,18 +539,22 @@ function pushHostedFacilitatorFloor(input: {
     return;
   }
 
-  const feeDerivedMinAtomic = ceilDiv(minFeeAtomic * 10_000n, BigInt(input.policy.feeBps));
-  const minAtomic =
-    configuredMinAtomic !== null && configuredMinAtomic > feeDerivedMinAtomic
-      ? configuredMinAtomic
-      : feeDerivedMinAtomic;
   const generatedFeeAtomic = (amountAtomic * BigInt(input.policy.feeBps)) / 10_000n;
+  const effectiveFeeAtomic = minFeeAtomic > generatedFeeAtomic ? minFeeAtomic : generatedFeeAtomic;
 
   input.notes.push(
-    `SantaClawz hosted facilitation requires at least $${formatUsdAtomic(minFeeAtomic)} in network facilitation value; at ${input.policy.feeBps / 100}% the minimum fixed price is $${formatUsdAtomic(minAtomic, 2)}.`
+    `SantaClawz hosted facilitation uses the higher of ${input.policy.feeBps / 100}% or the current $${formatUsdAtomic(minFeeAtomic)} network facilitation estimate.`
   );
-  if (amountAtomic < minAtomic || generatedFeeAtomic < minFeeAtomic) {
-    input.missing.push(`Set the fixed price to at least $${formatUsdAtomic(minAtomic, 2)} for hosted facilitator settlement.`);
+  if (generatedFeeAtomic < minFeeAtomic) {
+    input.notes.push(
+      `At this price, the network facilitation minimum is deducted from the payment before agent net proceeds.`
+    );
+  }
+  if (amountAtomic <= effectiveFeeAtomic) {
+    input.missing.push(`Set the fixed price above $${formatUsdAtomic(effectiveFeeAtomic, 2)} so the payment can cover hosted facilitation and leave agent proceeds.`);
+  }
+  if (configuredMinAtomic !== null && amountAtomic < configuredMinAtomic) {
+    input.missing.push(`Set the fixed price to at least $${formatUsdAtomic(configuredMinAtomic, 2)} for hosted facilitator settlement.`);
   }
 }
 
@@ -361,7 +601,10 @@ function pushPricingReadiness(
   return {};
 }
 
-function buildBaseRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPlan {
+function buildBaseRailPlan(
+  consoleState: ConsoleStateResponse,
+  networkFacilitationFee?: NetworkFacilitationFeeEstimate
+): AgentX402RailPlan {
   const profile = consoleState.profile;
   const missing: string[] = [];
   const notes: string[] = [];
@@ -396,6 +639,7 @@ function buildBaseRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
     rail: "base-usdc",
     profile,
     policy: consoleState.protocolOwnerFeePolicy,
+    ...(networkFacilitationFee ? { networkFacilitationFee } : {}),
     hostedFacilitator,
     missing,
     notes
@@ -465,7 +709,10 @@ function buildBaseRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
   };
 }
 
-function buildEthereumRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPlan {
+function buildEthereumRailPlan(
+  consoleState: ConsoleStateResponse,
+  networkFacilitationFee?: NetworkFacilitationFeeEstimate
+): AgentX402RailPlan {
   const profile = consoleState.profile;
   const missing: string[] = [];
   const notes: string[] = [];
@@ -498,6 +745,7 @@ function buildEthereumRailPlan(consoleState: ConsoleStateResponse): AgentX402Rai
     rail: "ethereum-usdc",
     profile,
     policy: consoleState.protocolOwnerFeePolicy,
+    ...(networkFacilitationFee ? { networkFacilitationFee } : {}),
     hostedFacilitator,
     missing,
     notes
@@ -610,6 +858,7 @@ function buildZekoRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
 export function buildAgentX402Plan(input: {
   baseUrl: string;
   consoleState: ConsoleStateResponse;
+  networkFacilitationFeeByRail?: Partial<Record<AgentPaymentRail, NetworkFacilitationFeeEstimate>>;
 }): AgentX402Plan {
   const baseUrl = normalizeBaseUrl(input.baseUrl);
   const consoleState = input.consoleState;
@@ -619,15 +868,16 @@ export function buildAgentX402Plan(input: {
   const protocolOwnerFeePolicy = consoleState.protocolOwnerFeePolicy;
   const feePreviewByRail = buildProtocolOwnerFeePreviews({
     policy: protocolOwnerFeePolicy,
-    profile
+    profile,
+    ...(input.networkFacilitationFeeByRail ? { networkFacilitationFeeByRail: input.networkFacilitationFeeByRail } : {})
   });
   const query = toQueryString(sessionId);
   const rails = profile.paymentProfile.supportedRails.map((rail) => {
     if (rail === "base-usdc") {
-      return buildBaseRailPlan(consoleState);
+      return buildBaseRailPlan(consoleState, input.networkFacilitationFeeByRail?.[rail]);
     }
     if (rail === "ethereum-usdc") {
-      return buildEthereumRailPlan(consoleState);
+      return buildEthereumRailPlan(consoleState, input.networkFacilitationFeeByRail?.[rail]);
     }
     return buildZekoRailPlan(consoleState);
   });
@@ -656,6 +906,26 @@ export function buildAgentX402Plan(input: {
     settlePaymentUrl: `${baseUrl}${X402_SETTLE_ROUTE}?${query}`,
     rails
   };
+}
+
+export async function buildAgentX402PlanWithNetworkQuotes(input: {
+  baseUrl: string;
+  consoleState: ConsoleStateResponse;
+}): Promise<AgentX402Plan> {
+  const entries = await Promise.all(
+    input.consoleState.profile.paymentProfile.supportedRails.map(async (rail) => {
+      const estimate = await estimateNetworkFacilitationFee(rail);
+      return [rail, estimate] as const;
+    })
+  );
+  const networkFacilitationFeeByRail = Object.fromEntries(
+    entries.filter((entry): entry is [AgentPaymentRail, NetworkFacilitationFeeEstimate] => Boolean(entry[1]))
+  ) as Partial<Record<AgentPaymentRail, NetworkFacilitationFeeEstimate>>;
+
+  return buildAgentX402Plan({
+    ...input,
+    ...(Object.keys(networkFacilitationFeeByRail).length > 0 ? { networkFacilitationFeeByRail } : {})
+  });
 }
 
 function railDescription(rail: AgentX402RailPlan): string {

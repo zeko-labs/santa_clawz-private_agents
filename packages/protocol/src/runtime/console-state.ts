@@ -265,6 +265,17 @@ export interface AgentFeePreview {
   grossAmountUsd?: string;
   sellerNetAmountUsd?: string;
   protocolFeeAmountUsd?: string;
+  nominalProtocolFeeAmountUsd?: string;
+  networkFacilitationFeeAmountUsd?: string;
+  feeBasis?: "protocol-bps" | "network-facilitation-minimum";
+  gasEstimate?: {
+    gasUnits: string;
+    gasPriceWei: string;
+    nativeAmount: string;
+    nativeSymbol: "ETH";
+    nativeUsdPrice?: string;
+    source: string;
+  };
   sellerPayTo?: string;
   protocolFeeRecipient?: string;
   feeBps: number;

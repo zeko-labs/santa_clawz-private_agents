@@ -1050,7 +1050,7 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
         supportedRails: ["base-usdc"],
         defaultRail: "base-usdc",
         pricingMode: "fixed-exact",
-        fixedAmountUsd: "0.01",
+        fixedAmountUsd: "0.001",
         settlementTrigger: "upfront"
       }
     };
@@ -1063,25 +1063,29 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     const underFloorPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
     assert.equal(underFloorPlan.status, 200);
     assert.equal(underFloorPlan.payload.rails[0].ready, false);
-    assert.match(underFloorPlan.payload.rails[0].missing.join("\n"), /\$0\.20/);
+    assert.match(underFloorPlan.payload.rails[0].missing.join("\n"), /above \$0\.002/);
     assert.match(underFloorPlan.payload.rails[0].notes.join("\n"), /\$0\.002/);
 
-    const oldFloor = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
+    const microPayment = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
       method: "POST",
       body: JSON.stringify({
         ...profileBody,
         paymentProfile: {
           ...profileBody.paymentProfile,
-          fixedAmountUsd: "0.10"
+          fixedAmountUsd: "0.01"
         }
       })
     });
-    assert.equal(oldFloor.status, 200);
+    assert.equal(microPayment.status, 200);
 
-    const oldFloorPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
-    assert.equal(oldFloorPlan.status, 200);
-    assert.equal(oldFloorPlan.payload.rails[0].ready, false);
-    assert.match(oldFloorPlan.payload.rails[0].missing.join("\n"), /\$0\.20/);
+    const microPaymentPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
+    assert.equal(microPaymentPlan.status, 200);
+    assert.equal(microPaymentPlan.payload.rails[0].ready, true);
+    assert.equal(microPaymentPlan.payload.feePreviewByRail[0].protocolFeeAmountUsd, "0.002");
+    assert.equal(microPaymentPlan.payload.feePreviewByRail[0].nominalProtocolFeeAmountUsd, "0.0001");
+    assert.equal(microPaymentPlan.payload.feePreviewByRail[0].networkFacilitationFeeAmountUsd, "0.002");
+    assert.equal(microPaymentPlan.payload.feePreviewByRail[0].sellerNetAmountUsd, "0.008");
+    assert.equal(microPaymentPlan.payload.feePreviewByRail[0].feeBasis, "network-facilitation-minimum");
 
     const atFloor = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
       method: "POST",
@@ -1099,8 +1103,9 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     assert.equal(atFloorPlan.status, 200);
     assert.equal(atFloorPlan.payload.rails[0].ready, true);
     assert.equal(atFloorPlan.payload.feePreviewByRail[0].protocolFeeAmountUsd, "0.002");
+    assert.equal(atFloorPlan.payload.feePreviewByRail[0].sellerNetAmountUsd, "0.198");
 
-    console.log("ok - hosted Base payments require the minimum network facilitation fee");
+    console.log("ok - hosted Base payments deduct the higher of percentage fee or minimum network facilitation fee");
   } finally {
     await stopProcess(server.child);
     await rm(workspaceDir, { recursive: true, force: true });

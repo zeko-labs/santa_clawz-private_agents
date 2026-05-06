@@ -146,6 +146,9 @@ export interface AgentPaymentClaim {
       grossAmountUsd?: string;
       sellerNetAmountUsd?: string;
       protocolFeeAmountUsd?: string;
+      nominalProtocolFeeAmountUsd?: string;
+      networkFacilitationFeeAmountUsd?: string;
+      feeBasis?: "protocol-bps" | "network-facilitation-minimum";
     }>;
     facilitatorUrlByRail?: Partial<Record<AgentPaymentRail, string>>;
     paymentNotes?: string;

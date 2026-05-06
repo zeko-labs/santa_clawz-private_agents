@@ -35,7 +35,7 @@ import {
   parseAgentX402PaymentPayload,
   buildAgentX402RuntimeContext,
   buildAgentX402PaymentRequiredPreview,
-  buildAgentX402Plan,
+  buildAgentX402PlanWithNetworkQuotes,
   settleAgentX402Payment,
   verifyAgentX402Payment
 } from "./x402-adapter.js";
@@ -519,7 +519,7 @@ async function buildX402PlanFromOptions(
   const consoleState = await controlPlane.getConsoleState(options);
   return {
     consoleState,
-    plan: buildAgentX402Plan({
+    plan: await buildAgentX402PlanWithNetworkQuotes({
       baseUrl,
       consoleState
     })
@@ -992,7 +992,7 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
 app.get("/api/x402/proof", route(async (request, response) => {
   try {
     const snapshot = await buildInteropSnapshot(request);
-    const plan = buildAgentX402Plan({
+    const plan = await buildAgentX402PlanWithNetworkQuotes({
       baseUrl: snapshot.baseUrl,
       consoleState: snapshot.consoleState
     });

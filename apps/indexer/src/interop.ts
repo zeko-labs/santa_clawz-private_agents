@@ -586,7 +586,14 @@ export function buildAgentProofBundle(input: InteropBuildInput): ClawzAgentProof
                     rail: preview.rail,
                     ...(preview.grossAmountUsd ? { grossAmountUsd: preview.grossAmountUsd } : {}),
                     ...(preview.sellerNetAmountUsd ? { sellerNetAmountUsd: preview.sellerNetAmountUsd } : {}),
-                    ...(preview.protocolFeeAmountUsd ? { protocolFeeAmountUsd: preview.protocolFeeAmountUsd } : {})
+                    ...(preview.protocolFeeAmountUsd ? { protocolFeeAmountUsd: preview.protocolFeeAmountUsd } : {}),
+                    ...(preview.nominalProtocolFeeAmountUsd
+                      ? { nominalProtocolFeeAmountUsd: preview.nominalProtocolFeeAmountUsd }
+                      : {}),
+                    ...(preview.networkFacilitationFeeAmountUsd
+                      ? { networkFacilitationFeeAmountUsd: preview.networkFacilitationFeeAmountUsd }
+                      : {}),
+                    ...(preview.feeBasis ? { feeBasis: preview.feeBasis } : {})
                   }))
                 }
               : {}),
