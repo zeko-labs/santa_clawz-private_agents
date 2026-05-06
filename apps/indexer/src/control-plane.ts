@@ -12,6 +12,8 @@ import {
 import { createTenantKeyBroker, type TenantKeyBrokerRuntimeDescriptor, TenantKeyBroker } from "@clawz/key-broker";
 import {
   canonicalDigest,
+  type AgentRuntimeHeartbeatState,
+  type AgentRuntimeStatus,
   type AgentRuntimeAvailabilityState,
   type AgentRegistryEntry,
   type AgentOwnershipChallengeState,
@@ -56,6 +58,9 @@ const DEFAULT_TURN_ID = "turn_0011";
 const OPENCLAW_OWNERSHIP_CHALLENGE_PATH = "/.well-known/santaclawz-agent-challenge.json";
 const OWNERSHIP_CHALLENGE_TTL_MS = 15 * 60 * 1000;
 const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
+const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
+const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
+const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
@@ -347,6 +352,37 @@ interface SubmitHireRequestOptions {
 interface AgentRuntimeAvailabilityOptions {
   sessionId?: string;
   agentId?: string;
+}
+
+interface AgentRuntimeReachabilityState {
+  agentId: string;
+  sessionId: string;
+  openClawUrl: string;
+  checkedAtIso: string;
+  reachable: boolean;
+  status: AgentRuntimeAvailabilityState["status"];
+  httpStatus?: number;
+  reason?: string;
+}
+
+interface AgentRuntimeHeartbeatRecord {
+  agentId: string;
+  sessionId: string;
+  status: AgentRuntimeStatus;
+  receivedAtIso: string;
+  ttlSeconds: number;
+  note?: string;
+}
+
+interface AgentRuntimeHeartbeatFile {
+  heartbeats: AgentRuntimeHeartbeatRecord[];
+}
+
+interface AgentRuntimeHeartbeatOptions extends AgentRuntimeAvailabilityOptions {
+  status?: AgentRuntimeStatus;
+  ttlSeconds?: number;
+  note?: string;
+  adminKey?: string;
 }
 
 interface ConsoleStateOptions {
@@ -826,6 +862,12 @@ function buildDefaultSocialAnchorQueueFile(): SocialAnchorQueueFile {
   };
 }
 
+function buildDefaultRuntimeHeartbeatFile(): AgentRuntimeHeartbeatFile {
+  return {
+    heartbeats: []
+  };
+}
+
 function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
   switch (kind) {
     case "agent-registered":
@@ -1128,6 +1170,7 @@ export class ClawzControlPlane {
   private readonly sponsorQueuePath: string;
   private readonly hireRequestPath: string;
   private readonly socialAnchorQueuePath: string;
+  private readonly runtimeHeartbeatPath: string;
   private readonly keyBroker: TenantKeyBroker;
   private readonly keyBrokerRuntime: TenantKeyBrokerRuntimeDescriptor;
   private readonly blobStore: SealedBlobStore;
@@ -1157,6 +1200,7 @@ export class ClawzControlPlane {
     this.sponsorQueuePath = path.join(baseDir, "state", "wallet-sponsor-queue.json");
     this.hireRequestPath = path.join(baseDir, "state", "hire-requests.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
+    this.runtimeHeartbeatPath = path.join(baseDir, "state", "agent-runtime-heartbeats.json");
     const configuredSharedAnchorIntervalMs = Number(process.env.CLAWZ_SHARED_SOCIAL_ANCHOR_INTERVAL_MS ?? "10000");
     this.sharedSocialAnchorIntervalMs = Number.isFinite(configuredSharedAnchorIntervalMs)
       ? Math.max(1000, Math.min(configuredSharedAnchorIntervalMs, 60000))
@@ -1357,6 +1401,25 @@ export class ClawzControlPlane {
     await writeJsonFile(this.socialAnchorQueuePath, file);
   }
 
+  private async loadRuntimeHeartbeatFile(): Promise<AgentRuntimeHeartbeatFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<AgentRuntimeHeartbeatFile>(this.runtimeHeartbeatPath);
+    if (file?.heartbeats) {
+      return {
+        heartbeats: file.heartbeats.filter((record) => record.agentId && record.sessionId)
+      };
+    }
+
+    const fallback = buildDefaultRuntimeHeartbeatFile();
+    await this.saveRuntimeHeartbeatFile(fallback);
+    return fallback;
+  }
+
+  private async saveRuntimeHeartbeatFile(file: AgentRuntimeHeartbeatFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.runtimeHeartbeatPath, file);
+  }
+
   private configuredSocialAnchorContractAddress(deployment: Pick<ZekoDeploymentState, "contracts">) {
     return (
       deployment.contracts.find((contract) => contract.label === "SocialAnchorKernel" && contract.address)?.address ??
@@ -1496,6 +1559,59 @@ export class ClawzControlPlane {
       state.agentIdsBySession[sessionId] ??
       buildStableAgentId(this.profileForSession(state, sessionId, trustModeId).agentName, sessionId)
     );
+  }
+
+  private buildAgentRuntimeHeartbeatState(input: {
+    state: ConsolePersistenceState;
+    sessionId: string;
+    trustModeId?: TrustModeId;
+    record?: AgentRuntimeHeartbeatRecord;
+  }, checkedAtIso = new Date().toISOString()): AgentRuntimeHeartbeatState {
+    const agentId = this.agentIdForSession(input.state, input.sessionId, input.trustModeId ?? input.state.activeMode);
+    const record = input.record;
+    if (!record) {
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        status: "waiting",
+        checkedAtIso,
+        ttlSeconds: AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS,
+        reason: "No heartbeat received yet."
+      };
+    }
+
+    const ttlSeconds = Math.max(
+      AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS,
+      Math.min(record.ttlSeconds, AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS)
+    );
+    const heartbeatMs = Date.parse(record.receivedAtIso);
+    const staleAtMs = Number.isFinite(heartbeatMs)
+      ? heartbeatMs + ttlSeconds * 1000
+      : Date.parse(checkedAtIso);
+    const staleAtIso = new Date(staleAtMs).toISOString();
+    const isStale = record.status === "live" && staleAtMs <= Date.parse(checkedAtIso);
+    const status: AgentRuntimeStatus =
+      record.status === "offline" ? "offline" : isStale || record.status === "waiting" ? "waiting" : "live";
+    const reason =
+      status === "offline"
+        ? record.note ?? "Agent reported offline."
+        : isStale
+          ? "Heartbeat stale."
+          : status === "waiting"
+            ? record.note ?? "Agent is waiting for its next live heartbeat."
+            : record.note ?? "Recent heartbeat received.";
+
+    return {
+      agentId,
+      sessionId: input.sessionId,
+      status,
+      checkedAtIso,
+      ttlSeconds,
+      lastHeartbeatAtIso: record.receivedAtIso,
+      staleAtIso,
+      reason,
+      ...(record.note ? { note: record.note } : {})
+    };
   }
 
   private ownershipRecordForSession(state: ConsolePersistenceState, sessionId: string): SessionOwnershipRecord {
@@ -1811,7 +1927,7 @@ export class ClawzControlPlane {
     sessionId: string;
     profile: AgentProfileState;
     trustModeId?: TrustModeId;
-  }): Promise<AgentRuntimeAvailabilityState> {
+  }): Promise<AgentRuntimeReachabilityState> {
     const checkedAtIso = new Date().toISOString();
     const openClawUrl = input.profile.openClawUrl.trim();
     const agentId = this.agentIdForSession(input.state, input.sessionId, input.trustModeId ?? input.state.activeMode);
@@ -1891,7 +2007,7 @@ export class ClawzControlPlane {
     }
   }
 
-  private assertAgentRuntimeReachable(availability: AgentRuntimeAvailabilityState) {
+  private assertAgentRuntimeReachable(availability: Pick<AgentRuntimeAvailabilityState, "reachable" | "reason">) {
     if (availability.reachable) {
       return;
     }
@@ -2159,6 +2275,7 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     await this.loadSponsorQueueFile();
     await this.loadHireRequestFile();
+    await this.loadRuntimeHeartbeatFile();
 
     if (existingEvents.length === 0) {
       await this.saveEvents(sampleEvents);
@@ -3701,21 +3818,80 @@ export class ClawzControlPlane {
     const events = await this.loadEvents();
     const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
     const profile = this.profileForSession(state, sessionId, trustModeId);
-    return this.checkOpenClawAgentReachability({
+    const [heartbeatFile, reachability] = await Promise.all([
+      this.loadRuntimeHeartbeatFile(),
+      this.checkOpenClawAgentReachability({
+        state,
+        sessionId,
+        profile,
+        trustModeId
+      })
+    ]);
+    const heartbeatRecord = heartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
+    const heartbeat = this.buildAgentRuntimeHeartbeatState({
       state,
       sessionId,
-      profile,
-      trustModeId
+      trustModeId,
+      ...(heartbeatRecord ? { record: heartbeatRecord } : {})
     });
+    const runtimeStatus: AgentRuntimeStatus = reachability.reachable ? heartbeat.status : "offline";
+    return {
+      ...reachability,
+      runtimeStatus,
+      heartbeat
+    };
+  }
+
+  async recordAgentRuntimeHeartbeat(options: AgentRuntimeHeartbeatOptions): Promise<AgentRuntimeHeartbeatState> {
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, options);
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const events = await this.loadEvents();
+    const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
+    const agentId = this.agentIdForSession(state, sessionId, trustModeId);
+    const status: AgentRuntimeStatus =
+      options.status === "waiting" || options.status === "offline" || options.status === "live"
+        ? options.status
+        : "live";
+    const rawTtlSeconds =
+      typeof options.ttlSeconds === "number" && Number.isFinite(options.ttlSeconds)
+        ? Math.round(options.ttlSeconds)
+        : AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS;
+    const ttlSeconds = Math.max(
+      AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS,
+      Math.min(rawTtlSeconds, AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS)
+    );
+    const receivedAtIso = new Date().toISOString();
+    const note = typeof options.note === "string" ? options.note.trim().slice(0, 240) : "";
+    const nextRecord: AgentRuntimeHeartbeatRecord = {
+      agentId,
+      sessionId,
+      status,
+      receivedAtIso,
+      ttlSeconds,
+      ...(note ? { note } : {})
+    };
+    const file = await this.loadRuntimeHeartbeatFile();
+    await this.saveRuntimeHeartbeatFile({
+      heartbeats: [nextRecord, ...file.heartbeats.filter((record) => record.sessionId !== sessionId)].slice(0, 500)
+    });
+
+    return this.buildAgentRuntimeHeartbeatState({
+      state,
+      sessionId,
+      trustModeId,
+      record: nextRecord
+    }, receivedAtIso);
   }
 
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
-    const [liveFlow, deployment, socialAnchorQueueFile] = await Promise.all([
+    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile] = await Promise.all([
       this.getLiveFlowState(),
       this.getDeploymentState(),
-      this.loadSocialAnchorQueueFile()
+      this.loadSocialAnchorQueueFile(),
+      this.loadRuntimeHeartbeatFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const materializer = new ReplayMaterializer(events);
@@ -3736,6 +3912,13 @@ export class ClawzControlPlane {
         const anchoredBatches = socialAnchorQueueFile.batches
           .filter((batch) => sessionAnchors.some((item) => item.batchId === batch.batchId))
           .sort((left, right) => right.settledAtIso.localeCompare(left.settledAtIso));
+        const heartbeatRecord = runtimeHeartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
+        const runtimeHeartbeat = this.buildAgentRuntimeHeartbeatState({
+          state,
+          sessionId,
+          trustModeId,
+          ...(heartbeatRecord ? { record: heartbeatRecord } : {})
+        });
         return {
           agentId: this.agentIdForSession(state, sessionId, trustModeId),
           sessionId,
@@ -3769,6 +3952,10 @@ export class ClawzControlPlane {
           ownershipVerified: ownership.status === "verified",
           availability: profile.availability,
           ...(profile.archivedAtIso ? { archivedAtIso: profile.archivedAtIso } : {}),
+          runtimeStatus: runtimeHeartbeat.status,
+          runtimeStatusUpdatedAtIso: runtimeHeartbeat.checkedAtIso,
+          ...(runtimeHeartbeat.lastHeartbeatAtIso ? { lastHeartbeatAtIso: runtimeHeartbeat.lastHeartbeatAtIso } : {}),
+          ...(runtimeHeartbeat.reason ? { runtimeStatusReason: runtimeHeartbeat.reason } : {}),
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "anchored").length,

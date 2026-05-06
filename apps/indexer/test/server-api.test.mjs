@@ -898,7 +898,33 @@ async function testMissionAuthVerificationPersists() {
     assert.equal(typeof registered.payload.adminAccess.issuedAdminKey, "string");
 
     const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
     const adminKey = registered.payload.adminAccess.issuedAdminKey;
+    const heartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        sessionId,
+        status: "live",
+        ttlSeconds: 20,
+        note: "Local smoke heartbeat."
+      })
+    });
+    assert.equal(heartbeat.status, 200);
+    assert.equal(heartbeat.payload.status, "live");
+    assert.equal(heartbeat.payload.lastHeartbeatAtIso, heartbeat.payload.checkedAtIso);
+
+    const availability = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/availability`);
+    assert.equal(availability.status, 200);
+    assert.equal(availability.payload.runtimeStatus, "live");
+    assert.equal(availability.payload.heartbeat.status, "live");
+
+    const registry = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(registry.status, 200);
+    assert.equal(registry.payload.find((agent) => agent.agentId === agentId)?.runtimeStatus, "live");
+
     const authorityBaseUrl = `http://127.0.0.1:${authorityPort}`;
     const checked = await requestJson(`${baseUrl}/api/mission-auth/check`, {
       method: "POST",

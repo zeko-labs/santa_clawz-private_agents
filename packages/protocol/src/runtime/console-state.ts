@@ -454,6 +454,10 @@ export interface AgentRegistryEntry {
   ownershipVerified: boolean;
   availability: AgentProfileState["availability"];
   archivedAtIso?: string;
+  runtimeStatus: AgentRuntimeStatus;
+  runtimeStatusUpdatedAtIso?: string;
+  lastHeartbeatAtIso?: string;
+  runtimeStatusReason?: string;
   published: boolean;
   pendingSocialAnchorCount: number;
   anchoredSocialFactCount: number;
@@ -472,6 +476,20 @@ export interface HireRequestReceipt {
   paidJobsEnabled: boolean;
 }
 
+export type AgentRuntimeStatus = "live" | "waiting" | "offline";
+
+export interface AgentRuntimeHeartbeatState {
+  agentId: string;
+  sessionId: string;
+  status: AgentRuntimeStatus;
+  checkedAtIso: string;
+  ttlSeconds: number;
+  lastHeartbeatAtIso?: string;
+  staleAtIso?: string;
+  reason?: string;
+  note?: string;
+}
+
 export interface AgentRuntimeAvailabilityState {
   agentId: string;
   sessionId: string;
@@ -479,6 +497,8 @@ export interface AgentRuntimeAvailabilityState {
   checkedAtIso: string;
   reachable: boolean;
   status: "online" | "offline" | "not-configured" | "check-disabled";
+  runtimeStatus: AgentRuntimeStatus;
+  heartbeat: AgentRuntimeHeartbeatState;
   httpStatus?: number;
   reason?: string;
 }

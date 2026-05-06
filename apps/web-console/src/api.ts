@@ -1,6 +1,8 @@
 import type {
   AgentProfileState,
   AgentRuntimeAvailabilityState,
+  AgentRuntimeHeartbeatState,
+  AgentRuntimeStatus,
   AgentRegistryEntry,
   ConsoleStateResponse,
   HireRequestReceipt,
@@ -289,6 +291,25 @@ export function fetchAgentRegistry(): Promise<AgentRegistryEntry[]> {
 
 export function fetchAgentRuntimeAvailability(agentId: string): Promise<AgentRuntimeAvailabilityState> {
   return request<AgentRuntimeAvailabilityState>(`/api/agents/${encodeURIComponent(agentId)}/availability`);
+}
+
+export function postAgentRuntimeHeartbeat(
+  agentId: string,
+  input: {
+    sessionId?: string;
+    status?: AgentRuntimeStatus;
+    ttlSeconds?: number;
+    note?: string;
+  } = {}
+): Promise<AgentRuntimeHeartbeatState> {
+  return request<AgentRuntimeHeartbeatState>(
+    `/api/agents/${encodeURIComponent(agentId)}/heartbeat`,
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    },
+    buildAdminContext(input.sessionId, agentId)
+  );
 }
 
 export function checkMissionAuthOverlay(input: {

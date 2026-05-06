@@ -163,6 +163,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         pathname === "/api/console/trust-mode" ||
         pathname === "/api/console/profile" ||
         (/^\/api\/agents\/[^/]+\/archive$/.test(pathname)) ||
+        (/^\/api\/agents\/[^/]+\/heartbeat$/.test(pathname)) ||
         pathname === "/api/social/anchors/settle" ||
         pathname === "/api/social/anchors/commit" ||
         pathname === "/api/wallet/sponsor" ||

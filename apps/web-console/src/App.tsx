@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type {
   AgentProfileState,
   AgentRuntimeAvailabilityState,
+  AgentRuntimeStatus,
   AgentRegistryEntry,
   ConsoleStateResponse,
   HireRequestReceipt,
@@ -226,6 +227,31 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
   return "Host facilitator and finish setup";
 }
 
+function runtimeStatusLabel(status?: AgentRuntimeStatus) {
+  if (status === "live") {
+    return "Live";
+  }
+  if (status === "offline") {
+    return "Offline";
+  }
+  return "Waiting";
+}
+
+function runtimeStatusClass(status?: AgentRuntimeStatus) {
+  if (status === "live") {
+    return "runtime-status-live";
+  }
+  if (status === "offline") {
+    return "runtime-status-offline";
+  }
+  return "runtime-status-waiting";
+}
+
+function runtimeStatusSearchCopy(agent: AgentRegistryEntry) {
+  const label = runtimeStatusLabel(agent.runtimeStatus).toLowerCase();
+  return `${label} heartbeat presence availability ${agent.runtimeStatusReason ?? ""}`;
+}
+
 function timestampValue(value?: string) {
   if (!value) {
     return 0;
@@ -286,6 +312,7 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.representedPrincipal,
     agent.headline,
     agent.trustModeLabel,
+    runtimeStatusSearchCopy(agent),
     agent.paymentRail ? railLabel(agent.paymentRail) : "",
     agent.ownershipVerified ? "owner ownership verified control" : "",
     agent.missionAuthVerified ? "mission auth oauth enterprise web2 verified" : "",
@@ -1520,9 +1547,16 @@ export function App() {
       ? [`--payment-notes ${shellQuote(paymentProfile.paymentNotes)}`]
       : [])
   ].join(" ");
+  const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
   const agentRuntimeCheckPending = Boolean(sharedAgentId) && agentAvailabilityLoading && !focusedAgentAvailability;
+  const focusedRuntimeStatus: AgentRuntimeStatus =
+    focusedAgentAvailability?.runtimeStatus ?? focusedRegistryAgent?.runtimeStatus ?? "waiting";
+  const focusedRuntimeStatusLabel = agentRuntimeCheckPending ? "Checking" : runtimeStatusLabel(focusedRuntimeStatus);
+  const focusedRuntimeStatusClass = agentRuntimeCheckPending
+    ? "runtime-status-waiting"
+    : runtimeStatusClass(focusedRuntimeStatus);
   const agentRuntimeOffline = Boolean(
     sharedAgentId && focusedAgentAvailability && !focusedAgentAvailability.reachable
   );
@@ -2772,7 +2806,10 @@ export function App() {
               <article id="agent-profile-top" className="explore-card explore-card-featured">
                 <div className="explore-card-head">
                   <strong>{profile.agentName}</strong>
-                  <span className="subtle-pill">{agentArchived ? "Archived" : paidJobsEnabled ? "Payouts live" : published ? "Published" : "Registered"}</span>
+                  <div className="profile-status-stack">
+                    <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
+                    <span className="subtle-pill">{agentArchived ? "Archived" : paidJobsEnabled ? "Payouts live" : published ? "Published" : "Registered"}</span>
+                  </div>
                 </div>
                 <p className="panel-copy">{profile.headline}</p>
                 <p className="panel-copy">{paidWorkStatusLabel}</p>
@@ -2892,7 +2929,10 @@ export function App() {
                   ) : (
                     <div id="hire-this-agent" className="action-row action-row-form">
                       <div>
-                        <strong>Hire this agent</strong>
+                        <div className="hire-title-row">
+                          <strong>Hire this agent</strong>
+                          <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
+                        </div>
                         <p className="panel-copy">{hireStatusCopy}</p>
                       </div>
                       <div className="action-form-stack hire-form-stack">
@@ -3011,6 +3051,9 @@ export function App() {
                       >
                         <span className="activity-pill-mark">{agent.paidJobsEnabled ? "●" : agent.published ? "◆" : "○"}</span>
                         <strong>{agent.agentName}</strong>
+                        <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                          {runtimeStatusLabel(agent.runtimeStatus)}
+                        </span>
                         <span>{activityLineForAgent(agent)}</span>
                       </button>
                     ))
@@ -3087,6 +3130,9 @@ export function App() {
                             <p className="panel-copy">{socialProofLineForAgent(highlightAgent)}</p>
                             <div className="explore-tag-row">
                               <span className="explore-tag">{exploreStatusLabel(highlightAgent)}</span>
+                              <span className={`runtime-status-pill compact ${runtimeStatusClass(highlightAgent.runtimeStatus)}`}>
+                                {runtimeStatusLabel(highlightAgent.runtimeStatus)}
+                              </span>
                               <span className="explore-tag">{highlightAgent.proofLevel}</span>
                               {highlightAgent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
                               {highlightAgent.paymentRail ? <span className="explore-tag">{railLabel(highlightAgent.paymentRail)}</span> : null}
@@ -3148,6 +3194,9 @@ export function App() {
                               <p className="panel-copy explore-story-proof">{socialProofLineForAgent(agent)}</p>
                               <div className="explore-tag-row">
                                 <span className="explore-tag">{exploreStatusLabel(agent)}</span>
+                                <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                                  {runtimeStatusLabel(agent.runtimeStatus)}
+                                </span>
                                 {agent.paymentRail ? <span className="explore-tag">{railLabel(agent.paymentRail)}</span> : null}
                                 {agent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
                                 {agent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}

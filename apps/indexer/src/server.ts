@@ -2,6 +2,7 @@ import express from "express";
 
 import {
   type AgentProfileState,
+  type AgentRuntimeStatus,
   assertClawzJsonRpcRequest,
   buildProofVerificationResponse,
   type ClawzAgentDiscoveryDocument,
@@ -151,6 +152,12 @@ type HireRequestBody = {
   taskPrompt?: unknown;
   budgetMina?: unknown;
   requesterContact?: unknown;
+};
+type AgentHeartbeatRequestBody = {
+  sessionId?: unknown;
+  status?: unknown;
+  ttlSeconds?: unknown;
+  note?: unknown;
 };
 type SponsorRequestBody = { amountMina?: unknown; sessionId?: unknown; purpose?: unknown };
 type RecoveryRequestBody = { sessionId?: unknown };
@@ -381,6 +388,21 @@ function parseHireRequest(body: unknown): HireRequestBody {
         requesterContact: body.requesterContact
       }
     : {};
+}
+
+function parseAgentHeartbeatRequest(body: unknown): AgentHeartbeatRequestBody {
+  return isRecord(body)
+    ? {
+        sessionId: body.sessionId,
+        status: body.status,
+        ttlSeconds: body.ttlSeconds,
+        note: body.note
+      }
+    : {};
+}
+
+function parseAgentRuntimeStatus(value: unknown): AgentRuntimeStatus | undefined {
+  return value === "live" || value === "waiting" || value === "offline" ? value : undefined;
 }
 
 function parseSponsorRequest(body: unknown): SponsorRequestBody {
@@ -870,6 +892,41 @@ app.get("/api/agents/:agentId/availability", route(async (request, response) => 
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to check agent availability."
+    });
+  }
+}));
+
+app.post("/api/agents/:agentId/heartbeat", route(async (request, response) => {
+  try {
+    const agentId = request.params.agentId;
+    if (!agentId) {
+      response.status(400).json({ error: "agentId is required." });
+      return;
+    }
+
+    const body = parseAgentHeartbeatRequest(request.body ?? null);
+    const status = parseAgentRuntimeStatus(body.status);
+    const ttlSeconds =
+      typeof body.ttlSeconds === "number"
+        ? body.ttlSeconds
+        : typeof body.ttlSeconds === "string"
+          ? Number.parseInt(body.ttlSeconds, 10)
+          : undefined;
+    response.json(
+      await controlPlane.recordAgentRuntimeHeartbeat({
+        agentId,
+        ...(typeof body.sessionId === "string" && body.sessionId.trim().length > 0
+          ? { sessionId: body.sessionId.trim() }
+          : {}),
+        ...(status ? { status } : {}),
+        ...(typeof ttlSeconds === "number" && Number.isFinite(ttlSeconds) ? { ttlSeconds } : {}),
+        ...(typeof body.note === "string" && body.note.trim().length > 0 ? { note: body.note.trim() } : {}),
+        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to record agent heartbeat."
     });
   }
 }));
