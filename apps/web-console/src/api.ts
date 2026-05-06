@@ -1,5 +1,6 @@
 import type {
   AgentProfileState,
+  AgentRuntimeAvailabilityState,
   AgentRegistryEntry,
   ConsoleStateResponse,
   HireRequestReceipt,
@@ -284,6 +285,10 @@ export function fetchConsoleState(sessionId?: string, agentId?: string): Promise
 
 export function fetchAgentRegistry(): Promise<AgentRegistryEntry[]> {
   return request<AgentRegistryEntry[]>("/api/agents");
+}
+
+export function fetchAgentRuntimeAvailability(agentId: string): Promise<AgentRuntimeAvailabilityState> {
+  return request<AgentRuntimeAvailabilityState>(`/api/agents/${encodeURIComponent(agentId)}/availability`);
 }
 
 export function checkMissionAuthOverlay(input: {

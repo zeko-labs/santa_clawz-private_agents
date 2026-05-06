@@ -12,6 +12,7 @@ import {
 import { createTenantKeyBroker, type TenantKeyBrokerRuntimeDescriptor, TenantKeyBroker } from "@clawz/key-broker";
 import {
   canonicalDigest,
+  type AgentRuntimeAvailabilityState,
   type AgentRegistryEntry,
   type AgentOwnershipChallengeState,
   type AgentOwnershipState,
@@ -54,6 +55,7 @@ const DEFAULT_SESSION_ID = "session_demo_enterprise";
 const DEFAULT_TURN_ID = "turn_0011";
 const OPENCLAW_OWNERSHIP_CHALLENGE_PATH = "/.well-known/santaclawz-agent-challenge.json";
 const OWNERSHIP_CHALLENGE_TTL_MS = 15 * 60 * 1000;
+const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
@@ -340,6 +342,11 @@ interface SubmitHireRequestOptions {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+}
+
+interface AgentRuntimeAvailabilityOptions {
+  sessionId?: string;
+  agentId?: string;
 }
 
 interface ConsoleStateOptions {
@@ -668,6 +675,13 @@ function normalizeHostedServiceBaseUrl(rawUrl: string, label: string) {
 
   const pathname = parsed.pathname.replace(/\/+$/, "");
   return `${parsed.origin}${pathname === "/" ? "" : pathname}`;
+}
+
+function shouldCheckAgentRuntimeReachability() {
+  if (process.env.CLAWZ_VALIDATE_AGENT_URLS === "false") {
+    return false;
+  }
+  return process.env.NODE_ENV === "production" || process.env.CLAWZ_VALIDATE_AGENT_URLS === "true";
 }
 
 function hostedServiceUrlFor(baseUrl: string, relativePath: string) {
@@ -1790,6 +1804,101 @@ export class ClawzControlPlane {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async checkOpenClawAgentReachability(input: {
+    state: ConsolePersistenceState;
+    sessionId: string;
+    profile: AgentProfileState;
+    trustModeId?: TrustModeId;
+  }): Promise<AgentRuntimeAvailabilityState> {
+    const checkedAtIso = new Date().toISOString();
+    const openClawUrl = input.profile.openClawUrl.trim();
+    const agentId = this.agentIdForSession(input.state, input.sessionId, input.trustModeId ?? input.state.activeMode);
+
+    if (!openClawUrl) {
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        openClawUrl,
+        checkedAtIso,
+        reachable: false,
+        status: "not-configured",
+        reason: "This agent has no OpenClaw URL configured."
+      };
+    }
+
+    try {
+      this.validateOpenClawUrl(openClawUrl);
+    } catch (error) {
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        openClawUrl,
+        checkedAtIso,
+        reachable: false,
+        status: "offline",
+        reason: error instanceof Error ? error.message : "The OpenClaw URL is not valid."
+      };
+    }
+
+    if (!shouldCheckAgentRuntimeReachability()) {
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        openClawUrl,
+        checkedAtIso,
+        reachable: true,
+        status: "check-disabled",
+        reason: "Runtime reachability checks are disabled in this environment."
+      };
+    }
+
+    try {
+      const response = await fetch(openClawUrl, {
+        method: "GET",
+        headers: {
+          accept: "application/json,text/plain,*/*"
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(AGENT_RUNTIME_CHECK_TIMEOUT_MS)
+      });
+      const reachable = response.ok || response.status === 401 || response.status === 403 || response.status === 405;
+
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        openClawUrl,
+        checkedAtIso,
+        reachable,
+        status: reachable ? "online" : "offline",
+        httpStatus: response.status,
+        ...(reachable
+          ? { reason: response.ok ? "OpenClaw agent endpoint responded." : `OpenClaw agent endpoint responded with ${response.status}.` }
+          : { reason: `OpenClaw agent endpoint returned ${response.status}.` })
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "network request failed";
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        openClawUrl,
+        checkedAtIso,
+        reachable: false,
+        status: "offline",
+        reason: `OpenClaw agent endpoint could not be reached (${message}).`
+      };
+    }
+  }
+
+  private assertAgentRuntimeReachable(availability: AgentRuntimeAvailabilityState) {
+    if (availability.reachable) {
+      return;
+    }
+
+    throw new Error(
+      `This agent appears offline. SantaClawz will not request payment or submit a hire until the OpenClaw endpoint is reachable. ${availability.reason ?? ""}`.trim()
+    );
   }
 
   private buildOwnershipChallengeRecord(openClawUrl: string, issuedAtIso: string): SessionOwnershipChallengeRecord {
@@ -3586,6 +3695,20 @@ export class ClawzControlPlane {
     };
   }
 
+  async getAgentRuntimeAvailability(options: AgentRuntimeAvailabilityOptions): Promise<AgentRuntimeAvailabilityState> {
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, options);
+    const events = await this.loadEvents();
+    const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
+    const profile = this.profileForSession(state, sessionId, trustModeId);
+    return this.checkOpenClawAgentReachability({
+      state,
+      sessionId,
+      profile,
+      trustModeId
+    });
+  }
+
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
@@ -4006,6 +4129,14 @@ export class ClawzControlPlane {
     if (options.taskPrompt.trim().length === 0 || options.requesterContact.trim().length === 0) {
       throw new Error("taskPrompt and requesterContact are required.");
     }
+    this.assertAgentRuntimeReachable(
+      await this.checkOpenClawAgentReachability({
+        state,
+        sessionId,
+        profile,
+        trustModeId
+      })
+    );
     const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
 
     const submittedAtIso = new Date().toISOString();

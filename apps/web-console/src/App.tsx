@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type {
   AgentProfileState,
+  AgentRuntimeAvailabilityState,
   AgentRegistryEntry,
   ConsoleStateResponse,
   HireRequestReceipt,
@@ -12,6 +13,7 @@ import {
   ApiError,
   checkAndSaveMissionAuthOverlay,
   checkMissionAuthOverlay,
+  fetchAgentRuntimeAvailability,
   fetchAgentRegistry,
   fetchConsoleState,
   getStoredAdminKey,
@@ -680,6 +682,8 @@ export function App() {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [registry, setRegistry] = useState<AgentRegistryEntry[]>([]);
+  const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
+  const [agentAvailabilityLoading, setAgentAvailabilityLoading] = useState(false);
   const [hireDraft, setHireDraft] = useState<HireDraft>({
     taskPrompt: "",
     budgetMina: "",
@@ -834,6 +838,38 @@ export function App() {
       cancelled = true;
     };
   }, [activeSection, state?.session.sessionId]);
+
+  useEffect(() => {
+    if (activeSection !== "explore" || !sharedAgentId) {
+      setAgentAvailability(null);
+      setAgentAvailabilityLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAgentAvailabilityLoading(true);
+    void fetchAgentRuntimeAvailability(sharedAgentId)
+      .then((availability) => {
+        if (!cancelled) {
+          setAgentAvailability(availability);
+        }
+      })
+      .catch((nextError: Error) => {
+        if (!cancelled) {
+          setAgentAvailability(null);
+          setError(nextError.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAgentAvailabilityLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, sharedAgentId, state?.profile.openClawUrl]);
 
   useEffect(() => {
     setDraftPayoutWalletValue(profile.payoutWallets[selectedPayoutWalletKey] ?? "");
@@ -1484,17 +1520,29 @@ export function App() {
       ? [`--payment-notes ${shellQuote(paymentProfile.paymentNotes)}`]
       : [])
   ].join(" ");
+  const focusedAgentAvailability =
+    sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
+  const agentRuntimeCheckPending = Boolean(sharedAgentId) && agentAvailabilityLoading && !focusedAgentAvailability;
+  const agentRuntimeOffline = Boolean(
+    sharedAgentId && focusedAgentAvailability && !focusedAgentAvailability.reachable
+  );
   const canSubmitHire =
     Boolean(sharedAgentId) &&
     !agentArchived &&
     published &&
     profile.openClawUrl.trim().length > 0 &&
+    !agentRuntimeCheckPending &&
+    !agentRuntimeOffline &&
     hireDraft.taskPrompt.trim().length > 0 &&
     hireDraft.requesterContact.trim().length > 0;
   const hireStatusCopy = agentArchived
     ? `This agent is archived on SantaClawz${archivedAtLabel}. Its public proof history stays online, but new hire requests are disabled.`
     : !published
       ? "This agent still needs to publish on Zeko before it can accept work."
+      : agentRuntimeCheckPending
+        ? "Checking that this OpenClaw agent is online before SantaClawz requests payment or submits work."
+        : agentRuntimeOffline
+          ? `This OpenClaw agent appears offline. SantaClawz will not request payment or send hires until it is reachable${focusedAgentAvailability?.reason ? `: ${focusedAgentAvailability.reason}` : "."}`
       : savedPaymentsEnabled && !savedPaymentProfileReady
         ? "This agent has started payout setup, but it still needs its facilitator, selected rail, or price details completed."
         : savedPaymentsEnabled && paidJobsEnabled
@@ -2918,7 +2966,13 @@ export function App() {
                                 });
                             }}
                           >
-                            {pendingAction === "hire-request" ? "Sending..." : "Send hire request"}
+                            {pendingAction === "hire-request"
+                              ? "Sending..."
+                              : agentRuntimeCheckPending
+                                ? "Checking agent..."
+                                : agentRuntimeOffline
+                                  ? "Agent offline"
+                                  : "Send hire request"}
                           </button>
                         </div>
                       </div>

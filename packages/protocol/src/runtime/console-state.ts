@@ -472,6 +472,17 @@ export interface HireRequestReceipt {
   paidJobsEnabled: boolean;
 }
 
+export interface AgentRuntimeAvailabilityState {
+  agentId: string;
+  sessionId: string;
+  openClawUrl: string;
+  checkedAtIso: string;
+  reachable: boolean;
+  status: "online" | "offline" | "not-configured" | "check-disabled";
+  httpStatus?: number;
+  reason?: string;
+}
+
 export interface AdminAccessState {
   requiresAdminKey: boolean;
   hasAdminAccess: boolean;

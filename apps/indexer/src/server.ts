@@ -8,6 +8,7 @@ import {
   type ClawzAgentProofBundle,
   type ClawzAgentProofVerificationRequest,
   type ClawzAgentProofVerificationResponse,
+  type ConsoleStateResponse,
   type PrivacyApprovalRecord,
   type TrustModeId,
   type WitnessPlanLike,
@@ -518,6 +519,24 @@ async function buildX402PlanFromQuery(request: IndexerRequest) {
   });
 }
 
+async function ensureAgentOnlineForPayment(response: IndexerResponse, consoleState: ConsoleStateResponse): Promise<boolean> {
+  const agentAvailability = await controlPlane.getAgentRuntimeAvailability({
+    sessionId: consoleState.session.sessionId
+  });
+
+  if (agentAvailability.reachable) {
+    return true;
+  }
+
+  response.status(503).json({
+    ok: false,
+    paymentRequested: false,
+    error: "Agent endpoint is offline; payment not requested.",
+    agentAvailability
+  });
+  return false;
+}
+
 function normalizeBaseUrl(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
@@ -839,6 +858,22 @@ app.get("/api/agents", route(async (_request, response) => {
   response.json(await controlPlane.listRegisteredAgents());
 }));
 
+app.get("/api/agents/:agentId/availability", route(async (request, response) => {
+  try {
+    const agentId = request.params.agentId;
+    if (!agentId) {
+      response.status(400).json({ error: "agentId is required." });
+      return;
+    }
+
+    response.json(await controlPlane.getAgentRuntimeAvailability({ agentId }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to check agent availability."
+    });
+  }
+}));
+
 app.post("/api/mission-auth/check", route(async (request, response) => {
   try {
     const parsed = parseMissionAuthOverlayRequest(request.body);
@@ -917,6 +952,9 @@ app.get("/api/x402/proof", route(async (request, response) => {
       }));
       return;
     }
+    if (!(await ensureAgentOnlineForPayment(response, snapshot.consoleState))) {
+      return;
+    }
 
     const paymentHeaderValue = request.header("payment-signature");
     const paymentPayload = parseAgentX402PaymentPayload({
@@ -976,6 +1014,9 @@ app.post("/api/x402/verify", route(async (_request, response) => {
       });
       return;
     }
+    if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
+      return;
+    }
 
     const paymentHeaderValue = _request.header("payment-signature");
     const paymentPayload = parseAgentX402PaymentPayload({
@@ -1014,6 +1055,9 @@ app.post("/api/x402/settle", route(async (_request, response) => {
         previewOnly: true,
         error: "No live exact-price x402 rail is configured for this agent yet."
       });
+      return;
+    }
+    if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
       return;
     }
 
