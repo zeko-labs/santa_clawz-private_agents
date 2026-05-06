@@ -1610,7 +1610,6 @@ export function App() {
     ...(missionAuthEnabled && missionAuthOverlay.scopeHints.length > 0
       ? [`--mission-auth-scopes ${shellQuote(missionAuthOverlay.scopeHints.join(","))}`]
       : []),
-    `--proving-location ${shellQuote(profile.preferredProvingLocation)}`,
     "--write-env .env.santaclawz",
     "--write-challenge .well-known/santaclawz-agent-challenge.json"
   ].join(" ");
@@ -1981,23 +1980,6 @@ export function App() {
                 />
               </label>
             ) : null}
-
-            <label className="field">
-              <span>Proving preference</span>
-              <select
-                className="text-input"
-                value={profile.preferredProvingLocation}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    preferredProvingLocation: event.target.value as PrivacyProvingLocation
-                  });
-                }}
-              >
-                <option value="client">Client/local proving</option>
-                <option value="sovereign-rollup">Sovereign rollup proving</option>
-              </select>
-            </label>
 
           </div>
 
