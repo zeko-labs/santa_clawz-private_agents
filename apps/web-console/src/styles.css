@@ -1957,7 +1957,9 @@ h3 {
   margin-top: 18px;
 }
 
-.manage-session-picker {
+.manage-agent-card {
+  display: grid;
+  gap: 12px;
   align-items: stretch;
   justify-content: space-between;
   padding: 14px;
@@ -1966,13 +1968,25 @@ h3 {
   background: rgba(255, 255, 255, 0.44);
 }
 
-.manage-session-picker > div {
-  flex: 1 1 280px;
+.manage-agent-open-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 14px;
 }
 
-.manage-session-picker .session-select {
-  flex: 0 1 420px;
-  align-self: center;
+.manage-agent-input-field {
+  flex: 1 1 420px;
+}
+
+.manage-agent-open-form .primary-button {
+  min-height: 50px;
+}
+
+.manage-current-agent {
+  margin-top: 10px;
+  word-break: break-word;
 }
 
 .manage-session-note {

@@ -49,6 +49,7 @@ type DuplicateClaimTarget = {
 type ExploreFilterKey = "all" | "payouts-live" | "owner-verified" | "mission-auth-verified" | "published-on-zeko";
 
 type ValueInputEvent = { target: { value: string } };
+type FormSubmitEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
@@ -178,6 +179,39 @@ function initialSelectedSessionId(route: AppRouteState) {
     return route.sessionId;
   }
   return route.section === "configure" && !route.agentId ? ONBOARDING_SESSION_ID : null;
+}
+
+function parseManageAgentTarget(value: string) {
+  let target = value.trim().replace(/[.,]+$/g, "");
+  if (!target) {
+    return null;
+  }
+
+  try {
+    const url = new URL(target);
+    const sessionId = url.searchParams.get("sessionId")?.trim();
+    const agentId = url.searchParams.get("agentId")?.trim();
+    if (sessionId) {
+      return { sessionId };
+    }
+    if (agentId) {
+      return { agentId };
+    }
+
+    const segments = url.pathname.split("/").map((segment) => segment.trim()).filter(Boolean);
+    const knownRouteIndex = segments.findIndex((segment) => segment === "configure" || segment === "manage" || segment === "explore");
+    const pathTarget =
+      knownRouteIndex >= 0 ? segments[knownRouteIndex + 1] : segments.length > 0 ? segments[segments.length - 1] : "";
+    target = decodeURIComponent(pathTarget ?? "").trim().replace(/[.,]+$/g, "");
+  } catch {
+    // Plain session ids and public agent ids are expected here.
+  }
+
+  if (!target) {
+    return null;
+  }
+
+  return target.startsWith("session_agent_") ? { sessionId: target } : { agentId: target };
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -724,6 +758,7 @@ export function App() {
   const [profileSessionId, setProfileSessionId] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<NavSectionKey>(initialRoute.section);
   const [sharedAgentId, setSharedAgentId] = useState<string | null>(initialRoute.agentId);
+  const [manageLookupValue, setManageLookupValue] = useState(initialRoute.sessionId ?? initialRoute.agentId ?? "");
   const [profile, setProfile] = useState<AgentProfileDraft>(normalizeProfileDraft());
   const [error, setError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -1189,6 +1224,9 @@ export function App() {
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
       setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
+      if (nextSection === "configure") {
+        setManageLookupValue("");
+      }
       window.history.pushState(null, "", buildSectionPath(nextSection));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -1198,9 +1236,37 @@ export function App() {
     setSharedAgentId(null);
     setActiveSection("configure");
     setSelectedSessionId(nextSessionId ?? null);
+    setManageLookupValue(nextSessionId ?? "");
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", buildSectionPath("configure", nextSessionId));
       window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function openManageTargetAction() {
+    const target = parseManageAgentTarget(manageLookupValue);
+    if (!target) {
+      setError("Paste a SantaClawz profile URL, public agent ID, or session_agent_... record to manage an agent.");
+      return;
+    }
+
+    setPendingAction("open-manage-agent");
+    setError(null);
+    try {
+      const nextState = await fetchConsoleState(target.sessionId, target.sessionId ? undefined : target.agentId);
+      setState(nextState);
+      setSharedAgentId(null);
+      setSelectedSessionId(nextState.session.sessionId);
+      setActiveSection("configure");
+      setManageLookupValue(target.sessionId ?? target.agentId ?? nextState.session.sessionId);
+      if (typeof window !== "undefined") {
+        window.history.pushState(null, "", buildSectionPath("configure", nextState.session.sessionId));
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not open that agent registration.");
+    } finally {
+      setPendingAction(null);
     }
   }
 
@@ -1379,8 +1445,6 @@ export function App() {
   }
 
   const sessionId = selectedSessionId ?? state.session.sessionId;
-  const sessionIds = Array.from(new Set(state.session.knownSessionIds ?? [state.session.sessionId]));
-  const registeredSessionIds = sessionIds.filter((knownSessionId) => knownSessionId.startsWith("session_agent_"));
   const launchTarget = state.liveFlowTargets.turns.find(
     (target) => target.sessionId === sessionId && target.canStartNextTurn
   );
@@ -2254,45 +2318,51 @@ export function App() {
           <section className="panel step-card manage-selector-card">
             <div className="step-head">
               <div className="step-title">
-                <span className="step-number manage-step-number">M</span>
+                <span className="step-number manage-step-number">2</span>
                 <div>
-                  <h2>Existing registrations</h2>
+                  <h2>Manage agent</h2>
                   <p className="panel-copy">
-                    Select a registered SantaClawz agent to update, publish, archive, heartbeat, or inspect proof history.
+                    Open an existing SantaClawz agent to update settings, publish, archive, heartbeat, or inspect proof history.
                   </p>
                 </div>
               </div>
-              <span className="subtle-pill">{isRegisteredSession ? "Agent selected" : "No agent selected"}</span>
             </div>
 
-            {registeredSessionIds.length > 0 ? (
-              <div className="session-picker manage-session-picker">
-                <div>
-                  <span className="metric">Agent registration</span>
-                  <p className="panel-copy manage-session-note">
-                    This is the internal registration record that binds the admin key, public profile, proof history, heartbeat, and payment settings.
-                  </p>
-                </div>
-                <select
-                  className="session-select"
-                  value={isRegisteredSession ? sessionId : registeredSessionIds[0] ?? ""}
-                  onChange={(event: ValueInputEvent) => {
-                    setError(null);
-                    showConfigureSession(event.target.value);
-                  }}
-                >
-                  {registeredSessionIds.map((knownSessionId) => (
-                    <option key={knownSessionId} value={knownSessionId}>
-                      {knownSessionId}
-                    </option>
-                  ))}
-                </select>
+            <div className="manage-agent-card">
+              <div>
+                <span className="metric">Agent registration</span>
+                <p className="panel-copy manage-session-note">
+                  Paste a public profile URL, public agent ID, or session_agent_... record. New agents should still enroll from the command above so they can save their admin key.
+                </p>
               </div>
-            ) : (
-              <div className="status-note">
-                No registered agents yet. Run the enrollment command above, then this area will show the agent for ongoing operations.
-              </div>
-            )}
+              <form
+                className="manage-agent-open-form"
+                onSubmit={(event: FormSubmitEvent) => {
+                  event.preventDefault();
+                  void openManageTargetAction();
+                }}
+              >
+                <label className="field manage-agent-input-field">
+                  <span>Agent URL or ID</span>
+                  <input
+                    className="text-input"
+                    value={manageLookupValue}
+                    onChange={(event: ValueInputEvent) => {
+                      setManageLookupValue(event.target.value);
+                    }}
+                    placeholder="https://santaclawz.ai/explore/... or session_agent_..."
+                  />
+                </label>
+                <button type="submit" className="primary-button" disabled={pendingAction === "open-manage-agent"}>
+                  {pendingAction === "open-manage-agent" ? "Opening..." : "Open agent"}
+                </button>
+              </form>
+              {isRegisteredSession ? (
+                <p className="panel-copy manage-current-agent">
+                  Current: {state.profile.agentName || state.agentId} ({state.session.sessionId})
+                </p>
+              ) : null}
+            </div>
 
             {isRegisteredSession ? (
               <div className="ownership-panel">
