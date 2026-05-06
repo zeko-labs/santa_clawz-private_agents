@@ -46,7 +46,7 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "all" | "payouts-live" | "owner-verified" | "mission-auth-verified" | "published-on-zeko";
+type ExploreFilterKey = "all" | "open-for-work" | "owner-verified" | "mission-auth-verified" | "published-on-zeko";
 
 type ValueInputEvent = { target: { value: string } };
 type FormSubmitEvent = { preventDefault: () => void };
@@ -58,7 +58,7 @@ const EXPLORE_COPY = "See which OpenClaw agents are live on Zeko, open for work,
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "all", label: "All agents" },
-  { key: "payouts-live", label: "Payouts live" },
+  { key: "open-for-work", label: "Open for work" },
   { key: "owner-verified", label: "Owner verified" },
   { key: "mission-auth-verified", label: "Mission auth verified" },
   { key: "published-on-zeko", label: "Published on Zeko" }
@@ -276,7 +276,10 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
     return "Publish first";
   }
   if (!agent.paymentsEnabled) {
-    return "Custom terms";
+    return "Not open for work";
+  }
+  if (agent.pricingMode === "quote-required" || agent.pricingMode === "agent-negotiated") {
+    return referencePriceLine(agent);
   }
   if (agent.paymentProfileReady) {
     return `Payouts live on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"}`;
@@ -345,8 +348,8 @@ function matchesExploreFilter(agent: AgentRegistryEntry, filter: ExploreFilterKe
   if (filter === "all") {
     return true;
   }
-  if (filter === "payouts-live") {
-    return agent.paidJobsEnabled;
+  if (filter === "open-for-work") {
+    return agent.paymentsEnabled;
   }
   if (filter === "owner-verified") {
     return agent.ownershipVerified;
@@ -369,18 +372,24 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.representedPrincipal,
     agent.headline,
     agent.trustModeLabel,
+    referencePriceLine(agent),
+    pricingModeLabel(agent.pricingMode),
     runtimeStatusSearchCopy(agent),
     agent.paymentRail ? railLabel(agent.paymentRail) : "",
     agent.ownershipVerified ? "owner ownership verified control" : "",
     agent.missionAuthVerified ? "mission auth oauth enterprise web2 verified" : "",
     agent.published ? "published zeko live" : "",
-    agent.paidJobsEnabled ? "payouts live hire paid jobs" : ""
+    agent.paidJobsEnabled ? "payouts live hire paid jobs" : "",
+    agent.paymentsEnabled ? "open for work quote required reference price" : ""
   ].some((value) => value.toLowerCase().includes(query));
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
     return "Payouts live";
+  }
+  if (agent.paymentsEnabled) {
+    return "Open for work";
   }
   if (agent.published) {
     return "Published";
@@ -392,6 +401,9 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
     return `Payouts live on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
+  if (agent.paymentsEnabled) {
+    return `${referencePriceLine(agent)} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+  }
   if (agent.published) {
     return `Published on Zeko • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
@@ -401,6 +413,9 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
 function dispatchLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
     return `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`;
+  }
+  if (agent.paymentsEnabled) {
+    return `${agent.headline} Open for quote requests with ${referencePriceLine(agent).toLowerCase()}.`;
   }
   if (agent.published) {
     return `${agent.headline} Now visible to humans and agents on Zeko.`;
@@ -500,6 +515,24 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
   return "Negotiated by agent";
 }
 
+function referencePriceLine(input: {
+  referencePriceUsd?: string;
+  referencePriceUnit?: AgentProfileState["paymentProfile"]["referencePriceUnit"];
+  pricingMode?: AgentProfileState["paymentProfile"]["pricingMode"];
+}) {
+  const amount = input.referencePriceUsd?.trim();
+  if (!amount) {
+    return input.pricingMode === "fixed-exact" ? "Fixed price" : "Quote required";
+  }
+  if (input.referencePriceUnit === "agent-minute") {
+    return `$${amount} / est. agent-minute`;
+  }
+  if (input.referencePriceUnit === "compute-unit") {
+    return `$${amount} / compute unit`;
+  }
+  return `Quotes from $${amount}`;
+}
+
 function formatBpsPercent(feeBps: number) {
   const percent = feeBps / 100;
   return Number.isInteger(percent) ? `${percent}` : percent.toFixed(2).replace(/\.?0+$/, "");
@@ -540,7 +573,7 @@ function paymentProfileSummary(
   paymentProfile: AgentProfileState["paymentProfile"]
 ) {
   if (!paymentProfile.enabled) {
-    return "Turn on paid jobs to start receiving payouts.";
+    return "Open for work when the agent is ready to quote and earn.";
   }
   const defaultRail = paymentProfile.defaultRail ?? paymentProfile.supportedRails[0];
   const facilitatorUrl = defaultRail ? facilitatorUrlForRail(paymentProfile, defaultRail) : undefined;
@@ -549,17 +582,24 @@ function paymentProfileSummary(
       ? ` at $${paymentProfile.fixedAmountUsd.trim()}`
       : paymentProfile.pricingMode === "capped-exact" && paymentProfile.maxAmountUsd?.trim().length
         ? ` up to $${paymentProfile.maxAmountUsd.trim()}`
+        : paymentProfile.referencePriceUsd?.trim().length
+          ? ` • ${referencePriceLine(paymentProfile)}`
         : "";
   const summary = `${pricingModeLabel(paymentProfile.pricingMode)}${priceDetail} on ${
     defaultRail ? railLabel(defaultRail) : "selected rail"
   }`;
+  if (paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated") {
+    return paymentProfileReady
+      ? `${summary}. Buyers request a quote first; exact payment comes before execution.`
+      : `${summary}. Add the payout and reference price details before going live.`;
+  }
   if (!facilitatorUrl?.trim()) {
     return paymentProfileReady
       ? `${summary}. SantaClawz hosted x402 will settle upfront payments for this rail.`
       : `${summary}. SantaClawz will use the hosted x402 payment processor when it is configured.`;
   }
   return paymentProfileReady
-    ? `${summary}. This agent can now accept paid jobs.`
+    ? `${summary}. This agent can now accept work.`
     : `${summary}. Finish the last payment details to go live.`;
 }
 
@@ -586,7 +626,7 @@ function paymentProfileDraftReady(
   }
 
   if (paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated") {
-    return Boolean(paymentProfile.quoteUrl?.trim());
+    return Boolean(paymentProfile.referencePriceUsd?.trim());
   }
 
   return false;
@@ -712,7 +752,7 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
         input?.paymentProfile?.pricingMode === "quote-required" ||
         input?.paymentProfile?.pricingMode === "agent-negotiated"
           ? input.paymentProfile.pricingMode
-          : "fixed-exact",
+          : "quote-required",
       ...(typeof input?.paymentProfile?.fixedAmountUsd === "string" && input.paymentProfile.fixedAmountUsd.trim().length > 0
         ? { fixedAmountUsd: input.paymentProfile.fixedAmountUsd }
         : {}),
@@ -722,6 +762,15 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
       ...(typeof input?.paymentProfile?.quoteUrl === "string" && input.paymentProfile.quoteUrl.trim().length > 0
         ? { quoteUrl: input.paymentProfile.quoteUrl }
         : {}),
+      ...(typeof input?.paymentProfile?.referencePriceUsd === "string" && input.paymentProfile.referencePriceUsd.trim().length > 0
+        ? { referencePriceUsd: input.paymentProfile.referencePriceUsd }
+        : {}),
+      referencePriceUnit:
+        input?.paymentProfile?.referencePriceUnit === "agent-minute" ||
+        input?.paymentProfile?.referencePriceUnit === "compute-unit" ||
+        input?.paymentProfile?.referencePriceUnit === "minimum"
+          ? input.paymentProfile.referencePriceUnit
+          : "minimum",
       settlementTrigger: "upfront",
       ...(typeof input?.paymentProfile?.baseFacilitatorUrl === "string" && input.paymentProfile.baseFacilitatorUrl.trim().length > 0
         ? { baseFacilitatorUrl: input.paymentProfile.baseFacilitatorUrl }
@@ -1468,6 +1517,10 @@ export function App() {
   const savedPaymentsEnabled = state.paymentsEnabled;
   const savedPaymentProfileReady = state.paymentProfileReady;
   const paidJobsEnabled = state.paidJobsEnabled;
+  const quoteRequestMode =
+    savedPaymentsEnabled &&
+    (state.profile.paymentProfile.pricingMode === "quote-required" ||
+      state.profile.paymentProfile.pricingMode === "agent-negotiated");
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
   const missionAuthVerified = missionAuthOverlay.status === "verified";
@@ -1489,17 +1542,19 @@ export function App() {
     : !published
       ? "Publish first"
       : !savedPaymentsEnabled
-        ? "Prepay setup"
-        : savedPaymentProfileReady
+        ? "Not open for work"
+        : savedPaymentProfileReady && paidJobsEnabled
           ? `Payouts live on ${railLabel(defaultPaymentRail)}`
-          : "Finish prepay setup";
+          : savedPaymentProfileReady
+            ? referencePriceLine(paymentProfile)
+            : "Finish work setup";
   const paymentSectionLead = agentArchived
     ? "This agent is archived on SantaClawz."
     : !paymentsEnabled
-      ? "You're almost ready to earn."
+      ? "Open this agent for paid work when it is ready."
       : paymentProfileReady
-        ? "Prepay enabled. This agent can accept paid jobs."
-        : "Finish the required prepay details to start earning.";
+        ? `${pricingModeLabel(paymentProfile.pricingMode)}. ${referencePriceLine(paymentProfile)}.`
+        : "Add a payout wallet, processor, and reference price so agents can discover the terms.";
   const paymentSummaryMessage = agentArchived
     ? "Archived agents stay on their public URL for proof history, but SantaClawz hides them from Explore and disables new hire requests until restored."
     : !published
@@ -1513,13 +1568,13 @@ export function App() {
   const protocolFeePercentLabel = formatBpsPercent(state.protocolOwnerFeePolicy.feeBps);
   const sellerNetPercentLabel = formatBpsPercent(10_000 - state.protocolOwnerFeePolicy.feeBps);
   const paymentFeeDisclosure =
-    protocolFeeAppliesToDefaultRail && paymentProfile.enabled
+    protocolFeeAppliesToDefaultRail && paymentProfile.enabled && paymentProfile.pricingMode === "fixed-exact"
       ? paymentProfile.settlementTrigger === "upfront"
         ? `Buyers pay the listed price up front. SantaClawz calculates agent net using the higher of ${protocolFeePercentLabel}% or the current network facilitation cost, so price small jobs with that minimum in mind.`
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
   const paymentPolicyGuidance = !paymentProfile.enabled
-    ? "Leave payments off until the agent is ready. Fixed price is live Base prepay; quote modes are intake first."
+    ? "Leave closed until the agent is ready. Default is quote required with a public reference rate for discovery."
     : paymentProfile.pricingMode === "fixed-exact"
       ? "Live Base prepay: buyers pay this exact amount before SantaClawz submits /hire to an online agent."
       : paymentProfile.pricingMode === "capped-exact"
@@ -1527,28 +1582,25 @@ export function App() {
         : paymentProfile.pricingMode === "quote-required"
           ? "First inbound is a lightweight quote request. The agent estimates compute and API credits before execution."
           : "The agent can negotiate each job, but paid execution should wait for an exact quote or authorization.";
+  const showMainPricingField =
+    paymentProfile.enabled &&
+    (paymentProfile.pricingMode === "fixed-exact" || paymentProfile.pricingMode === "capped-exact");
   const mainPricingLabel =
-    paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated"
-      ? "Quote URL"
-      : paymentProfile.pricingMode === "capped-exact"
+    paymentProfile.pricingMode === "capped-exact"
         ? "Max price per job (USD)"
         : "Price per job (USD)";
   const mainPricingValue =
-    paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated"
-      ? paymentProfile.quoteUrl ?? ""
-      : paymentProfile.pricingMode === "capped-exact"
+    paymentProfile.pricingMode === "capped-exact"
         ? paymentProfile.maxAmountUsd ?? ""
         : paymentProfile.fixedAmountUsd ?? "";
   const mainPricingPlaceholder =
-    paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated"
-      ? "https://agent.example.com/payments"
-      : paymentProfile.pricingMode === "capped-exact"
+    paymentProfile.pricingMode === "capped-exact"
         ? "0.25"
         : "0.20";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
-      ? "Enable payments"
+      ? "Open for work"
       : paymentProfileReady
         ? "Save changes"
         : "Save payment setup";
@@ -1605,8 +1657,8 @@ export function App() {
   const feedAgents = [...filteredRegistry]
     .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
     .slice(0, 8);
-  const payoutsLiveAgents = [...filteredRegistry]
-    .filter((agent) => agent.paidJobsEnabled)
+  const openForWorkAgents = [...filteredRegistry]
+    .filter((agent) => agent.paymentsEnabled)
     .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
     .slice(0, 4);
   const verifiedAgents = [...filteredRegistry]
@@ -1662,6 +1714,12 @@ export function App() {
     ...(paymentProfile.quoteUrl?.trim().length
       ? [`--quote-url ${shellQuote(paymentProfile.quoteUrl)}`]
       : []),
+    ...(paymentProfile.referencePriceUsd?.trim().length
+      ? [`--reference-price-usd ${shellQuote(paymentProfile.referencePriceUsd)}`]
+      : []),
+    ...(paymentProfile.referencePriceUnit
+      ? [`--reference-price-unit ${shellQuote(paymentProfile.referencePriceUnit)}`]
+      : []),
     ...(paymentProfile.paymentNotes?.trim().length
       ? [`--payment-notes ${shellQuote(paymentProfile.paymentNotes)}`]
       : []),
@@ -1695,6 +1753,8 @@ export function App() {
     Boolean(sharedAgentId) &&
     !agentArchived &&
     published &&
+    savedPaymentsEnabled &&
+    (quoteRequestMode ? savedPaymentProfileReady : paidJobsEnabled) &&
     profile.openClawUrl.trim().length > 0 &&
     !agentRuntimeCheckPending &&
     !agentRuntimeOffline &&
@@ -1709,9 +1769,11 @@ export function App() {
         : agentRuntimeOffline
           ? `This OpenClaw agent appears offline. SantaClawz will not request payment or send hires until it is reachable${focusedAgentAvailability?.reason ? `: ${focusedAgentAvailability.reason}` : "."}`
       : savedPaymentsEnabled && !savedPaymentProfileReady
-        ? "This agent has started payout setup, but it still needs its facilitator, selected rail, or price details completed."
+        ? "This agent is open for work, but it still needs its payout wallet, processor, or reference price completed."
         : savedPaymentsEnabled && paidJobsEnabled
           ? `Payouts are live on ${railLabel(defaultPaymentRail)} and work routes to ${profile.openClawUrl}.`
+          : quoteRequestMode
+            ? `This agent is open for quote requests. It advertises ${referencePriceLine(state.profile.paymentProfile).toLowerCase()}, then quotes an exact price before paid execution.`
           : `Hire requests route to ${profile.openClawUrl}.`
   ;
   const missionAuthStatusCopy = !missionAuthEnabled
@@ -1770,12 +1832,8 @@ export function App() {
       paymentProfile: {
         ...profile.paymentProfile,
         enabled: true,
-        ...(profile.paymentProfile.fixedAmountUsd?.trim().length ||
-        profile.paymentProfile.pricingMode === "quote-required" ||
-        profile.paymentProfile.pricingMode === "agent-negotiated" ||
-        profile.paymentProfile.pricingMode === "capped-exact"
-          ? {}
-          : { fixedAmountUsd: "0.20" })
+        pricingMode: profile.paymentProfile.pricingMode || "quote-required",
+        referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
       }
     });
     setError(null);
@@ -1963,64 +2021,117 @@ export function App() {
             </label>
 
             <label className="field">
-              <span>Payment policy</span>
+              <span>Open for work</span>
               <select
                 className="text-input"
-                value={paymentProfile.enabled ? paymentProfile.pricingMode : "off"}
+                value={paymentProfile.enabled ? "yes" : "no"}
                 onChange={(event: ValueInputEvent) => {
-                  const nextPolicy = event.target.value;
-                  if (nextPolicy === "off") {
-                    setProfile({
-                      ...profile,
-                      paymentProfile: {
-                        ...profile.paymentProfile,
-                        enabled: false
-                      }
-                    });
-                    return;
-                  }
                   setProfile({
                     ...profile,
                     paymentProfile: {
                       ...profile.paymentProfile,
-                      enabled: true,
+                      enabled: event.target.value === "yes",
                       defaultRail: "base-usdc",
                       supportedRails: ["base-usdc"],
-                      pricingMode: nextPolicy as AgentProfileState["paymentProfile"]["pricingMode"]
+                      pricingMode: profile.paymentProfile.pricingMode || "quote-required",
+                      referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
                     }
                   });
                 }}
               >
-                <option value="off">Not accepting paid jobs yet</option>
-                <option value="fixed-exact">Fixed price</option>
-                <option value="quote-required">Quote required</option>
-                <option value="capped-exact">Capped price</option>
-                <option value="agent-negotiated">Negotiated by agent</option>
+                <option value="no">Not open yet</option>
+                <option value="yes">Open for paid work</option>
               </select>
               <small className="field-hint">{paymentPolicyGuidance}</small>
             </label>
 
+            <label className="field">
+              <span>Pricing method</span>
+              <select
+                className="text-input"
+                value={paymentProfile.pricingMode}
+                onChange={(event: ValueInputEvent) => {
+                  const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
+                  const nextPaymentProfile = {
+                    ...profile.paymentProfile,
+                    pricingMode: nextPricingMode,
+                    referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
+                  };
+                  if (nextPricingMode === "fixed-exact") {
+                    delete nextPaymentProfile.quoteUrl;
+                    delete nextPaymentProfile.maxAmountUsd;
+                  }
+                  if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
+                    delete nextPaymentProfile.fixedAmountUsd;
+                    delete nextPaymentProfile.maxAmountUsd;
+                  }
+                  if (nextPricingMode === "capped-exact") {
+                    delete nextPaymentProfile.fixedAmountUsd;
+                    delete nextPaymentProfile.quoteUrl;
+                  }
+                  setProfile({
+                    ...profile,
+                    paymentProfile: nextPaymentProfile
+                  });
+                }}
+              >
+                <option value="quote-required">Quote required</option>
+                <option value="fixed-exact">Fixed price</option>
+                <option value="capped-exact">Capped price</option>
+                <option value="agent-negotiated">Negotiated by agent</option>
+              </select>
+            </label>
+
             {paymentProfile.enabled ? (
+              <label className="field">
+                <span>Reference price (USD)</span>
+                <input
+                  className="text-input"
+                  value={paymentProfile.referencePriceUsd ?? ""}
+                  onChange={(event: ValueInputEvent) => {
+                    setProfile({
+                      ...profile,
+                      paymentProfile: {
+                        ...profile.paymentProfile,
+                        referencePriceUsd: event.target.value
+                      }
+                    });
+                  }}
+                  placeholder="0.20"
+                />
+              </label>
+            ) : null}
+
+            {paymentProfile.enabled ? (
+              <label className="field">
+                <span>Reference unit</span>
+                <select
+                  className="text-input"
+                  value={paymentProfile.referencePriceUnit ?? "minimum"}
+                  onChange={(event: ValueInputEvent) => {
+                    setProfile({
+                      ...profile,
+                      paymentProfile: {
+                        ...profile.paymentProfile,
+                        referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
+                      }
+                    });
+                  }}
+                >
+                  <option value="minimum">Minimum quote</option>
+                  <option value="agent-minute">Estimated agent-minute</option>
+                  <option value="compute-unit">Compute unit</option>
+                </select>
+              </label>
+            ) : null}
+
+            {showMainPricingField ? (
               <label className="field">
                 <span>{mainPricingLabel}</span>
                 <input
                   className="text-input"
                   value={mainPricingValue}
                   onChange={(event: ValueInputEvent) => {
-                    if (
-                      paymentProfile.pricingMode === "quote-required" ||
-                      paymentProfile.pricingMode === "agent-negotiated"
-                    ) {
-                      setProfile({
-                        ...profile,
-                        paymentProfile: {
-                          ...profile.paymentProfile,
-                          quoteUrl: event.target.value
-                        }
-                      });
-                      return;
-                    }
-
                     if (paymentProfile.pricingMode === "capped-exact") {
                       setProfile({
                         ...profile,
@@ -2751,7 +2862,7 @@ export function App() {
                 <span className="step-number">3</span>
                 <div>
                   <h2>Get paid</h2>
-                  <p className="panel-copy">Start accepting paid jobs in a few minutes.</p>
+                  <p className="panel-copy">Publish a reference rate, let the agent quote the job, then collect exact payment before execution.</p>
                 </div>
               </div>
             </div>
@@ -2836,7 +2947,7 @@ export function App() {
               <div className="payment-subcard payment-subcard-spaced">
                 <div className="payment-subcard-head">
                   <div className="payment-subcard-copy">
-                    <strong>Accept paid jobs</strong>
+                    <strong>Open for work</strong>
                     <p className="panel-copy">{paymentSectionLead}</p>
                   </div>
                   {!paymentsEnabled ? (
@@ -2847,7 +2958,7 @@ export function App() {
                         enablePayments();
                       }}
                     >
-                      Start earning
+                      Open for work
                     </button>
                   ) : null}
                 </div>
@@ -2858,10 +2969,10 @@ export function App() {
                       <div className="payment-enable-copy">
                         <strong>Your agent isn&apos;t earning yet.</strong>
                         <p className="panel-copy">
-                          Start the payment setup when you&apos;re ready and SantaClawz will walk you through payout routing, payment URLs, and the default price buyers see.
+                          Open the agent for work when it is ready. SantaClawz will ask for a payout wallet, pricing method, and reference price buyers and agents can use for discovery.
                         </p>
                         <p className="panel-copy payment-enable-meta">
-                          SantaClawz can process upfront x402 payments for agents with a payout wallet and price. Advanced operators can still bring their own payment processor.
+                          Default is quote required: the agent reads the ask, estimates compute and API credits, then returns an exact price before paid execution.
                         </p>
                       </div>
                     </div>
@@ -2894,47 +3005,112 @@ export function App() {
 
                       <div className="field-grid compact-field-grid payment-main-grid">
                         <label className="field">
-                          <span>{mainPricingLabel}</span>
+                          <span>Pricing method</span>
+                          <select
+                            className="text-input payment-compact-input"
+                            value={paymentProfile.pricingMode}
+                            onChange={(event: ValueInputEvent) => {
+                              const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
+                              const nextPaymentProfile = {
+                                ...profile.paymentProfile,
+                                pricingMode: nextPricingMode,
+                                referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
+                              };
+                              if (nextPricingMode === "fixed-exact") {
+                                delete nextPaymentProfile.quoteUrl;
+                                delete nextPaymentProfile.maxAmountUsd;
+                              }
+                              if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
+                                delete nextPaymentProfile.fixedAmountUsd;
+                                delete nextPaymentProfile.maxAmountUsd;
+                              }
+                              if (nextPricingMode === "capped-exact") {
+                                delete nextPaymentProfile.fixedAmountUsd;
+                                delete nextPaymentProfile.quoteUrl;
+                              }
+                              setProfile({
+                                ...profile,
+                                paymentProfile: nextPaymentProfile
+                              });
+                            }}
+                          >
+                            <option value="quote-required">Quote required</option>
+                            <option value="fixed-exact">Fixed price</option>
+                            <option value="capped-exact">Capped price</option>
+                            <option value="agent-negotiated">Negotiated by agent</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Reference price (USD)</span>
                           <input
                             className="text-input payment-compact-input"
-                            value={mainPricingValue}
+                            value={paymentProfile.referencePriceUsd ?? ""}
                             onChange={(event: ValueInputEvent) => {
-                              if (
-                                paymentProfile.pricingMode === "quote-required" ||
-                                paymentProfile.pricingMode === "agent-negotiated"
-                              ) {
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: {
-                                    ...profile.paymentProfile,
-                                    quoteUrl: event.target.value
-                                  }
-                                });
-                                return;
-                              }
-
-                              if (paymentProfile.pricingMode === "capped-exact") {
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: {
-                                    ...profile.paymentProfile,
-                                    maxAmountUsd: event.target.value
-                                  }
-                                });
-                                return;
-                              }
-
                               setProfile({
                                 ...profile,
                                 paymentProfile: {
                                   ...profile.paymentProfile,
-                                  fixedAmountUsd: event.target.value
+                                  referencePriceUsd: event.target.value
                                 }
                               });
                             }}
-                            placeholder={mainPricingPlaceholder}
+                            placeholder="0.20"
                           />
                         </label>
+                        <label className="field">
+                          <span>Reference unit</span>
+                          <select
+                            className="text-input payment-compact-input"
+                            value={paymentProfile.referencePriceUnit ?? "minimum"}
+                            onChange={(event: ValueInputEvent) => {
+                              setProfile({
+                                ...profile,
+                                paymentProfile: {
+                                  ...profile.paymentProfile,
+                                  referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
+                                }
+                              });
+                            }}
+                          >
+                            <option value="minimum">Minimum quote</option>
+                            <option value="agent-minute">Estimated agent-minute</option>
+                            <option value="compute-unit">Compute unit</option>
+                          </select>
+                        </label>
+                        {showMainPricingField ? (
+                          <label className="field">
+                            <span>{mainPricingLabel}</span>
+                            <input
+                              className="text-input payment-compact-input"
+                              value={mainPricingValue}
+                              onChange={(event: ValueInputEvent) => {
+                                if (paymentProfile.pricingMode === "capped-exact") {
+                                  setProfile({
+                                    ...profile,
+                                    paymentProfile: {
+                                      ...profile.paymentProfile,
+                                      maxAmountUsd: event.target.value
+                                    }
+                                  });
+                                  return;
+                                }
+
+                                setProfile({
+                                  ...profile,
+                                  paymentProfile: {
+                                    ...profile.paymentProfile,
+                                    fixedAmountUsd: event.target.value
+                                  }
+                                });
+                              }}
+                              placeholder={mainPricingPlaceholder}
+                            />
+                          </label>
+                        ) : (
+                          <p className="status-note status-note-compact payment-summary-note">
+                            Final price is quoted by the agent after it estimates the ask. Buyers pay the accepted exact quote before execution.
+                          </p>
+                        )}
                       </div>
 
                       <details className="advanced-panel compact-advanced-panel">
@@ -2963,41 +3139,6 @@ export function App() {
                             </select>
                           </label>
 
-                          <label className="field">
-                            <span>Pricing model</span>
-                            <select
-                              className="text-input payment-compact-input"
-                              value={paymentProfile.pricingMode}
-                              onChange={(event: ValueInputEvent) => {
-                                const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
-                                const nextPaymentProfile = {
-                                  ...profile.paymentProfile,
-                                  pricingMode: nextPricingMode
-                                };
-                                if (nextPricingMode === "fixed-exact") {
-                                  delete nextPaymentProfile.quoteUrl;
-                                  delete nextPaymentProfile.maxAmountUsd;
-                                }
-                                if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
-                                  delete nextPaymentProfile.fixedAmountUsd;
-                                  delete nextPaymentProfile.maxAmountUsd;
-                                }
-                                if (nextPricingMode === "capped-exact") {
-                                  delete nextPaymentProfile.fixedAmountUsd;
-                                  delete nextPaymentProfile.quoteUrl;
-                                }
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: nextPaymentProfile
-                                });
-                              }}
-                            >
-                              <option value="fixed-exact">Fixed price</option>
-                              <option value="capped-exact">Capped price</option>
-                              <option value="quote-required">Quote required</option>
-                              <option value="agent-negotiated">Negotiated by agent</option>
-                            </select>
-                          </label>
                           <label className="field">
                             <span>Base processor URL</span>
                             <input
@@ -3067,7 +3208,7 @@ export function App() {
                           {!isRegisteredSession
                             ? "Register the agent first, then save payout settings."
                             : paymentProfileReady
-                              ? "Your agent is ready to earn."
+                              ? "Your agent is open for work."
                               : "Save once the payout setup looks right."}
                         </p>
                         <button
@@ -3130,7 +3271,17 @@ export function App() {
                   <strong>{profile.agentName}</strong>
                   <div className="profile-status-stack">
                     <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
-                    <span className="subtle-pill">{agentArchived ? "Archived" : paidJobsEnabled ? "Payouts live" : published ? "Published" : "Registered"}</span>
+                    <span className="subtle-pill">
+                      {agentArchived
+                        ? "Archived"
+                        : paidJobsEnabled
+                          ? "Payouts live"
+                          : savedPaymentsEnabled
+                            ? "Open for work"
+                            : published
+                              ? "Published"
+                              : "Registered"}
+                    </span>
                   </div>
                 </div>
                 <p className="panel-copy">{profile.headline}</p>
@@ -3252,7 +3403,7 @@ export function App() {
                     <div id="hire-this-agent" className="action-row action-row-form">
                       <div>
                         <div className="hire-title-row">
-                          <strong>Hire this agent</strong>
+                          <strong>{quoteRequestMode ? "Request a quote" : "Hire this agent"}</strong>
                           <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
                         </div>
                         <p className="panel-copy">{hireStatusCopy}</p>
@@ -3334,7 +3485,9 @@ export function App() {
                                 ? "Checking agent..."
                                 : agentRuntimeOffline
                                   ? "Agent offline"
-                                  : "Send hire request"}
+                                  : quoteRequestMode
+                                    ? "Send quote request"
+                                    : "Send hire request"}
                           </button>
                         </div>
                       </div>
@@ -3371,7 +3524,7 @@ export function App() {
                           showAgentProfile(agent.agentId);
                         }}
                       >
-                        <span className="activity-pill-mark">{agent.paidJobsEnabled ? "●" : agent.published ? "◆" : "○"}</span>
+                        <span className="activity-pill-mark">{agent.paidJobsEnabled ? "●" : agent.paymentsEnabled ? "◇" : agent.published ? "◆" : "○"}</span>
                         <strong>{agent.agentName}</strong>
                         <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
                           {runtimeStatusLabel(agent.runtimeStatus)}
@@ -3456,6 +3609,7 @@ export function App() {
                                 {runtimeStatusLabel(highlightAgent.runtimeStatus)}
                               </span>
                               <span className="explore-tag">{highlightAgent.proofLevel}</span>
+                              {highlightAgent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(highlightAgent)}</span> : null}
                               {highlightAgent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
                               {highlightAgent.paymentRail ? <span className="explore-tag">{railLabel(highlightAgent.paymentRail)}</span> : null}
                               {highlightAgent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}
@@ -3508,6 +3662,8 @@ export function App() {
                               <p className="explore-story-action">
                                 {agent.paidJobsEnabled
                                   ? `${agent.agentName} is now accepting paid jobs.`
+                                  : agent.paymentsEnabled
+                                    ? `${agent.agentName} is open for quote requests.`
                                   : agent.published
                                     ? `${agent.agentName} published on Zeko.`
                                     : `${agent.agentName} joined SantaClawz.`}
@@ -3520,6 +3676,7 @@ export function App() {
                                   {runtimeStatusLabel(agent.runtimeStatus)}
                                 </span>
                                 {agent.paymentRail ? <span className="explore-tag">{railLabel(agent.paymentRail)}</span> : null}
+                                {agent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(agent)}</span> : null}
                                 {agent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
                                 {agent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}
                               </div>
@@ -3557,20 +3714,20 @@ export function App() {
                       <section className="explore-section-block explore-rail-card">
                         <div className="section-head compact-head">
                           <div>
-                            <p className="eyebrow">Payouts live</p>
-                            <h3 className="explore-section-title">Agents ready to earn</h3>
+                            <p className="eyebrow">Open for work</p>
+                            <h3 className="explore-section-title">Agents ready to quote</h3>
                           </div>
-                          <span className="subtle-pill">{payoutsLiveAgents.length}</span>
+                          <span className="subtle-pill">{openForWorkAgents.length}</span>
                         </div>
                         <div className="explore-sidebar-list">
-                          {payoutsLiveAgents.length === 0 ? (
+                          {openForWorkAgents.length === 0 ? (
                             <article className="explore-card explore-sidebar-card">
-                              <p className="panel-copy">No agents have turned on live payouts yet in this view.</p>
+                              <p className="panel-copy">No agents are open for work yet in this view.</p>
                             </article>
                           ) : (
-                            payoutsLiveAgents.map((agent) => (
+                            openForWorkAgents.map((agent) => (
                               <button
-                                key={`payouts-live-${agent.agentId}`}
+                                key={`open-for-work-${agent.agentId}`}
                                 type="button"
                                 className="explore-sidebar-list-item"
                                 onClick={() => {
@@ -3578,7 +3735,7 @@ export function App() {
                                 }}
                               >
                                 <strong>{agent.agentName}</strong>
-                                <span>{agent.paymentRail ? railLabel(agent.paymentRail) : "Configured rail"}</span>
+                                <span>{referencePriceLine(agent)}</span>
                               </button>
                             ))
                           )}

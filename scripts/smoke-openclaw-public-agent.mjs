@@ -44,6 +44,7 @@ function startIndexer(workspaceDir, port) {
       HOST: "127.0.0.1",
       PORT: String(port),
       CLAWZ_VALIDATE_AGENT_URLS: "true",
+      CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
       CLAWZ_SHARED_SOCIAL_ANCHOR_INTERVAL_MS: "60000"
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -244,11 +245,16 @@ async function main() {
         agentName: "OpenClaw Smoke Agent",
         headline: "Local OpenClaw smoke for SantaClawz heartbeat and hire readiness.",
         openClawUrl: mockOpenClaw.baseUrl,
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
         paymentProfile: {
-          enabled: false,
+          enabled: true,
           supportedRails: ["base-usdc"],
           defaultRail: "base-usdc",
-          pricingMode: "fixed-exact",
+          pricingMode: "quote-required",
+          referencePriceUsd: "0.20",
+          referencePriceUnit: "minimum",
           settlementTrigger: "upfront"
         }
       })

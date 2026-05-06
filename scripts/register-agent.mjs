@@ -9,6 +9,7 @@ const VALID_TRUST_MODES = new Set(["fast", "private", "verified", "team-governed
 const VALID_PROVING_LOCATIONS = new Set(["client", "sovereign-rollup"]);
 const VALID_PAYMENT_RAILS = new Set(["base-usdc", "ethereum-usdc", "zeko-native"]);
 const VALID_PRICING_MODES = new Set(["fixed-exact", "capped-exact", "quote-required", "agent-negotiated"]);
+const VALID_REFERENCE_PRICE_UNITS = new Set(["minimum", "agent-minute", "compute-unit"]);
 const VALID_SETTLEMENT_TRIGGERS = new Set(["upfront", "on-proof"]);
 const VALID_SOCIAL_ANCHOR_MODES = new Set(["shared-batched", "priority-self-funded"]);
 const VALID_MISSION_AUTH_PROVIDERS = new Set(["custom-oidc", "auth0", "okta"]);
@@ -27,7 +28,9 @@ function printUsage() {
     [--base-facilitator-url "https://your-base-facilitator.onrender.com"] \\
     [--ethereum-facilitator-url "https://your-ethereum-facilitator.onrender.com"] \\
     [--default-rail "base-usdc"] \\
-    [--pricing-mode fixed-exact] \\
+    [--pricing-mode quote-required] \\
+    [--reference-price-usd "0.20"] \\
+    [--reference-price-unit minimum] \\
     [--fixed-price-usd "0.05"] \\
     [--quote-url "https://agent.example.com/payments"] \\
     [--payment-notes "Custom quotes available for larger jobs."] \\
@@ -164,10 +167,14 @@ const paymentProfile = {
     ? { ethereumFacilitatorUrl: args["ethereum-facilitator-url"].trim() }
     : {}),
   ...(typeof args["default-rail"] === "string" ? { defaultRail: args["default-rail"].trim() } : {}),
-  pricingMode: typeof args["pricing-mode"] === "string" ? args["pricing-mode"].trim() : "fixed-exact",
+  pricingMode: typeof args["pricing-mode"] === "string" ? args["pricing-mode"].trim() : "quote-required",
   ...(typeof args["fixed-price-usd"] === "string" ? { fixedAmountUsd: args["fixed-price-usd"].trim() } : {}),
   ...(typeof args["max-price-usd"] === "string" ? { maxAmountUsd: args["max-price-usd"].trim() } : {}),
   ...(typeof args["quote-url"] === "string" ? { quoteUrl: args["quote-url"].trim() } : {}),
+  ...(typeof args["reference-price-usd"] === "string" ? { referencePriceUsd: args["reference-price-usd"].trim() } : {}),
+  ...(typeof args["reference-price-unit"] === "string"
+    ? { referencePriceUnit: args["reference-price-unit"].trim() }
+    : { referencePriceUnit: "minimum" }),
   settlementTrigger:
     typeof args["settlement-trigger"] === "string" ? args["settlement-trigger"].trim() : "upfront",
   ...(typeof args["payment-notes"] === "string" ? { paymentNotes: args["payment-notes"].trim() } : {})
@@ -229,6 +236,10 @@ if (
 
 if (!VALID_PRICING_MODES.has(paymentProfile.pricingMode)) {
   throw new Error(`Unsupported pricing mode: ${paymentProfile.pricingMode}`);
+}
+
+if (!VALID_REFERENCE_PRICE_UNITS.has(paymentProfile.referencePriceUnit)) {
+  throw new Error(`Unsupported reference price unit: ${paymentProfile.referencePriceUnit}`);
 }
 
 if (!VALID_SETTLEMENT_TRIGGERS.has(paymentProfile.settlementTrigger)) {
@@ -384,7 +395,15 @@ if (args.json) {
       console.log(`Ownership challenge file written to ${path.resolve(writeChallengePath)}.`);
     }
   }
-  if (result.paymentsEnabled && !result.paidJobsEnabled) {
+  if (
+    result.paymentsEnabled &&
+    !result.paidJobsEnabled &&
+    (result.profile?.paymentProfile?.pricingMode === "quote-required" ||
+      result.profile?.paymentProfile?.pricingMode === "agent-negotiated")
+  ) {
+    console.log("");
+    console.log("Open for quote requests: buyers and agents can discover the reference price, then your agent should return an exact quote before paid execution.");
+  } else if (result.paymentsEnabled && !result.paidJobsEnabled) {
     console.log("");
     console.log("Next step: host your x402 facilitator and paste its HTTPS URL back into SantaClawz.");
     console.log(`Guide: ${FACILITATOR_SETUP_GUIDE_URL}`);

@@ -249,6 +249,7 @@ export interface AgentPayoutWallets {
 export type AgentPaymentRail = "base-usdc" | "ethereum-usdc" | "zeko-native";
 export type AgentPricingMode = "fixed-exact" | "capped-exact" | "quote-required" | "agent-negotiated";
 export type AgentSettlementTrigger = "upfront" | "on-proof";
+export type AgentReferencePriceUnit = "minimum" | "agent-minute" | "compute-unit";
 export type ProtocolOwnerFeeApplicability = "santaclawz-marketplace";
 export type ProtocolOwnerFeeSettlementModel = "split-release-v1" | "fee-on-reserve-v1";
 
@@ -309,6 +310,8 @@ export interface AgentPaymentProfile {
   fixedAmountUsd?: string;
   maxAmountUsd?: string;
   quoteUrl?: string;
+  referencePriceUsd?: string;
+  referencePriceUnit?: AgentReferencePriceUnit;
   settlementTrigger: AgentSettlementTrigger;
   baseFacilitatorUrl?: string;
   ethereumFacilitatorUrl?: string;
@@ -457,6 +460,8 @@ export interface AgentRegistryEntry {
   protocolFeeApplies?: boolean;
   paymentRail?: AgentPaymentRail;
   pricingMode: AgentPricingMode;
+  referencePriceUsd?: string;
+  referencePriceUnit?: AgentReferencePriceUnit;
   settlementTrigger: AgentSettlementTrigger;
   payoutAddressConfigured: boolean;
   paymentProfileReady: boolean;
@@ -605,6 +610,8 @@ export interface AgentX402Plan {
   settlementTrigger: AgentSettlementTrigger;
   defaultRail?: AgentPaymentRail;
   quoteUrl?: string;
+  referencePriceUsd?: string;
+  referencePriceUnit?: AgentReferencePriceUnit;
   paymentNotes?: string;
   protocolOwnerFeePolicy?: ProtocolOwnerFeePolicy;
   feePreviewByRail?: AgentFeePreview[];

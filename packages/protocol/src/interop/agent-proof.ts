@@ -138,6 +138,8 @@ export interface AgentPaymentClaim {
     fixedAmountUsd?: string;
     maxAmountUsd?: string;
     quoteUrl?: string;
+    referencePriceUsd?: string;
+    referencePriceUnit?: "minimum" | "agent-minute" | "compute-unit";
     protocolOwnerFeeBps?: number;
     protocolFeeRecipientByRail?: Partial<Record<AgentPaymentRail, string>>;
     feeSettlementMode?: ProtocolOwnerFeeSettlementModel;

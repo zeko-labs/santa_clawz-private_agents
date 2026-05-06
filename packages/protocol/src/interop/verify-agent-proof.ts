@@ -91,6 +91,8 @@ export interface AgentTrustQuestionAnswer {
     fixedAmountUsd?: NonNullable<AgentPaymentClaim["x402"]>["fixedAmountUsd"];
     maxAmountUsd?: NonNullable<AgentPaymentClaim["x402"]>["maxAmountUsd"];
     quoteUrl?: NonNullable<AgentPaymentClaim["x402"]>["quoteUrl"];
+    referencePriceUsd?: NonNullable<AgentPaymentClaim["x402"]>["referencePriceUsd"];
+    referencePriceUnit?: NonNullable<AgentPaymentClaim["x402"]>["referencePriceUnit"];
     facilitatorUrlByRail?: NonNullable<AgentPaymentClaim["x402"]>["facilitatorUrlByRail"];
     payTo?: NonNullable<AgentPaymentClaim["x402"]>["payTo"];
   };
@@ -432,6 +434,8 @@ export function summarizeAgentProofBundle(bundle: ClawzAgentProofBundle): AgentT
       ...(bundle.payment.x402?.fixedAmountUsd ? { fixedAmountUsd: bundle.payment.x402.fixedAmountUsd } : {}),
       ...(bundle.payment.x402?.maxAmountUsd ? { maxAmountUsd: bundle.payment.x402.maxAmountUsd } : {}),
       ...(bundle.payment.x402?.quoteUrl ? { quoteUrl: bundle.payment.x402.quoteUrl } : {}),
+      ...(bundle.payment.x402?.referencePriceUsd ? { referencePriceUsd: bundle.payment.x402.referencePriceUsd } : {}),
+      ...(bundle.payment.x402?.referencePriceUnit ? { referencePriceUnit: bundle.payment.x402.referencePriceUnit } : {}),
       ...(bundle.payment.x402?.payTo ? { payTo: bundle.payment.x402.payTo } : {})
     },
     privacy: {

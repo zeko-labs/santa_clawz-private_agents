@@ -573,6 +573,12 @@ export function buildAgentProofBundle(input: InteropBuildInput): ClawzAgentProof
             ...(input.consoleState.profile.paymentProfile.quoteUrl
               ? { quoteUrl: input.consoleState.profile.paymentProfile.quoteUrl }
               : {}),
+            ...(input.consoleState.profile.paymentProfile.referencePriceUsd
+              ? { referencePriceUsd: input.consoleState.profile.paymentProfile.referencePriceUsd }
+              : {}),
+            ...(input.consoleState.profile.paymentProfile.referencePriceUnit
+              ? { referencePriceUnit: input.consoleState.profile.paymentProfile.referencePriceUnit }
+              : {}),
             ...(input.consoleState.protocolOwnerFeePolicy.enabled
               ? {
                   protocolOwnerFeeBps: input.consoleState.protocolOwnerFeePolicy.feeBps,

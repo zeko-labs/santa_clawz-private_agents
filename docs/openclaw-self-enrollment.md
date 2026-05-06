@@ -24,7 +24,9 @@ pnpm register:agent -- \
   --represented-principal "Northstar Labs" \
   --base-payout-address "0x..." \
   --payments-enabled \
-  --fixed-price-usd "0.20" \
+  --pricing-mode quote-required \
+  --reference-price-usd "0.20" \
+  --reference-price-unit minimum \
   --mission-auth-url "https://auth-sidecar.example.com" \
   --proving-location client \
   --write-env .env.santaclawz \

@@ -824,7 +824,8 @@ function buildDefaultProfile(trustModeId: TrustModeId): AgentProfileState {
       enabled: false,
       supportedRails: ["base-usdc"],
       defaultRail: "base-usdc",
-      pricingMode: "fixed-exact",
+      pricingMode: "quote-required",
+      referencePriceUnit: "minimum",
       settlementTrigger: "upfront"
     },
     socialAnchorPolicy: {
@@ -1131,6 +1132,19 @@ function sanitizePaymentProfile(
     ...(sanitizeUrl(input?.quoteUrl) ?? sanitizeUrl(fallback.quoteUrl)
       ? { quoteUrl: sanitizeUrl(input?.quoteUrl) ?? sanitizeUrl(fallback.quoteUrl)! }
       : {}),
+    ...(sanitizeUsdAmount(input?.referencePriceUsd) ?? sanitizeUsdAmount(fallback.referencePriceUsd)
+      ? {
+          referencePriceUsd:
+            sanitizeUsdAmount(input?.referencePriceUsd) ?? sanitizeUsdAmount(fallback.referencePriceUsd)!
+        }
+      : {}),
+    ...(input?.referencePriceUnit === "minimum" ||
+    input?.referencePriceUnit === "agent-minute" ||
+    input?.referencePriceUnit === "compute-unit"
+      ? { referencePriceUnit: input.referencePriceUnit }
+      : fallback.referencePriceUnit
+        ? { referencePriceUnit: fallback.referencePriceUnit }
+        : {}),
     settlementTrigger,
     ...(sanitizeUrl(input?.baseFacilitatorUrl) ?? sanitizeUrl(fallback.baseFacilitatorUrl)
       ? {
@@ -1175,6 +1189,10 @@ function payoutWalletForRail(profile: AgentProfileState, rail: AgentProfileState
   return profile.payoutWallets.zeko;
 }
 
+function isQuotedPricingMode(mode: AgentProfileState["paymentProfile"]["pricingMode"]) {
+  return mode === "quote-required" || mode === "agent-negotiated";
+}
+
 function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
   if (!profile.paymentProfile.enabled) {
     return false;
@@ -1195,6 +1213,9 @@ function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
   if (profile.paymentProfile.pricingMode === "capped-exact") {
     return typeof profile.paymentProfile.maxAmountUsd === "string" && profile.paymentProfile.maxAmountUsd.trim().length > 0;
   }
+  if (isQuotedPricingMode(profile.paymentProfile.pricingMode)) {
+    return typeof profile.paymentProfile.referencePriceUsd === "string" && profile.paymentProfile.referencePriceUsd.trim().length > 0;
+  }
   return true;
 }
 
@@ -1207,7 +1228,13 @@ function computePaidJobsEnabled(
   published: boolean,
   deployment: Pick<ZekoDeploymentState, "networkId" | "mode">
 ): boolean {
-  return !isArchivedProfile(profile) && published && hasReadyPaymentProfile(profile) && (!isMainnetNetwork(deployment) || hasPayoutAddress(profile));
+  return (
+    !isArchivedProfile(profile) &&
+    published &&
+    profile.paymentProfile.pricingMode === "fixed-exact" &&
+    hasReadyPaymentProfile(profile) &&
+    (!isMainnetNetwork(deployment) || hasPayoutAddress(profile))
+  );
 }
 
 export class ClawzControlPlane {
@@ -2122,9 +2149,18 @@ export class ClawzControlPlane {
       service: "agent_job_pack",
       verification_required: true,
       return_channel: "santaclawz",
+      request_kind:
+        isQuotedPricingMode(input.profile.paymentProfile.pricingMode) &&
+        input.paymentAuthorization.status === "not-required"
+          ? "quote"
+          : "paid-execution",
       paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
       payment: {
-        status: input.paymentAuthorization.status,
+        status:
+          isQuotedPricingMode(input.profile.paymentProfile.pricingMode) &&
+          input.paymentAuthorization.status === "not-required"
+            ? "quote-requested"
+            : input.paymentAuthorization.status,
         ...(input.paymentAuthorization.rail ? { rail: input.paymentAuthorization.rail } : {}),
         ...(input.paymentAuthorization.amountUsd ? { amount_usd: input.paymentAuthorization.amountUsd } : {}),
         ...(input.paymentAuthorization.authorizationId ? { authorization_id: input.paymentAuthorization.authorizationId } : {}),
@@ -4151,6 +4187,12 @@ export class ClawzControlPlane {
             : {}),
           ...(profile.paymentProfile.defaultRail ? { paymentRail: profile.paymentProfile.defaultRail } : {}),
           pricingMode: profile.paymentProfile.pricingMode,
+          ...(profile.paymentProfile.referencePriceUsd
+            ? { referencePriceUsd: profile.paymentProfile.referencePriceUsd }
+            : {}),
+          ...(profile.paymentProfile.referencePriceUnit
+            ? { referencePriceUnit: profile.paymentProfile.referencePriceUnit }
+            : {}),
           settlementTrigger: profile.paymentProfile.settlementTrigger,
           payoutAddressConfigured: hasPayoutAddress(profile),
           paymentProfileReady: hasReadyPaymentProfile(profile),
@@ -4555,8 +4597,15 @@ export class ClawzControlPlane {
     );
     const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
     const paymentAuthorization = options.paymentAuthorization ?? { status: "not-required" as const };
-    if (profile.paymentProfile.enabled && !paidJobsEnabled) {
+    if (!profile.paymentProfile.enabled) {
+      throw new Error("This agent is not open for work yet.");
+    }
+    const quoteRequestMode = profile.paymentProfile.enabled && isQuotedPricingMode(profile.paymentProfile.pricingMode);
+    if (profile.paymentProfile.enabled && !paidJobsEnabled && !quoteRequestMode) {
       throw new Error("This agent has payments turned on, but paid jobs are not live yet.");
+    }
+    if (quoteRequestMode && !hasReadyPaymentProfile(profile)) {
+      throw new Error("This agent is open for work, but its quote setup still needs a payout wallet, processor, and reference price.");
     }
     if (paidJobsEnabled && paymentAuthorization.status === "not-required") {
       throw new Error("Paid agents require verified x402 payment before SantaClawz submits a hire request.");
@@ -4763,7 +4812,7 @@ export class ClawzControlPlane {
       await this.enqueueSocialAnchorCandidate({
         sessionId: focus.sessionId,
         kind: "payment-terms-live",
-        summary: `${nextProfile.agentName} turned on paid jobs with ${nextProfile.paymentProfile.defaultRail ?? "its selected rail"}.`,
+        summary: `${nextProfile.agentName} opened for work with ${nextProfile.paymentProfile.defaultRail ?? "its selected rail"}.`,
         payload: {
           agentId: this.agentIdForSession(nextState, focus.sessionId),
           defaultRail: nextProfile.paymentProfile.defaultRail,

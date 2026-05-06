@@ -590,10 +590,10 @@ function pushPricingReadiness(
   }
 
   if (isQuotedPricing(profile.paymentProfile.pricingMode)) {
-    if (!profile.paymentProfile.quoteUrl?.trim()) {
-      missing.push("Provide a quote URL for negotiated pricing.");
+    if (!profile.paymentProfile.referencePriceUsd?.trim()) {
+      missing.push("Set a reference price for discovery.");
     } else {
-      notes.push("Quoted or agent-negotiated pricing needs a quote step before emitting an exact x402 challenge.");
+      notes.push("Quoted or agent-negotiated pricing starts with quote intake before emitting an exact x402 challenge.");
     }
     return {};
   }
@@ -895,6 +895,8 @@ export function buildAgentX402Plan(input: {
     settlementTrigger: profile.paymentProfile.settlementTrigger,
     ...(profile.paymentProfile.defaultRail ? { defaultRail: profile.paymentProfile.defaultRail } : {}),
     ...(profile.paymentProfile.quoteUrl ? { quoteUrl: profile.paymentProfile.quoteUrl } : {}),
+    ...(profile.paymentProfile.referencePriceUsd ? { referencePriceUsd: profile.paymentProfile.referencePriceUsd } : {}),
+    ...(profile.paymentProfile.referencePriceUnit ? { referencePriceUnit: profile.paymentProfile.referencePriceUnit } : {}),
     ...(profile.paymentProfile.paymentNotes ? { paymentNotes: profile.paymentProfile.paymentNotes } : {}),
     ...(protocolOwnerFeePolicy.enabled ? { protocolOwnerFeePolicy } : {}),
     ...(feePreviewByRail.length > 0 ? { feePreviewByRail } : {}),
@@ -979,6 +981,8 @@ function railAcceptPreview(plan: AgentX402Plan, rail: AgentX402RailPlan) {
         builderHint: rail.builderHint,
         executionMode: rail.executionMode,
         pricingMode: plan.pricingMode,
+        ...(plan.referencePriceUsd ? { referencePriceUsd: plan.referencePriceUsd } : {}),
+        ...(plan.referencePriceUnit ? { referencePriceUnit: plan.referencePriceUnit } : {}),
         settlementTrigger: plan.settlementTrigger,
         ...(feePreview ? { feePreview } : {}),
         missing: rail.missing,
@@ -1076,6 +1080,8 @@ export function buildAgentX402CatalogPreview(input: {
         ...(input.plan.feePreviewByRail ? { feePreviewByRail: input.plan.feePreviewByRail } : {}),
         ...(input.plan.defaultRail ? { defaultRail: input.plan.defaultRail } : {}),
         ...(input.plan.quoteUrl ? { quoteUrl: input.plan.quoteUrl } : {}),
+        ...(input.plan.referencePriceUsd ? { referencePriceUsd: input.plan.referencePriceUsd } : {}),
+        ...(input.plan.referencePriceUnit ? { referencePriceUnit: input.plan.referencePriceUnit } : {}),
         ...(input.plan.paymentNotes ? { paymentNotes: input.plan.paymentNotes } : {}),
         incompleteRails: input.plan.rails.filter((rail) => !rail.ready).map(incompleteRailPreview)
       }

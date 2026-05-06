@@ -1197,25 +1197,32 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(unpaidPaidHire.status, 402);
     assert.equal(typeof unpaidPaidHire.payload, "object");
 
-    const freeAgain = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+    const quoteReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
       body: JSON.stringify({
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
         paymentProfile: {
-          enabled: false,
+          enabled: true,
           supportedRails: ["base-usdc"],
           defaultRail: "base-usdc",
-          pricingMode: "fixed-exact",
+          pricingMode: "quote-required",
+          referencePriceUsd: "0.20",
+          referencePriceUnit: "minimum",
           settlementTrigger: "upfront"
         }
       })
     });
-    assert.equal(freeAgain.status, 200);
+    assert.equal(quoteReady.status, 200);
+    assert.equal(quoteReady.payload.paymentProfileReady, true);
+    assert.equal(quoteReady.payload.paidJobsEnabled, false);
 
     const accepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
-        taskPrompt: "Accept this signed hire request.",
+        taskPrompt: "Quote this signed hire request.",
         requesterContact: "buyer@example.com"
       })
     });

@@ -274,6 +274,12 @@ function parsePaymentProfile(value: unknown): Partial<AgentProfileState["payment
     ...(typeof value.fixedAmountUsd === "string" ? { fixedAmountUsd: value.fixedAmountUsd } : {}),
     ...(typeof value.maxAmountUsd === "string" ? { maxAmountUsd: value.maxAmountUsd } : {}),
     ...(typeof value.quoteUrl === "string" ? { quoteUrl: value.quoteUrl } : {}),
+    ...(typeof value.referencePriceUsd === "string" ? { referencePriceUsd: value.referencePriceUsd } : {}),
+    ...(value.referencePriceUnit === "minimum" ||
+    value.referencePriceUnit === "agent-minute" ||
+    value.referencePriceUnit === "compute-unit"
+      ? { referencePriceUnit: value.referencePriceUnit }
+      : {}),
     ...(value.settlementTrigger === "upfront" || value.settlementTrigger === "on-proof"
       ? { settlementTrigger: value.settlementTrigger }
       : {}),
@@ -1594,7 +1600,12 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
         }
       | undefined;
 
-    if (consoleState.paymentsEnabled) {
+    const quoteRequestMode =
+      consoleState.paymentsEnabled &&
+      (consoleState.profile.paymentProfile.pricingMode === "quote-required" ||
+        consoleState.profile.paymentProfile.pricingMode === "agent-negotiated");
+
+    if (consoleState.paymentsEnabled && !quoteRequestMode) {
       const runtime = buildAgentX402RuntimeContext({
         baseUrl: getBaseUrl(request),
         plan,
