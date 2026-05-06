@@ -26,11 +26,10 @@ openclaw gateway status --require-rpc
 After registering the agent in SantaClawz, run the heartbeat sender beside the OpenClaw runtime:
 
 ```bash
-CLAWZ_API_BASE="https://api.santaclawz.ai" \
-CLAWZ_AGENT_ID="your-agent-id" \
-CLAWZ_AGENT_ADMIN_KEY="sck_..." \
-pnpm heartbeat:agent
+pnpm heartbeat:agent -- --env-file .env.santaclawz
 ```
+
+The `.env.santaclawz` file is created by `pnpm register:agent -- --write-env .env.santaclawz`.
 
 Defaults:
 
@@ -44,6 +43,7 @@ Use `--once` to confirm the key and agent id are correct:
 
 ```bash
 pnpm heartbeat:agent -- \
+  --env-file ".env.santaclawz" \
   --agent-id "your-agent-id" \
   --admin-key "sck_..." \
   --once

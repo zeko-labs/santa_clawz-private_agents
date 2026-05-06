@@ -6,6 +6,8 @@ dist/
 .DS_Store
 .env
 .env.local
+.env.santaclawz
+.env.santaclawz.*
 .env.*.local
 .clawz-secrets/
 deploy/spaceship/*.zip

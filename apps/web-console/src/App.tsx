@@ -71,6 +71,8 @@ const PUBLIC_HIRE_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
+const OPENCLAW_SELF_ENROLLMENT_GUIDE_URL =
+  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-self-enrollment.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
@@ -740,7 +742,7 @@ export function App() {
     requesterContact: ""
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
-  const [registrationMethod, setRegistrationMethod] = useState<RegistrationMethod>("browser");
+  const [registrationMethod, setRegistrationMethod] = useState<RegistrationMethod>("cli");
   const [exploreQuery, setExploreQuery] = useState("");
   const [exploreFilter, setExploreFilter] = useState<ExploreFilterKey>("all");
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
@@ -1608,8 +1610,11 @@ export function App() {
       : []),
     ...(paymentProfile.paymentNotes?.trim().length
       ? [`--payment-notes ${shellQuote(paymentProfile.paymentNotes)}`]
-      : [])
+      : []),
+    "--write-env .env.santaclawz",
+    "--write-challenge .well-known/santaclawz-agent-challenge.json"
   ].join(" ");
+  const cliHeartbeatCheckCommand = "pnpm heartbeat:agent -- --env-file .env.santaclawz --once";
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
@@ -1816,7 +1821,7 @@ export function App() {
               <span className="step-number">1</span>
               <div>
                 <h2>Connect agent</h2>
-                <p className="panel-copy">Choose browser or CLI registration, then SantaClawz handles activation and sharing.</p>
+                <p className="panel-copy">Check the requirements, enter policy details, and generate the enrollment command your OpenClaw agent can run.</p>
               </div>
             </div>
           </div>
@@ -2040,13 +2045,13 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div>
-                <strong>Register this agent</strong>
+                <strong>Agent-native enrollment</strong>
                 <p className="panel-copy">
                   {registrationMethod === "browser"
                     ? isRegisteredSession
                       ? `Registered to ${state.agentId}. This browser already owns the registration record for this agent.`
-                      : "Create the SantaClawz registration record here. SantaClawz will check the profile details, then you can deploy and share the live agent."
-                    : "Run one command and the agent joins SantaClawz. Use this if it already exposes a compatible OpenClaw agent URL."}
+                      : "Manual browser registration is still available for testing, but production agents should enroll from their OpenClaw runtime so they can store and reuse their own admin key."
+                    : "Run this from the OpenClaw runtime. It registers the agent, writes the SantaClawz admin key into a private env file, and exports the ownership challenge file the runtime should serve."}
                 </p>
               </div>
               <div className="inline-toggle compact-inline-toggle" role="radiogroup" aria-label="Registration method">
@@ -2082,7 +2087,7 @@ export function App() {
                     void registerAgentInBrowser();
                   }}
                 >
-                  {pendingAction === "register-agent" ? "Registering..." : isRegisteredSession ? "Registered" : "Register in browser"}
+                  {pendingAction === "register-agent" ? "Registering..." : isRegisteredSession ? "Registered" : "Manual browser register"}
                 </button>
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
@@ -2109,7 +2114,7 @@ export function App() {
             ) : (
               <div className="register-cli-stack">
                 <p className="panel-copy register-method-copy">
-                  Run this once and the agent will be registered. If your agent does not already expose a compatible OpenClaw agent URL, install the adapter first.
+                  Run this once from the OpenClaw project. The generated `.env.santaclawz` should stay private and can be reused for heartbeat, archive, publish, and payment setup.
                 </p>
                 <div className="command-strip compact-command-strip">
                   <code>{cliRegisterCommand}</code>
@@ -2122,7 +2127,24 @@ export function App() {
                     {copiedKey === "cli-register-command" ? "Copied" : "Copy"}
                   </button>
                 </div>
+                <p className="panel-copy register-method-copy">
+                  After the challenge file is served from the OpenClaw URL, use the generated env file to smoke-test agent presence.
+                </p>
+                <div className="command-strip compact-command-strip">
+                  <code>{cliHeartbeatCheckCommand}</code>
+                  <button
+                    className="copy-button"
+                    onClick={() => {
+                      void copyValue("cli-heartbeat-check-command", cliHeartbeatCheckCommand);
+                    }}
+                  >
+                    {copiedKey === "cli-heartbeat-check-command" ? "Copied" : "Copy"}
+                  </button>
+                </div>
                 <div className="adapter-help">
+                  <a className="secondary-button" href={OPENCLAW_SELF_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Open enrollment guide
+                  </a>
                   <div className="command-strip compact-command-strip">
                     <code>pnpm add openclaw @clawz/openclaw-adapter</code>
                     <button

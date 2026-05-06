@@ -1,4 +1,5 @@
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
+import { readFileSync } from "node:fs";
+
 const DEFAULT_INTERVAL_MS = 15_000;
 const DEFAULT_TTL_SECONDS = 30;
 const VALID_STATUSES = new Set(["live", "waiting", "offline"]);
@@ -8,6 +9,7 @@ function printUsage() {
   pnpm heartbeat:agent -- \\
     --agent-id "agent-id" \\
     --admin-key "sck_..." \\
+    [--env-file .env.santaclawz] \\
     [--api-base https://api.santaclawz.ai] \\
     [--session-id "session_agent_..."] \\
     [--interval-ms 15000] \\
@@ -60,6 +62,37 @@ function normalizeBaseUrl(value) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
+function unquoteEnvValue(value) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function loadEnvFile(filePath) {
+  const contents = readFileSync(filePath, "utf8");
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    const value = unquoteEnvValue(line.slice(separatorIndex + 1));
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+    process.env[key] = value;
+  }
+}
+
 function parsePositiveInteger(value, fallback, label) {
   if (value === undefined || value === null || String(value).trim().length === 0) {
     return fallback;
@@ -85,7 +118,7 @@ function resolveConfig(args) {
   }
 
   return {
-    apiBase: normalizeBaseUrl(String(args["api-base"] ?? DEFAULT_API_BASE).trim()),
+    apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim()),
     agentId,
     adminKey,
     sessionId: String(args["session-id"] ?? process.env.CLAWZ_AGENT_SESSION_ID ?? "").trim(),
@@ -131,6 +164,9 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
   process.exit(0);
+}
+if (typeof args["env-file"] === "string" && args["env-file"].trim().length > 0) {
+  loadEnvFile(args["env-file"].trim());
 }
 
 const config = resolveConfig(args);
