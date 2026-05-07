@@ -1952,7 +1952,7 @@ export function App() {
                     agentName: event.target.value
                   });
                 }}
-                placeholder="SantaClawz Operator"
+                placeholder="Santaclawz operator"
               />
             </label>
 
