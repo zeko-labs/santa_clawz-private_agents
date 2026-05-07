@@ -24,7 +24,6 @@ import {
   issueOwnershipChallenge,
   type OwnershipChallengeIssueResponse,
   prepareRecoveryKit,
-  registerAgent,
   runLiveSessionTurnFlow,
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
@@ -41,7 +40,6 @@ type HireDraft = {
   budgetMina: string;
   requesterContact: string;
 };
-type RegistrationMethod = "browser" | "cli";
 type PayoutWalletKey = "base" | "ethereum";
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
 type EnrollmentTicket = EnrollmentTicketResponse;
@@ -852,7 +850,6 @@ export function App() {
     requesterContact: ""
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
-  const [registrationMethod, setRegistrationMethod] = useState<RegistrationMethod>("cli");
   const [exploreQuery, setExploreQuery] = useState("");
   const [exploreFilter, setExploreFilter] = useState<ExploreFilterKey>("all");
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
@@ -1230,57 +1227,6 @@ export function App() {
         }
       }
       setError(nextError instanceof Error ? nextError.message : "Could not create enrollment ticket.");
-    } finally {
-      setPendingAction(null);
-    }
-  }
-
-  async function registerAgentInBrowser() {
-    if (!paymentEnrollmentReady) {
-      setError("When Open for work is on, add a Base payout wallet and the required pricing field before registration.");
-      return;
-    }
-
-    setPendingAction("register-agent");
-    setError(null);
-    setDuplicateClaimTarget(null);
-
-    try {
-      let nextState = await registerAgent(buildAgentRegistrationPayload());
-
-      setState(nextState);
-      setSelectedSessionId(nextState.session.sessionId);
-
-      if (nextState.agentId && nextState.profile.openClawUrl.trim().length > 0 && nextState.ownership.status !== "verified") {
-        try {
-          const challengedState = await issueOwnershipChallenge(nextState.session.sessionId, nextState.agentId);
-          setIssuedOwnershipChallenge(challengedState.issuedOwnershipChallenge);
-          nextState = challengedState;
-          setState(nextState);
-          setSelectedSessionId(nextState.session.sessionId);
-        } catch (challengeError) {
-          setError(
-            challengeError instanceof Error
-              ? `Agent registered. ${challengeError.message}`
-              : "Agent registered, but SantaClawz could not issue the ownership challenge yet."
-          );
-        }
-      }
-      showConfigureSession(nextState.session.sessionId);
-    } catch (nextError) {
-      if (nextError instanceof ApiError) {
-        const duplicateAgentId =
-          typeof nextError.data?.agentId === "string" && nextError.data.agentId.trim().length > 0
-            ? nextError.data.agentId
-            : null;
-        if (nextError.data?.code === "openclaw_url_registered" && duplicateAgentId) {
-          setDuplicateClaimTarget({
-            agentId: duplicateAgentId,
-            canReclaim: Boolean(nextError.data.canReclaim)
-          });
-        }
-      }
-      setError(nextError instanceof Error ? nextError.message : "Could not register agent.");
     } finally {
       setPendingAction(null);
     }
@@ -2363,72 +2309,12 @@ export function App() {
               <div>
                 <strong>Agent-native enrollment</strong>
                 <p className="panel-copy">
-                  {registrationMethod === "browser"
-                    ? isRegisteredSession
-                      ? `Registered to ${state.agentId}. This browser already owns the registration record for this agent.`
-                      : "Manual browser registration is still available for testing, but production agents should enroll from their OpenClaw runtime so they can store and reuse their own admin key."
-                    : "Create a short-lived ticket, then run one command from the OpenClaw project. The agent redeems it locally, stores secrets, verifies URL control, starts ingress, and sends heartbeat."}
+                  Create a short-lived ticket, then run one command from the OpenClaw project. The agent redeems it locally, stores secrets, verifies URL control, starts ingress, and sends heartbeat.
                 </p>
-              </div>
-              <div className="inline-toggle compact-inline-toggle" role="radiogroup" aria-label="Registration method">
-                <button
-                  className={registrationMethod === "browser" ? "inline-toggle-button active" : "inline-toggle-button"}
-                  onClick={() => {
-                    setRegistrationMethod("browser");
-                  }}
-                  role="radio"
-                  aria-checked={registrationMethod === "browser"}
-                >
-                  Browser
-                </button>
-                <button
-                  className={registrationMethod === "cli" ? "inline-toggle-button active" : "inline-toggle-button"}
-                  onClick={() => {
-                    setRegistrationMethod("cli");
-                  }}
-                  role="radio"
-                  aria-checked={registrationMethod === "cli"}
-                >
-                  CLI
-                </button>
               </div>
             </div>
 
-            {registrationMethod === "browser" ? (
-              <div className="register-browser-stack">
-                <button
-                  className="primary-button register-browser-button"
-                  disabled={pendingAction === "register-agent" || !enrollmentReady || isRegisteredSession}
-                  onClick={() => {
-                    void registerAgentInBrowser();
-                  }}
-                >
-                  {pendingAction === "register-agent" ? "Registering..." : isRegisteredSession ? "Registered" : "Manual browser register"}
-                </button>
-                {duplicateClaimTarget ? (
-                  <div className="status-note ownership-reclaim-note">
-                    <div>
-                      <strong>{duplicateClaimTarget.canReclaim ? "This OpenClaw URL is already registered." : "This OpenClaw URL is already claimed."}</strong>
-                      <span>
-                        {duplicateClaimTarget.canReclaim
-                          ? "Open the existing agent record, issue the ownership challenge, and verify control to reclaim it."
-                          : "Open the existing agent profile to inspect the verified record."}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        showAgentProfile(duplicateClaimTarget.agentId);
-                      }}
-                    >
-                      {duplicateClaimTarget.canReclaim ? "Open and reclaim" : "Open existing agent"}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="register-cli-stack">
+            <div className="register-cli-stack">
                 <p className="panel-copy register-method-copy">
                   SantaClawz uses the fields above to issue a one-time enrollment ticket. The ticket does not contain the agent admin key; the local OpenClaw command mints and stores those secrets after it proves control of the public URL.
                 </p>
@@ -2451,6 +2337,27 @@ export function App() {
                     {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
                   </span>
                 </div>
+                {duplicateClaimTarget ? (
+                  <div className="status-note ownership-reclaim-note">
+                    <div>
+                      <strong>{duplicateClaimTarget.canReclaim ? "This OpenClaw URL is already registered." : "This OpenClaw URL is already claimed."}</strong>
+                      <span>
+                        {duplicateClaimTarget.canReclaim
+                          ? "Open the existing agent record, issue the ownership challenge, and verify control to reclaim it."
+                          : "Open the existing agent profile to inspect the verified record."}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        showAgentProfile(duplicateClaimTarget.agentId);
+                      }}
+                    >
+                      {duplicateClaimTarget.canReclaim ? "Open and reclaim" : "Open existing agent"}
+                    </button>
+                  </div>
+                ) : null}
                 <p className="panel-copy register-method-copy">
                   Then run this single command from the OpenClaw project. With `--serve`, it starts the starter public hire ingress, redeems the ticket, writes `.env.santaclawz`, exports the challenge file, verifies ownership, and keeps heartbeat running.
                 </p>
@@ -2489,7 +2396,6 @@ export function App() {
                   </div>
                 </div>
               </div>
-            )}
 
           </div>
           </section>

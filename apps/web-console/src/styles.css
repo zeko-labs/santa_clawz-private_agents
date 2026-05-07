@@ -890,14 +890,9 @@ pre,
   margin-bottom: 4px;
 }
 
-.register-browser-stack,
 .register-cli-stack {
   display: grid;
   gap: 12px;
-}
-
-.register-browser-stack {
-  justify-items: start;
 }
 
 .ownership-reclaim-note {
@@ -922,21 +917,6 @@ pre,
 .register-method-copy,
 .compact-detail-copy {
   max-width: 60rem;
-}
-
-.register-browser-button {
-  min-width: 15rem;
-  width: auto;
-  justify-content: center;
-}
-
-.compact-inline-toggle {
-  flex-shrink: 0;
-}
-
-.compact-inline-toggle .inline-toggle-button {
-  min-width: 88px;
-  padding: 9px 14px;
 }
 
 .compact-command-strip {
@@ -1952,31 +1932,6 @@ h3 {
   margin-top: 16px;
 }
 
-.inline-toggle {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.inline-toggle-button {
-  min-width: 104px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.inline-toggle-button.active,
-.inline-toggle-button:hover {
-  background: rgba(185, 45, 34, 0.12);
-  color: var(--accent);
-}
-
 .toggle-help {
   margin-top: 8px;
 }
@@ -2591,14 +2546,6 @@ button:disabled {
     width: 100%;
   }
 
-  .inline-toggle {
-    width: 100%;
-  }
-
-  .inline-toggle-button {
-    flex: 1 1 0;
-  }
-
   .masthead,
   .step-card {
     padding: 18px;
@@ -2654,10 +2601,6 @@ button:disabled {
     width: auto;
     max-width: 100%;
     align-self: flex-end;
-  }
-
-  .register-browser-button {
-    width: 100%;
   }
 
   .wallet-builder-grid {
