@@ -928,6 +928,38 @@ async function testPublicOnboardingApiAuth() {
     });
     assert.equal(publicState.status, 200);
 
+    const publicEnrollmentTicket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Public Enrollment Auth Smoke",
+        headline: "Smoke test ticket creation without operator API key.",
+        representedPrincipal: "SantaClawz smoke operator",
+        publicClawzUrl: "http://127.0.0.1:49996/hire",
+        openClawUrl: "http://127.0.0.1:49996/hire",
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "quote-required",
+          referencePriceUsd: "0.20",
+          referencePriceUnit: "minimum",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(publicEnrollmentTicket.status, 200);
+    assert.match(publicEnrollmentTicket.payload.ticket, /^scz_enroll_/);
+
+    const publicEnrollmentRedeem = await requestJson(`${baseUrl}/api/enrollment/redeem`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(publicEnrollmentRedeem.status, 400);
+    assert.match(publicEnrollmentRedeem.payload.error, /ticket is required/);
+
     const publicTrustMode = await requestJson(`${baseUrl}/api/console/trust-mode`, {
       method: "POST",
       body: JSON.stringify({

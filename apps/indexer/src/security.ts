@@ -154,6 +154,8 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         /^\/api\/agents\/[^/]+\/x402-plan$/.test(pathname))) ||
     (method === "POST" &&
       (pathname === "/api/console/register" ||
+        pathname === "/api/enrollment/tickets" ||
+        pathname === "/api/enrollment/redeem" ||
         pathname === "/api/ownership/challenge" ||
         pathname === "/api/ownership/verify" ||
         pathname === "/api/ownership/reclaim" ||
