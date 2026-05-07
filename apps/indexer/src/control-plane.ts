@@ -5109,6 +5109,9 @@ export class ClawzControlPlane {
             : {}),
           ...(profile.paymentProfile.defaultRail ? { paymentRail: profile.paymentProfile.defaultRail } : {}),
           pricingMode: profile.paymentProfile.pricingMode,
+          ...(profile.paymentProfile.fixedAmountUsd
+            ? { fixedAmountUsd: profile.paymentProfile.fixedAmountUsd }
+            : {}),
           ...(profile.paymentProfile.referencePriceUsd
             ? { referencePriceUsd: profile.paymentProfile.referencePriceUsd }
             : {}),

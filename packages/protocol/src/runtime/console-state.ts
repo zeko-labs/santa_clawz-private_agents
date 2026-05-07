@@ -498,6 +498,7 @@ export interface AgentRegistryEntry {
   protocolFeeApplies?: boolean;
   paymentRail?: AgentPaymentRail;
   pricingMode: AgentPricingMode;
+  fixedAmountUsd?: string;
   referencePriceUsd?: string;
   referencePriceUnit?: AgentReferencePriceUnit;
   settlementTrigger: AgentSettlementTrigger;

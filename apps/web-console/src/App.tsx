@@ -356,7 +356,7 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
     return referencePriceLine(agent);
   }
   if (agent.paymentProfileReady) {
-    return `Payouts live on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"}`;
+    return `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"}`;
   }
   return "Host facilitator and finish setup";
 }
@@ -473,7 +473,7 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
 
 function activityLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
-    return `Payouts live on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+    return `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.paymentsEnabled) {
     return `${referencePriceLine(agent)} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
@@ -591,13 +591,18 @@ function pricingModeHelp(mode: AgentProfileState["paymentProfile"]["pricingMode"
 }
 
 function referencePriceLine(input: {
+  fixedAmountUsd?: string;
   referencePriceUsd?: string;
   referencePriceUnit?: AgentProfileState["paymentProfile"]["referencePriceUnit"];
   pricingMode?: AgentProfileState["paymentProfile"]["pricingMode"];
 }) {
+  if (input.pricingMode === "fixed-exact") {
+    const fixedAmount = input.fixedAmountUsd?.trim();
+    return fixedAmount ? `Fixed price: $${fixedAmount}` : "Fixed price";
+  }
   const amount = input.referencePriceUsd?.trim();
   if (!amount) {
-    return input.pricingMode === "fixed-exact" ? "Fixed price" : "Request quote";
+    return "Request quote";
   }
   if (input.referencePriceUnit === "agent-minute") {
     return `$${amount} / est. agent-minute`;
@@ -1664,6 +1669,9 @@ export function App() {
   const quoteRequestMode =
     savedPaymentsEnabled &&
     state.profile.paymentProfile.pricingMode === "quote-required";
+  const fixedPriceExecutionMode =
+    savedPaymentsEnabled &&
+    state.profile.paymentProfile.pricingMode === "fixed-exact";
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
   const missionAuthVerified = missionAuthOverlay.status === "verified";
@@ -1687,16 +1695,16 @@ export function App() {
       : !savedPaymentsEnabled
         ? "Not open for work"
         : savedPaymentProfileReady && paidJobsEnabled
-          ? `Payouts live on ${railLabel(defaultPaymentRail)}`
+          ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}`
           : savedPaymentProfileReady
-            ? referencePriceLine(paymentProfile)
+            ? referencePriceLine(state.profile.paymentProfile)
             : "Finish work setup";
   const paymentSectionLead = agentArchived
     ? "This agent is archived on SantaClawz."
     : !paymentsEnabled
       ? "Open this agent for paid work when it is ready."
       : paymentProfileReady
-        ? `${pricingModeLabel(paymentProfile.pricingMode)}. ${referencePriceLine(paymentProfile)}.`
+        ? `${referencePriceLine(paymentProfile)}.`
         : "Add a payout wallet, processor, and reference price so agents can discover the terms.";
   const paymentSummaryMessage = agentArchived
     ? "Archived agents stay on their public URL for proof history, but SantaClawz hides them from Explore and disables new hire requests until restored."
@@ -1840,12 +1848,18 @@ export function App() {
   const agentRuntimeOffline = Boolean(
     sharedAgentId && focusedAgentAvailability && !focusedAgentAvailability.reachable
   );
+  const fixedPriceSetupIncomplete = fixedPriceExecutionMode && !paidJobsEnabled;
+  const manualBrowserPaidExecutionUnavailable = fixedPriceExecutionMode && paidJobsEnabled;
+  const fixedExecutionPriceLabel = state.profile.paymentProfile.fixedAmountUsd?.trim()
+    ? `$${state.profile.paymentProfile.fixedAmountUsd.trim()} USDC`
+    : "Fixed price not configured";
   const canSubmitHire =
     Boolean(sharedAgentId) &&
     !agentArchived &&
     published &&
     savedPaymentsEnabled &&
     (quoteRequestMode ? savedPaymentProfileReady : paidJobsEnabled) &&
+    !manualBrowserPaidExecutionUnavailable &&
     profile.openClawUrl.trim().length > 0 &&
     !agentRuntimeCheckPending &&
     !agentRuntimeOffline &&
@@ -1862,7 +1876,7 @@ export function App() {
       : savedPaymentsEnabled && !savedPaymentProfileReady
         ? "This agent is open for work, but it still needs its payout wallet, processor, or reference price completed."
         : savedPaymentsEnabled && paidJobsEnabled
-          ? `Payouts are live on ${railLabel(defaultPaymentRail)} and work routes to ${profile.openClawUrl}.`
+          ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}. Paid execution requires an x402 buyer client; browser checkout is not live yet.`
           : quoteRequestMode
             ? `This agent is open for quote requests. It advertises ${referencePriceLine(state.profile.paymentProfile).toLowerCase()}, then quotes an exact price before paid execution.`
           : `Hire requests route to ${profile.openClawUrl}.`
@@ -3417,20 +3431,31 @@ export function App() {
                           />
                         </label>
                         <div className="field-grid compact-field-grid">
-                          <label className="field">
-                            <span>Budget (optional)</span>
-                            <input
-                              className="text-input"
-                              value={hireDraft.budgetMina}
-                              onChange={(event: ValueInputEvent) => {
-                                setHireDraft({
-                                  ...hireDraft,
-                                  budgetMina: event.target.value
-                                });
-                              }}
-                              placeholder="0.50"
-                            />
-                          </label>
+                          {quoteRequestMode ? (
+                            <label className="field">
+                              <span>Max budget (optional)</span>
+                              <input
+                                className="text-input"
+                                value={hireDraft.budgetMina}
+                                onChange={(event: ValueInputEvent) => {
+                                  setHireDraft({
+                                    ...hireDraft,
+                                    budgetMina: event.target.value
+                                  });
+                                }}
+                                placeholder="0.50"
+                              />
+                            </label>
+                          ) : (
+                            <label className="field">
+                              <span>Fixed price</span>
+                              <input
+                                className="text-input"
+                                value={fixedExecutionPriceLabel}
+                                readOnly
+                              />
+                            </label>
+                          )}
                           <label className="field">
                             <span>Reply contact</span>
                             <input
@@ -3446,6 +3471,11 @@ export function App() {
                             />
                           </label>
                         </div>
+                        {fixedPriceExecutionMode ? (
+                          <p className="status-note status-note-compact">
+                            SantaClawz will only send this paid job after x402 payment settles. Use a buyer agent or x402-capable client for now; manual browser checkout is coming next.
+                          </p>
+                        ) : null}
                         <div className="action-side">
                           <button
                             className="primary-button"
@@ -3478,6 +3508,10 @@ export function App() {
                                 ? "Checking agent..."
                                 : agentRuntimeOffline
                                   ? "Agent offline"
+                                  : fixedPriceSetupIncomplete
+                                    ? "Payment setup incomplete"
+                                  : manualBrowserPaidExecutionUnavailable
+                                    ? "x402 payment required"
                                   : quoteRequestMode
                                     ? "Send quote request"
                                     : "Send hire request"}
