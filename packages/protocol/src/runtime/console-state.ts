@@ -335,7 +335,7 @@ export interface AgentOwnershipVerificationState {
   challengeUrl: string;
   verificationMethod: "well-known-http";
   verifiedAtIso: string;
-  verifiedOpenClawUrl: string;
+  verifiedPublicClawUrl: string;
   challengeResponseDigestSha256: string;
   attestationDigestSha256: string;
   reclaimedAtIso?: string;

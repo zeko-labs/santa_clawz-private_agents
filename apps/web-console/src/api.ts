@@ -253,7 +253,8 @@ export interface EnrollmentTicketResponse {
     ticketId: string;
     ticketDigestSha256: string;
     challengeUrl: string;
-    openClawUrl: string;
+    publicClawUrl: string;
+    openClawUrl?: string;
   };
 }
 
@@ -356,6 +357,7 @@ export function registerAgent(input: {
   agentName: string;
   representedPrincipal?: string;
   headline: string;
+  publicClawUrl?: string;
   openClawUrl: string;
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
@@ -374,6 +376,7 @@ export function createEnrollmentTicket(input: {
   agentName: string;
   representedPrincipal?: string;
   headline: string;
+  publicClawUrl?: string;
   openClawUrl: string;
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];

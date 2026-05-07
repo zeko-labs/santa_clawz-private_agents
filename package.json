@@ -40,6 +40,7 @@
     "start:enterprise-kms": "pnpm --filter @clawz/enterprise-kms start",
     "start:privacy-gateway": "pnpm --filter @clawz/privacy-gateway start",
     "enroll:openclaw": "node scripts/enroll-openclaw-agent.mjs",
+    "enroll:publicclaw": "node scripts/enroll-openclaw-agent.mjs",
     "verify:proof": "pnpm --filter @clawz/indexer verify:proof",
     "compile:contracts": "pnpm --filter @clawz/contracts compile:contracts",
     "preflight:testnet": "pnpm --filter @clawz/contracts preflight:testnet",

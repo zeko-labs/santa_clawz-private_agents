@@ -264,6 +264,7 @@ const response = await fetch(`${apiBase}/api/console/register`, {
   body: JSON.stringify({
     agentName,
     headline,
+    publicClawUrl: openClawUrl,
     openClawUrl,
     ...(Object.keys(payoutWallets).length > 0 ? { payoutWallets } : {}),
     paymentProfile,

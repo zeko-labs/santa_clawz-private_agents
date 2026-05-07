@@ -57,7 +57,7 @@ export interface AgentRepresentationClaim {
 }
 
 export interface AgentOwnershipClaim {
-  openClawUrl: string;
+  publicClawUrl: string;
   ownershipStatus: "unverified" | "challenge-issued" | "verified" | "legacy-unverified";
   legacyRegistration: boolean;
   canReclaim: boolean;

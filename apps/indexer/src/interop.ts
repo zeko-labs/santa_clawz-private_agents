@@ -355,7 +355,7 @@ export function buildDiscoveryDocument(input: Omit<InteropBuildInput, "sessionVi
       privacyExceptions: `${input.baseUrl}/api/privacy-exceptions?${sessionQuery}`
     },
     answersQuestion:
-      "ClawZ publishes a deterministic proof bundle plus a live Zeko deployment surface that binds represented principal, verified OpenClaw runtime control, allowed action boundary, payment rail, privacy policy, proving location, and remote-origin provenance into reproducible digests another agent can verify.",
+      "ClawZ publishes a deterministic proof bundle plus a live Zeko deployment surface that binds represented principal, verified PublicClaw endpoint control, allowed action boundary, payment rail, privacy policy, proving location, and remote-origin provenance into reproducible digests another agent can verify.",
     proofClaims: ["representation", "ownership", "authority", "payment", "privacy", "origin"],
     programmablePrivacy,
     capabilities: [
@@ -445,7 +445,7 @@ export function buildAgentProofBundle(input: InteropBuildInput): ClawzAgentProof
   };
 
   const ownershipWithoutDigest = {
-    openClawUrl: profile.openClawUrl,
+    publicClawUrl: profile.openClawUrl,
     ownershipStatus: input.consoleState.ownership.status,
     legacyRegistration: input.consoleState.ownership.legacyRegistration,
     canReclaim: input.consoleState.ownership.canReclaim,

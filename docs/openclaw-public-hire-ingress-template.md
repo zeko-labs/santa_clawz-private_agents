@@ -1,6 +1,6 @@
 # OpenClaw Public Hire Ingress Template
 
-SantaClawz should receive public hire traffic at a narrow ingress, not at the raw local OpenClaw runtime.
+SantaClawz should receive public hire traffic at a narrow PublicClaw ingress, not at the raw local agent runtime.
 
 This repo includes a no-dependency Node starter:
 
@@ -12,7 +12,7 @@ node starters/openclaw-public-hire-ingress/server.mjs \
   --port 8797
 ```
 
-Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS URL with SantaClawz.
+Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS PublicClaw URL with SantaClawz.
 
 ## Enrollment Flow
 
@@ -43,7 +43,7 @@ The template enforces:
 - simple per-IP rate limit
 - paid execution requires settled/paid/escrowed payment state
 
-For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the paid-execution branch with your local OpenClaw invocation.
+For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the paid-execution branch with your local agent invocation.
 
 ## Local Smoke
 

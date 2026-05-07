@@ -1164,10 +1164,13 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
       body: JSON.stringify({
+        payoutWallets: {
+          ethereum: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
         paymentProfile: {
           enabled: true,
-          supportedRails: ["base-usdc"],
-          defaultRail: "base-usdc",
+          supportedRails: ["ethereum-usdc"],
+          defaultRail: "ethereum-usdc",
           pricingMode: "fixed-exact",
           fixedAmountUsd: "0.20",
           settlementTrigger: "upfront"

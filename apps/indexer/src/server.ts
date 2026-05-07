@@ -19,7 +19,7 @@ import {
 
 import {
   ClawzControlPlane,
-  DuplicateOpenClawUrlError,
+  DuplicatePublicClawUrlError,
   SelfServeSocialAnchoringDisabledError
 } from "./control-plane.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
@@ -121,6 +121,7 @@ type RegisterAgentRequestBody = {
   agentName?: unknown;
   representedPrincipal?: unknown;
   headline?: unknown;
+  publicClawUrl?: unknown;
   openClawUrl?: unknown;
   payoutAddress?: unknown;
   payoutWallets?: unknown;
@@ -137,6 +138,7 @@ type ProfileRequestBody = {
   agentName?: unknown;
   representedPrincipal?: unknown;
   headline?: unknown;
+  publicClawUrl?: unknown;
   openClawUrl?: unknown;
   payoutAddress?: unknown;
   payoutWallets?: unknown;
@@ -345,6 +347,7 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
         agentName: body.agentName,
         representedPrincipal: body.representedPrincipal,
         headline: body.headline,
+        publicClawUrl: body.publicClawUrl,
         openClawUrl: body.openClawUrl,
         payoutAddress: body.payoutAddress,
         payoutWallets: body.payoutWallets,
@@ -387,7 +390,12 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
   return {
     agentName: typeof body.agentName === "string" ? body.agentName : "",
     headline: typeof body.headline === "string" ? body.headline : "",
-    openClawUrl: typeof body.openClawUrl === "string" ? body.openClawUrl : "",
+    openClawUrl:
+      typeof body.publicClawUrl === "string"
+        ? body.publicClawUrl
+        : typeof body.openClawUrl === "string"
+          ? body.openClawUrl
+          : "",
     ...(typeof body.payoutAddress === "string" ? { payoutAddress: body.payoutAddress } : {}),
     ...(payoutWallets ? { payoutWallets } : {}),
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
@@ -405,6 +413,7 @@ function parseProfileRequest(body: unknown): ProfileRequestBody {
           agentName: body.agentName,
           representedPrincipal: body.representedPrincipal,
           headline: body.headline,
+          publicClawUrl: body.publicClawUrl,
           openClawUrl: body.openClawUrl,
           payoutAddress: body.payoutAddress,
           payoutWallets: body.payoutWallets,
@@ -1437,10 +1446,10 @@ app.post("/api/console/register", route(async (request, response) => {
     enforceRegistrationRateLimit(request);
     response.json(await controlPlane.registerAgent(registerOptionsFromBody(body)));
   } catch (error) {
-    if (error instanceof DuplicateOpenClawUrlError) {
+    if (error instanceof DuplicatePublicClawUrlError) {
       response.status(409).json({
         error: error.message,
-        code: "openclaw_url_registered",
+        code: "publicclaw_url_registered",
         agentId: error.existingAgentId,
         canReclaim: error.canReclaim
       });
@@ -1470,10 +1479,10 @@ app.post("/api/enrollment/tickets", route(async (request, response) => {
     enforceRegistrationRateLimit(request);
     response.json(await controlPlane.issueEnrollmentTicket(registerOptionsFromBody(body)));
   } catch (error) {
-    if (error instanceof DuplicateOpenClawUrlError) {
+    if (error instanceof DuplicatePublicClawUrlError) {
       response.status(409).json({
         error: error.message,
-        code: "openclaw_url_registered",
+        code: "publicclaw_url_registered",
         agentId: error.existingAgentId,
         canReclaim: error.canReclaim
       });
@@ -1507,10 +1516,10 @@ app.post("/api/enrollment/redeem", route(async (request, response) => {
   try {
     response.json(await controlPlane.redeemEnrollmentTicket(ticket));
   } catch (error) {
-    if (error instanceof DuplicateOpenClawUrlError) {
+    if (error instanceof DuplicatePublicClawUrlError) {
       response.status(409).json({
         error: error.message,
-        code: "openclaw_url_registered",
+        code: "publicclaw_url_registered",
         agentId: error.existingAgentId,
         canReclaim: error.canReclaim
       });
@@ -1539,7 +1548,11 @@ app.post("/api/console/profile", route(async (request, response) => {
     ...(typeof body.agentName === "string" ? { agentName: body.agentName } : {}),
     ...(typeof body.representedPrincipal === "string" ? { representedPrincipal: body.representedPrincipal } : {}),
     ...(typeof body.headline === "string" ? { headline: body.headline } : {}),
-    ...(typeof body.openClawUrl === "string" ? { openClawUrl: body.openClawUrl } : {}),
+    ...(typeof body.publicClawUrl === "string"
+      ? { openClawUrl: body.publicClawUrl }
+      : typeof body.openClawUrl === "string"
+        ? { openClawUrl: body.openClawUrl }
+        : {}),
     ...(payoutWallets ? { payoutWallets } : {}),
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
@@ -1650,7 +1663,7 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
       return;
     }
     if (consoleState.ownership.status !== "verified") {
-      response.status(400).json({ error: "This agent must verify control of its OpenClaw runtime before it can accept public hire requests." });
+      response.status(400).json({ error: "This agent must verify control of its PublicClaw endpoint before it can accept public hire requests." });
       return;
     }
     if (!published) {
@@ -1658,7 +1671,7 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
       return;
     }
     if (!consoleState.profile.openClawUrl.trim()) {
-      response.status(400).json({ error: "This agent has no OpenClaw callback URL configured yet." });
+      response.status(400).json({ error: "This agent has no PublicClaw callback URL configured yet." });
       return;
     }
     let paymentAuthorization:
