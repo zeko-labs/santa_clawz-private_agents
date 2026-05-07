@@ -164,6 +164,7 @@ Core production environment areas:
 - key broker/KMS: `CLAWZ_KEY_BROKER_MODE`, `CLAWZ_KMS_ENDPOINT`, `CLAWZ_KMS_API_KEY`
 - Zeko social anchor: `CLAWZ_SOCIAL_ANCHOR_PUBLIC_KEY`, `CLAWZ_SOCIAL_ANCHOR_SUBMITTER_PRIVATE_KEY`, `SOCIAL_ANCHOR_PRIVATE_KEY`
 - Base x402 facilitator: `CLAWZ_X402_BASE_FACILITATOR_URL`, `CLAWZ_PROTOCOL_OWNER_FEE_BPS`, `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`
+- Base gas top-up worker: `CLAWZ_BASE_FACILITATOR_GAS_TREASURY_PRIVATE_KEY`, `CLAWZ_BASE_FACILITATOR_GAS_TARGET_ADDRESS`, `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MIN_NATIVE_ETH`, `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_TARGET_NATIVE_ETH`, `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MAX_USDC`
 
 See the deployment docs for the full Render checklist.
 
@@ -208,7 +209,7 @@ pnpm agent:pricing -- \
 - `docs/public-hire-url-pattern.md`: public URL and signed hire-request contract.
 - `docs/openclaw-heartbeat.md`: live/waiting/offline presence model.
 - `docs/payment-architecture-v1.md`: payment profile and x402 architecture.
-- `docs/hosted-facilitator-gas-topups.md`: hosted Base facilitator gas policy.
+- `docs/hosted-facilitator-gas-topups.md`: hosted Base facilitator gas policy and Uniswap/Aerodrome top-up routing.
 - `docs/protocol-owner-fee-split-spec.md`: SantaClawz protocol fee model.
 - `docs/self-serve-social-anchoring.md`: shared and self-serve Zeko anchoring.
 - `docs/render-backend-rollout.md`: Render deployment order.

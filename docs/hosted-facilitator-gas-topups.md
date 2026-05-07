@@ -17,7 +17,14 @@ No escrow is required for this path.
 
 The relayer still needs native ETH for gas on Base and Ethereum.
 
-If the relayer or fee wallet holds USDC, SantaClawz can top up native gas by swapping USDC to WETH through Uniswap V3 and unwrapping WETH to native ETH.
+If the treasury wallet holds USDC, SantaClawz can top up the facilitator relayer by swapping treasury USDC to native ETH and sending that ETH to the facilitator address.
+
+On Base, the top-up command quotes both Uniswap v3 and Aerodrome, then chooses the route that needs the least USDC unless a route is pinned. The default policy is intentionally simple:
+
+- if facilitator ETH is at least `0.01`, do nothing
+- if facilitator ETH is below `0.01`, top it back up toward `0.2`
+- cap any single top-up with `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MAX_USDC`
+- dry-run by default; broadcast only with `--execute`
 
 Payment floors are enforced for the SantaClawz-hosted path. The indexer calculates the network facilitation fee as the higher of:
 
@@ -30,23 +37,23 @@ For Base/Ethereum hosted rails, the indexer reads current gas price from the con
 
 If the configured percentage fee is below the network facilitation estimate, the higher network amount is used in the seller-net preview. Payments are allowed only when the gross fixed price is greater than that facilitation fee, so agents can still offer small jobs as long as the listed price leaves positive proceeds after relay cost.
 
-The repo includes an ops script:
+The repo includes an ops script. Dry-run first:
 
 ```bash
-pnpm top-up:facilitator-gas -- \
-  --rail base \
-  --swap-usdc 5 \
-  --min-native-eth 0.003
+pnpm top-up:facilitator-gas -- --rail base
 ```
 
 The command is dry-run by default. To broadcast:
 
 ```bash
-pnpm top-up:facilitator-gas -- \
-  --rail base \
-  --swap-usdc 5 \
-  --min-native-eth 0.003 \
-  --execute
+pnpm top-up:facilitator-gas -- --rail base --execute
+```
+
+To force one venue for debugging:
+
+```bash
+pnpm top-up:facilitator-gas -- --rail base --route uniswap
+pnpm top-up:facilitator-gas -- --rail base --route aerodrome
 ```
 
 ## Required Env
@@ -55,25 +62,30 @@ Base:
 
 ```bash
 X402_BASE_RPC_URL=https://...
-X402_BASE_RELAYER_PRIVATE_KEY=0x...
-CLAWZ_BASE_FACILITATOR_GAS_TOPUP_SWAP_USDC=5
-CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MIN_NATIVE_ETH=0.003
+CLAWZ_BASE_FACILITATOR_GAS_TREASURY_PRIVATE_KEY=0x...
+CLAWZ_BASE_FACILITATOR_GAS_TARGET_ADDRESS=0x...
+CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MIN_NATIVE_ETH=0.01
+CLAWZ_BASE_FACILITATOR_GAS_TOPUP_TARGET_NATIVE_ETH=0.2
+CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MAX_USDC=1000
 ```
 
 Ethereum:
 
 ```bash
 X402_ETHEREUM_RPC_URL=https://...
-X402_ETHEREUM_RELAYER_PRIVATE_KEY=0x...
-CLAWZ_ETHEREUM_FACILITATOR_GAS_TOPUP_SWAP_USDC=25
+CLAWZ_ETHEREUM_FACILITATOR_GAS_TREASURY_PRIVATE_KEY=0x...
+CLAWZ_ETHEREUM_FACILITATOR_GAS_TARGET_ADDRESS=0x...
 CLAWZ_ETHEREUM_FACILITATOR_GAS_TOPUP_MIN_NATIVE_ETH=0.03
+CLAWZ_ETHEREUM_FACILITATOR_GAS_TOPUP_TARGET_NATIVE_ETH=0.2
+CLAWZ_ETHEREUM_FACILITATOR_GAS_TOPUP_MAX_USDC=1500
 ```
 
 Optional shared knobs:
 
 ```bash
+CLAWZ_FACILITATOR_GAS_TOPUP_ROUTE=best
 CLAWZ_FACILITATOR_GAS_TOPUP_SLIPPAGE_BPS=100
-CLAWZ_FACILITATOR_GAS_TOPUP_POOL_FEE=500
+CLAWZ_FACILITATOR_GAS_TOPUP_UNISWAP_POOL_FEE=500
 CLAWZ_PROTOCOL_OWNER_FEE_BPS=10
 CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002
 CLAWZ_X402_BASE_SETTLEMENT_GAS_UNITS=90000
@@ -82,13 +94,23 @@ CLAWZ_X402_ETHEREUM_SETTLEMENT_GAS_UNITS=110000
 CLAWZ_X402_HOSTED_FACILITATOR_MIN_PAYMENT_USD=
 ```
 
+Base-only optional knobs:
+
+```bash
+CLAWZ_BASE_FACILITATOR_GAS_TOPUP_ROUTE=best
+CLAWZ_BASE_FACILITATOR_GAS_TOPUP_AERODROME_STABLE=false
+CLAWZ_BASE_FACILITATOR_GAS_TOPUP_UNISWAP_POOL_FEE=500
+```
+
 ## Safety Rules
 
 - The script does nothing if native gas is already above the threshold.
-- The script quotes Uniswap V3 before swapping and applies a slippage floor.
+- The script quotes Uniswap v3 before swapping and applies a slippage guard.
+- On Base, the script also quotes Aerodrome and chooses the lower-USDC route when `route=best`.
 - The script requires `--execute` before broadcasting transactions.
-- The relayer still needs enough native ETH to pay for approve/swap gas; if it is completely empty, manually seed it first.
-- Keep the relayer hot wallet low-balance and refill intentionally.
+- The treasury signer still needs enough native ETH to pay for approve/swap gas; if it is completely empty, manually seed it first.
+- Keep the facilitator relayer hot wallet low-balance and refill intentionally.
+- Keep the treasury wallet separate from the relayer when possible.
 
 ## Default Addresses
 
@@ -98,6 +120,8 @@ Base mainnet:
 - WETH: `0x4200000000000000000000000000000000000006`
 - Uniswap V3 `SwapRouter02`: `0x2626664c2603336E57B271c5C0b26F421741e481`
 - Uniswap V3 `QuoterV2`: `0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a`
+- Aerodrome `Router`: `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43`
+- Aerodrome `PoolFactory`: `0x420DD381b31aEf6683db6B902084cB0FFECe40Da`
 
 Ethereum mainnet:
 
@@ -106,7 +130,17 @@ Ethereum mainnet:
 - Uniswap V3 `SwapRouter02`: `0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45`
 - Uniswap V3 `QuoterV2`: `0x61fFE014bA17989E743c5F6cB21bF9697530B21e`
 
-These addresses should be rechecked against Uniswap's official deployment docs before production changes.
+These addresses should be rechecked against Uniswap and Aerodrome official deployment docs before production changes.
+
+## Render Cron Shape
+
+Run this as a Render Cron Job or background worker that executes every few minutes:
+
+```bash
+pnpm top-up:facilitator-gas -- --rail base --execute
+```
+
+Use the same QuickNode Base RPC as the hosted x402 facilitator. The cron should not receive seller payout keys or agent admin keys. It only needs the treasury key that holds USDC for gas replenishment and the public facilitator target address.
 
 ## Product Boundary
 
