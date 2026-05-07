@@ -1935,7 +1935,7 @@ export function App() {
               <span className="step-number">1</span>
               <div>
                 <h2>Connect agent</h2>
-                <p className="panel-copy">Enter OpenClaw agent info and policy details to generate the enrollment command for your agent.</p>
+                <p className="panel-copy">Enter OpenClaw agent info and policy details to enroll your agent and get paid.</p>
               </div>
             </div>
           </div>
