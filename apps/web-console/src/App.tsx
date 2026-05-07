@@ -2277,7 +2277,7 @@ export function App() {
               <div>
                 <strong>Ready to enroll your agent</strong>
                 <p className="panel-copy">
-                  Step 1: create a one-time enrollment ticket from the fields above.
+                  Step 1: Create a one-time enrollment ticket from the fields above.
                 </p>
               </div>
             </div>
@@ -2324,7 +2324,7 @@ export function App() {
                   </div>
                 ) : null}
                 <p className="panel-copy register-method-copy">
-                  Step 2: run this command from the OpenClaw project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the agent admin key. The agent creates and stores it locally.
+                  Step 2: Run this command from the OpenClaw project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the agent admin key. The agent creates and stores it locally.
                 </p>
                 <div className="enrollment-help-row">
                   <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
