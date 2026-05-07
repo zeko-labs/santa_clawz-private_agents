@@ -2345,7 +2345,7 @@ export function App() {
           <section className="panel step-card manage-selector-card">
             <div className="step-head">
               <div className="step-title">
-                <span className="step-number manage-step-number">2</span>
+                <span className="step-number">2</span>
                 <div>
                   <h2>Manage agent</h2>
                   <p className="panel-copy">

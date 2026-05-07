@@ -711,15 +711,18 @@ pre,
 }
 
 .step-title {
-  gap: 14px;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: start;
 }
 
 .step-title > div {
   display: grid;
-  gap: 6px;
+  gap: 7px;
   flex: 1 1 auto;
   min-width: 0;
+  padding-top: 1px;
 }
 
 .step-number {
@@ -736,6 +739,8 @@ pre,
   color: white;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.88rem;
+  line-height: 1;
+  font-weight: 500;
 }
 
 .simple-choice-stack,
@@ -2101,10 +2106,6 @@ h3 {
 .manage-session-note {
   margin-top: 6px;
   max-width: 760px;
-}
-
-.manage-step-number {
-  font-size: 1.35rem;
 }
 
 .listing-top {
