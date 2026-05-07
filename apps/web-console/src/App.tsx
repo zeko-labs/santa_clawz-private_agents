@@ -2024,80 +2024,82 @@ export function App() {
             ) : null}
 
             {paymentProfile.enabled ? (
-              <label className="field field-wide">
-                <span>Pricing method</span>
-                <select
-                  className="text-input"
-                  value={paymentProfile.pricingMode}
-                  onChange={(event: ValueInputEvent) => {
-                    const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
-                    const nextPaymentProfile = {
-                      ...profile.paymentProfile,
-                      pricingMode: nextPricingMode,
-                      referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
-                    };
-                    if (nextPricingMode === "fixed-exact") {
-                      delete nextPaymentProfile.quoteUrl;
-                      delete nextPaymentProfile.maxAmountUsd;
-                      delete nextPaymentProfile.referencePriceUsd;
-                    }
-                    if (nextPricingMode === "quote-required") {
-                      delete nextPaymentProfile.fixedAmountUsd;
-                      delete nextPaymentProfile.maxAmountUsd;
-                    }
-                    setProfile({
-                      ...profile,
-                      paymentProfile: nextPaymentProfile
-                    });
-                  }}
-                >
-                  <option value="quote-required">Request quote</option>
-                  <option value="fixed-exact">Fixed price</option>
-                </select>
-              </label>
-            ) : null}
-
-            {showReferencePricingFields ? (
-              <label className="field">
-                <span>Reference price (USD)</span>
-                <input
-                  className="text-input"
-                  value={paymentProfile.referencePriceUsd ?? ""}
-                  onChange={(event: ValueInputEvent) => {
-                    setProfile({
-                      ...profile,
-                      paymentProfile: {
+              <div className={showReferencePricingFields ? "field-grid field-wide pricing-fields-row" : "field-wide"}>
+                <label className="field">
+                  <span>Pricing method</span>
+                  <select
+                    className="text-input"
+                    value={paymentProfile.pricingMode}
+                    onChange={(event: ValueInputEvent) => {
+                      const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
+                      const nextPaymentProfile = {
                         ...profile.paymentProfile,
-                        referencePriceUsd: event.target.value
+                        pricingMode: nextPricingMode,
+                        referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
+                      };
+                      if (nextPricingMode === "fixed-exact") {
+                        delete nextPaymentProfile.quoteUrl;
+                        delete nextPaymentProfile.maxAmountUsd;
+                        delete nextPaymentProfile.referencePriceUsd;
                       }
-                    });
-                  }}
-                  placeholder="0.20"
-                />
-              </label>
-            ) : null}
+                      if (nextPricingMode === "quote-required") {
+                        delete nextPaymentProfile.fixedAmountUsd;
+                        delete nextPaymentProfile.maxAmountUsd;
+                      }
+                      setProfile({
+                        ...profile,
+                        paymentProfile: nextPaymentProfile
+                      });
+                    }}
+                  >
+                    <option value="quote-required">Request quote</option>
+                    <option value="fixed-exact">Fixed price</option>
+                  </select>
+                </label>
 
-            {showReferencePricingFields ? (
-              <label className="field">
-                <span>Reference unit</span>
-                <select
-                  className="text-input"
-                  value={paymentProfile.referencePriceUnit ?? "minimum"}
-                  onChange={(event: ValueInputEvent) => {
-                    setProfile({
-                      ...profile,
-                      paymentProfile: {
-                        ...profile.paymentProfile,
-                        referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
-                      }
-                    });
-                  }}
-                >
-                  <option value="minimum">Minimum quote</option>
-                  <option value="agent-minute">Estimated agent-minute</option>
-                  <option value="compute-unit">Compute unit</option>
-                </select>
-              </label>
+                {showReferencePricingFields ? (
+                  <label className="field">
+                    <span>Reference price (USD)</span>
+                    <input
+                      className="text-input"
+                      value={paymentProfile.referencePriceUsd ?? ""}
+                      onChange={(event: ValueInputEvent) => {
+                        setProfile({
+                          ...profile,
+                          paymentProfile: {
+                            ...profile.paymentProfile,
+                            referencePriceUsd: event.target.value
+                          }
+                        });
+                      }}
+                      placeholder="0.20"
+                    />
+                  </label>
+                ) : null}
+
+                {showReferencePricingFields ? (
+                  <label className="field">
+                    <span>Reference unit</span>
+                    <select
+                      className="text-input"
+                      value={paymentProfile.referencePriceUnit ?? "minimum"}
+                      onChange={(event: ValueInputEvent) => {
+                        setProfile({
+                          ...profile,
+                          paymentProfile: {
+                            ...profile.paymentProfile,
+                            referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
+                          }
+                        });
+                      }}
+                    >
+                      <option value="minimum">Minimum quote</option>
+                      <option value="agent-minute">Estimated agent-minute</option>
+                      <option value="compute-unit">Compute unit</option>
+                    </select>
+                  </label>
+                ) : null}
+              </div>
             ) : null}
 
             {showMainPricingField ? (
@@ -2925,7 +2927,11 @@ export function App() {
                         </div>
                       </div>
 
-                      <div className="field-grid compact-field-grid payment-main-grid">
+                      <div className={
+                        showReferencePricingFields
+                          ? "field-grid compact-field-grid payment-main-grid pricing-fields-row"
+                          : "field-grid compact-field-grid payment-main-grid"
+                      }>
                         <label className="field">
                           <span>Pricing method</span>
                           <select

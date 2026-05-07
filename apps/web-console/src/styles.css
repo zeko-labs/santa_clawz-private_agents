@@ -1748,6 +1748,11 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.pricing-fields-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0;
+}
+
 .field > span,
 .field-label-row > span {
   font-size: 0.76rem;
@@ -2529,6 +2534,10 @@ button:disabled {
   .dial-metrics,
   .background-grid,
   .exception-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-fields-row {
     grid-template-columns: 1fr;
   }
 
