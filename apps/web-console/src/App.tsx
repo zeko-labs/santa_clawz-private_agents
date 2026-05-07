@@ -182,37 +182,73 @@ function initialSelectedSessionId(route: AppRouteState) {
   return route.section === "configure" && !route.agentId ? ONBOARDING_SESSION_ID : null;
 }
 
+const MANAGE_SESSION_ID_PATTERN = /^session_agent_[a-z0-9]{8,64}$/;
+const MANAGE_AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,180}--session_agent_[a-z0-9]{8,64}$/;
+
+function normalizeManageTargetToken(value: string) {
+  return value.trim().replace(/[.,]+$/g, "");
+}
+
+function parseManageTargetToken(value: string) {
+  const target = normalizeManageTargetToken(value);
+  if (!target) {
+    return null;
+  }
+  if (MANAGE_SESSION_ID_PATTERN.test(target)) {
+    return { sessionId: target };
+  }
+  if (MANAGE_AGENT_ID_PATTERN.test(target)) {
+    return { agentId: target };
+  }
+  return null;
+}
+
+function isSantaClawzManageUrl(url: URL) {
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "santaclawz.ai" || hostname.endsWith(".santaclawz.ai")) {
+    return true;
+  }
+  if (typeof window !== "undefined" && hostname === window.location.hostname.toLowerCase()) {
+    return true;
+  }
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
 function parseManageAgentTarget(value: string) {
-  let target = value.trim().replace(/[.,]+$/g, "");
+  let target = normalizeManageTargetToken(value);
   if (!target) {
     return null;
   }
 
   try {
     const url = new URL(target);
+    if (!isSantaClawzManageUrl(url)) {
+      return null;
+    }
     const sessionId = url.searchParams.get("sessionId")?.trim();
     const agentId = url.searchParams.get("agentId")?.trim();
     if (sessionId) {
-      return { sessionId };
+      return parseManageTargetToken(sessionId);
     }
     if (agentId) {
-      return { agentId };
+      return parseManageTargetToken(agentId);
     }
 
     const segments = url.pathname.split("/").map((segment) => segment.trim()).filter(Boolean);
     const knownRouteIndex = segments.findIndex((segment) => segment === "configure" || segment === "manage" || segment === "explore");
-    const pathTarget =
-      knownRouteIndex >= 0 ? segments[knownRouteIndex + 1] : segments.length > 0 ? segments[segments.length - 1] : "";
-    target = decodeURIComponent(pathTarget ?? "").trim().replace(/[.,]+$/g, "");
+    if (knownRouteIndex < 0) {
+      return null;
+    }
+    const pathTarget = segments[knownRouteIndex + 1] ?? "";
+    target = normalizeManageTargetToken(decodeURIComponent(pathTarget));
   } catch {
     // Plain session ids and public agent ids are expected here.
   }
 
-  if (!target) {
-    return null;
-  }
-
-  return target.startsWith("session_agent_") ? { sessionId: target } : { agentId: target };
+  return parseManageTargetToken(target);
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -1503,6 +1539,7 @@ export function App() {
   }
 
   const sessionId = selectedSessionId ?? state.session.sessionId;
+  const manageTargetReady = Boolean(parseManageAgentTarget(manageLookupValue));
   const launchTarget = state.liveFlowTargets.turns.find(
     (target) => target.sessionId === sessionId && target.canStartNextTurn
   );
@@ -2366,8 +2403,12 @@ export function App() {
                     placeholder="https://santaclawz.ai/explore/... or session_agent_..."
                   />
                 </label>
-                <button type="submit" className="primary-button" disabled={pendingAction === "open-manage-agent"}>
-                  {pendingAction === "open-manage-agent" ? "Opening..." : "Open agent"}
+                <button
+                  type="submit"
+                  className={manageTargetReady ? "primary-button" : "secondary-button"}
+                  disabled={pendingAction === "open-manage-agent" || !manageTargetReady}
+                >
+                  {pendingAction === "open-manage-agent" ? "Viewing..." : "View agent"}
                 </button>
               </form>
               {isRegisteredSession ? (
