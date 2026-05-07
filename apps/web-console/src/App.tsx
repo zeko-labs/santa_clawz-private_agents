@@ -1942,7 +1942,7 @@ export function App() {
 
           <div className="field-grid compact-field-grid">
             <label className="field">
-              <span>Agent name</span>
+              <span>PUBLIC AGENT NAME</span>
               <input
                 className="text-input"
                 value={profile.agentName}
@@ -1952,12 +1952,12 @@ export function App() {
                     agentName: event.target.value
                   });
                 }}
-                placeholder="Santaclawz operator"
+                placeholder="Agent name"
               />
             </label>
 
             <label className="field">
-              <span>Represented principal</span>
+              <span>Principal Operator</span>
               <input
                 className="text-input"
                 value={profile.representedPrincipal}
