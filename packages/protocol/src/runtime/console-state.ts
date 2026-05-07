@@ -366,6 +366,9 @@ export interface AgentSocialAnchorPolicy {
   mode: AgentSocialAnchorMode;
 }
 
+export type SocialAnchorCandidateStatus = "pending" | "submitted" | "retrying" | "confirmed" | "failed";
+export type SocialAnchorBatchStatus = "submitted" | "retrying" | "confirmed" | "failed";
+
 export interface SocialAnchorCandidate {
   candidateId: string;
   sessionId: string;
@@ -376,9 +379,21 @@ export interface SocialAnchorCandidate {
   summary: string;
   occurredAtIso: string;
   payloadDigestSha256: string;
-  status: "pending" | "anchored";
+  status: SocialAnchorCandidateStatus;
   batchId?: string;
+  batchRootDigestSha256?: string;
+  batchAnchorField?: string;
+  batchItemIndex?: number;
+  batchItemCount?: number;
+  submittedAtIso?: string;
+  confirmedAtIso?: string;
+  failedAtIso?: string;
   anchoredAtIso?: string;
+  contractAddress?: string;
+  txHash?: string;
+  submitAttemptCount?: number;
+  lastAnchorError?: string;
+  nextRetryAtIso?: string;
 }
 
 export interface SocialAnchorBatch {
@@ -390,7 +405,11 @@ export interface SocialAnchorBatch {
   itemCount: number;
   candidateKinds: SocialAnchorCandidateKind[];
   rootDigestSha256: string;
+  status: SocialAnchorBatchStatus;
   createdAtIso: string;
+  submittedAtIso?: string;
+  confirmedAtIso?: string;
+  failedAtIso?: string;
   settledAtIso: string;
   anchorField?: string;
   contractAddress?: string;
@@ -399,6 +418,13 @@ export interface SocialAnchorBatch {
   submitFee?: string;
   submitFeeSource?: string;
   submitAttemptCount?: number;
+  retryCount?: number;
+  lastCheckedAtIso?: string;
+  observedAtIso?: string;
+  observedAnchorField?: string;
+  lastAnchorError?: string;
+  nextRetryAtIso?: string;
+  candidateIds?: string[];
   operatorNote?: string;
 }
 
@@ -425,9 +451,18 @@ export interface SocialAnchorBatchExport {
 
 export interface SocialAnchorQueueState {
   pendingCount: number;
+  submittedCount: number;
+  retryingCount: number;
+  confirmedCount: number;
+  failedCount: number;
   anchoredCount: number;
   latestRootDigestSha256?: string;
+  latestSubmittedRootDigestSha256?: string;
+  lastConfirmedAtIso?: string;
   lastSettledAtIso?: string;
+  lastError?: string;
+  lastErrorAtIso?: string;
+  operatorAlerts?: string[];
   items: SocialAnchorCandidate[];
   recentBatches: SocialAnchorBatch[];
 }

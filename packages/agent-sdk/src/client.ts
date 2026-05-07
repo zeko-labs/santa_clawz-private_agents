@@ -333,6 +333,10 @@ export class ClawzAgentClient {
     return this.readJson(withQuery(this.baseUrl, "/api/zeko/deployment"));
   }
 
+  async getZekoHealth(): Promise<unknown> {
+    return this.readJson(withQuery(this.baseUrl, "/api/zeko/health"));
+  }
+
   async getAgentDiscoveryViaMcp(input: { sessionId?: string } = {}): Promise<ClawzAgentDiscoveryDocument> {
     return this.callMcp<ClawzAgentDiscoveryDocument>("get_agent_discovery", {
       ...(input.sessionId ? { sessionId: input.sessionId } : {})

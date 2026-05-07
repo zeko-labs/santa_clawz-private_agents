@@ -45,6 +45,8 @@ export interface SubmitSocialAnchorBatchOnZekoResult {
   contractAddress: string;
   anchorField: string;
   digestField: string;
+  confirmed: boolean;
+  observedAtIso?: string;
   submitFeeRaw: string;
   submitFee: string;
   submitFeeSource: string;
@@ -56,6 +58,15 @@ export interface SocialAnchorFeeQuote {
   feeRaw: string;
   fee: string;
   source: string;
+}
+
+export interface SocialAnchorKernelObservedState {
+  networkId: string;
+  contractAddress: string;
+  latestBatchRoot?: string;
+  latestBatchDigest?: string;
+  anchoredBatchCount?: string;
+  observedAtIso: string;
 }
 
 export function assertSocialAnchorSigningKeys(input: {
@@ -228,6 +239,35 @@ function latestBatchRootFromAppState(appState: string[]): string | undefined {
   return typeof appState[0] === "string" && appState[0].length > 0 ? appState[0] : undefined;
 }
 
+export async function readSocialAnchorKernelStateOnZeko(input: {
+  socialAnchorPublicKey: string;
+  networkId?: string;
+  mina?: string;
+  archive?: string;
+}): Promise<SocialAnchorKernelObservedState> {
+  const networkId = input.networkId ?? "testnet";
+  const mina = normalizeGraphqlEndpoint(input.mina ?? "https://testnet.zeko.io/graphql");
+  const archive = normalizeGraphqlEndpoint(input.archive ?? mina);
+  Mina.setActiveInstance(
+    Mina.Network({
+      networkId: networkId as never,
+      mina,
+      archive
+    })
+  );
+
+  const publicKey = PublicKey.fromBase58(input.socialAnchorPublicKey);
+  const appState = await readSocialAnchorAppState(publicKey);
+  return {
+    networkId,
+    contractAddress: publicKey.toBase58(),
+    ...(typeof appState[0] === "string" ? { latestBatchRoot: appState[0] } : {}),
+    ...(typeof appState[1] === "string" ? { latestBatchDigest: appState[1] } : {}),
+    ...(typeof appState[2] === "string" ? { anchoredBatchCount: appState[2] } : {}),
+    observedAtIso: new Date().toISOString()
+  };
+}
+
 async function waitForAnchoredBatchRoot(
   contractAddress: PublicKey,
   expectedAnchorField: string,
@@ -312,11 +352,14 @@ export async function submitSocialAnchorBatchOnZeko(
           ? ((pending as { hash: string }).hash)
           : undefined;
 
+      const confirmed = await waitForAnchoredBatchRoot(contractAddress, expectedAnchorField, confirmationWaitMs);
       return {
         networkId,
         contractAddress: contractAddressBase58,
         anchorField: expectedAnchorField,
         digestField: batchDigestField.toString(),
+        confirmed,
+        ...(confirmed ? { observedAtIso: new Date().toISOString() } : {}),
         submitFeeRaw,
         submitFee: rawNanoToMinaString(parseRawFee(submitFeeRaw) ?? DEFAULT_SOCIAL_ANCHOR_FEE_RAW),
         submitFeeSource: attempt === 1 ? feeQuote.source : "retry-bump",
@@ -332,6 +375,8 @@ export async function submitSocialAnchorBatchOnZeko(
           contractAddress: contractAddressBase58,
           anchorField: expectedAnchorField,
           digestField: batchDigestField.toString(),
+          confirmed: true,
+          observedAtIso: new Date().toISOString(),
           submitFeeRaw,
           submitFee: rawNanoToMinaString(parseRawFee(submitFeeRaw) ?? DEFAULT_SOCIAL_ANCHOR_FEE_RAW),
           submitFeeSource: attempt === 1 ? feeQuote.source : "retry-bump",

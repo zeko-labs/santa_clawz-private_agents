@@ -1213,6 +1213,10 @@ app.get("/api/zeko/deployment", route(async (_request, response) => {
   response.json(await controlPlane.getDeploymentState());
 }));
 
+app.get("/api/zeko/health", route(async (_request, response) => {
+  response.json(await controlPlane.getZekoHealthState());
+}));
+
 app.post("/api/zeko/session-turn/run", route(async (request, response) => {
   try {
     response.json(await controlPlane.runLiveSessionTurnFlow(parseLiveFlowRequest(request.body), adminKeyHeader(request)));

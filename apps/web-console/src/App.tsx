@@ -1655,6 +1655,10 @@ export function App() {
     ? state.socialAnchorQueue
     : {
         pendingCount: 0,
+        submittedCount: 0,
+        retryingCount: 0,
+        confirmedCount: 0,
+        failedCount: 0,
         anchoredCount: 0,
         items: [],
         recentBatches: []

@@ -50,6 +50,14 @@ The backend protects this with batch matching:
 
 So if the queue changes between export and commit, SantaClawz rejects the commit and asks you to export again.
 
+After a batch is submitted, SantaClawz tracks it as `submitted` or `retrying` until the expected root is observed on the Zeko `SocialAnchorKernel`. Only then does the batch become `confirmed`. If submission cannot be confirmed after the retry window, the public milestones are released back to `pending` instead of being counted as anchored.
+
+Operators can inspect the managed anchor path with:
+
+```bash
+curl https://api.santaclawz.ai/api/zeko/health
+```
+
 ## CLI path
 
 Use:

@@ -64,6 +64,7 @@ That unlocks agent-managed pricing plus self-serve social anchoring helpers:
 - `updateAgentPricing(...)`
 - `getSocialAnchorBatchExport(...)`
 - `commitSocialAnchorBatch(...)`
+- `getZekoHealth(...)`
 
 Example autonomous pricing update:
 
@@ -83,7 +84,7 @@ For V1, pricing mode is intentionally small:
 - `quote-required`, shown as **Request quote** in the UI
 - `fixed-exact`, shown as **Fixed price** in the UI
 
-The social anchor methods are the SDK surface for exporting a canonical pending milestone batch, submitting it independently, and committing the exact root back into SantaClawz.
+The social anchor methods are the SDK surface for exporting a canonical pending milestone batch, submitting it independently, committing the exact root back into SantaClawz, and checking Zeko anchor health/status.
 
 See:
 

@@ -1046,6 +1046,91 @@ async function testOperatorCanDeleteLostKeyRegistration() {
   }
 }
 
+async function testZekoSocialAnchorHealthAndMembershipState() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-zeko-anchor-health-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Zeko Anchor Health Agent",
+        headline: "Exercises social anchor health state.",
+        openClawUrl: "http://127.0.0.1:49996/agent"
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+
+    const pendingQueue = await requestJson(`${baseUrl}/api/social/anchors?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "GET",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      }
+    });
+    assert.equal(pendingQueue.status, 200);
+    assert.equal(pendingQueue.payload.pendingCount > 0, true);
+    assert.equal(pendingQueue.payload.submittedCount, 0);
+    assert.equal(pendingQueue.payload.confirmedCount, 0);
+
+    const pendingHealth = await requestJson(`${baseUrl}/api/zeko/health`, {
+      method: "GET"
+    });
+    assert.equal(pendingHealth.status, 200);
+    assert.equal(pendingHealth.payload.socialAnchor.pendingCount > 0, true);
+    assert.equal(Array.isArray(pendingHealth.payload.socialAnchor.alerts), true);
+    assert.ok(pendingHealth.payload.socialAnchor.alerts.some((alert) => /SocialAnchorKernel is not configured/.test(alert)));
+
+    const settled = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        sessionId,
+        agentId,
+        localOnly: true
+      })
+    });
+    assert.equal(settled.status, 200);
+    assert.equal(settled.payload.pendingCount, 0);
+    assert.equal(settled.payload.confirmedCount > 0, true);
+    assert.equal(settled.payload.anchoredCount, settled.payload.confirmedCount);
+    assert.equal(settled.payload.recentBatches[0]?.status, "confirmed");
+    assert.equal(typeof settled.payload.recentBatches[0]?.rootDigestSha256, "string");
+
+    const confirmedItem = settled.payload.items.find((item) => item.status === "confirmed");
+    assert.equal(typeof confirmedItem?.batchId, "string");
+    assert.equal(confirmedItem?.batchRootDigestSha256, settled.payload.recentBatches[0]?.rootDigestSha256);
+    assert.equal(confirmedItem?.batchAnchorField, settled.payload.recentBatches[0]?.anchorField);
+    assert.equal(typeof confirmedItem?.batchItemIndex, "number");
+    assert.equal(confirmedItem?.batchItemCount, settled.payload.recentBatches[0]?.itemCount);
+    assert.equal(typeof confirmedItem?.confirmedAtIso, "string");
+
+    const confirmedHealth = await requestJson(`${baseUrl}/api/zeko/health`, {
+      method: "GET"
+    });
+    assert.equal(confirmedHealth.status, 200);
+    assert.equal(confirmedHealth.payload.socialAnchor.confirmedCount > 0, true);
+    assert.equal(
+      confirmedHealth.payload.socialAnchor.latestConfirmedRootDigestSha256,
+      settled.payload.recentBatches[0]?.rootDigestSha256
+    );
+    assert.equal(typeof confirmedHealth.payload.socialAnchor.lastSuccessfulAnchorAtIso, "string");
+
+    console.log("ok - Zeko social anchor health exposes queue status and per-milestone batch membership");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testHireRouteRequiresSafeIngressAndPaymentState() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-hire-gating-test-"));
   const port = await reservePort();
@@ -1554,6 +1639,7 @@ async function main() {
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
   await testOperatorCanDeleteLostKeyRegistration();
+  await testZekoSocialAnchorHealthAndMembershipState();
   await testHireRouteRequiresSafeIngressAndPaymentState();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();

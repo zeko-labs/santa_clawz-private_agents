@@ -648,15 +648,20 @@ export function buildAgentProofBundle(input: InteropBuildInput): ClawzAgentProof
     recentBatches: input.consoleState.socialAnchorQueue.recentBatches.map((batch) => ({
       batchId: batch.batchId,
       anchorMode: batch.anchorMode,
+      status: batch.status,
       rootDigestSha256: batch.rootDigestSha256,
       settledAtIso: batch.settledAtIso,
+      ...(batch.submittedAtIso ? { submittedAtIso: batch.submittedAtIso } : {}),
+      ...(batch.confirmedAtIso ? { confirmedAtIso: batch.confirmedAtIso } : {}),
+      ...(batch.lastCheckedAtIso ? { lastCheckedAtIso: batch.lastCheckedAtIso } : {}),
       ...(batch.anchorField ? { anchorField: batch.anchorField } : {}),
       ...(batch.contractAddress ? { contractAddress: batch.contractAddress } : {}),
       ...(batch.txHash ? { txHash: batch.txHash } : {}),
       ...(batch.submitFeeRaw ? { submitFeeRaw: batch.submitFeeRaw } : {}),
       ...(batch.submitFee ? { submitFee: batch.submitFee } : {}),
       ...(batch.submitFeeSource ? { submitFeeSource: batch.submitFeeSource } : {}),
-      ...(typeof batch.submitAttemptCount === "number" ? { submitAttemptCount: batch.submitAttemptCount } : {})
+      ...(typeof batch.submitAttemptCount === "number" ? { submitAttemptCount: batch.submitAttemptCount } : {}),
+      ...(typeof batch.retryCount === "number" ? { retryCount: batch.retryCount } : {})
     }))
   };
   const social = {
