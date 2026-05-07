@@ -2301,6 +2301,9 @@ export function App() {
                   <span className={enrollmentTicket ? "subtle-pill live" : "subtle-pill"}>
                     {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
                   </span>
+                  <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Agent setup guide
+                  </a>
                 </div>
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
@@ -2323,11 +2326,6 @@ export function App() {
                     </button>
                   </div>
                 ) : null}
-                <div className="enrollment-help-row">
-                  <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Agent setup guide
-                  </a>
-                </div>
                 <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
                   <code>{cliEnrollCommand}</code>
                   <button
