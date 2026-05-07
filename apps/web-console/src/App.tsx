@@ -637,6 +637,32 @@ function paymentProfileDraftReady(
   return false;
 }
 
+function paymentProfileEnrollmentReady(profile: AgentProfileState) {
+  const paymentProfile = effectivePaymentProfile(profile);
+  if (!paymentProfile.enabled) {
+    return true;
+  }
+
+  const hasBaseWallet = Boolean(profile.payoutWallets.base?.trim());
+  if (!hasBaseWallet) {
+    return false;
+  }
+
+  if (paymentProfile.pricingMode === "fixed-exact") {
+    return Boolean(paymentProfile.fixedAmountUsd?.trim());
+  }
+
+  if (paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated") {
+    return Boolean(paymentProfile.referencePriceUsd?.trim());
+  }
+
+  if (paymentProfile.pricingMode === "capped-exact") {
+    return Boolean(paymentProfile.maxAmountUsd?.trim());
+  }
+
+  return false;
+}
+
 function effectivePaymentProfile(profile: AgentProfileState): AgentProfileState["paymentProfile"] {
   const supportedRails = derivedSupportedRails(profile);
   const defaultRail =
@@ -1174,6 +1200,15 @@ export function App() {
   }
 
   async function createEnrollmentTicketAction() {
+    if (!connectReady) {
+      setError("Add the agent name, OpenClaw URL, and description before creating an enrollment ticket.");
+      return;
+    }
+    if (!paymentEnrollmentReady) {
+      setError("When Open for work is on, add a Base payout wallet and the required pricing field before enrollment.");
+      return;
+    }
+
     setPendingAction("create-enrollment-ticket");
     setError(null);
     setDuplicateClaimTarget(null);
@@ -1201,6 +1236,11 @@ export function App() {
   }
 
   async function registerAgentInBrowser() {
+    if (!paymentEnrollmentReady) {
+      setError("When Open for work is on, add a Base payout wallet and the required pricing field before registration.");
+      return;
+    }
+
     setPendingAction("register-agent");
     setError(null);
     setDuplicateClaimTarget(null);
@@ -1548,6 +1588,8 @@ export function App() {
       : "";
   const connectReady =
     profile.agentName.trim().length > 0 && profile.openClawUrl.trim().length > 0 && profile.headline.trim().length > 0;
+  const paymentEnrollmentReady = paymentProfileEnrollmentReady(profile);
+  const enrollmentReady = connectReady && paymentEnrollmentReady;
   const canPreparePublish = isRegisteredSession && connectReady;
   const canPublish = isRegisteredSession && connectReady && hasSponsoredBalance && recoveryReady && ownershipVerified;
   const hasAdminAccess = state.adminAccess.hasAdminAccess;
@@ -2009,24 +2051,6 @@ export function App() {
               />
             </label>
 
-            <label className="field field-wide">
-              <span>Base Network Payout Wallet</span>
-              <input
-                className="text-input"
-                value={profile.payoutWallets.base ?? ""}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    payoutWallets: {
-                      ...profile.payoutWallets,
-                      base: event.target.value
-                    }
-                  });
-                }}
-                placeholder="0x..."
-              />
-            </label>
-
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">
                 <span>Open for work</span>
@@ -2050,6 +2074,26 @@ export function App() {
                 </span>
               </button>
             </div>
+
+            {paymentProfile.enabled ? (
+              <label className="field field-wide">
+                <span>Base Network Payout Wallet</span>
+                <input
+                  className="text-input"
+                  value={profile.payoutWallets.base ?? ""}
+                  onChange={(event: ValueInputEvent) => {
+                    setProfile({
+                      ...profile,
+                      payoutWallets: {
+                        ...profile.payoutWallets,
+                        base: event.target.value
+                      }
+                    });
+                  }}
+                  placeholder="0x..."
+                />
+              </label>
+            ) : null}
 
             {paymentProfile.enabled ? (
               <label className="field field-wide">
@@ -2354,7 +2398,7 @@ export function App() {
               <div className="register-browser-stack">
                 <button
                   className="primary-button register-browser-button"
-                  disabled={pendingAction === "register-agent" || !connectReady || isRegisteredSession}
+                  disabled={pendingAction === "register-agent" || !enrollmentReady || isRegisteredSession}
                   onClick={() => {
                     void registerAgentInBrowser();
                   }}
@@ -2392,7 +2436,7 @@ export function App() {
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={pendingAction === "create-enrollment-ticket" || !connectReady}
+                    disabled={pendingAction === "create-enrollment-ticket" || !enrollmentReady}
                     onClick={() => {
                       void createEnrollmentTicketAction();
                     }}

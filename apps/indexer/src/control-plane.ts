@@ -1944,6 +1944,40 @@ export class ClawzControlPlane {
     if (profile.payoutWallets.zeko && !looksLikeZekoAddress(profile.payoutWallets.zeko)) {
       throw new Error("Zeko payout wallet must look like a valid Mina address.");
     }
+    if (profile.paymentProfile.enabled) {
+      const defaultRail = profile.paymentProfile.defaultRail ?? profile.paymentProfile.supportedRails[0] ?? "base-usdc";
+      const requiredWallet =
+        defaultRail === "ethereum-usdc"
+          ? profile.payoutWallets.ethereum?.trim()
+          : profile.payoutWallets.base?.trim();
+      if (!requiredWallet) {
+        throw new Error(
+          defaultRail === "ethereum-usdc"
+            ? "Ethereum payout wallet is required when Open for work is on."
+            : "Base payout wallet is required when Open for work is on."
+        );
+      }
+
+      if (profile.paymentProfile.pricingMode === "fixed-exact") {
+        if (!profile.paymentProfile.fixedAmountUsd?.trim()) {
+          throw new Error("Fixed price is required when Open for work is on.");
+        }
+        assertUsdAmount(profile.paymentProfile.fixedAmountUsd, "Fixed price");
+      } else if (
+        profile.paymentProfile.pricingMode === "quote-required" ||
+        profile.paymentProfile.pricingMode === "agent-negotiated"
+      ) {
+        if (!profile.paymentProfile.referencePriceUsd?.trim()) {
+          throw new Error("Reference price is required when Open for work is on.");
+        }
+        assertUsdAmount(profile.paymentProfile.referencePriceUsd, "Reference price");
+      } else if (profile.paymentProfile.pricingMode === "capped-exact") {
+        if (!profile.paymentProfile.maxAmountUsd?.trim()) {
+          throw new Error("Max price is required when Open for work is on.");
+        }
+        assertUsdAmount(profile.paymentProfile.maxAmountUsd, "Max price");
+      }
+    }
 
     if (profile.paymentProfile.baseFacilitatorUrl) {
       this.validatePublicHttpsUrl(profile.paymentProfile.baseFacilitatorUrl, "Base facilitator URL");
