@@ -533,16 +533,6 @@ function formatBpsPercent(feeBps: number) {
   return Number.isInteger(percent) ? `${percent}` : percent.toFixed(2).replace(/\.?0+$/, "");
 }
 
-function missionAuthStatusLabel(overlay: AgentProfileState["missionAuthOverlay"]) {
-  if (!overlay.enabled) {
-    return "Optional";
-  }
-  if (overlay.status === "verified") {
-    return "Verified";
-  }
-  return "Needs check";
-}
-
 function missionAuthProviderLabel(provider: NonNullable<AgentProfileState["missionAuthOverlay"]["providerHint"]>) {
   if (provider === "auth0") {
     return "Auth0";
@@ -2127,11 +2117,10 @@ export function App() {
           <div className="mission-auth-card">
             <div className="mission-auth-head">
               <div className="mission-auth-copy">
-                <strong>Enterprise auth overlay</strong>
+                <strong>Enterprise auth overlay (optional)</strong>
                 <p className="panel-copy">{missionAuthStatusCopy}</p>
               </div>
               <div className="mission-auth-head-actions">
-                <span className="subtle-pill">{missionAuthStatusLabel(missionAuthOverlay)}</span>
                 {!missionAuthEnabled ? (
                   <button
                     type="button"
