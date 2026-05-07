@@ -1769,7 +1769,7 @@ export function App() {
     ? "Add this if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions, verify key checkpoints, and export portable proof bundles."
     : missionAuthVerified
       ? `${missionAuthOverlay.authorityName ?? "Mission auth overlay"} verified${missionAuthOverlay.lastVerifiedAtIso ? ` on ${new Date(missionAuthOverlay.lastVerifiedAtIso).toLocaleString()}` : ""}.`
-      : "Paste the public sidecar URL, then check its discovery document and mission authority JWKS.";
+      : "Paste the public sidecar URL, then check its discovery and mission authority JWKS.";
 
   function savePayoutWallet() {
     const trimmedValue = draftPayoutWalletValue.trim();
