@@ -887,6 +887,12 @@ pre,
   margin-bottom: 4px;
 }
 
+.register-flow-guide-link {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
 .register-cli-stack {
   display: grid;
   gap: 10px;

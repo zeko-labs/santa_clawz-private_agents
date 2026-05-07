@@ -2324,6 +2324,9 @@ export function App() {
                   Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
                 </p>
               </div>
+              <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                Agent setup guide
+              </a>
             </div>
 
             <div className="register-cli-stack">
@@ -2345,9 +2348,6 @@ export function App() {
                   <span className={enrollmentTicket ? "subtle-pill live" : "subtle-pill"}>
                     {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
                   </span>
-                  <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Agent setup guide
-                  </a>
                 </div>
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
