@@ -827,7 +827,7 @@ pre,
 
 .register-flow-card {
   display: grid;
-  gap: 6px;
+  gap: 10px;
   padding-top: 18px;
 }
 
@@ -897,7 +897,7 @@ pre,
 
 .register-cli-stack {
   display: grid;
-  gap: 6px;
+  gap: 10px;
 }
 
 .ownership-reclaim-note {
@@ -1702,6 +1702,7 @@ h3 {
   align-items: center;
   gap: 12px;
   margin-top: 0;
+  margin-bottom: 0;
 }
 
 .command-strip {
