@@ -487,7 +487,7 @@ export interface HireRequestReceipt {
   sessionId: string;
   networkId: string;
   submittedAtIso: string;
-  status: "submitted";
+  status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
   ingress?: {
@@ -495,7 +495,25 @@ export interface HireRequestReceipt {
     requestId: string;
     timestamp: string;
     bodyDigestSha256: string;
+    responseStatusCode?: number;
     signatureHeader: "X-SantaClawz-Signature";
+  };
+  protocolReturn?: {
+    schemaVersion: "santaclawz-return/1.0";
+    status: "quoted" | "completed" | "failed";
+    digestSha256: string;
+    quote?: {
+      amountUsd: string;
+      currency: "USDC";
+      expiresAtIso: string;
+      summary: string;
+    };
+    verifiedOutput?: {
+      packageHash: string;
+      deliverableCount: number;
+      zekoAttestationIncluded: boolean;
+    };
+    incidentId?: string;
   };
   payment?: {
     status: "not-required" | "authorized" | "settled";

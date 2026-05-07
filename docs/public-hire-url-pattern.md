@@ -131,6 +131,26 @@ Ingress should reject:
 - body digest mismatch
 - unpaid request where `request_kind` is paid execution
 
+## Return Handling
+
+SantaClawz treats HTTP status and protocol status separately:
+
+- `202 Accepted` means the ingress received or queued the request.
+- `204 No Content` means the ingress accepted the request without an immediate protocol package.
+- `200 OK` may include a `santaclawz-return/1.0` package for an immediate quote, completion, or failure.
+
+When a `santaclawz-return/1.0` package is present, SantaClawz validates it before treating it as protocol output:
+
+- `request_id` must match the submitted hire request.
+- `agent_private` must be `true`.
+- `request_kind: "quote"` may return `quoted` or `failed`, but not `completed`.
+- `request_kind: "paid-execution"` may return `completed` or `failed`, but not quote-only status.
+- quote packages must include a USDC amount, expiry, and summary.
+- completed packages must include a sha256 verified output package hash.
+- failed packages must include an incident id.
+
+The return package digest is persisted with the hire receipt so it can be anchored as a public milestone without exposing private job contents.
+
 ## What the public hire URL should do
 
 The public ingress should be able to:

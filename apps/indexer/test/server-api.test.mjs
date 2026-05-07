@@ -181,6 +181,7 @@ async function startHireIngress(port) {
   let challengePayload = null;
   let expectedIngressToken = "";
   let expectedSigningSecret = "";
+  let nextProtocolReturnFactory = null;
   const receivedHireRequestIds = new Set();
   const server = createServer((request, response) => {
     const url = request.url ?? "/";
@@ -235,6 +236,13 @@ async function startHireIngress(port) {
           return;
         }
         receivedHireRequestIds.add(requestId);
+        if (nextProtocolReturnFactory) {
+          const protocolReturn = nextProtocolReturnFactory({ requestId, request: parsed });
+          nextProtocolReturnFactory = null;
+          response.statusCode = 200;
+          response.end(JSON.stringify(protocolReturn));
+          return;
+        }
         response.statusCode = 202;
         response.end(JSON.stringify({ ok: true, requestId }));
       });
@@ -259,6 +267,9 @@ async function startHireIngress(port) {
     },
     setExpectedSigningSecret(nextSecret) {
       expectedSigningSecret = nextSecret;
+    },
+    setNextProtocolReturnFactory(nextFactory) {
+      nextProtocolReturnFactory = nextFactory;
     },
     receivedHireRequestIds,
     close() {
@@ -1239,6 +1250,53 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(accepted.payload.deliveryStatus, "forwarded");
     assert.equal(accepted.payload.ingress.signatureHeader, "X-SantaClawz-Signature");
     assert.equal(ingress.receivedHireRequestIds.has(accepted.payload.requestId), true);
+
+    ingress.setNextProtocolReturnFactory(({ requestId }) => ({
+      schema_version: "santaclawz-return/1.0",
+      request_id: requestId,
+      status: "quoted",
+      agent_private: true,
+      quote: {
+        amount_usd: "0.42",
+        currency: "USDC",
+        expires_at_iso: "2026-05-06T23:59:59.000Z",
+        summary: "The agent can complete this after a paid exact quote."
+      }
+    }));
+    const quoted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Return a protocol quote package.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(quoted.status, 200);
+    assert.equal(quoted.payload.status, "quoted");
+    assert.equal(quoted.payload.protocolReturn.status, "quoted");
+    assert.equal(quoted.payload.protocolReturn.quote.amountUsd, "0.42");
+    assert.equal(typeof quoted.payload.protocolReturn.digestSha256, "string");
+    assert.equal(quoted.payload.ingress.responseStatusCode, 200);
+
+    ingress.setNextProtocolReturnFactory(({ requestId }) => ({
+      schema_version: "santaclawz-return/1.0",
+      request_id: requestId,
+      status: "completed",
+      agent_private: true,
+      verified_output: {
+        package_hash: "a".repeat(64),
+        hash_algorithm: "sha256",
+        deliverables: []
+      }
+    }));
+    const invalidQuoteCompletion = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Do not allow quote intake to masquerade as completed paid work.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(invalidQuoteCompletion.status, 400);
+    assert.match(invalidQuoteCompletion.payload.error, /Quote intake cannot return completed paid execution/);
 
     console.log("ok - hire route gates ownership, publish, archive, payment readiness, and signed ingress delivery");
   } finally {

@@ -62,10 +62,13 @@ const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
 const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
 const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
 const HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0";
+const HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0";
 const HIRE_INGRESS_TIMEOUT_MS = 10_000;
+const HIRE_INGRESS_RETURN_MAX_BYTES = 128 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
+type HireIngressRequestKind = "quote" | "paid-execution";
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
   "first-turn": [
@@ -466,13 +469,15 @@ interface HireRequestRecord {
   sessionId: string;
   networkId: string;
   submittedAtIso: string;
-  status: "submitted";
+  status: HireRequestReceipt["status"];
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
   ingressBodyDigestSha256?: string;
+  ingressResponseStatusCode?: number;
+  protocolReturn?: HireRequestReceipt["protocolReturn"];
   payment?: HirePaymentAuthorization;
 }
 
@@ -883,6 +888,31 @@ function ownershipChallengeUrlFor(openClawUrl: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function assertStringValue(record: Record<string, unknown>, key: string, context: string): string {
+  const value = stringValue(record, key);
+  if (!value) {
+    throw new Error(`${context} must include ${key}.`);
+  }
+  return value;
+}
+
+function assertUsdAmount(value: string, context: string) {
+  if (!/^[0-9]+(\.[0-9]{1,6})?$/.test(value)) {
+    throw new Error(`${context} must be a decimal USD amount string.`);
+  }
+}
+
+function assertSha256Hex(value: string, context: string) {
+  if (!/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error(`${context} must be a lowercase sha256 hex digest.`);
+  }
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
@@ -2151,6 +2181,10 @@ export class ClawzControlPlane {
     paymentAuthorization: HirePaymentAuthorization;
   }) {
     const ingressUrl = this.hireIngressUrlFor(input.profile.openClawUrl);
+    const requestKind: HireIngressRequestKind =
+      isQuotedPricingMode(input.profile.paymentProfile.pricingMode) && input.paymentAuthorization.status === "not-required"
+        ? "quote"
+        : "paid-execution";
     const envelope = {
       schema_version: HIRE_REQUEST_SCHEMA_VERSION,
       request_id: input.requestId,
@@ -2160,16 +2194,11 @@ export class ClawzControlPlane {
       service: "agent_job_pack",
       verification_required: true,
       return_channel: "santaclawz",
-      request_kind:
-        isQuotedPricingMode(input.profile.paymentProfile.pricingMode) &&
-        input.paymentAuthorization.status === "not-required"
-          ? "quote"
-          : "paid-execution",
+      request_kind: requestKind,
       paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
       payment: {
         status:
-          isQuotedPricingMode(input.profile.paymentProfile.pricingMode) &&
-          input.paymentAuthorization.status === "not-required"
+          requestKind === "quote"
             ? "quote-requested"
             : input.paymentAuthorization.status,
         ...(input.paymentAuthorization.rail ? { rail: input.paymentAuthorization.rail } : {}),
@@ -2199,6 +2228,7 @@ export class ClawzControlPlane {
 
     return {
       ingressUrl,
+      requestKind,
       body,
       bodyDigestSha256,
       headers: {
@@ -2209,6 +2239,126 @@ export class ClawzControlPlane {
         "x-santaclawz-body-sha256": bodyDigestSha256,
         "x-santaclawz-signature": `v1=${signature}`
       }
+    };
+  }
+
+  private parseHireIngressProtocolReturn(input: {
+    responseText: string;
+    requestId: string;
+    requestKind: HireIngressRequestKind;
+  }): HireRequestReceipt["protocolReturn"] | undefined {
+    const trimmedResponseText = input.responseText.trim();
+    if (trimmedResponseText.length === 0) {
+      return undefined;
+    }
+    if (Buffer.byteLength(input.responseText, "utf8") > HIRE_INGRESS_RETURN_MAX_BYTES) {
+      throw new Error("Public hire ingress returned a protocol response that is too large.");
+    }
+    if (!trimmedResponseText.startsWith("{")) {
+      return undefined;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmedResponseText);
+    } catch {
+      throw new Error("Public hire ingress returned invalid JSON.");
+    }
+    if (!isRecord(parsed) || parsed.schema_version === undefined) {
+      return undefined;
+    }
+    if (parsed.schema_version !== HIRE_RETURN_SCHEMA_VERSION) {
+      throw new Error("Public hire ingress returned an unsupported SantaClawz return schema.");
+    }
+
+    const returnedRequestId = assertStringValue(parsed, "request_id", "SantaClawz return package");
+    if (returnedRequestId !== input.requestId) {
+      throw new Error("Public hire ingress returned a SantaClawz package for the wrong request_id.");
+    }
+    if (parsed.agent_private !== true) {
+      throw new Error("SantaClawz return package must set agent_private=true.");
+    }
+
+    const status = assertStringValue(parsed, "status", "SantaClawz return package");
+    if (status !== "quoted" && status !== "completed" && status !== "failed") {
+      throw new Error("SantaClawz return package has an unsupported status.");
+    }
+    if (input.requestKind === "quote" && status === "completed") {
+      throw new Error("Quote intake cannot return completed paid execution.");
+    }
+    if (input.requestKind === "paid-execution" && status === "quoted") {
+      throw new Error("Paid execution cannot return quote-only status.");
+    }
+
+    const digestSha256 = sha256Hex(input.responseText);
+    if (status === "quoted") {
+      const quote = parsed.quote;
+      if (!isRecord(quote)) {
+        throw new Error("Quoted SantaClawz return package must include quote.");
+      }
+      const amountUsd = assertStringValue(quote, "amount_usd", "SantaClawz quote");
+      assertUsdAmount(amountUsd, "SantaClawz quote amount_usd");
+      if (quote.currency !== "USDC") {
+        throw new Error("SantaClawz quote currency must be USDC.");
+      }
+      const expiresAtIso = assertStringValue(quote, "expires_at_iso", "SantaClawz quote");
+      if (Number.isNaN(Date.parse(expiresAtIso))) {
+        throw new Error("SantaClawz quote expires_at_iso must be an ISO date-time.");
+      }
+      const summary = assertStringValue(quote, "summary", "SantaClawz quote");
+      return {
+        schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
+        status,
+        digestSha256,
+        quote: {
+          amountUsd,
+          currency: "USDC",
+          expiresAtIso,
+          summary
+        }
+      };
+    }
+
+    if (status === "completed") {
+      const verifiedOutput = parsed.verified_output;
+      if (!isRecord(verifiedOutput)) {
+        throw new Error("Completed SantaClawz return package must include verified_output.");
+      }
+      const packageHash = assertStringValue(verifiedOutput, "package_hash", "SantaClawz verified_output");
+      assertSha256Hex(packageHash, "SantaClawz verified_output package_hash");
+      if (verifiedOutput.hash_algorithm !== "sha256") {
+        throw new Error("SantaClawz verified_output hash_algorithm must be sha256.");
+      }
+      if (!Array.isArray(verifiedOutput.deliverables)) {
+        throw new Error("SantaClawz verified_output deliverables must be an array.");
+      }
+      for (const [index, deliverable] of verifiedOutput.deliverables.entries()) {
+        if (!isRecord(deliverable)) {
+          throw new Error(`SantaClawz verified_output deliverable ${index} must be an object.`);
+        }
+        assertStringValue(deliverable, "name", `SantaClawz verified_output deliverable ${index}`);
+        assertSha256Hex(
+          assertStringValue(deliverable, "sha256", `SantaClawz verified_output deliverable ${index}`),
+          `SantaClawz verified_output deliverable ${index} sha256`
+        );
+      }
+      return {
+        schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
+        status,
+        digestSha256,
+        verifiedOutput: {
+          packageHash,
+          deliverableCount: verifiedOutput.deliverables.length,
+          zekoAttestationIncluded: isRecord(verifiedOutput.zeko_attestation)
+        }
+      };
+    }
+
+    return {
+      schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
+      status,
+      digestSha256,
+      incidentId: assertStringValue(parsed, "incident_id", "Failed SantaClawz return package")
     };
   }
 
@@ -2256,11 +2406,19 @@ export class ClawzControlPlane {
         `Public hire ingress rejected the signed request with ${response.status}${responseText ? `: ${responseText.slice(0, 240)}` : ""}`
       );
     }
+    const responseText = await response.text().catch(() => "");
+    const protocolReturn = this.parseHireIngressProtocolReturn({
+      responseText,
+      requestId: input.requestId,
+      requestKind: signedRequest.requestKind
+    });
 
     return {
       deliveryStatus: "forwarded" as const,
       ingressUrl: signedRequest.ingressUrl,
-      bodyDigestSha256: signedRequest.bodyDigestSha256
+      bodyDigestSha256: signedRequest.bodyDigestSha256,
+      responseStatusCode: response.status,
+      ...(protocolReturn ? { protocolReturn } : {})
     };
   }
 
@@ -4649,13 +4807,17 @@ export class ClawzControlPlane {
         : {}),
       paymentAuthorization
     });
+    const ingressProtocolReturn = "protocolReturn" in ingressDelivery ? ingressDelivery.protocolReturn : undefined;
+    const ingressResponseStatusCode =
+      "responseStatusCode" in ingressDelivery ? ingressDelivery.responseStatusCode : undefined;
+    const hireStatus: HireRequestReceipt["status"] = ingressProtocolReturn?.status ?? "submitted";
     const nextRecord: HireRequestRecord = {
       requestId,
       agentId: options.agentId,
       sessionId,
       networkId: deployment.networkId,
       submittedAtIso,
-      status: "submitted",
+      status: hireStatus,
       taskPrompt,
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
@@ -4664,6 +4826,8 @@ export class ClawzControlPlane {
       deliveryTarget: ingressDelivery.ingressUrl,
       deliveryStatus: ingressDelivery.deliveryStatus,
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
+      ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
+      ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
       payment: paymentAuthorization
     };
 
@@ -4678,7 +4842,9 @@ export class ClawzControlPlane {
       payload: {
         requestId,
         agentId: options.agentId,
-        requesterContact: nextRecord.requesterContact
+        requesterContact: nextRecord.requesterContact,
+        status: hireStatus,
+        ...(ingressProtocolReturn ? { protocolReturnDigestSha256: ingressProtocolReturn.digestSha256 } : {})
       }
     });
 
@@ -4688,7 +4854,7 @@ export class ClawzControlPlane {
       sessionId,
       networkId: deployment.networkId,
       submittedAtIso,
-      status: "submitted",
+      status: hireStatus,
       deliveryTarget: ingressDelivery.ingressUrl,
       deliveryStatus: ingressDelivery.deliveryStatus,
       ingress: {
@@ -4696,8 +4862,10 @@ export class ClawzControlPlane {
         requestId,
         timestamp: submittedAtIso,
         bodyDigestSha256: ingressDelivery.bodyDigestSha256,
+        ...(typeof ingressResponseStatusCode === "number" ? { responseStatusCode: ingressResponseStatusCode } : {}),
         signatureHeader: "X-SantaClawz-Signature"
       },
+      ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
       payment: {
         status: paymentAuthorization.status,
         ...(paymentAuthorization.rail ? { rail: paymentAuthorization.rail } : {}),

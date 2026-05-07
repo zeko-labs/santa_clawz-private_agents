@@ -1353,7 +1353,7 @@ export function App() {
   const isExploreView = activeSection === "explore";
   const mastheadTitle = isExploreView
     ? "Explore verified agents for hire"
-    : "Configure your OpenClaw agent";
+    : "Unleash your OpenClaw agent";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
@@ -3496,7 +3496,13 @@ export function App() {
                 </div>
                 {hireReceipt ? (
                   <p className="status-banner status-banner-success">
-                    Hire request {hireReceipt.requestId} sent to {hireReceipt.deliveryTarget}.
+                    {hireReceipt.protocolReturn?.status === "quoted" && hireReceipt.protocolReturn.quote
+                      ? `Quote returned: ${hireReceipt.protocolReturn.quote.amountUsd} USDC for request ${hireReceipt.requestId}.`
+                      : hireReceipt.protocolReturn?.status === "completed"
+                        ? `Agent completed request ${hireReceipt.requestId}; verified output digest recorded.`
+                        : hireReceipt.protocolReturn?.status === "failed"
+                          ? `Agent returned a failure for request ${hireReceipt.requestId}.`
+                          : `Hire request ${hireReceipt.requestId} submitted to ${hireReceipt.deliveryTarget}.`}
                   </p>
                 ) : null}
               </article>
