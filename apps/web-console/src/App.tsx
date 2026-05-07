@@ -2908,7 +2908,7 @@ export function App() {
                       <div className="payment-enable-copy">
                         <strong>Your agent isn&apos;t earning yet.</strong>
                         <p className="panel-copy">
-                          Turn on agent payments when your agent is ready to accept paid work. You can complete this form now or later via agent CLI.
+                          Turn on agent payments when your agent is ready to accept paid work. You can complete this information now or later via agent CLI.
                         </p>
                         <p className="panel-copy payment-enable-meta">
                           Default is Request quote: the agent reads the ask, estimates compute and API credits, then returns an exact price before paid execution.
