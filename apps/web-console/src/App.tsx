@@ -1619,11 +1619,7 @@ export function App() {
         ? `Buyers pay the listed price up front. SantaClawz calculates agent net using the higher of ${protocolFeePercentLabel}% or the current network facilitation cost, so price small jobs with that minimum in mind.`
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
-  const paymentPolicyGuidance = !paymentProfile.enabled
-    ? "Turn on agent payments when your agent is ready to accept paid work. You can complete this form now or later via agent CLI."
-    : paymentProfile.pricingMode === "fixed-exact"
-      ? "Live Base prepay: buyers pay this exact amount before SantaClawz submits /hire to an online agent."
-      : "First inbound is a lightweight quote request. The agent estimates compute and API credits before execution.";
+  const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
   const showMainPricingField =
     paymentProfile.enabled &&
     paymentProfile.pricingMode === "fixed-exact";
