@@ -2275,7 +2275,7 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div>
-                <strong>Ready to enroll your agent</strong>
+                <strong>Enroll agent to go live and get paid</strong>
                 <p className="panel-copy">
                   Create a one-time enrollment ticket from the fields above, then run the pnpm command from the OpenClaw agent. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
                 </p>
