@@ -904,10 +904,6 @@ pre,
   max-width: 60rem;
 }
 
-.compact-command-strip {
-  margin-top: 0;
-}
-
 .compact-advanced-panel {
   margin-top: 2px;
 }
@@ -1695,6 +1691,10 @@ h3 {
   border-radius: 20px;
   background: #101d2d;
   color: #edf5ff;
+}
+
+.command-strip.compact-command-strip {
+  margin-top: 0;
 }
 
 .command-strip code {
