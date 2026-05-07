@@ -1948,7 +1948,7 @@ export function App() {
               <div className="field-label-row">
                 <span>PublicClawz agent URL</span>
                 <a className="field-help-link" href={PUBLIC_HIRE_URL_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Why this URL is public
+                  Public URL setup guide
                 </a>
               </div>
               <input
