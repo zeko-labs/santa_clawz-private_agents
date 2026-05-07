@@ -11,6 +11,7 @@
     "session_id",
     "caller_type",
     "service",
+    "service_key",
     "verification_required",
     "return_channel",
     "request_type",
@@ -42,8 +43,11 @@
     },
     "service": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 80
+      "pattern": "^[a-z0-9][a-z0-9_:-]{0,79}$"
+    },
+    "service_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_:-]{0,79}$"
     },
     "verification_required": {
       "type": "boolean"

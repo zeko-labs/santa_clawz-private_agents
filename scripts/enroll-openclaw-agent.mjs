@@ -91,6 +91,36 @@ function envQuote(value) {
     .replace(/`/g, "\\`")}"`;
 }
 
+function serviceKeySlug(value) {
+  const normalized = String(value ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "agent";
+}
+
+function serviceKeyFromOpenClawUrl(openClawUrl) {
+  try {
+    const url = new URL(String(openClawUrl ?? ""));
+    const segments = url.pathname
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    const serviceSegment = segments.at(-1) === "hire" ? segments.at(-2) : segments.at(-1);
+    return serviceSegment ? serviceKeySlug(serviceSegment) : "";
+  } catch {
+    return "";
+  }
+}
+
+function serviceKeyForEnrollment(profile, agentId) {
+  return (
+    serviceKeyFromOpenClawUrl(profile?.openClawUrl) ||
+    serviceKeySlug(profile?.agentName || String(agentId ?? "").split("--")[0] || "agent")
+  );
+}
+
 function writePrivateFile(filePath, contents) {
   const resolvedPath = path.resolve(filePath);
   mkdirSync(path.dirname(resolvedPath), { recursive: true });
@@ -116,6 +146,7 @@ function buildAgentEnvFile(input) {
     `CLAWZ_SITE_BASE=${envQuote(input.siteBase)}`,
     `CLAWZ_AGENT_ID=${envQuote(input.agentId)}`,
     `CLAWZ_AGENT_SESSION_ID=${envQuote(input.sessionId)}`,
+    `CLAWZ_AGENT_SERVICE_KEY=${envQuote(input.serviceKey)}`,
     `CLAWZ_AGENT_ADMIN_KEY=${envQuote(input.adminKey)}`,
     `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(input.ingressToken)}`,
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(input.signingSecret)}`,
@@ -296,6 +327,7 @@ try {
     adminKey,
     ingressToken,
     signingSecret,
+    serviceKey: serviceKeyForEnrollment(redeemed.profile, agentId),
     networkId: redeemed.deployment?.networkId,
     publicAgentUrl: `${siteBase}/explore/${encodeURIComponent(agentId)}`,
     discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,

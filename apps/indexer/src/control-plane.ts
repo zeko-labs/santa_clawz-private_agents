@@ -13,6 +13,7 @@ import {
 import { createTenantKeyBroker, type TenantKeyBrokerRuntimeDescriptor, TenantKeyBroker } from "@clawz/key-broker";
 import {
   SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION,
+  assertValidSantaClawzHireServiceIdentity,
   assertValidSantaClawzHirePolicy,
   canonicalDigest,
   paymentStatusForHireRequest,
@@ -747,6 +748,33 @@ function slugify(value: string): string {
 
 function buildStableAgentId(agentName: string, sessionId: string): string {
   return `${slugify(agentName)}--${sessionId}`;
+}
+
+function serviceKeySlug(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized.length > 0 ? normalized : "agent";
+}
+
+function serviceKeyForAgent(profile: Pick<AgentProfileState, "agentName" | "openClawUrl">, agentId: string): string {
+  try {
+    const url = new URL(profile.openClawUrl);
+    const pathSegments = url.pathname
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    const servicePathSegment = pathSegments.at(-1) === "hire" ? pathSegments.at(-2) : pathSegments.at(-1);
+    if (servicePathSegment) {
+      return serviceKeySlug(servicePathSegment);
+    }
+  } catch {
+    // Fall back to the public profile name when the URL is not parseable yet.
+  }
+
+  return serviceKeySlug(profile.agentName || agentId.split("--")[0] || agentId);
 }
 
 function buildAdminKey() {
@@ -2477,13 +2505,19 @@ export class ClawzControlPlane {
         ? { rail: input.paymentAuthorization.rail }
         : {})
     });
+    const serviceKey = serviceKeyForAgent(input.profile, input.agentId);
+    assertValidSantaClawzHireServiceIdentity({
+      service: serviceKey,
+      service_key: serviceKey
+    });
     const envelope = {
       schema_version: HIRE_REQUEST_SCHEMA_VERSION,
       request_id: input.requestId,
       agent_id: input.agentId,
       session_id: input.sessionId,
       caller_type: "human",
-      service: "agent_job_pack",
+      service: serviceKey,
+      service_key: serviceKey,
       verification_required: true,
       return_channel: "santaclawz",
       request_type: requestType,
@@ -5122,14 +5156,16 @@ export class ClawzControlPlane {
           trustModeId,
           ...(heartbeatRecord ? { record: heartbeatRecord } : {})
         });
+        const agentId = this.agentIdForSession(state, sessionId, trustModeId);
         return {
-          agentId: this.agentIdForSession(state, sessionId, trustModeId),
+          agentId,
           sessionId,
           networkId: deployment.networkId,
           agentName: profile.agentName,
           representedPrincipal: profile.representedPrincipal,
           headline: profile.headline,
           openClawUrl: profile.openClawUrl,
+          serviceKey: serviceKeyForAgent(profile, agentId),
           trustModeId,
           trustModeLabel: trustMode.label,
           proofLevel: trustMode.proofLevel,

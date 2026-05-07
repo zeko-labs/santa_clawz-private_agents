@@ -5,6 +5,13 @@ export const SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0" a
 export type SantaClawzHireRequestType = "quote_intake" | "paid_execution";
 export type SantaClawzHirePaymentStatus = "quote_requested" | "settled" | "paid" | "escrowed";
 
+const SERVICE_KEY_PATTERN = /^[a-z0-9][a-z0-9_:-]{0,79}$/;
+
+export interface SantaClawzHireServiceIdentity {
+  service: string;
+  service_key: string;
+}
+
 export interface SantaClawzHireProtocolFields {
   request_type: SantaClawzHireRequestType;
   pricing_mode: AgentPricingMode;
@@ -31,6 +38,15 @@ export function paymentStatusForHireRequest(input: {
     return "settled";
   }
   throw new Error("paid_execution requires payment_status=settled, paid, or escrowed.");
+}
+
+export function assertValidSantaClawzHireServiceIdentity(identity: SantaClawzHireServiceIdentity): void {
+  if (!SERVICE_KEY_PATTERN.test(identity.service_key)) {
+    throw new Error("hire request service_key is invalid.");
+  }
+  if (identity.service !== identity.service_key) {
+    throw new Error("hire request service must match service_key.");
+  }
 }
 
 export function assertValidSantaClawzHirePolicy(policy: SantaClawzHirePaymentPolicy): void {

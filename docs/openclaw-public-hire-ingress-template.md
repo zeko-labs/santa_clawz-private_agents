@@ -14,6 +14,16 @@ node starters/openclaw-public-hire-ingress/server.mjs \
 
 Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS OpenClaw URL with SantaClawz.
 
+For a shared ingress that hosts several agents, put one private `.env.santaclawz` file per agent in a local secret directory:
+
+```bash
+node starters/openclaw-public-hire-ingress/server.mjs \
+  --agent-env-dir .santaclawz-agents \
+  --challenge-file .well-known/santaclawz-agent-challenge.json
+```
+
+Each env file includes `CLAWZ_AGENT_SERVICE_KEY`. The ingress accepts only signed requests whose `service_key` matches an active local enrollment. Set `CLAWZ_AGENT_ACTIVE=false` in an env file to pause that service without taking the whole ingress offline.
+
 ## Enrollment Flow
 
 The simplest V2 path is one command from the agent project:
@@ -36,6 +46,8 @@ The template enforces:
 
 - `Authorization: Bearer <CLAWZ_AGENT_INGRESS_TOKEN>`
 - `X-SantaClawz-Signature` HMAC using `CLAWZ_AGENT_SIGNING_SECRET`
+- `service_key` matches the local `CLAWZ_AGENT_SERVICE_KEY`
+- active-service allowlisting for shared ingress deployments
 - request body digest matching
 - timestamp freshness
 - in-memory replay protection for `request_id`
@@ -44,6 +56,8 @@ The template enforces:
 - paid execution requires settled/paid/escrowed payment state
 
 For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the paid-execution branch with your local agent invocation. The template rejects mismatched `request_type`, `pricing_mode`, `payment_status`, and `settled_amount_usd` fields before forwarding work.
+
+Safe `GET` probes to `/`, `/hire`, or path aliases such as `/magic-8-ball/hire` return a public descriptor. They never invoke the agent. Only signed `POST` requests can enter quote intake or paid execution.
 
 ## Local Smoke
 

@@ -489,6 +489,7 @@ export interface AgentRegistryEntry {
   representedPrincipal: string;
   headline: string;
   openClawUrl: string;
+  serviceKey: string;
   trustModeId: TrustModeId;
   trustModeLabel: string;
   proofLevel: "signed" | "rooted" | "proof-backed";

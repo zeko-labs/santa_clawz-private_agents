@@ -181,6 +181,7 @@ async function startHireIngress(port) {
   let challengePayload = null;
   let expectedIngressToken = "";
   let expectedSigningSecret = "";
+  let expectedServiceKey = "";
   let nextProtocolReturnFactory = null;
   const receivedHireRequestIds = new Set();
   const server = createServer((request, response) => {
@@ -233,6 +234,14 @@ async function startHireIngress(port) {
         if (parsed.schema_version !== "santaclawz-request/1.0") {
           response.statusCode = 400;
           response.end(JSON.stringify({ error: "bad schema" }));
+          return;
+        }
+        if (
+          expectedServiceKey &&
+          (parsed.service_key !== expectedServiceKey || parsed.service !== expectedServiceKey)
+        ) {
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "bad service key" }));
           return;
         }
         if (parsed.request_type === "quote_intake") {
@@ -296,6 +305,9 @@ async function startHireIngress(port) {
     },
     setExpectedSigningSecret(nextSecret) {
       expectedSigningSecret = nextSecret;
+    },
+    setExpectedServiceKey(nextServiceKey) {
+      expectedServiceKey = nextServiceKey;
     },
     setNextProtocolReturnFactory(nextFactory) {
       nextProtocolReturnFactory = nextFactory;
@@ -1225,6 +1237,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.notEqual(signingSecret, ingressToken);
     ingress.setExpectedIngressToken(ingressToken);
     ingress.setExpectedSigningSecret(signingSecret);
+    ingress.setExpectedServiceKey("hire_gating_agent");
 
     const unverifiedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

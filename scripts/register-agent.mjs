@@ -93,6 +93,36 @@ function envQuote(value) {
     .replace(/`/g, "\\`")}"`;
 }
 
+function serviceKeySlug(value) {
+  const normalized = String(value ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "agent";
+}
+
+function serviceKeyFromPublicUrl(publicUrl) {
+  try {
+    const url = new URL(String(publicUrl ?? ""));
+    const segments = url.pathname
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    const serviceSegment = segments.at(-1) === "hire" ? segments.at(-2) : segments.at(-1);
+    return serviceSegment ? serviceKeySlug(serviceSegment) : "";
+  } catch {
+    return "";
+  }
+}
+
+function serviceKeyForResult(result) {
+  return (
+    serviceKeyFromPublicUrl(result.profile?.openClawUrl) ||
+    serviceKeySlug(result.profile?.agentName || String(result.agentId ?? "").split("--")[0] || "agent")
+  );
+}
+
 function writePrivateFile(filePath, contents) {
   const resolvedPath = path.resolve(filePath);
   mkdirSync(path.dirname(resolvedPath), { recursive: true });
@@ -109,6 +139,7 @@ function buildAgentEnvFile(result, issuedAdminKey) {
     `CLAWZ_SITE_BASE=${envQuote(result.siteBase)}`,
     `CLAWZ_AGENT_ID=${envQuote(result.agentId)}`,
     `CLAWZ_AGENT_SESSION_ID=${envQuote(result.sessionId)}`,
+    `CLAWZ_AGENT_SERVICE_KEY=${envQuote(result.serviceKey ?? serviceKeyForResult(result))}`,
     `CLAWZ_AGENT_ADMIN_KEY=${envQuote(issuedAdminKey ?? "")}`,
     `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(result.ingressToken ?? "")}`,
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(result.signingSecret ?? "")}`,
@@ -339,6 +370,7 @@ const result = {
   paymentsEnabled: state.paymentsEnabled,
   paymentProfileReady: state.paymentProfileReady,
   paidJobsEnabled: state.paidJobsEnabled,
+  serviceKey: serviceKeyForResult({ agentId, profile: state.profile }),
   publicAgentUrl: `${siteBase}/explore/${encodeURIComponent(agentId)}`,
   discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
   verifyUrl: `${apiBase}/api/interop/verify?sessionId=${encodeURIComponent(sessionId)}`,
