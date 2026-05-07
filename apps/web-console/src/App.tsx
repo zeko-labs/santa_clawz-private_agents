@@ -1972,9 +1972,6 @@ export function App() {
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">
                 <span>Agent payments</span>
-                <span className={paymentProfile.enabled ? "toggle-state toggle-state-on" : "toggle-state"}>
-                  {paymentProfile.enabled ? "On" : "Off"}
-                </span>
               </div>
               <button
                 type="button"
@@ -2860,13 +2857,11 @@ export function App() {
                     className={paymentsEnabled ? "slider-toggle slider-toggle-compact active" : "slider-toggle slider-toggle-compact"}
                     role="switch"
                     aria-checked={paymentsEnabled}
+                    aria-label={paymentsEnabled ? "Turn off agent payments" : "Turn on agent payments"}
                     onClick={toggleOpenForWork}
                   >
                     <span className="slider-toggle-track" aria-hidden="true">
                       <span className="slider-toggle-thumb" />
-                    </span>
-                    <span className="slider-toggle-copy">
-                      <strong>{paymentsEnabled ? "On" : "Off"}</strong>
                     </span>
                   </button>
                 </div>

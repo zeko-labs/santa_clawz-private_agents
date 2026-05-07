@@ -1778,26 +1778,6 @@ h3 {
   gap: 10px;
 }
 
-.toggle-state {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 48px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: rgba(18, 35, 54, 0.08);
-  color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.toggle-state-on {
-  background: rgba(22, 113, 88, 0.12);
-  color: var(--success);
-}
-
 .slider-toggle {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
