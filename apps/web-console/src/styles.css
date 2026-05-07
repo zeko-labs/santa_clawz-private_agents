@@ -1755,6 +1755,11 @@ h3 {
   margin-top: 0;
 }
 
+.fixed-pricing-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+}
+
 .field > span,
 .field-label-row > span {
   font-size: 0.76rem;
@@ -2521,7 +2526,8 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .pricing-fields-row {
+  .pricing-fields-row,
+  .fixed-pricing-row {
     grid-template-columns: 1fr;
   }
 

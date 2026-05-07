@@ -2046,7 +2046,11 @@ export function App() {
             ) : null}
 
             {paymentProfile.enabled ? (
-              <div className={showReferencePricingFields ? "field-grid field-wide pricing-fields-row" : "field-wide"}>
+              <div className={
+                showReferencePricingFields
+                  ? "field-grid field-wide pricing-fields-row"
+                  : "field-grid field-wide fixed-pricing-row"
+              }>
                 <label className="field">
                   <span>Pricing method</span>
                   <select
@@ -2121,27 +2125,27 @@ export function App() {
                     </select>
                   </label>
                 ) : null}
-              </div>
-            ) : null}
 
-            {showMainPricingField ? (
-              <label className="field">
-                <span>{mainPricingLabel}</span>
-                <input
-                  className="text-input"
-                  value={mainPricingValue}
-                  onChange={(event: ValueInputEvent) => {
-                    setProfile({
-                      ...profile,
-                      paymentProfile: {
-                        ...profile.paymentProfile,
-                        fixedAmountUsd: event.target.value
-                      }
-                    });
-                  }}
-                  placeholder={mainPricingPlaceholder}
-                />
-              </label>
+                {showMainPricingField ? (
+                  <label className="field">
+                    <span>{mainPricingLabel}</span>
+                    <input
+                      className="text-input"
+                      value={mainPricingValue}
+                      onChange={(event: ValueInputEvent) => {
+                        setProfile({
+                          ...profile,
+                          paymentProfile: {
+                            ...profile.paymentProfile,
+                            fixedAmountUsd: event.target.value
+                          }
+                        });
+                      }}
+                      placeholder={mainPricingPlaceholder}
+                    />
+                  </label>
+                ) : null}
+              </div>
             ) : null}
 
           </div>
