@@ -57,6 +57,7 @@ function startIndexer(workspaceDir, port) {
 function startMockOpenClaw() {
   let challengePayload = null;
   let expectedIngressToken = "";
+  let expectedSigningSecret = "";
   const seenHireRequestIds = new Set();
   const server = createServer((request, response) => {
     if (request.method === "GET" && request.url === "/.well-known/santaclawz-agent-challenge.json") {
@@ -83,7 +84,7 @@ function startMockOpenClaw() {
         const expectedDigest = createHash("sha256").update(body).digest("hex");
         const expectedSignature =
           typeof timestamp === "string" && typeof requestId === "string"
-            ? `v1=${createHmac("sha256", expectedIngressToken).update(`${timestamp}.${requestId}.${expectedDigest}`).digest("hex")}`
+            ? `v1=${createHmac("sha256", expectedSigningSecret).update(`${timestamp}.${requestId}.${expectedDigest}`).digest("hex")}`
             : "";
 
         if (!expectedIngressToken || authorization !== `Bearer ${expectedIngressToken}`) {
@@ -128,6 +129,9 @@ function startMockOpenClaw() {
         },
         setExpectedIngressToken(nextToken) {
           expectedIngressToken = nextToken;
+        },
+        setExpectedSigningSecret(nextSecret) {
+          expectedSigningSecret = nextSecret;
         },
         close() {
           return new Promise((closeResolve) => server.close(closeResolve));
@@ -264,6 +268,7 @@ async function main() {
     const sessionId = registered.payload.session.sessionId;
     const adminKey = registered.payload.adminAccess.issuedAdminKey;
     mockOpenClaw.setExpectedIngressToken(registered.payload.ingressAccess.issuedIngressToken);
+    mockOpenClaw.setExpectedSigningSecret(registered.payload.ingressAccess.issuedSigningSecret);
 
     const challenge = await requestJson(`${baseUrl}/api/ownership/challenge`, {
       method: "POST",

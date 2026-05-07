@@ -543,8 +543,11 @@ export interface AdminAccessState {
 
 export interface IngressAccessState {
   hasIngressToken: boolean;
+  hasSigningSecret?: boolean;
   tokenHint?: string;
+  signingSecretHint?: string;
   issuedIngressToken?: string;
+  issuedSigningSecret?: string;
 }
 
 export interface ConsoleStateResponse {

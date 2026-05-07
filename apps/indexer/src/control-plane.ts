@@ -130,6 +130,8 @@ interface DeletedAgentRegistrationRecord {
 interface SessionIngressSecretRecord {
   token: string;
   tokenHint: string;
+  signingSecret: string;
+  signingSecretHint: string;
   issuedAtIso: string;
 }
 
@@ -426,6 +428,7 @@ interface ConsoleStateOptions {
   agentId?: string;
   exposeIssuedAdminKey?: string;
   exposeIssuedIngressToken?: string;
+  exposeIssuedSigningSecret?: string;
 }
 
 interface EventListOptions {
@@ -666,6 +669,10 @@ function buildAdminKey() {
 
 function buildIngressToken() {
   return `sc_ing_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+}
+
+function buildIngressSigningSecret() {
+  return `sc_sig_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 }
 
 function adminKeyHash(value: string) {
@@ -1770,13 +1777,17 @@ export class ClawzControlPlane {
   private buildIngressAccessState(
     state: ConsolePersistenceState,
     sessionId: string,
-    issuedIngressToken?: string
+    issuedIngressToken?: string,
+    issuedSigningSecret?: string
   ): NonNullable<ConsoleStateResponse["ingressAccess"]> {
     const record = state.ingressSecretsBySession[sessionId];
     return {
       hasIngressToken: Boolean(record),
+      hasSigningSecret: Boolean(record?.signingSecret),
       ...(record?.tokenHint ? { tokenHint: record.tokenHint } : {}),
-      ...(issuedIngressToken ? { issuedIngressToken } : {})
+      ...(record?.signingSecretHint ? { signingSecretHint: record.signingSecretHint } : {}),
+      ...(issuedIngressToken ? { issuedIngressToken } : {}),
+      ...(issuedSigningSecret ? { issuedSigningSecret } : {})
     };
   }
 
@@ -2184,7 +2195,7 @@ export class ClawzControlPlane {
     const body = JSON.stringify(envelope);
     const bodyDigestSha256 = sha256Hex(body);
     const signaturePayload = `${input.submittedAtIso}.${input.requestId}.${bodyDigestSha256}`;
-    const signature = createHmac("sha256", input.ingressRecord.token).update(signaturePayload).digest("hex");
+    const signature = createHmac("sha256", input.ingressRecord.signingSecret).update(signaturePayload).digest("hex");
 
     return {
       ingressUrl,
@@ -2203,10 +2214,12 @@ export class ClawzControlPlane {
 
   private ingressSecretRecordForSession(state: ConsolePersistenceState, sessionId: string): SessionIngressSecretRecord {
     const record = state.ingressSecretsBySession[sessionId];
-    if (record) {
+    if (record?.token && record.signingSecret) {
       return record;
     }
-    throw new Error("This agent is missing a SantaClawz ingress token. Re-enroll or rotate ingress credentials before accepting public hires.");
+    throw new Error(
+      "This agent is missing current SantaClawz ingress credentials. Re-enroll or rotate ingress credentials before accepting public hires."
+    );
   }
 
   private async forwardHireRequestToIngress(input: {
@@ -4008,7 +4021,8 @@ export class ClawzControlPlane {
     const ingressAccess = this.buildIngressAccessState(
       state,
       focus.sessionId,
-      options.exposeIssuedIngressToken
+      options.exposeIssuedIngressToken,
+      options.exposeIssuedSigningSecret
     );
 
     return {
@@ -4291,6 +4305,7 @@ export class ClawzControlPlane {
     const agentId = buildStableAgentId(profile.agentName, sessionId);
     const adminKey = buildAdminKey();
     const ingressToken = buildIngressToken();
+    const signingSecret = buildIngressSigningSecret();
     const nextState: ConsolePersistenceState = {
       ...this.applyFocusedSession(state, sessionId, trustModeId),
       agentIdsBySession: {
@@ -4314,6 +4329,8 @@ export class ClawzControlPlane {
         [sessionId]: {
           token: ingressToken,
           tokenHint: ingressTokenHint(ingressToken),
+          signingSecret,
+          signingSecretHint: ingressTokenHint(signingSecret),
           issuedAtIso: registeredAtIso
         }
       },
@@ -4372,7 +4389,8 @@ export class ClawzControlPlane {
       sessionId,
       adminKey,
       exposeIssuedAdminKey: adminKey,
-      exposeIssuedIngressToken: ingressToken
+      exposeIssuedIngressToken: ingressToken,
+      exposeIssuedSigningSecret: signingSecret
     });
   }
 

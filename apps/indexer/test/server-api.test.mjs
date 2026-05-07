@@ -180,6 +180,7 @@ async function startMissionAuthAuthority(port) {
 async function startHireIngress(port) {
   let challengePayload = null;
   let expectedIngressToken = "";
+  let expectedSigningSecret = "";
   const receivedHireRequestIds = new Set();
   const server = createServer((request, response) => {
     const url = request.url ?? "/";
@@ -208,7 +209,7 @@ async function startHireIngress(port) {
         const expectedBodyDigest = createHash("sha256").update(body).digest("hex");
         const expectedSignature =
           typeof timestamp === "string" && typeof requestId === "string"
-            ? `v1=${createHmac("sha256", expectedIngressToken).update(`${timestamp}.${requestId}.${expectedBodyDigest}`).digest("hex")}`
+            ? `v1=${createHmac("sha256", expectedSigningSecret).update(`${timestamp}.${requestId}.${expectedBodyDigest}`).digest("hex")}`
             : "";
 
         response.setHeader("content-type", "application/json");
@@ -255,6 +256,9 @@ async function startHireIngress(port) {
     },
     setExpectedIngressToken(nextToken) {
       expectedIngressToken = nextToken;
+    },
+    setExpectedSigningSecret(nextSecret) {
+      expectedSigningSecret = nextSecret;
     },
     receivedHireRequestIds,
     close() {
@@ -1058,8 +1062,12 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     const agentId = registered.payload.agentId;
     const adminKey = registered.payload.adminAccess.issuedAdminKey;
     const ingressToken = registered.payload.ingressAccess.issuedIngressToken;
+    const signingSecret = registered.payload.ingressAccess.issuedSigningSecret;
     assert.equal(typeof ingressToken, "string");
+    assert.equal(typeof signingSecret, "string");
+    assert.notEqual(signingSecret, ingressToken);
     ingress.setExpectedIngressToken(ingressToken);
+    ingress.setExpectedSigningSecret(signingSecret);
 
     const unverifiedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

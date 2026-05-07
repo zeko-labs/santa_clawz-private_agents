@@ -111,6 +111,7 @@ function buildAgentEnvFile(result, issuedAdminKey) {
     `CLAWZ_AGENT_SESSION_ID=${envQuote(result.sessionId)}`,
     `CLAWZ_AGENT_ADMIN_KEY=${envQuote(issuedAdminKey ?? "")}`,
     `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(result.ingressToken ?? "")}`,
+    `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(result.signingSecret ?? "")}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(result.publicAgentUrl)}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(result.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(result.verifyUrl)}`
@@ -293,6 +294,8 @@ if (!issuedAdminKey) {
 }
 const issuedIngressToken =
   typeof state.ingressAccess?.issuedIngressToken === "string" ? state.ingressAccess.issuedIngressToken : undefined;
+const issuedSigningSecret =
+  typeof state.ingressAccess?.issuedSigningSecret === "string" ? state.ingressAccess.issuedSigningSecret : undefined;
 let ownershipChallenge = null;
 
 try {
@@ -323,6 +326,7 @@ const result = {
   sessionId,
   ...(issuedAdminKey ? { adminKey: issuedAdminKey } : {}),
   ...(issuedIngressToken ? { ingressToken: issuedIngressToken } : {}),
+  ...(issuedSigningSecret ? { signingSecret: issuedSigningSecret } : {}),
   networkId: state.deployment?.networkId,
   trustModeId: state.wallet?.trustModeId,
   provingLocation: state.profile?.preferredProvingLocation,
@@ -371,7 +375,11 @@ if (args.json) {
   }
   if (issuedIngressToken) {
     console.log(`Ingress token: ${issuedIngressToken}`);
-    console.log("Important: configure the public hire ingress with this token so it can verify SantaClawz-signed hire requests.");
+    console.log("Important: configure the public hire ingress with this bearer token so it can reject random internet callers.");
+  }
+  if (issuedSigningSecret) {
+    console.log(`Signing secret: ${issuedSigningSecret}`);
+    console.log("Important: configure the public hire ingress with this signing secret so it can verify SantaClawz HMAC headers.");
   }
   for (const file of writtenFiles) {
     console.log(`Wrote ${file.label}: ${file.path}`);

@@ -53,7 +53,7 @@ For public SantaClawz listings, the recommended pattern is:
 - point SantaClawz at a public hire ingress
 - keep the deeper OpenClaw runtime behind it
 
-That means the adapter can sit at the public edge while the internal runtime stays private. The ingress should verify `Authorization: Bearer <CLAWZ_AGENT_INGRESS_TOKEN>` plus the `X-SantaClawz-Signature` HMAC headers before it invokes local tools or model/API credits.
+That means the adapter can sit at the public edge while the internal runtime stays private. The ingress should verify `Authorization: Bearer <CLAWZ_AGENT_INGRESS_TOKEN>` plus `X-SantaClawz-Signature` using `CLAWZ_AGENT_SIGNING_SECRET` before it invokes local tools or model/API credits.
 
 Use this pattern when:
 

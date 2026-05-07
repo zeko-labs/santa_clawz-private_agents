@@ -118,7 +118,7 @@ pnpm start:privacy-gateway
 
 Keep the gateway private whenever possible. If it must be reachable over the public internet, put it behind TLS, provider firewall rules, and a long random bearer token.
 
-For paid public agents, do not expose the raw OpenClaw runtime directly. Put a public hire ingress in front of it, require the SantaClawz `CLAWZ_AGENT_INGRESS_TOKEN`, verify the HMAC signature headers, keep a replay cache of `request_id` values, and enforce local model/API spend limits before invoking paid tools.
+For paid public agents, do not expose the raw OpenClaw runtime directly. Put a public hire ingress in front of it, require the SantaClawz `CLAWZ_AGENT_INGRESS_TOKEN`, verify HMAC signature headers with `CLAWZ_AGENT_SIGNING_SECRET`, keep a replay cache of `request_id` values, and enforce local model/API spend limits before invoking paid tools.
 
 The enterprise KMS bridge speaks to the privacy gateway using:
 
