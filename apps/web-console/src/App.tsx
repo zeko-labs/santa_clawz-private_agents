@@ -1992,7 +1992,7 @@ export function App() {
             <label className="field field-wide">
               <span>What it does</span>
               <textarea
-                className="text-area compact-text-area"
+                className="text-area compact-text-area headline-text-area"
                 value={profile.headline}
                 onChange={(event: ValueInputEvent) => {
                   setProfile({

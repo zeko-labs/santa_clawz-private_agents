@@ -1899,6 +1899,10 @@ h3 {
   resize: vertical;
 }
 
+.text-area.headline-text-area {
+  min-height: 92px;
+}
+
 .choice-row {
   margin-top: 16px;
 }
