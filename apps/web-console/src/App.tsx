@@ -2277,7 +2277,7 @@ export function App() {
               <div>
                 <strong>Ready to enroll your agent</strong>
                 <p className="panel-copy">
-                  Create a one-time enrollment ticket for your agents, from the completed fields above. Then run the pnpm command from the OpenClaw agent. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the agent admin key. The agent creates and stores it locally.
+                  Create a one-time enrollment ticket from the fields above, then run the pnpm command from the OpenClaw agent. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat live. The browser never receives the admin key.
                 </p>
               </div>
             </div>
