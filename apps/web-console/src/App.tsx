@@ -2000,7 +2000,7 @@ export function App() {
                     headline: event.target.value
                   });
                 }}
-                placeholder="Private research, governed execution, and verifiable delivery."
+                placeholder="Enter description: e.g. Private research, governed execution, and verifiable delivery."
               />
             </label>
 
