@@ -712,8 +712,7 @@ pre,
 
 .step-title {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  column-gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
@@ -722,25 +721,6 @@ pre,
   gap: 7px;
   flex: 1 1 auto;
   min-width: 0;
-  padding-top: 1px;
-}
-
-.step-number {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  min-height: 36px;
-  flex: 0 0 36px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-bright));
-  color: white;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.88rem;
-  line-height: 1;
-  font-weight: 500;
 }
 
 .simple-choice-stack,

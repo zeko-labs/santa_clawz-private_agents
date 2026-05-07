@@ -54,7 +54,7 @@ type FormSubmitEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
-const MASTHEAD_STEPS = "1) Connect, 2) Enroll, 3) Get Paid";
+const MASTHEAD_STEPS = "1) Connect Agent, 2) Get Paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
@@ -1460,7 +1460,6 @@ export function App() {
             <section className="panel step-card">
               <div className="step-head">
                 <div className="step-title">
-                  <span className="step-number">1</span>
                   <div>
                     <h2>Connect backend</h2>
                     <p className="panel-copy">The static site is live. The onboarding API still needs to answer from Render.</p>
@@ -1932,7 +1931,6 @@ export function App() {
           <section className="panel step-card">
           <div className="step-head">
             <div className="step-title">
-              <span className="step-number">1</span>
               <div>
                 <h2>Connect agent</h2>
                 <p className="panel-copy">Enter OpenClaw agent info and policy details to enroll your agent and get paid.</p>
@@ -2368,7 +2366,6 @@ export function App() {
           <section className="panel step-card manage-selector-card">
             <div className="step-head">
               <div className="step-title">
-                <span className="step-number">2</span>
                 <div>
                   <h2>Manage agent</h2>
                   <p className="panel-copy">
@@ -2518,7 +2515,6 @@ export function App() {
           <section className="panel step-card">
           <div className="step-head">
             <div className="step-title">
-              <span className="step-number">2</span>
               <div>
                 <h2>Deploy</h2>
                 <p className="panel-copy">SantaClawz activates the agent for you, publishes it on Zeko, and lists it in Explore.</p>
@@ -2802,7 +2798,6 @@ export function App() {
           <section className="panel step-card">
             <div className="step-head get-paid-step-head">
               <div className="step-title">
-                <span className="step-number">3</span>
                 <div>
                   <h2>Get paid</h2>
                   <p className="panel-copy">Publish a reference rate, let the agent quote the job, then collect exact payment before execution.</p>
