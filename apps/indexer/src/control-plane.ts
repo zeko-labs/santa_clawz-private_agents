@@ -1211,44 +1211,43 @@ function sanitizePaymentProfile(
     (fallback.defaultRail && normalizedRails.includes(fallback.defaultRail) ? fallback.defaultRail : undefined) ??
     normalizedRails[0];
   const pricingMode =
-    input?.pricingMode === "fixed-exact" ||
-    input?.pricingMode === "capped-exact" ||
-    input?.pricingMode === "quote-required" ||
-    input?.pricingMode === "agent-negotiated"
+    input?.pricingMode === "fixed-exact" || input?.pricingMode === "quote-required"
       ? input.pricingMode
-      : fallback.pricingMode;
+      : fallback.pricingMode === "fixed-exact" || fallback.pricingMode === "quote-required"
+        ? fallback.pricingMode
+        : "quote-required";
   const settlementTrigger =
     input?.settlementTrigger === "upfront" || input?.settlementTrigger === "on-proof"
       ? input.settlementTrigger
       : fallback.settlementTrigger;
+  const fixedAmountUsd =
+    pricingMode === "fixed-exact"
+      ? sanitizeUsdAmount(input?.fixedAmountUsd) ?? sanitizeUsdAmount(fallback.fixedAmountUsd)
+      : undefined;
+  const quoteUrl =
+    pricingMode === "quote-required"
+      ? sanitizeUrl(input?.quoteUrl) ?? sanitizeUrl(fallback.quoteUrl)
+      : undefined;
+  const referencePriceUsd =
+    pricingMode === "quote-required"
+      ? sanitizeUsdAmount(input?.referencePriceUsd) ?? sanitizeUsdAmount(fallback.referencePriceUsd)
+      : undefined;
+  const referencePriceUnit =
+    input?.referencePriceUnit === "minimum" ||
+    input?.referencePriceUnit === "agent-minute" ||
+    input?.referencePriceUnit === "compute-unit"
+      ? input.referencePriceUnit
+      : fallback.referencePriceUnit;
 
   return {
     enabled: typeof input?.enabled === "boolean" ? input.enabled : fallback.enabled,
     supportedRails: normalizedRails,
     ...(defaultRail ? { defaultRail } : {}),
     pricingMode,
-    ...(sanitizeUsdAmount(input?.fixedAmountUsd) ?? sanitizeUsdAmount(fallback.fixedAmountUsd)
-      ? { fixedAmountUsd: sanitizeUsdAmount(input?.fixedAmountUsd) ?? sanitizeUsdAmount(fallback.fixedAmountUsd)! }
-      : {}),
-    ...(sanitizeUsdAmount(input?.maxAmountUsd) ?? sanitizeUsdAmount(fallback.maxAmountUsd)
-      ? { maxAmountUsd: sanitizeUsdAmount(input?.maxAmountUsd) ?? sanitizeUsdAmount(fallback.maxAmountUsd)! }
-      : {}),
-    ...(sanitizeUrl(input?.quoteUrl) ?? sanitizeUrl(fallback.quoteUrl)
-      ? { quoteUrl: sanitizeUrl(input?.quoteUrl) ?? sanitizeUrl(fallback.quoteUrl)! }
-      : {}),
-    ...(sanitizeUsdAmount(input?.referencePriceUsd) ?? sanitizeUsdAmount(fallback.referencePriceUsd)
-      ? {
-          referencePriceUsd:
-            sanitizeUsdAmount(input?.referencePriceUsd) ?? sanitizeUsdAmount(fallback.referencePriceUsd)!
-        }
-      : {}),
-    ...(input?.referencePriceUnit === "minimum" ||
-    input?.referencePriceUnit === "agent-minute" ||
-    input?.referencePriceUnit === "compute-unit"
-      ? { referencePriceUnit: input.referencePriceUnit }
-      : fallback.referencePriceUnit
-        ? { referencePriceUnit: fallback.referencePriceUnit }
-        : {}),
+    ...(fixedAmountUsd ? { fixedAmountUsd } : {}),
+    ...(quoteUrl ? { quoteUrl } : {}),
+    ...(referencePriceUsd ? { referencePriceUsd } : {}),
+    ...(pricingMode === "quote-required" && referencePriceUnit ? { referencePriceUnit } : {}),
     settlementTrigger,
     ...(sanitizeUrl(input?.baseFacilitatorUrl) ?? sanitizeUrl(fallback.baseFacilitatorUrl)
       ? {
@@ -1294,7 +1293,7 @@ function payoutWalletForRail(profile: AgentProfileState, rail: AgentProfileState
 }
 
 function isQuotedPricingMode(mode: AgentProfileState["paymentProfile"]["pricingMode"]) {
-  return mode === "quote-required" || mode === "agent-negotiated";
+  return mode === "quote-required";
 }
 
 function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
@@ -1313,9 +1312,6 @@ function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
   }
   if (profile.paymentProfile.pricingMode === "fixed-exact") {
     return typeof profile.paymentProfile.fixedAmountUsd === "string" && profile.paymentProfile.fixedAmountUsd.trim().length > 0;
-  }
-  if (profile.paymentProfile.pricingMode === "capped-exact") {
-    return typeof profile.paymentProfile.maxAmountUsd === "string" && profile.paymentProfile.maxAmountUsd.trim().length > 0;
   }
   if (isQuotedPricingMode(profile.paymentProfile.pricingMode)) {
     return typeof profile.paymentProfile.referencePriceUsd === "string" && profile.paymentProfile.referencePriceUsd.trim().length > 0;
@@ -1963,19 +1959,11 @@ export class ClawzControlPlane {
           throw new Error("Fixed price is required when Open for work is on.");
         }
         assertUsdAmount(profile.paymentProfile.fixedAmountUsd, "Fixed price");
-      } else if (
-        profile.paymentProfile.pricingMode === "quote-required" ||
-        profile.paymentProfile.pricingMode === "agent-negotiated"
-      ) {
+      } else if (profile.paymentProfile.pricingMode === "quote-required") {
         if (!profile.paymentProfile.referencePriceUsd?.trim()) {
           throw new Error("Reference price is required when Open for work is on.");
         }
         assertUsdAmount(profile.paymentProfile.referencePriceUsd, "Reference price");
-      } else if (profile.paymentProfile.pricingMode === "capped-exact") {
-        if (!profile.paymentProfile.maxAmountUsd?.trim()) {
-          throw new Error("Max price is required when Open for work is on.");
-        }
-        assertUsdAmount(profile.paymentProfile.maxAmountUsd, "Max price");
       }
     }
 

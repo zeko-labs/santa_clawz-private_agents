@@ -30,6 +30,7 @@
     "dev": "pnpm --parallel --filter @clawz/web-console --filter @clawz/indexer dev",
     "package:web:spaceship": "node scripts/package-spaceship-web-console.mjs",
     "register:agent": "node scripts/register-agent.mjs",
+    "agent:pricing": "node scripts/agent-pricing.mjs",
     "heartbeat:agent": "node scripts/agent-heartbeat.mjs",
     "delete:agent": "node scripts/delete-agent-registration.mjs",
     "top-up:facilitator-gas": "node scripts/top-up-facilitator-gas.mjs",

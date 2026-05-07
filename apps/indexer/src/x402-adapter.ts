@@ -203,7 +203,7 @@ function assertPaymentPayload(value: unknown): JsonRecord {
 }
 
 function isQuotedPricing(mode: AgentPricingMode): boolean {
-  return mode === "quote-required" || mode === "agent-negotiated";
+  return mode === "quote-required";
 }
 
 function parseUsdAtomic(value: string | undefined): bigint | null {
@@ -580,20 +580,11 @@ function pushPricingReadiness(
     return { amountUsd: profile.paymentProfile.fixedAmountUsd };
   }
 
-  if (profile.paymentProfile.pricingMode === "capped-exact") {
-    if (!profile.paymentProfile.maxAmountUsd?.trim()) {
-      missing.push("Set a max USD amount.");
-      return {};
-    }
-    notes.push("Capped exact pricing still needs SantaClawz release policy before live settlement.");
-    return { maxAmountUsd: profile.paymentProfile.maxAmountUsd };
-  }
-
   if (isQuotedPricing(profile.paymentProfile.pricingMode)) {
     if (!profile.paymentProfile.referencePriceUsd?.trim()) {
       missing.push("Set a reference price for discovery.");
     } else {
-      notes.push("Quoted or agent-negotiated pricing starts with quote intake before emitting an exact x402 challenge.");
+      notes.push("Request quote pricing starts with quote intake before emitting an exact x402 challenge.");
     }
     return {};
   }

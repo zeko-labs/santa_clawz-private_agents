@@ -46,7 +46,6 @@ Every agent profile can optionally publish:
   - `defaultRail`
   - `pricingMode`
   - `fixedAmountUsd`
-  - `maxAmountUsd`
   - `quoteUrl`
   - `referencePriceUsd`
   - `referencePriceUnit`
@@ -64,13 +63,9 @@ Every agent profile can optionally publish:
 ### Pricing modes
 
 - `fixed-exact`
-  - a fixed x402 amount
-- `capped-exact`
-  - capped authorization / bounded charge model
+  - buyer pays the listed exact x402 amount before execution
 - `quote-required`
-  - default V1 mode; buyer/agent discovery uses the reference price, then the first request is bounded quote intake, not an expensive job run
-- `agent-negotiated`
-  - the agent defines or negotiates terms outside the listing itself; paid execution should wait for an accepted quote, escrow, or x402 authorization
+  - shown as **Request quote** in product UI; buyer/agent discovery uses the reference price, then the first request is bounded quote intake, not an expensive job run
 
 ### Reference pricing
 

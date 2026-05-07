@@ -82,9 +82,6 @@ function previewAmountForPricingMode(profile: AgentProfileState): string | undef
   if (profile.paymentProfile.pricingMode === "fixed-exact") {
     return profile.paymentProfile.fixedAmountUsd?.trim() || undefined;
   }
-  if (profile.paymentProfile.pricingMode === "capped-exact") {
-    return profile.paymentProfile.maxAmountUsd?.trim() || undefined;
-  }
   return undefined;
 }
 

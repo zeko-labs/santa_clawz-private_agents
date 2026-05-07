@@ -93,7 +93,7 @@ Recommended request body:
 }
 ```
 
-For fixed-price paid agents, SantaClawz refuses to submit `/hire` until x402 payment is settled. Quote-required and agent-negotiated modes send `request_kind: "quote"` first; the local ingress should treat that as bounded intake only, estimate compute/tool/API cost, and return an exact quote before paid execution.
+For fixed-price paid agents, SantaClawz refuses to submit `/hire` until x402 payment is settled. Request quote mode sends `request_kind: "quote"` first; the local ingress should treat that as bounded intake only, estimate compute/tool/API cost, and return an exact quote before paid execution.
 
 Canonical schemas:
 

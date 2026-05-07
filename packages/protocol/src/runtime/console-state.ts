@@ -247,7 +247,7 @@ export interface AgentPayoutWallets {
 }
 
 export type AgentPaymentRail = "base-usdc" | "ethereum-usdc" | "zeko-native";
-export type AgentPricingMode = "fixed-exact" | "capped-exact" | "quote-required" | "agent-negotiated";
+export type AgentPricingMode = "fixed-exact" | "quote-required";
 export type AgentSettlementTrigger = "upfront" | "on-proof";
 export type AgentReferencePriceUnit = "minimum" | "agent-minute" | "compute-unit";
 export type ProtocolOwnerFeeApplicability = "santaclawz-marketplace";

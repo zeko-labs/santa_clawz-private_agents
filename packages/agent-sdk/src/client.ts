@@ -1,4 +1,7 @@
 import {
+  type AgentPaymentRail,
+  type AgentPricingMode,
+  type AgentReferencePriceUnit,
   summarizeAgentProofBundle,
   type AgentX402Plan,
   type AgentProofVerificationReport,
@@ -8,6 +11,7 @@ import {
   type ClawzAgentProofVerificationRequest,
   type ClawzAgentProofVerificationResponse,
   type ClawzMcpToolDefinition,
+  type ConsoleStateResponse,
   type SocialAnchorBatchExport,
   type SocialAnchorQueueState,
   type WitnessPlanLike,
@@ -64,6 +68,20 @@ export interface ClawzX402PlanQuery {
 export interface ClawzSocialAnchorQuery {
   sessionId?: string;
   agentId?: string;
+}
+
+export interface ClawzAgentPricingUpdate {
+  sessionId?: string;
+  agentId?: string;
+  openForWork?: boolean;
+  pricingMode?: AgentPricingMode;
+  defaultRail?: Extract<AgentPaymentRail, "base-usdc" | "ethereum-usdc">;
+  basePayoutAddress?: string;
+  ethereumPayoutAddress?: string;
+  fixedPriceUsd?: string;
+  referencePriceUsd?: string;
+  referencePriceUnit?: AgentReferencePriceUnit;
+  paymentNotes?: string;
 }
 
 let nextRpcId = 1;
@@ -261,6 +279,54 @@ export class ClawzAgentClient {
     }
   ): Promise<SocialAnchorQueueState> {
     return this.postJson<SocialAnchorQueueState>("/api/social/anchors/commit", input);
+  }
+
+  async updateAgentPricing(input: ClawzAgentPricingUpdate): Promise<ConsoleStateResponse> {
+    if (!this.adminKey) {
+      throw new Error("updateAgentPricing requires an adminKey from the agent's private .env.santaclawz file.");
+    }
+    const pricingMode =
+      input.pricingMode ??
+      (input.fixedPriceUsd?.trim()
+        ? "fixed-exact"
+        : input.referencePriceUsd?.trim()
+          ? "quote-required"
+          : undefined);
+    const paymentProfile: Record<string, unknown> = {
+      ...(typeof input.openForWork === "boolean" ? { enabled: input.openForWork } : {}),
+      ...(pricingMode ? { pricingMode } : {}),
+      ...(input.defaultRail ? { defaultRail: input.defaultRail, supportedRails: [input.defaultRail] } : {}),
+      ...(input.fixedPriceUsd ? { fixedAmountUsd: input.fixedPriceUsd } : {}),
+      ...(input.referencePriceUsd ? { referencePriceUsd: input.referencePriceUsd } : {}),
+      ...(input.referencePriceUnit ? { referencePriceUnit: input.referencePriceUnit } : {}),
+      ...(input.paymentNotes ? { paymentNotes: input.paymentNotes } : {}),
+      settlementTrigger: "upfront"
+    };
+    return this.readJson<ConsoleStateResponse>(
+      withQuery(this.baseUrl, "/api/console/profile", {
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.agentId ? { agentId: input.agentId } : {})
+      }),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          ...(input.agentId ? { agentId: input.agentId } : {}),
+          ...(input.basePayoutAddress || input.ethereumPayoutAddress
+            ? {
+                payoutWallets: {
+                  ...(input.basePayoutAddress ? { base: input.basePayoutAddress } : {}),
+                  ...(input.ethereumPayoutAddress ? { ethereum: input.ethereumPayoutAddress } : {})
+                }
+              }
+            : {}),
+          paymentProfile
+        })
+      }
+    );
   }
 
   async getDeployment(): Promise<unknown> {

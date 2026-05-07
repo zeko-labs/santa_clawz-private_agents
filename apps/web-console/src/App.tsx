@@ -281,7 +281,7 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
   if (!agent.paymentsEnabled) {
     return "Not open for work";
   }
-  if (agent.pricingMode === "quote-required" || agent.pricingMode === "agent-negotiated") {
+  if (agent.pricingMode === "quote-required") {
     return referencePriceLine(agent);
   }
   if (agent.paymentProfileReady) {
@@ -509,13 +509,7 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
   if (mode === "fixed-exact") {
     return "Fixed price";
   }
-  if (mode === "capped-exact") {
-    return "Capped price";
-  }
-  if (mode === "quote-required") {
-    return "Quote required";
-  }
-  return "Negotiated by agent";
+  return "Request quote";
 }
 
 function referencePriceLine(input: {
@@ -525,7 +519,7 @@ function referencePriceLine(input: {
 }) {
   const amount = input.referencePriceUsd?.trim();
   if (!amount) {
-    return input.pricingMode === "fixed-exact" ? "Fixed price" : "Quote required";
+    return input.pricingMode === "fixed-exact" ? "Fixed price" : "Request quote";
   }
   if (input.referencePriceUnit === "agent-minute") {
     return `$${amount} / est. agent-minute`;
@@ -583,15 +577,13 @@ function paymentProfileSummary(
   const priceDetail =
     paymentProfile.pricingMode === "fixed-exact" && paymentProfile.fixedAmountUsd?.trim().length
       ? ` at $${paymentProfile.fixedAmountUsd.trim()}`
-      : paymentProfile.pricingMode === "capped-exact" && paymentProfile.maxAmountUsd?.trim().length
-        ? ` up to $${paymentProfile.maxAmountUsd.trim()}`
-        : paymentProfile.referencePriceUsd?.trim().length
+      : paymentProfile.referencePriceUsd?.trim().length
           ? ` • ${referencePriceLine(paymentProfile)}`
         : "";
   const summary = `${pricingModeLabel(paymentProfile.pricingMode)}${priceDetail} on ${
     defaultRail ? railLabel(defaultRail) : "selected rail"
   }`;
-  if (paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated") {
+  if (paymentProfile.pricingMode === "quote-required") {
     return paymentProfileReady
       ? `${summary}. Buyers request a quote first; exact payment comes before execution.`
       : `${summary}. Add the payout and reference price details before going live.`;
@@ -628,7 +620,7 @@ function paymentProfileDraftReady(
     return Boolean(paymentProfile.fixedAmountUsd?.trim());
   }
 
-  if (paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated") {
+  if (paymentProfile.pricingMode === "quote-required") {
     return Boolean(paymentProfile.referencePriceUsd?.trim());
   }
 
@@ -650,12 +642,8 @@ function paymentProfileEnrollmentReady(profile: AgentProfileState) {
     return Boolean(paymentProfile.fixedAmountUsd?.trim());
   }
 
-  if (paymentProfile.pricingMode === "quote-required" || paymentProfile.pricingMode === "agent-negotiated") {
+  if (paymentProfile.pricingMode === "quote-required") {
     return Boolean(paymentProfile.referencePriceUsd?.trim());
-  }
-
-  if (paymentProfile.pricingMode === "capped-exact") {
-    return Boolean(paymentProfile.maxAmountUsd?.trim());
   }
 
   return false;
@@ -686,6 +674,10 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
     typeof (input as { payoutAddress?: unknown } | undefined)?.payoutAddress === "string"
       ? ((input as { payoutAddress?: string }).payoutAddress ?? "")
       : "";
+  const pricingMode =
+    input?.paymentProfile?.pricingMode === "fixed-exact" || input?.paymentProfile?.pricingMode === "quote-required"
+      ? input.paymentProfile.pricingMode
+      : "quote-required";
   return {
     agentName: typeof input?.agentName === "string" ? input.agentName : "",
     representedPrincipal: typeof input?.representedPrincipal === "string" ? input.representedPrincipal : "",
@@ -775,31 +767,32 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
       input?.paymentProfile?.defaultRail === "ethereum-usdc"
         ? { defaultRail: input.paymentProfile.defaultRail }
         : {}),
-      pricingMode:
-        input?.paymentProfile?.pricingMode === "fixed-exact" ||
-        input?.paymentProfile?.pricingMode === "capped-exact" ||
-        input?.paymentProfile?.pricingMode === "quote-required" ||
-        input?.paymentProfile?.pricingMode === "agent-negotiated"
-          ? input.paymentProfile.pricingMode
-          : "quote-required",
-      ...(typeof input?.paymentProfile?.fixedAmountUsd === "string" && input.paymentProfile.fixedAmountUsd.trim().length > 0
+      pricingMode,
+      ...(pricingMode === "fixed-exact" &&
+      typeof input?.paymentProfile?.fixedAmountUsd === "string" &&
+      input.paymentProfile.fixedAmountUsd.trim().length > 0
         ? { fixedAmountUsd: input.paymentProfile.fixedAmountUsd }
         : {}),
-      ...(typeof input?.paymentProfile?.maxAmountUsd === "string" && input.paymentProfile.maxAmountUsd.trim().length > 0
-        ? { maxAmountUsd: input.paymentProfile.maxAmountUsd }
-        : {}),
-      ...(typeof input?.paymentProfile?.quoteUrl === "string" && input.paymentProfile.quoteUrl.trim().length > 0
+      ...(pricingMode === "quote-required" &&
+      typeof input?.paymentProfile?.quoteUrl === "string" &&
+      input.paymentProfile.quoteUrl.trim().length > 0
         ? { quoteUrl: input.paymentProfile.quoteUrl }
         : {}),
-      ...(typeof input?.paymentProfile?.referencePriceUsd === "string" && input.paymentProfile.referencePriceUsd.trim().length > 0
+      ...(pricingMode === "quote-required" &&
+      typeof input?.paymentProfile?.referencePriceUsd === "string" &&
+      input.paymentProfile.referencePriceUsd.trim().length > 0
         ? { referencePriceUsd: input.paymentProfile.referencePriceUsd }
         : {}),
-      referencePriceUnit:
-        input?.paymentProfile?.referencePriceUnit === "agent-minute" ||
-        input?.paymentProfile?.referencePriceUnit === "compute-unit" ||
-        input?.paymentProfile?.referencePriceUnit === "minimum"
-          ? input.paymentProfile.referencePriceUnit
-          : "minimum",
+      ...(pricingMode === "quote-required"
+        ? {
+            referencePriceUnit:
+              input?.paymentProfile?.referencePriceUnit === "agent-minute" ||
+              input?.paymentProfile?.referencePriceUnit === "compute-unit" ||
+              input?.paymentProfile?.referencePriceUnit === "minimum"
+                ? input.paymentProfile.referencePriceUnit
+                : "minimum"
+          }
+        : {}),
       settlementTrigger: "upfront",
       ...(typeof input?.paymentProfile?.baseFacilitatorUrl === "string" && input.paymentProfile.baseFacilitatorUrl.trim().length > 0
         ? { baseFacilitatorUrl: input.paymentProfile.baseFacilitatorUrl }
@@ -1549,8 +1542,7 @@ export function App() {
   const paidJobsEnabled = state.paidJobsEnabled;
   const quoteRequestMode =
     savedPaymentsEnabled &&
-    (state.profile.paymentProfile.pricingMode === "quote-required" ||
-      state.profile.paymentProfile.pricingMode === "agent-negotiated");
+    state.profile.paymentProfile.pricingMode === "quote-required";
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
   const missionAuthVerified = missionAuthOverlay.status === "verified";
@@ -1604,29 +1596,17 @@ export function App() {
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
   const paymentPolicyGuidance = !paymentProfile.enabled
-    ? "Leave closed until the agent is ready. Default is quote required with a public reference rate for discovery."
+    ? "Leave closed until the agent is ready. Default is Request quote with a public reference rate for discovery."
     : paymentProfile.pricingMode === "fixed-exact"
       ? "Live Base prepay: buyers pay this exact amount before SantaClawz submits /hire to an online agent."
-      : paymentProfile.pricingMode === "capped-exact"
-        ? "Use this for bounded authorizations later; V1 still needs a release policy before live settlement."
-        : paymentProfile.pricingMode === "quote-required"
-          ? "First inbound is a lightweight quote request. The agent estimates compute and API credits before execution."
-          : "The agent can negotiate each job, but paid execution should wait for an exact quote or authorization.";
+      : "First inbound is a lightweight quote request. The agent estimates compute and API credits before execution.";
   const showMainPricingField =
     paymentProfile.enabled &&
-    (paymentProfile.pricingMode === "fixed-exact" || paymentProfile.pricingMode === "capped-exact");
-  const mainPricingLabel =
-    paymentProfile.pricingMode === "capped-exact"
-        ? "Max price per job (USD)"
-        : "Price per job (USD)";
-  const mainPricingValue =
-    paymentProfile.pricingMode === "capped-exact"
-        ? paymentProfile.maxAmountUsd ?? ""
-        : paymentProfile.fixedAmountUsd ?? "";
-  const mainPricingPlaceholder =
-    paymentProfile.pricingMode === "capped-exact"
-        ? "0.25"
-        : "0.20";
+    paymentProfile.pricingMode === "fixed-exact";
+  const showReferencePricingFields = paymentProfile.enabled && paymentProfile.pricingMode === "quote-required";
+  const mainPricingLabel = "Price per job (USD)";
+  const mainPricingValue = paymentProfile.fixedAmountUsd ?? "";
+  const mainPricingPlaceholder = "0.20";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
@@ -2062,14 +2042,11 @@ export function App() {
                     if (nextPricingMode === "fixed-exact") {
                       delete nextPaymentProfile.quoteUrl;
                       delete nextPaymentProfile.maxAmountUsd;
+                      delete nextPaymentProfile.referencePriceUsd;
                     }
-                    if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
+                    if (nextPricingMode === "quote-required") {
                       delete nextPaymentProfile.fixedAmountUsd;
                       delete nextPaymentProfile.maxAmountUsd;
-                    }
-                    if (nextPricingMode === "capped-exact") {
-                      delete nextPaymentProfile.fixedAmountUsd;
-                      delete nextPaymentProfile.quoteUrl;
                     }
                     setProfile({
                       ...profile,
@@ -2077,15 +2054,13 @@ export function App() {
                     });
                   }}
                 >
-                  <option value="quote-required">Quote required</option>
+                  <option value="quote-required">Request quote</option>
                   <option value="fixed-exact">Fixed price</option>
-                  <option value="capped-exact">Capped price</option>
-                  <option value="agent-negotiated">Negotiated by agent</option>
                 </select>
               </label>
             ) : null}
 
-            {paymentProfile.enabled ? (
+            {showReferencePricingFields ? (
               <label className="field">
                 <span>Reference price (USD)</span>
                 <input
@@ -2105,7 +2080,7 @@ export function App() {
               </label>
             ) : null}
 
-            {paymentProfile.enabled ? (
+            {showReferencePricingFields ? (
               <label className="field">
                 <span>Reference unit</span>
                 <select
@@ -2135,17 +2110,6 @@ export function App() {
                   className="text-input"
                   value={mainPricingValue}
                   onChange={(event: ValueInputEvent) => {
-                    if (paymentProfile.pricingMode === "capped-exact") {
-                      setProfile({
-                        ...profile,
-                        paymentProfile: {
-                          ...profile.paymentProfile,
-                          maxAmountUsd: event.target.value
-                        }
-                      });
-                      return;
-                    }
-
                     setProfile({
                       ...profile,
                       paymentProfile: {
@@ -3000,14 +2964,11 @@ export function App() {
                               if (nextPricingMode === "fixed-exact") {
                                 delete nextPaymentProfile.quoteUrl;
                                 delete nextPaymentProfile.maxAmountUsd;
+                                delete nextPaymentProfile.referencePriceUsd;
                               }
-                              if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
+                              if (nextPricingMode === "quote-required") {
                                 delete nextPaymentProfile.fixedAmountUsd;
                                 delete nextPaymentProfile.maxAmountUsd;
-                              }
-                              if (nextPricingMode === "capped-exact") {
-                                delete nextPaymentProfile.fixedAmountUsd;
-                                delete nextPaymentProfile.quoteUrl;
                               }
                               setProfile({
                                 ...profile,
@@ -3015,49 +2976,51 @@ export function App() {
                               });
                             }}
                           >
-                            <option value="quote-required">Quote required</option>
+                            <option value="quote-required">Request quote</option>
                             <option value="fixed-exact">Fixed price</option>
-                            <option value="capped-exact">Capped price</option>
-                            <option value="agent-negotiated">Negotiated by agent</option>
                           </select>
                         </label>
-                        <label className="field">
-                          <span>Reference price (USD)</span>
-                          <input
-                            className="text-input payment-compact-input"
-                            value={paymentProfile.referencePriceUsd ?? ""}
-                            onChange={(event: ValueInputEvent) => {
-                              setProfile({
-                                ...profile,
-                                paymentProfile: {
-                                  ...profile.paymentProfile,
-                                  referencePriceUsd: event.target.value
-                                }
-                              });
-                            }}
-                            placeholder="0.20"
-                          />
-                        </label>
-                        <label className="field">
-                          <span>Reference unit</span>
-                          <select
-                            className="text-input payment-compact-input"
-                            value={paymentProfile.referencePriceUnit ?? "minimum"}
-                            onChange={(event: ValueInputEvent) => {
-                              setProfile({
-                                ...profile,
-                                paymentProfile: {
-                                  ...profile.paymentProfile,
-                                  referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
-                                }
-                              });
-                            }}
-                          >
-                            <option value="minimum">Minimum quote</option>
-                            <option value="agent-minute">Estimated agent-minute</option>
-                            <option value="compute-unit">Compute unit</option>
-                          </select>
-                        </label>
+                        {showReferencePricingFields ? (
+                          <>
+                            <label className="field">
+                              <span>Reference price (USD)</span>
+                              <input
+                                className="text-input payment-compact-input"
+                                value={paymentProfile.referencePriceUsd ?? ""}
+                                onChange={(event: ValueInputEvent) => {
+                                  setProfile({
+                                    ...profile,
+                                    paymentProfile: {
+                                      ...profile.paymentProfile,
+                                      referencePriceUsd: event.target.value
+                                    }
+                                  });
+                                }}
+                                placeholder="0.20"
+                              />
+                            </label>
+                            <label className="field">
+                              <span>Reference unit</span>
+                              <select
+                                className="text-input payment-compact-input"
+                                value={paymentProfile.referencePriceUnit ?? "minimum"}
+                                onChange={(event: ValueInputEvent) => {
+                                  setProfile({
+                                    ...profile,
+                                    paymentProfile: {
+                                      ...profile.paymentProfile,
+                                      referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
+                                    }
+                                  });
+                                }}
+                              >
+                                <option value="minimum">Minimum quote</option>
+                                <option value="agent-minute">Estimated agent-minute</option>
+                                <option value="compute-unit">Compute unit</option>
+                              </select>
+                            </label>
+                          </>
+                        ) : null}
                         {showMainPricingField ? (
                           <label className="field">
                             <span>{mainPricingLabel}</span>
@@ -3065,17 +3028,6 @@ export function App() {
                               className="text-input payment-compact-input"
                               value={mainPricingValue}
                               onChange={(event: ValueInputEvent) => {
-                                if (paymentProfile.pricingMode === "capped-exact") {
-                                  setProfile({
-                                    ...profile,
-                                    paymentProfile: {
-                                      ...profile.paymentProfile,
-                                      maxAmountUsd: event.target.value
-                                    }
-                                  });
-                                  return;
-                                }
-
                                 setProfile({
                                   ...profile,
                                   paymentProfile: {

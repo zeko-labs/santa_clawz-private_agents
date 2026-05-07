@@ -271,9 +271,7 @@ function parsePaymentProfile(value: unknown): Partial<AgentProfileState["payment
       ? { defaultRail: value.defaultRail }
       : {}),
     ...(value.pricingMode === "fixed-exact" ||
-    value.pricingMode === "capped-exact" ||
-    value.pricingMode === "quote-required" ||
-    value.pricingMode === "agent-negotiated"
+    value.pricingMode === "quote-required"
       ? { pricingMode: value.pricingMode }
       : {}),
     ...(typeof value.fixedAmountUsd === "string" ? { fixedAmountUsd: value.fixedAmountUsd } : {}),
@@ -1688,8 +1686,7 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
 
     const quoteRequestMode =
       consoleState.paymentsEnabled &&
-      (consoleState.profile.paymentProfile.pricingMode === "quote-required" ||
-        consoleState.profile.paymentProfile.pricingMode === "agent-negotiated");
+      consoleState.profile.paymentProfile.pricingMode === "quote-required";
 
     if (consoleState.paymentsEnabled && !quoteRequestMode) {
       const runtime = buildAgentX402RuntimeContext({

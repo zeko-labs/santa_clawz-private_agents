@@ -8,7 +8,7 @@ const FACILITATOR_SETUP_GUIDE_URL =
 const VALID_TRUST_MODES = new Set(["fast", "private", "verified", "team-governed"]);
 const VALID_PROVING_LOCATIONS = new Set(["client", "sovereign-rollup"]);
 const VALID_PAYMENT_RAILS = new Set(["base-usdc", "ethereum-usdc", "zeko-native"]);
-const VALID_PRICING_MODES = new Set(["fixed-exact", "capped-exact", "quote-required", "agent-negotiated"]);
+const VALID_PRICING_MODES = new Set(["fixed-exact", "quote-required"]);
 const VALID_REFERENCE_PRICE_UNITS = new Set(["minimum", "agent-minute", "compute-unit"]);
 const VALID_SETTLEMENT_TRIGGERS = new Set(["upfront", "on-proof"]);
 const VALID_SOCIAL_ANCHOR_MODES = new Set(["shared-batched", "priority-self-funded"]);
@@ -49,7 +49,6 @@ function printUsage() {
 
 Advanced:
     [--supported-rails "base-usdc,ethereum-usdc"] \\
-    [--max-price-usd "0.25"] \\
     [--settlement-trigger upfront]
 `);
 }
@@ -171,7 +170,6 @@ const paymentProfile = {
   ...(typeof args["default-rail"] === "string" ? { defaultRail: args["default-rail"].trim() } : {}),
   pricingMode: typeof args["pricing-mode"] === "string" ? args["pricing-mode"].trim() : "quote-required",
   ...(typeof args["fixed-price-usd"] === "string" ? { fixedAmountUsd: args["fixed-price-usd"].trim() } : {}),
-  ...(typeof args["max-price-usd"] === "string" ? { maxAmountUsd: args["max-price-usd"].trim() } : {}),
   ...(typeof args["quote-url"] === "string" ? { quoteUrl: args["quote-url"].trim() } : {}),
   ...(typeof args["reference-price-usd"] === "string" ? { referencePriceUsd: args["reference-price-usd"].trim() } : {}),
   ...(typeof args["reference-price-unit"] === "string"
@@ -408,8 +406,7 @@ if (args.json) {
   if (
     result.paymentsEnabled &&
     !result.paidJobsEnabled &&
-    (result.profile?.paymentProfile?.pricingMode === "quote-required" ||
-      result.profile?.paymentProfile?.pricingMode === "agent-negotiated")
+    result.profile?.paymentProfile?.pricingMode === "quote-required"
   ) {
     console.log("");
     console.log("Open for quote requests: buyers and agents can discover the reference price, then your agent should return an exact quote before paid execution.");

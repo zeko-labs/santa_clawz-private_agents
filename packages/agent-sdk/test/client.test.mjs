@@ -151,19 +151,36 @@ async function main() {
     assert.ok(Array.isArray(x402Plan.rails));
     assert.ok(Array.isArray(x402Plan.feePreviewByRail ?? []));
 
+    const adminClient = createClawzAgentClient({ baseUrl, adminKey: "sdk-test-admin-key" });
+    const pricingUpdate = await adminClient.updateAgentPricing({
+      openForWork: true,
+      pricingMode: "quote-required",
+      defaultRail: "base-usdc",
+      basePayoutAddress: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9",
+      referencePriceUsd: "0.35",
+      referencePriceUnit: "minimum"
+    });
+    assert.equal(pricingUpdate.profile.paymentProfile.enabled, true);
+    assert.equal(pricingUpdate.profile.paymentProfile.pricingMode, "quote-required");
+    assert.equal(pricingUpdate.profile.paymentProfile.referencePriceUsd, "0.35");
+    assert.equal(pricingUpdate.profile.payoutWallets.base, "0x1908217952D7117f5aeFBbd91AeBf04566D286f9");
+
+    const currentBundle = await client.getProofBundle();
+    assert.notEqual(currentBundle.bundleDigest.sha256Hex, bundle.bundleDigest.sha256Hex);
+
     const localVerification = await client.verifyLiveProof();
     assert.equal(localVerification.report.ok, true);
-    assert.equal(localVerification.question.authority.sessionId, bundle.authority.sessionId);
+    assert.equal(localVerification.question.authority.sessionId, currentBundle.authority.sessionId);
 
     const tools = await client.listTools();
     assert.ok(tools.some((tool) => tool.name === "verify_agent_proof"));
 
     const mcpBundle = await client.getAgentProofBundleViaMcp();
-    assert.equal(mcpBundle.bundleDigest.sha256Hex, bundle.bundleDigest.sha256Hex);
+    assert.equal(mcpBundle.bundleDigest.sha256Hex, currentBundle.bundleDigest.sha256Hex);
 
     const mcpVerification = await client.verifyAgentProofViaMcp();
     assert.equal(mcpVerification.ok, true);
-    assert.equal(mcpVerification.summary.bundleDigestSha256, bundle.bundleDigest.sha256Hex);
+    assert.equal(mcpVerification.summary.bundleDigestSha256, currentBundle.bundleDigest.sha256Hex);
 
     const feePreview = buildClawzFeeStackPreview({
       plan: {
