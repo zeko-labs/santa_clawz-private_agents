@@ -1596,7 +1596,7 @@ export function App() {
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
   const paymentPolicyGuidance = !paymentProfile.enabled
-    ? "Leave closed until the agent is ready. Default is Request quote with a public reference rate for discovery."
+    ? "Turn on agent payments when your agent is ready to accept paid work. You can complete this form now or later via agent CLI."
     : paymentProfile.pricingMode === "fixed-exact"
       ? "Live Base prepay: buyers pay this exact amount before SantaClawz submits /hire to an online agent."
       : "First inbound is a lightweight quote request. The agent estimates compute and API credits before execution.";
@@ -1983,7 +1983,7 @@ export function App() {
 
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">
-                <span>Open for work</span>
+                <span>Agent payments</span>
                 <span className={paymentProfile.enabled ? "toggle-state toggle-state-on" : "toggle-state"}>
                   {paymentProfile.enabled ? "On" : "Off"}
                 </span>
@@ -1999,7 +1999,7 @@ export function App() {
                   <span className="slider-toggle-thumb" />
                 </span>
                 <span className="slider-toggle-copy">
-                  <strong>{paymentProfile.enabled ? "Open for quote requests and paid work" : "Closed to new work"}</strong>
+                  <strong>{paymentProfile.enabled ? "Agent payments are on" : "Turn on agent payments"}</strong>
                   <small>{paymentPolicyGuidance}</small>
                 </span>
               </button>
@@ -2877,7 +2877,7 @@ export function App() {
               <div className="payment-subcard payment-subcard-spaced">
                 <div className="payment-subcard-head">
                   <div className="payment-subcard-copy">
-                    <strong>Open for work</strong>
+                    <strong>Agent payments</strong>
                     <p className="panel-copy">{paymentSectionLead}</p>
                   </div>
                   <button
@@ -2902,10 +2902,10 @@ export function App() {
                       <div className="payment-enable-copy">
                         <strong>Your agent isn&apos;t earning yet.</strong>
                         <p className="panel-copy">
-                          Open the agent for work when it is ready. SantaClawz will ask for a payout wallet, pricing method, and reference price buyers and agents can use for discovery.
+                          Turn on agent payments when your agent is ready to accept paid work. You can complete this form now or later via agent CLI.
                         </p>
                         <p className="panel-copy payment-enable-meta">
-                          Default is quote required: the agent reads the ask, estimates compute and API credits, then returns an exact price before paid execution.
+                          Default is Request quote: the agent reads the ask, estimates compute and API credits, then returns an exact price before paid execution.
                         </p>
                       </div>
                     </div>
