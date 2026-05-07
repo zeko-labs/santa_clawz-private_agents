@@ -546,6 +546,13 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
   return "Request quote";
 }
 
+function pricingModeHelp(mode: AgentProfileState["paymentProfile"]["pricingMode"]) {
+  if (mode === "fixed-exact") {
+    return "Fixed payment is settled before SantaClawz sends work to your agent.";
+  }
+  return "Your agent reviews quote requests and returns an exact price before paid execution.";
+}
+
 function referencePriceLine(input: {
   referencePriceUsd?: string;
   referencePriceUnit?: AgentProfileState["paymentProfile"]["referencePriceUnit"];
@@ -1620,6 +1627,7 @@ export function App() {
         : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
       : null;
   const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
+  const pricingMethodHelpText = pricingModeHelp(paymentProfile.pricingMode);
   const showMainPricingField =
     paymentProfile.enabled &&
     paymentProfile.pricingMode === "fixed-exact";
@@ -2052,7 +2060,18 @@ export function App() {
                   : "field-grid field-wide fixed-pricing-row"
               }>
                 <label className="field">
-                  <span>Pricing method</span>
+                  <span className="field-label-with-info">
+                    <span>Pricing method</span>
+                    <span
+                      className="pricing-info-tooltip"
+                      aria-label={pricingMethodHelpText}
+                      data-tooltip={pricingMethodHelpText}
+                      tabIndex={0}
+                      title={pricingMethodHelpText}
+                    >
+                      i
+                    </span>
+                  </span>
                   <select
                     className="text-input"
                     value={paymentProfile.pricingMode}
@@ -2952,7 +2971,18 @@ export function App() {
                           : "field-grid compact-field-grid payment-main-grid"
                       }>
                         <label className="field">
-                          <span>Pricing method</span>
+                          <span className="field-label-with-info">
+                            <span>Pricing method</span>
+                            <span
+                              className="pricing-info-tooltip"
+                              aria-label={pricingMethodHelpText}
+                              data-tooltip={pricingMethodHelpText}
+                              tabIndex={0}
+                              title={pricingMethodHelpText}
+                            >
+                              i
+                            </span>
+                          </span>
                           <select
                             className="text-input payment-compact-input"
                             value={paymentProfile.pricingMode}

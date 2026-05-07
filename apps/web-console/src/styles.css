@@ -1769,6 +1769,79 @@ h3 {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.field-label-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+}
+
+.pricing-info-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(18, 35, 54, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  cursor: help;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.pricing-info-tooltip::after {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  width: min(270px, 72vw);
+  padding: 9px 11px;
+  border: 1px solid rgba(18, 35, 54, 0.14);
+  border-radius: 12px;
+  background: rgba(18, 35, 54, 0.95);
+  box-shadow: 0 14px 30px rgba(18, 35, 54, 0.16);
+  color: #fffaf1;
+  content: attr(data-tooltip);
+  font-family: "Sora", sans-serif;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.pricing-info-tooltip:hover,
+.pricing-info-tooltip:focus-visible {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(18, 35, 54, 0.3);
+  color: var(--ink);
+  outline: none;
+}
+
+.pricing-info-tooltip:hover::after,
+.pricing-info-tooltip:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .field-hint {
   color: var(--muted);
   font-size: 0.86rem;
