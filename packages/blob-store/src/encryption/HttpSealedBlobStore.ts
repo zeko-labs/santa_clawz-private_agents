@@ -14,12 +14,23 @@ interface ObjectListResponse {
   keys?: string[];
 }
 
+const TRANSIENT_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const MAX_REQUEST_ATTEMPTS = 10;
+const BASE_RETRY_DELAY_MS = 500;
+const MAX_RETRY_DELAY_MS = 5_000;
+
 function normalizeEndpoint(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
 function objectUri(key: string): string {
   return `object://${key}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function objectKeyFromUri(uri: string): string {
@@ -56,18 +67,75 @@ export class HttpSealedBlobStore implements SealedBlobStore {
     };
   }
 
-  private async request(method: string, route: string, body?: unknown, optional = false): Promise<any> {
-    const response = await fetch(`${this.endpoint}${route}`, {
-      method,
-      headers: this.headers(),
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
-    });
+  private retryDelayMs(attemptIndex: number): number {
+    return Math.min(MAX_RETRY_DELAY_MS, BASE_RETRY_DELAY_MS * 2 ** attemptIndex);
+  }
 
-    if (!response.ok && !(optional && response.status === 404)) {
-      throw new Error(`Sealed blob object-store request failed: ${method} ${route} ${response.status}`);
+  private shouldRetryStatus(status: number): boolean {
+    return TRANSIENT_STATUS_CODES.has(status);
+  }
+
+  private retryLog(method: string, route: string, detail: string, attemptIndex: number): void {
+    const nextAttempt = attemptIndex + 2;
+    console.warn(
+      `[clawz:blob-store] transient object-store failure for ${method} ${route}: ${detail}; retrying attempt ${nextAttempt}/${MAX_REQUEST_ATTEMPTS}`
+    );
+  }
+
+  private async request(method: string, route: string, body?: unknown, optional = false): Promise<any> {
+    const requestBody = body === undefined ? undefined : JSON.stringify(body);
+    let lastError: unknown;
+    let lastStatus: number | undefined;
+    let lastResponseBody: string | undefined;
+
+    for (let attemptIndex = 0; attemptIndex < MAX_REQUEST_ATTEMPTS; attemptIndex += 1) {
+      try {
+        const response = await fetch(`${this.endpoint}${route}`, {
+          method,
+          headers: this.headers(),
+          ...(requestBody === undefined ? {} : { body: requestBody })
+        });
+
+        if (response.ok || (optional && response.status === 404)) {
+          return response;
+        }
+
+        lastStatus = response.status;
+        lastResponseBody = await response.text().catch(() => undefined);
+        if (!this.shouldRetryStatus(response.status) || attemptIndex === MAX_REQUEST_ATTEMPTS - 1) {
+          break;
+        }
+
+        this.retryLog(method, route, `HTTP ${response.status}`, attemptIndex);
+      } catch (error) {
+        lastError = error;
+        if (attemptIndex === MAX_REQUEST_ATTEMPTS - 1) {
+          break;
+        }
+
+        this.retryLog(
+          method,
+          route,
+          error instanceof Error ? error.message : String(error),
+          attemptIndex
+        );
+      }
+
+      await sleep(this.retryDelayMs(attemptIndex));
     }
 
-    return response;
+    if (lastStatus !== undefined) {
+      const detail = lastResponseBody?.trim()
+        ? `${lastStatus}: ${lastResponseBody.trim().slice(0, 240)}`
+        : String(lastStatus);
+      throw new Error(`Sealed blob object-store request failed: ${method} ${route} ${detail}`);
+    }
+
+    throw new Error(
+      `Sealed blob object-store request failed: ${method} ${route} ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`
+    );
   }
 
   private async putObject(key: string, value: unknown): Promise<void> {
