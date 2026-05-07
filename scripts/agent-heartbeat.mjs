@@ -15,7 +15,7 @@ function printUsage() {
     [--interval-ms 15000] \\
     [--ttl-seconds 30] \\
     [--status live] \\
-    [--note "Local OpenClaw gateway heartbeat"] \\
+    [--note "Local PublicClawz gateway heartbeat"] \\
     [--once]
 
 Environment variables:
@@ -133,7 +133,7 @@ function resolveConfig(args) {
       "ttl-seconds"
     ),
     status,
-    note: String(args.note ?? process.env.CLAWZ_AGENT_HEARTBEAT_NOTE ?? "Local OpenClaw gateway heartbeat.").trim(),
+    note: String(args.note ?? process.env.CLAWZ_AGENT_HEARTBEAT_NOTE ?? "Local PublicClawz gateway heartbeat.").trim(),
     once: Boolean(args.once)
   };
 }

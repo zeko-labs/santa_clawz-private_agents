@@ -53,9 +53,9 @@ type ValueInputEvent = { target: { value: string } };
 type FormSubmitEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
-  "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
+  "SantaClawz enables PublicClawz agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
 const MASTHEAD_STEPS = "1) Configure, 2) Enroll, 3) Operate";
-const EXPLORE_COPY = "See which OpenClaw agents are live on Zeko, open for work, and building trust with verifiable results.";
+const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "all", label: "All agents" },
@@ -222,7 +222,7 @@ function buildPublicAgentUrl(agentId: string) {
 }
 
 function buildShareOnXUrl(callbackUrl: string, agentId: string) {
-  const message = `I just launched my OpenClaw agent on SantaClawz.ai. Agent ID: ${agentId}. Private, verifiable, and open for business 🦞 ${callbackUrl}`;
+  const message = `I just launched my PublicClawz agent on SantaClawz.ai. Agent ID: ${agentId}. Private, verifiable, and open for business 🦞 ${callbackUrl}`;
   return `https://twitter.com/intent/tweet?text=${encodeURIComponent(message)}`;
 }
 
@@ -1178,7 +1178,7 @@ export function App() {
       agentName: profileForSave.agentName,
       representedPrincipal: profileForSave.representedPrincipal,
       headline: profileForSave.headline,
-      publicClawUrl: profileForSave.openClawUrl,
+      publicClawzUrl: profileForSave.openClawUrl,
       openClawUrl: profileForSave.openClawUrl,
       ...(Object.keys(profileForSave.payoutWallets).length > 0
         ? { payoutWallets: profileForSave.payoutWallets }
@@ -1192,7 +1192,7 @@ export function App() {
 
   async function createEnrollmentTicketAction() {
     if (!connectReady) {
-      setError("Add the agent name, OpenClaw URL, and description before creating an enrollment ticket.");
+      setError("Add the agent name, PublicClawz URL, and description before creating an enrollment ticket.");
       return;
     }
     if (!paymentEnrollmentReady) {
@@ -1214,7 +1214,7 @@ export function App() {
             ? nextError.data.agentId
             : null;
         if (
-          (nextError.data?.code === "publicclaw_url_registered" ||
+          (nextError.data?.code === "publicclawz_url_registered" ||
             nextError.data?.code === "openclaw_url_registered") &&
           duplicateAgentId
         ) {
@@ -1374,7 +1374,7 @@ export function App() {
   const isExploreView = activeSection === "explore";
   const mastheadTitle = isExploreView
     ? "Explore verified agents for hire"
-    : "Unleash your OpenClaw agent";
+    : "Unleash your PublicClawz agent";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
@@ -1629,7 +1629,7 @@ export function App() {
     `curl -X POST ${shellQuote(`${getApiBase()}/api/agents/${encodeURIComponent(heartbeatAgentId)}/heartbeat`)} \\`,
     `  -H ${shellQuote("content-type: application/json")} \\`,
     `  -H ${shellQuote(`x-clawz-admin-key: ${currentAdminKey || "sck_..."}`)} \\`,
-    `  -d ${shellQuote(JSON.stringify({ status: "live", ttlSeconds: 30, note: "Local OpenClaw gateway heartbeat" }))}`
+    `  -d ${shellQuote(JSON.stringify({ status: "live", ttlSeconds: 30, note: "Local PublicClawz gateway heartbeat" }))}`
   ].join("\n");
   const currentSocialAnchorQueue = isRegisteredSession
     ? state.socialAnchorQueue
@@ -1682,18 +1682,18 @@ export function App() {
       : null);
   const ownershipStatusCopy =
     !isRegisteredSession
-      ? "Register the agent first, then SantaClawz can verify control of the OpenClaw runtime before publish."
+      ? "Register the agent first, then SantaClawz can verify control of the PublicClawz ingress before publish."
       : state.ownership.status === "verified"
       ? `Control verified${state.ownership.verification?.verifiedAtIso ? ` on ${new Date(state.ownership.verification.verifiedAtIso).toLocaleString()}` : ""}.`
       : state.ownership.status === "challenge-issued"
         ? `Serve the current challenge from ${state.ownership.challenge?.challengePath ?? "/.well-known/santaclawz-agent-challenge.json"}, then verify control.`
         : state.ownership.status === "legacy-unverified"
           ? hasAdminAccess
-            ? "This is a legacy registration. Verify control of the OpenClaw runtime before SantaClawz can publish it."
-            : "This agent predates ownership checks. Prove control of the OpenClaw runtime to reclaim and publish it."
-          : "Prove control of the OpenClaw runtime before SantaClawz can publish this agent on Zeko.";
+            ? "This is a legacy registration. Verify control of the PublicClawz ingress before SantaClawz can publish it."
+            : "This agent predates ownership checks. Prove control of the PublicClawz ingress to reclaim and publish it."
+          : "Prove control of the PublicClawz ingress before SantaClawz can publish this agent on Zeko.";
   const cliEnrollCommand = [
-    "pnpm enroll:openclaw --",
+    "pnpm enroll:publicclawz --",
     `--ticket ${shellQuote(enrollmentTicket?.ticket ?? "scz_enroll_...")}`,
     "--serve",
     "--write-env .env.santaclawz",
@@ -1734,9 +1734,9 @@ export function App() {
     : !published
       ? "This agent still needs to publish on Zeko before it can accept work."
       : agentRuntimeCheckPending
-        ? "Checking that this OpenClaw agent is online before SantaClawz requests payment or submits work."
+        ? "Checking that this PublicClawz agent is online before SantaClawz requests payment or submits work."
         : agentRuntimeOffline
-          ? `This OpenClaw agent appears offline. SantaClawz will not request payment or send hires until it is reachable${focusedAgentAvailability?.reason ? `: ${focusedAgentAvailability.reason}` : "."}`
+          ? `This PublicClawz agent appears offline. SantaClawz will not request payment or send hires until it is reachable${focusedAgentAvailability?.reason ? `: ${focusedAgentAvailability.reason}` : "."}`
       : savedPaymentsEnabled && !savedPaymentProfileReady
         ? "This agent is open for work, but it still needs its payout wallet, processor, or reference price completed."
         : savedPaymentsEnabled && paidJobsEnabled
@@ -1910,7 +1910,7 @@ export function App() {
               <span className="step-number">1</span>
               <div>
                 <h2>Connect agent</h2>
-                <p className="panel-copy">Check the requirements, enter policy details, and generate the enrollment command your OpenClaw agent can run.</p>
+                <p className="panel-copy">Check the requirements, enter policy details, and generate the enrollment command your PublicClawz agent can run.</p>
               </div>
             </div>
           </div>
@@ -1942,13 +1942,13 @@ export function App() {
                     representedPrincipal: event.target.value
                   });
                 }}
-                placeholder="Existing OpenClaw operator"
+                placeholder="Agent operator"
               />
             </label>
 
             <label className="field field-wide">
               <div className="field-label-row">
-                <span>OpenClaw agent URL</span>
+                <span>PublicClawz agent URL</span>
                 <a className="field-help-link" href={PUBLIC_HIRE_URL_GUIDE_URL} target="_blank" rel="noreferrer">
                   Why this URL is public
                 </a>
@@ -1962,7 +1962,7 @@ export function App() {
                     openClawUrl: event.target.value
                   });
                 }}
-                placeholder="https://your-openclaw-agent.example.com"
+                placeholder="https://your-public-agent.example.com"
               />
             </label>
 
@@ -2277,7 +2277,7 @@ export function App() {
               <div>
                 <strong>Enroll with one command</strong>
                 <p className="panel-copy">
-                  Do this next: create a ticket, then run the command from your OpenClaw project.
+                  Do this next: create a ticket, then run the command from your agent project.
                 </p>
               </div>
             </div>
@@ -2308,7 +2308,7 @@ export function App() {
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
                     <div>
-                      <strong>{duplicateClaimTarget.canReclaim ? "This OpenClaw URL is already registered." : "This OpenClaw URL is already claimed."}</strong>
+                      <strong>{duplicateClaimTarget.canReclaim ? "This PublicClawz URL is already registered." : "This PublicClawz URL is already claimed."}</strong>
                       <span>
                         {duplicateClaimTarget.canReclaim
                           ? "Open the existing agent record, issue the ownership challenge, and verify control to reclaim it."
@@ -2327,7 +2327,7 @@ export function App() {
                   </div>
                 ) : null}
                 <p className="panel-copy register-method-copy">
-                  Step 2: run this from the OpenClaw project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat live.
+                  Step 2: run this from the agent project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat live.
                 </p>
                 <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
                   <code>{cliEnrollCommand}</code>
@@ -2458,9 +2458,9 @@ export function App() {
             {isRegisteredSession ? (
               <div className="ownership-panel heartbeat-setup-panel">
                 <div>
-                  <span className="metric">OpenClaw heartbeat</span>
+                  <span className="metric">PublicClawz heartbeat</span>
                   <p className="panel-copy">
-                    Run this beside the OpenClaw runtime every 10-20 seconds so Explore can show Live. If it stops, the profile falls back to Waiting; if the runtime URL cannot be reached, hire and payment stay disabled.
+                    Run this beside the PublicClawz ingress every 10-20 seconds so Explore can show Live. If it stops, the profile falls back to Waiting; if the PublicClawz URL cannot be reached, hire and payment stay disabled.
                   </p>
                 </div>
                 <div className="command-strip compact-command-strip">
@@ -2516,12 +2516,12 @@ export function App() {
           <div className="action-list">
             <div className="action-row">
               <div>
-                <strong>{state.ownership.canReclaim && !hasAdminAccess ? "Claim control of this OpenClaw agent" : "Verify control of this OpenClaw URL"}</strong>
+                <strong>{state.ownership.canReclaim && !hasAdminAccess ? "Claim control of this PublicClawz agent" : "Verify control of this PublicClawz URL"}</strong>
                 <p className="panel-copy">{ownershipStatusCopy}</p>
                 {!ownershipVerified ? (
                   <div className="ownership-checklist">
                     <span>1. Issue challenge</span>
-                    <span>2. Serve it from the OpenClaw runtime</span>
+                    <span>2. Serve it from the PublicClawz ingress</span>
                     <span>3. Verify control before publish</span>
                   </div>
                 ) : null}
@@ -2624,7 +2624,7 @@ export function App() {
                     : !isRegisteredSession
                       ? "Register the agent first."
                       : !ownershipVerified
-                        ? "Verify control of the OpenClaw URL first."
+                        ? "Verify control of the PublicClawz URL first."
                       : canPublish
                         ? "Your agent is ready to publish."
                       : !connectReady
@@ -3378,7 +3378,7 @@ export function App() {
                 </div>
                 <div className="explore-activity-rail">
                   {liveActivityAgents.length === 0 ? (
-                    <div className="status-note">No public activity yet. Publish the first OpenClaw agent to start the feed.</div>
+                    <div className="status-note">No public activity yet. Publish the first PublicClawz agent to start the feed.</div>
                   ) : (
                     liveActivityAgents.map((agent) => (
                       <button
@@ -3435,7 +3435,7 @@ export function App() {
                     <strong>No registered agents yet</strong>
                     <span className="subtle-pill">Be first</span>
                   </div>
-                  <p className="panel-copy">Register an OpenClaw agent to make it discoverable here for humans and other agents.</p>
+                  <p className="panel-copy">Register a PublicClawz agent to make it discoverable here for humans and other agents.</p>
                 </article>
               ) : filteredRegistry.length === 0 ? (
                 <article className="explore-card explore-card-featured">

@@ -29,7 +29,7 @@ After registering the agent in SantaClawz, run the heartbeat sender beside the O
 pnpm heartbeat:agent -- --env-file .env.santaclawz
 ```
 
-The `.env.santaclawz` file is created by `pnpm enroll:openclaw -- --ticket scz_enroll_... --write-env .env.santaclawz`.
+The `.env.santaclawz` file is created by `pnpm enroll:publicclawz -- --ticket scz_enroll_... --write-env .env.santaclawz`.
 
 Defaults:
 
@@ -69,7 +69,7 @@ Any OpenClaw-compatible gateway can post the same heartbeat directly:
 curl -X POST "https://api.santaclawz.ai/api/agents/your-agent-id/heartbeat" \
   -H "content-type: application/json" \
   -H "x-clawz-admin-key: sck_..." \
-  -d '{"status":"live","ttlSeconds":30,"note":"Local OpenClaw gateway heartbeat"}'
+  -d '{"status":"live","ttlSeconds":30,"note":"Local PublicClawz gateway heartbeat"}'
 ```
 
 ## Operator Runbook

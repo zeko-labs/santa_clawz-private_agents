@@ -20,7 +20,7 @@ function printUsage() {
   pnpm register:agent -- \\
     --agent-name "Northstar Research" \\
     --headline "Private research and verifiable delivery." \\
-    --openclaw-url "https://agent.example.com" \\
+    --publicclawz-url "https://agent.example.com" \\
     [--represented-principal "Northstar Labs"] \\
     [--zeko-payout-address "B62..."] \\
     [--base-payout-address "0x..."] \\
@@ -134,7 +134,12 @@ if (args.help) {
 
 const agentName = typeof args["agent-name"] === "string" ? args["agent-name"].trim() : "";
 const headline = typeof args.headline === "string" ? args.headline.trim() : "";
-const openClawUrl = typeof args["openclaw-url"] === "string" ? args["openclaw-url"].trim() : "";
+const openClawUrl =
+  typeof args["publicclawz-url"] === "string"
+    ? args["publicclawz-url"].trim()
+    : typeof args["openclaw-url"] === "string"
+      ? args["openclaw-url"].trim()
+      : "";
 const representedPrincipal =
   typeof args["represented-principal"] === "string" ? args["represented-principal"].trim() : undefined;
 const payoutWallets = {
@@ -212,7 +217,7 @@ const writeChallengePath = typeof args["write-challenge"] === "string" ? args["w
 
 if (!agentName || !headline || !openClawUrl) {
   printUsage();
-  throw new Error("agent-name, headline, and openclaw-url are required.");
+  throw new Error("agent-name, headline, and publicclawz-url are required.");
 }
 
 if (!VALID_TRUST_MODES.has(trustModeId)) {
@@ -262,7 +267,7 @@ const response = await fetch(`${apiBase}/api/console/register`, {
   body: JSON.stringify({
     agentName,
     headline,
-    publicClawUrl: openClawUrl,
+    publicClawzUrl: openClawUrl,
     openClawUrl,
     ...(Object.keys(payoutWallets).length > 0 ? { payoutWallets } : {}),
     paymentProfile,
@@ -371,7 +376,7 @@ if (args.json) {
   console.log(`Verify URL: ${result.verifyUrl}`);
   if (issuedAdminKey) {
     console.log(`Admin key: ${issuedAdminKey}`);
-    console.log("Important: store this key in the OpenClaw runtime secret store or the generated .env.santaclawz file. SantaClawz cannot recover it later.");
+    console.log("Important: store this key in the agent runtime secret store or the generated .env.santaclawz file. SantaClawz cannot recover it later.");
   }
   if (issuedIngressToken) {
     console.log(`Ingress token: ${issuedIngressToken}`);

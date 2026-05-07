@@ -248,7 +248,7 @@ async function main() {
       body: JSON.stringify({
         agentName: "OpenClaw Smoke Agent",
         headline: "Local OpenClaw smoke for SantaClawz heartbeat and hire readiness.",
-        publicClawUrl: mockOpenClaw.baseUrl,
+        publicClawzUrl: mockOpenClaw.baseUrl,
         openClawUrl: mockOpenClaw.baseUrl,
         payoutWallets: {
           base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"

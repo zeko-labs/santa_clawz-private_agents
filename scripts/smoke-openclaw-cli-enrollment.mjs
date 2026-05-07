@@ -227,7 +227,7 @@ async function main() {
         agentName: "OpenClaw CLI Enrollment Smoke",
         headline: "CLI enrolled OpenClaw ingress returning signed quote packages.",
         representedPrincipal: "SantaClawz smoke operator",
-        publicClawUrl: ingress.baseUrl,
+        publicClawzUrl: ingress.baseUrl,
         openClawUrl: ingress.baseUrl,
         payoutWallets: {
           base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"

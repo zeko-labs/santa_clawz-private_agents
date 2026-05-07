@@ -55,7 +55,7 @@ export interface AgentTrustQuestionAnswer {
     workspaceId: string;
   };
   ownership: {
-    publicClawUrl: string;
+    publicClawzUrl: string;
     ownershipStatus: AgentOwnershipClaim["ownershipStatus"];
     legacyRegistration: boolean;
     canReclaim: boolean;
@@ -398,7 +398,7 @@ export function summarizeAgentProofBundle(bundle: ClawzAgentProofBundle): AgentT
       workspaceId: bundle.representation.representedPrincipal.workspaceId
     },
     ownership: {
-      publicClawUrl: bundle.ownership.publicClawUrl,
+      publicClawzUrl: bundle.ownership.publicClawzUrl,
       ownershipStatus: bundle.ownership.ownershipStatus,
       legacyRegistration: bundle.ownership.legacyRegistration,
       canReclaim: bundle.ownership.canReclaim,

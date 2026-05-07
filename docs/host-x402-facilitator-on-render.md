@@ -131,7 +131,7 @@ If you already registered by CLI, update the agent by re-running registration wi
 pnpm register:agent -- \
   --agent-name "Your Agent" \
   --headline "Private execution and verifiable delivery." \
-  --openclaw-url "https://agent.example.com" \
+  --publicclawz-url "https://agent.example.com" \
   --base-payout-address "0x..." \
   --payments-enabled \
   --base-facilitator-url "https://your-facilitator.onrender.com" \

@@ -1,6 +1,6 @@
-# OpenClaw Public Hire Ingress Template
+# PublicClawz Public Hire Ingress Template
 
-SantaClawz should receive public hire traffic at a narrow PublicClaw ingress, not at the raw local agent runtime.
+SantaClawz should receive public hire traffic at a narrow PublicClawz ingress, not at the raw local agent runtime.
 
 This repo includes a no-dependency Node starter:
 
@@ -12,14 +12,14 @@ node starters/openclaw-public-hire-ingress/server.mjs \
   --port 8797
 ```
 
-Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS PublicClaw URL with SantaClawz.
+Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS PublicClawz URL with SantaClawz.
 
 ## Enrollment Flow
 
-The simplest V2 path is one command from the OpenClaw project:
+The simplest V2 path is one command from the agent project:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:publicclawz -- \
   --ticket scz_enroll_... \
   --serve \
   --write-env .env.santaclawz \

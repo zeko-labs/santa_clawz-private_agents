@@ -55,7 +55,7 @@ const DEFAULT_TENANT_ID = "tenant_acme";
 const DEFAULT_WORKSPACE_ID = "workspace_blue";
 const DEFAULT_SESSION_ID = "session_demo_enterprise";
 const DEFAULT_TURN_ID = "turn_0011";
-const PUBLICCLAW_OWNERSHIP_CHALLENGE_PATH = "/.well-known/santaclawz-agent-challenge.json";
+const PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH = "/.well-known/santaclawz-agent-challenge.json";
 const OWNERSHIP_CHALLENGE_TTL_MS = 15 * 60 * 1000;
 const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
 const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
@@ -165,13 +165,13 @@ interface EnrollmentTicketRecord {
   redeemedAgentId?: string;
 }
 
-export class DuplicatePublicClawUrlError extends Error {
+export class DuplicatePublicClawzUrlError extends Error {
   existingAgentId: string;
   canReclaim: boolean;
 
   constructor(message: string, existingAgentId: string, canReclaim: boolean) {
     super(message);
-    this.name = "DuplicatePublicClawUrlError";
+    this.name = "DuplicatePublicClawzUrlError";
     this.existingAgentId = existingAgentId;
     this.canReclaim = canReclaim;
   }
@@ -372,7 +372,7 @@ interface EnrollmentTicketIssueResult {
     ticketId: string;
     ticketDigestSha256: string;
     challengeUrl: string;
-    publicClawUrl: string;
+    publicClawzUrl: string;
   };
 }
 
@@ -944,7 +944,7 @@ function asPublicOwnershipState(record: SessionOwnershipRecord, openClawUrl: str
 }
 
 function ownershipChallengeUrlFor(openClawUrl: string) {
-  return new URL(PUBLICCLAW_OWNERSHIP_CHALLENGE_PATH, openClawUrl).toString();
+  return new URL(PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH, openClawUrl).toString();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1906,7 +1906,7 @@ export class ClawzControlPlane {
     sessionIdToIgnore?: string
   ) {
     if (profile.openClawUrl.trim().length > 0) {
-      const normalizedPublicClawUrl = this.validatePublicClawUrl(profile.openClawUrl);
+      const normalizedPublicClawzUrl = this.validatePublicClawzUrl(profile.openClawUrl);
       for (const [knownSessionId, knownProfile] of Object.entries(state.profilesBySession)) {
         if (knownSessionId === sessionIdToIgnore || knownProfile.openClawUrl.trim().length === 0) {
           continue;
@@ -1917,13 +1917,13 @@ export class ClawzControlPlane {
         } catch (error) {
           continue;
         }
-        if (normalizedKnownUrl === normalizedPublicClawUrl) {
+        if (normalizedKnownUrl === normalizedPublicClawzUrl) {
           const existingAgentId = state.agentIdsBySession[knownSessionId] ?? knownSessionId;
           const ownership = this.ownershipRecordForSession(state, knownSessionId);
-          throw new DuplicatePublicClawUrlError(
+          throw new DuplicatePublicClawzUrlError(
             ownership.status === "verified"
-              ? "That PublicClaw agent URL is already registered and ownership has already been verified."
-              : "That PublicClaw agent URL is already registered. Verify control of the existing agent record to reclaim it.",
+              ? "That PublicClawz agent URL is already registered and ownership has already been verified."
+              : "That PublicClawz agent URL is already registered. Verify control of the existing agent record to reclaim it.",
             existingAgentId,
             ownership.status !== "verified"
           );
@@ -2003,12 +2003,12 @@ export class ClawzControlPlane {
     }
   }
 
-  private validatePublicClawUrl(rawUrl: string) {
+  private validatePublicClawzUrl(rawUrl: string) {
     let parsed: URL;
     try {
       parsed = new URL(rawUrl);
     } catch (error) {
-      throw new Error("PublicClaw agent URL must be a valid URL.");
+      throw new Error("PublicClawz agent URL must be a valid URL.");
     }
 
     const isProductionValidation = process.env.NODE_ENV === "production";
@@ -2016,13 +2016,13 @@ export class ClawzControlPlane {
     const isLocalHttp = parsed.protocol === "http:" && isPrivateHostname(parsed.hostname) && !isProductionValidation;
 
     if (!usesSecureProtocol && !isLocalHttp) {
-      throw new Error("PublicClaw agent URL must use https in public deployments.");
+      throw new Error("PublicClawz agent URL must use https in public deployments.");
     }
     if (isProductionValidation && isPrivateHostname(parsed.hostname)) {
-      throw new Error("PublicClaw agent URL must be publicly reachable.");
+      throw new Error("PublicClawz agent URL must be publicly reachable.");
     }
     if (isPlaceholderHostname(parsed.hostname)) {
-      throw new Error("PublicClaw agent URL still looks like placeholder copy.");
+      throw new Error("PublicClawz agent URL still looks like placeholder copy.");
     }
 
     return normalizeComparableUrl(parsed.toString());
@@ -2117,7 +2117,7 @@ export class ClawzControlPlane {
     };
   }
 
-  private async validatePublicClawAgentHealth(rawUrl: string) {
+  private async validatePublicClawzAgentHealth(rawUrl: string) {
     if (process.env.CLAWZ_VALIDATE_AGENT_URLS === "false" || process.env.NODE_ENV !== "production") {
       return;
     }
@@ -2147,13 +2147,13 @@ export class ClawzControlPlane {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "network request failed";
-      throw new Error(`PublicClaw agent URL did not respond cleanly (${message}).`);
+      throw new Error(`PublicClawz agent URL did not respond cleanly (${message}).`);
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  private async checkPublicClawAgentReachability(input: {
+  private async checkPublicClawzAgentReachability(input: {
     state: ConsolePersistenceState;
     sessionId: string;
     profile: AgentProfileState;
@@ -2171,12 +2171,12 @@ export class ClawzControlPlane {
         checkedAtIso,
         reachable: false,
         status: "not-configured",
-        reason: "This agent has no PublicClaw URL configured."
+        reason: "This agent has no PublicClawz URL configured."
       };
     }
 
     try {
-      this.validatePublicClawUrl(openClawUrl);
+      this.validatePublicClawzUrl(openClawUrl);
     } catch (error) {
       return {
         agentId,
@@ -2185,7 +2185,7 @@ export class ClawzControlPlane {
         checkedAtIso,
         reachable: false,
         status: "offline",
-        reason: error instanceof Error ? error.message : "The PublicClaw URL is not valid."
+        reason: error instanceof Error ? error.message : "The PublicClawz URL is not valid."
       };
     }
 
@@ -2221,8 +2221,8 @@ export class ClawzControlPlane {
         status: reachable ? "online" : "offline",
         httpStatus: response.status,
         ...(reachable
-          ? { reason: response.ok ? "PublicClaw agent endpoint responded." : `PublicClaw agent endpoint responded with ${response.status}.` }
-          : { reason: `PublicClaw agent endpoint returned ${response.status}.` })
+          ? { reason: response.ok ? "PublicClawz agent endpoint responded." : `PublicClawz agent endpoint responded with ${response.status}.` }
+          : { reason: `PublicClawz agent endpoint returned ${response.status}.` })
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "network request failed";
@@ -2233,7 +2233,7 @@ export class ClawzControlPlane {
         checkedAtIso,
         reachable: false,
         status: "offline",
-        reason: `PublicClaw agent endpoint could not be reached (${message}).`
+        reason: `PublicClawz agent endpoint could not be reached (${message}).`
       };
     }
   }
@@ -2244,7 +2244,7 @@ export class ClawzControlPlane {
     }
 
     throw new Error(
-      `This agent appears offline. SantaClawz will not request payment or submit a hire until the PublicClaw endpoint is reachable. ${availability.reason ?? ""}`.trim()
+      `This agent appears offline. SantaClawz will not request payment or submit a hire until the PublicClawz endpoint is reachable. ${availability.reason ?? ""}`.trim()
     );
   }
 
@@ -2522,7 +2522,7 @@ export class ClawzControlPlane {
     return {
       challengeId,
       challengeToken,
-      challengePath: PUBLICCLAW_OWNERSHIP_CHALLENGE_PATH,
+      challengePath: PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH,
       challengeUrl,
       verificationMethod: "well-known-http",
       issuedAtIso,
@@ -2541,7 +2541,7 @@ export class ClawzControlPlane {
       challengeToken: challenge.challengeToken,
       agentId: this.agentIdForSession(state, sessionId),
       sessionId,
-      publicClawUrl: profile.openClawUrl
+      publicClawzUrl: profile.openClawUrl
     };
   }
 
@@ -2635,7 +2635,7 @@ export class ClawzControlPlane {
       schema_version: ENROLLMENT_TICKET_SCHEMA_VERSION,
       ticket_id: record.ticketId,
       ticket_digest_sha256: sha256Hex(ticket),
-      publicclaw_url: record.profile.openClawUrl,
+      publicclawz_url: record.profile.openClawUrl,
       challenge_url: challengeUrl
     };
   }
@@ -2676,10 +2676,10 @@ export class ClawzControlPlane {
       parsed.schema_version !== ENROLLMENT_TICKET_SCHEMA_VERSION ||
       parsed.ticket_id !== record.ticketId ||
       ticketDigest !== expected.ticket_digest_sha256 ||
-      (parsed.publicclaw_url !== undefined && parsed.publicclaw_url !== record.profile.openClawUrl)
+      (parsed.publicclawz_url !== undefined && parsed.publicclawz_url !== record.profile.openClawUrl)
     ) {
       throw new Error(
-        `The PublicClaw endpoint did not return the expected SantaClawz enrollment ticket challenge at ${PUBLICCLAW_OWNERSHIP_CHALLENGE_PATH}.`
+        `The PublicClawz endpoint did not return the expected SantaClawz enrollment ticket challenge at ${PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH}.`
       );
     }
   }
@@ -2687,7 +2687,7 @@ export class ClawzControlPlane {
   private assertOwnershipVerifiedForPublish(state: ConsolePersistenceState, sessionId: string) {
     const ownership = this.ownershipRecordForSession(state, sessionId);
     if (ownership.status !== "verified" || !ownership.verification) {
-      throw new Error("Verify control of the PublicClaw agent URL before publishing on Zeko.");
+      throw new Error("Verify control of the PublicClawz agent URL before publishing on Zeko.");
     }
   }
 
@@ -4422,7 +4422,7 @@ export class ClawzControlPlane {
     const profile = this.profileForSession(state, sessionId, trustModeId);
     const [heartbeatFile, reachability] = await Promise.all([
       this.loadRuntimeHeartbeatFile(),
-      this.checkPublicClawAgentReachability({
+      this.checkPublicClawzAgentReachability({
         state,
         sessionId,
         profile,
@@ -4651,14 +4651,14 @@ export class ClawzControlPlane {
       ticketId,
       issuedAtIso,
       expiresAtIso,
-      challengePath: PUBLICCLAW_OWNERSHIP_CHALLENGE_PATH,
+      challengePath: PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH,
       challengeUrl: ownershipChallengeUrlFor(profile.openClawUrl),
       enrollmentChallenge: {
         schemaVersion: ENROLLMENT_TICKET_SCHEMA_VERSION,
         ticketId,
         ticketDigestSha256: ticketHash,
         challengeUrl: ownershipChallengeUrlFor(profile.openClawUrl),
-        publicClawUrl: profile.openClawUrl
+        publicClawzUrl: profile.openClawUrl
       }
     };
   }
@@ -4749,7 +4749,7 @@ export class ClawzControlPlane {
       throw new Error("agentName, headline, and openClawUrl are required.");
     }
     await this.assertAgentProfileIsValid(state, profile);
-    await this.validatePublicClawAgentHealth(profile.openClawUrl);
+    await this.validatePublicClawzAgentHealth(profile.openClawUrl);
 
     const agentId = buildStableAgentId(profile.agentName, sessionId);
     const adminKey = buildAdminKey();
@@ -4849,7 +4849,7 @@ export class ClawzControlPlane {
 
     const profile = this.profileForSession(state, sessionId);
     if (!profile.openClawUrl.trim()) {
-      throw new Error("This agent still needs a PublicClaw agent URL before ownership can be verified.");
+      throw new Error("This agent still needs a PublicClawz agent URL before ownership can be verified.");
     }
 
     const issuedAtIso = new Date().toISOString();
@@ -4906,7 +4906,7 @@ export class ClawzControlPlane {
 
     const profile = this.profileForSession(state, sessionId);
     if (!profile.openClawUrl.trim()) {
-      throw new Error("This agent still needs a PublicClaw agent URL before ownership can be verified.");
+      throw new Error("This agent still needs a PublicClawz agent URL before ownership can be verified.");
     }
 
     const ownership = this.ownershipRecordForSession(state, sessionId);
@@ -4921,7 +4921,7 @@ export class ClawzControlPlane {
     const challengeResult = await this.fetchOwnershipChallengeResponse(challenge);
     if (!challengeResult.matched) {
       throw new Error(
-        `The PublicClaw endpoint did not return the expected SantaClawz challenge at ${challenge.challengePath}.`
+        `The PublicClawz endpoint did not return the expected SantaClawz challenge at ${challenge.challengePath}.`
       );
     }
 
@@ -4931,7 +4931,7 @@ export class ClawzControlPlane {
     const attestationDigestSha256 = canonicalDigest({
       sessionId,
       agentId: this.agentIdForSession(state, sessionId),
-      publicClawUrl: profile.openClawUrl,
+      publicClawzUrl: profile.openClawUrl,
       challengeId: challenge.challengeId,
       challengePath: challenge.challengePath,
       challengeUrl: challenge.challengeUrl,
@@ -4947,7 +4947,7 @@ export class ClawzControlPlane {
       challengeUrl: challenge.challengeUrl,
       verificationMethod,
       verifiedAtIso,
-      verifiedPublicClawUrl: profile.openClawUrl,
+      verifiedPublicClawzUrl: profile.openClawUrl,
       challengeResponseDigestSha256,
       attestationDigestSha256,
       ...(!adminHadAccess ? { reclaimedAtIso: verifiedAtIso } : {})
@@ -4990,13 +4990,13 @@ export class ClawzControlPlane {
     await this.enqueueSocialAnchorCandidate({
       sessionId,
       kind: "ownership-verified",
-      summary: `${profile.agentName} proved control of its PublicClaw endpoint.`,
+      summary: `${profile.agentName} proved control of its PublicClawz endpoint.`,
       occurredAtIso: verifiedAtIso,
       payload: {
         agentId: this.agentIdForSession(state, sessionId),
         challengeId: challenge.challengeId,
         attestationDigestSha256,
-        verifiedPublicClawUrl: profile.openClawUrl
+        verifiedPublicClawzUrl: profile.openClawUrl
       }
     });
 
@@ -5034,14 +5034,14 @@ export class ClawzControlPlane {
     }
     const ownership = this.ownershipForSession(state, sessionId);
     if (ownership.status !== "verified") {
-      throw new Error("This agent must verify control of its PublicClaw endpoint before it can accept public hire requests.");
+      throw new Error("This agent must verify control of its PublicClawz endpoint before it can accept public hire requests.");
     }
     const published = liveFlowTargets.turns.some((target) => target.sessionId === sessionId);
     if (!published) {
       throw new Error("This agent needs to publish on Zeko before it can accept hire requests.");
     }
     if (!profile.openClawUrl.trim()) {
-      throw new Error("This agent has no PublicClaw callback URL configured yet.");
+      throw new Error("This agent has no PublicClawz callback URL configured yet.");
     }
     const taskPrompt = options.taskPrompt.trim();
     const requesterContact = options.requesterContact.trim();
@@ -5055,7 +5055,7 @@ export class ClawzControlPlane {
       throw new Error(`requesterContact must be ${HIRE_REQUESTER_CONTACT_MAX_LENGTH} characters or less.`);
     }
     this.assertAgentRuntimeReachable(
-      await this.checkPublicClawAgentReachability({
+      await this.checkPublicClawzAgentReachability({
         state,
         sessionId,
         profile,
@@ -5292,7 +5292,7 @@ export class ClawzControlPlane {
     }), deployment);
     await this.assertAgentProfileIsValid(state, nextProfile, focus.sessionId);
     if (nextProfile.openClawUrl !== currentProfile.openClawUrl) {
-      await this.validatePublicClawAgentHealth(nextProfile.openClawUrl);
+      await this.validatePublicClawzAgentHealth(nextProfile.openClawUrl);
     }
     const nextState: ConsolePersistenceState = {
       ...this.applyFocusedSession(state, focus.sessionId, trustModeId),
