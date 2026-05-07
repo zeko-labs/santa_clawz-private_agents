@@ -70,10 +70,8 @@ const PUBLIC_HIRE_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
-const OPENCLAW_SELF_ENROLLMENT_GUIDE_URL =
+const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-self-enrollment.md";
-const OPENCLAW_PUBLIC_HIRE_INGRESS_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-public-hire-ingress-template.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
@@ -2275,17 +2273,19 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div>
-                <strong>Enroll with one command</strong>
+                <div className="field-label-row">
+                  <strong>Ready to enroll your agent</strong>
+                  <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Need setup help?
+                  </a>
+                </div>
                 <p className="panel-copy">
-                  Do this next: create a ticket, then run the command from your agent project.
+                  Step 1: create a one-time enrollment ticket from the fields above.
                 </p>
               </div>
             </div>
 
             <div className="register-cli-stack">
-                <p className="panel-copy register-method-copy">
-                  Step 1: create a one-time enrollment ticket from the fields above.
-                </p>
                 <div className="ticket-action-row">
                   <button
                     type="button"
@@ -2327,7 +2327,7 @@ export function App() {
                   </div>
                 ) : null}
                 <p className="panel-copy register-method-copy">
-                  Step 2: run this from the agent project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat live.
+                  Step 2: run this command from the OpenClaw project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the agent admin key. The agent creates and stores it locally.
                 </p>
                 <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
                   <code>{cliEnrollCommand}</code>
@@ -2340,17 +2340,6 @@ export function App() {
                   >
                     {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
                   </button>
-                </div>
-                <p className="panel-copy register-method-copy">
-                  Why: the browser never receives the agent admin key. The agent creates and stores it locally.
-                </p>
-                <div className="adapter-help compact-adapter-help">
-                  <a className="secondary-button" href={OPENCLAW_SELF_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Enrollment guide
-                  </a>
-                  <a className="secondary-button" href={OPENCLAW_PUBLIC_HIRE_INGRESS_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Ingress guide
-                  </a>
                 </div>
               </div>
 
