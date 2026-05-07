@@ -1659,7 +1659,7 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
     }
 
     const { consoleState, plan } = await buildX402PlanFromOptions(getBaseUrl(request), { agentId });
-    const published = consoleState.liveFlowTargets.turns.some((target) => target.sessionId === consoleState.session.sessionId);
+    const published = plan.published;
     if (consoleState.profile.availability === "archived") {
       response.status(400).json({ error: "This agent is archived on SantaClawz and is not accepting new hire requests." });
       return;

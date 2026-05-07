@@ -1261,16 +1261,24 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(unpublishedHire.status, 400);
     assert.match(unpublishedHire.payload.error, /publish on Zeko/i);
 
-    const published = await requestJson(`${baseUrl}/api/events/ingest`, {
+    const published = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
       method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
       body: JSON.stringify({
-        id: "evt_hire_gating_published",
-        type: "TurnFinalized",
-        occurredAtIso: new Date().toISOString(),
-        payload: { sessionId, turnId: "turn_hire_gating_001" }
+        sessionId,
+        agentId,
+        localOnly: true
       })
     });
-    assert.equal(published.status, 202);
+    assert.equal(published.status, 200);
+
+    const publishedState = await requestJson(`${baseUrl}/api/console/state?sessionId=${encodeURIComponent(sessionId)}`);
+    assert.equal(publishedState.status, 200);
+    assert.equal(publishedState.payload.published, true);
+
+    const publishedRegistry = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(publishedRegistry.status, 200);
+    assert.equal(publishedRegistry.payload.find((agent) => agent.agentId === agentId)?.published, true);
 
     const oversizedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

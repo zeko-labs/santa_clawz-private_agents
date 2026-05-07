@@ -1439,6 +1439,35 @@ function computePaidJobsEnabled(
   );
 }
 
+function hasConfirmedSocialAnchorKind(
+  items: SocialAnchorCandidate[],
+  sessionId: string,
+  kind: SocialAnchorCandidateKind
+): boolean {
+  return items.some((item) => item.sessionId === sessionId && item.kind === kind && item.status === "confirmed");
+}
+
+function hasConfirmedZekoPublication(items: SocialAnchorCandidate[], sessionId: string): boolean {
+  return (
+    hasConfirmedSocialAnchorKind(items, sessionId, "agent-published") ||
+    (
+      hasConfirmedSocialAnchorKind(items, sessionId, "agent-registered") &&
+      hasConfirmedSocialAnchorKind(items, sessionId, "ownership-verified")
+    )
+  );
+}
+
+function isSessionPublishedOnZeko(input: {
+  liveFlowTargets: LiveFlowTargets;
+  socialAnchorQueueFile: SocialAnchorQueueFile;
+  sessionId: string;
+}): boolean {
+  return (
+    input.liveFlowTargets.turns.some((target) => target.sessionId === input.sessionId) ||
+    hasConfirmedZekoPublication(input.socialAnchorQueueFile.items, input.sessionId)
+  );
+}
+
 export class ClawzControlPlane {
   private readonly statePath: string;
   private readonly eventsPath: string;
@@ -4913,7 +4942,11 @@ export class ClawzControlPlane {
     const socialAnchorQueue = this.buildSocialAnchorQueueState(socialAnchorQueueFile, focus.sessionId);
     const profile = this.profileForSession(state, focus.sessionId, focus.trustModeId);
     const agentId = this.agentIdForSession(state, focus.sessionId, focus.trustModeId);
-    const published = liveFlowTargets.turns.some((target) => target.sessionId === focus.sessionId);
+    const published = isSessionPublishedOnZeko({
+      liveFlowTargets,
+      socialAnchorQueueFile,
+      sessionId: focus.sessionId
+    });
     const paymentsEnabled = profile.paymentProfile.enabled;
     const paymentProfileReady = hasReadyPaymentProfile(profile);
     const payoutAddressConfigured = hasPayoutAddress(profile);
@@ -4935,6 +4968,7 @@ export class ClawzControlPlane {
 
     return {
       agentId,
+      published,
       paymentsEnabled,
       paymentProfileReady,
       payoutAddressConfigured,
@@ -5070,10 +5104,14 @@ export class ClawzControlPlane {
         const trustMode = TRUST_MODE_PRESETS.find((mode) => mode.id === trustModeId) ?? TRUST_MODE_PRESETS[0]!;
         const profile = this.profileForSession(state, sessionId, trustModeId);
         const session = materializer.getSession(sessionId);
-        const published = liveFlowTargets.turns.some((target) => target.sessionId === sessionId);
         const lastUpdatedAtIso = session.events.at(-1)?.occurredAtIso;
         const ownership = this.ownershipForSession(state, sessionId);
         const sessionAnchors = socialAnchorQueueFile.items.filter((item) => item.sessionId === sessionId);
+        const published = isSessionPublishedOnZeko({
+          liveFlowTargets,
+          socialAnchorQueueFile,
+          sessionId
+        });
         const anchoredBatches = socialAnchorQueueFile.batches
           .filter((batch) => batch.status === "confirmed" && sessionAnchors.some((item) => item.batchId === batch.batchId))
           .sort((left, right) => right.settledAtIso.localeCompare(left.settledAtIso));
@@ -5586,11 +5624,12 @@ export class ClawzControlPlane {
       throw new Error(`Unknown agent: ${options.agentId}`);
     }
 
-    const [events, liveFlow, deployment, hireRequests] = await Promise.all([
+    const [events, liveFlow, deployment, hireRequests, socialAnchorQueueFile] = await Promise.all([
       this.loadEvents(),
       this.getLiveFlowState(),
       this.getDeploymentState(),
-      this.loadHireRequestFile()
+      this.loadHireRequestFile(),
+      this.loadSocialAnchorQueueFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
@@ -5602,7 +5641,11 @@ export class ClawzControlPlane {
     if (ownership.status !== "verified") {
       throw new Error("This agent must verify control of its PublicClawz endpoint before it can accept public hire requests.");
     }
-    const published = liveFlowTargets.turns.some((target) => target.sessionId === sessionId);
+    const published = isSessionPublishedOnZeko({
+      liveFlowTargets,
+      socialAnchorQueueFile,
+      sessionId
+    });
     if (!published) {
       throw new Error("This agent needs to publish on Zeko before it can accept hire requests.");
     }

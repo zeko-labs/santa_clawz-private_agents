@@ -1649,7 +1649,11 @@ export function App() {
   const recoveryReady = state.wallet.recovery.status === "sealed";
   const isRegisteredSession = state.session.sessionId.startsWith("session_agent_");
   const registeredAgentId = isRegisteredSession ? state.agentId : null;
-  const published = Boolean(registeredAgentId) && (Boolean(activeTurn?.turnId) || state.liveFlow.status === "succeeded");
+  const published = Boolean(registeredAgentId) && (
+    state.published ||
+    Boolean(activeTurn?.turnId) ||
+    state.liveFlow.status === "succeeded"
+  );
   const ownershipVerified = state.ownership.status === "verified";
   const agentArchived = profile.availability === "archived";
   const archivedAtLabel =

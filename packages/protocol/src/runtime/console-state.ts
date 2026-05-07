@@ -613,6 +613,7 @@ export interface IngressAccessState {
 
 export interface ConsoleStateResponse {
   agentId: string;
+  published: boolean;
   paymentsEnabled: boolean;
   paymentProfileReady: boolean;
   payoutAddressConfigured: boolean;

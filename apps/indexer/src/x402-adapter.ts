@@ -872,7 +872,7 @@ export function buildAgentX402Plan(input: {
     }
     return buildZekoRailPlan(consoleState);
   });
-  const published = consoleState.liveFlowTargets.turns.some((target) => target.sessionId === sessionId);
+  const published = consoleState.published;
 
   return {
     serviceId: serviceIdFor(agentId),
