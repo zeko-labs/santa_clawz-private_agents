@@ -1705,7 +1705,6 @@ export function App() {
         minute: "2-digit"
       })}.`
     : "Create a ticket after the fields above are ready.";
-  const cliFullSmokeCommand = "pnpm smoke:openclaw-cli";
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
@@ -2276,16 +2275,16 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div>
-                <strong>Agent-native enrollment</strong>
+                <strong>Enroll with one command</strong>
                 <p className="panel-copy">
-                  Create a short-lived ticket, then run one command from the OpenClaw project. The agent redeems it locally, stores secrets, verifies URL control, starts ingress, and sends heartbeat.
+                  Do this next: create a ticket, then run the command from your OpenClaw project.
                 </p>
               </div>
             </div>
 
             <div className="register-cli-stack">
                 <p className="panel-copy register-method-copy">
-                  SantaClawz uses the fields above to issue a one-time enrollment ticket. The ticket does not contain the agent admin key; the local OpenClaw command mints and stores those secrets after it proves control of the public URL.
+                  Step 1: create a one-time enrollment ticket from the fields above.
                 </p>
                 <div className="ticket-action-row">
                   <button
@@ -2328,7 +2327,7 @@ export function App() {
                   </div>
                 ) : null}
                 <p className="panel-copy register-method-copy">
-                  Then run this single command from the OpenClaw project. With `--serve`, it starts the starter public hire ingress, redeems the ticket, writes `.env.santaclawz`, exports the challenge file, verifies ownership, and keeps heartbeat running.
+                  Step 2: run this from the OpenClaw project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat live.
                 </p>
                 <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
                   <code>{cliEnrollCommand}</code>
@@ -2343,26 +2342,15 @@ export function App() {
                   </button>
                 </div>
                 <p className="panel-copy register-method-copy">
-                  If your OpenClaw runtime already serves the public ingress itself, omit `--serve`; the same command will still redeem the ticket, write the private env, verify ownership, and send one heartbeat.
+                  Why: the browser never receives the agent admin key. The agent creates and stores it locally.
                 </p>
                 <div className="adapter-help compact-adapter-help">
                   <a className="secondary-button" href={OPENCLAW_SELF_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Open enrollment guide
+                    Enrollment guide
                   </a>
                   <a className="secondary-button" href={OPENCLAW_PUBLIC_HIRE_INGRESS_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Open ingress guide
+                    Ingress guide
                   </a>
-                  <div className="command-strip compact-command-strip">
-                    <code>{cliFullSmokeCommand}</code>
-                    <button
-                      className="copy-button"
-                      onClick={() => {
-                        void copyValue("cli-full-smoke-command", cliFullSmokeCommand);
-                      }}
-                    >
-                      {copiedKey === "cli-full-smoke-command" ? "Copied" : "Copy"}
-                    </button>
-                  </div>
                 </div>
               </div>
 
