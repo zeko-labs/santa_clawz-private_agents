@@ -71,7 +71,7 @@ const PUBLIC_HIRE_URL_GUIDE_URL =
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-self-enrollment.md";
+  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
@@ -2275,12 +2275,7 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div>
-                <div className="field-label-row">
-                  <strong>Ready to enroll your agent</strong>
-                  <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Need setup help?
-                  </a>
-                </div>
+                <strong>Ready to enroll your agent</strong>
                 <p className="panel-copy">
                   Step 1: create a one-time enrollment ticket from the fields above.
                 </p>
@@ -2331,6 +2326,11 @@ export function App() {
                 <p className="panel-copy register-method-copy">
                   Step 2: run this command from the OpenClaw project. It stores the agent key, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the agent admin key. The agent creates and stores it locally.
                 </p>
+                <div className="enrollment-help-row">
+                  <a className="field-help-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Need setup help?
+                  </a>
+                </div>
                 <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
                   <code>{cliEnrollCommand}</code>
                   <button

@@ -919,6 +919,12 @@ pre,
   max-width: 60rem;
 }
 
+.enrollment-help-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -2px;
+}
+
 .compact-command-strip {
   margin-top: 0;
 }
