@@ -3519,11 +3519,11 @@ export function App() {
                         key={`activity-${agent.agentId}`}
                         type="button"
                         className="activity-pill"
+                        aria-label={`${agent.agentName}: ${runtimeStatusLabel(agent.runtimeStatus)}. ${activityLineForAgent(agent)}`}
                         onClick={() => {
                           showAgentProfile(agent.agentId);
                         }}
                       >
-                        <span className="activity-pill-mark">{agent.paidJobsEnabled ? "●" : agent.paymentsEnabled ? "◇" : agent.published ? "◆" : "○"}</span>
                         <strong>{agent.agentName}</strong>
                         <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
                           {runtimeStatusLabel(agent.runtimeStatus)}

@@ -362,11 +362,6 @@ pre,
   font-size: 0.82rem;
 }
 
-.activity-pill-mark {
-  color: var(--gold);
-  font-size: 0.8rem;
-}
-
 .explore-toolbar {
   display: grid;
   gap: 14px;
