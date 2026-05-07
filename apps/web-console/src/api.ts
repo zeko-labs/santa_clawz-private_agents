@@ -241,6 +241,22 @@ export interface OwnershipChallengeIssueResponse extends ConsoleStateResponse {
   };
 }
 
+export interface EnrollmentTicketResponse {
+  ticket: string;
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  challengePath: string;
+  challengeUrl: string;
+  enrollmentChallenge: {
+    schemaVersion: "santaclawz-enrollment-ticket/1.0";
+    ticketId: string;
+    ticketDigestSha256: string;
+    challengeUrl: string;
+    openClawUrl: string;
+  };
+}
+
 async function request<T>(path: string, init?: RequestInit, adminContext?: AdminKeyContext): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
   if (!headers.has("content-type")) {
@@ -352,6 +368,24 @@ export function registerAgent(input: {
     method: "POST",
     body: JSON.stringify(input)
   }).then(normalizeConsoleStateResponse);
+}
+
+export function createEnrollmentTicket(input: {
+  agentName: string;
+  representedPrincipal?: string;
+  headline: string;
+  openClawUrl: string;
+  payoutWallets?: AgentProfileState["payoutWallets"];
+  missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
+  paymentProfile?: AgentProfileState["paymentProfile"];
+  socialAnchorPolicy?: AgentProfileState["socialAnchorPolicy"];
+  trustModeId?: TrustModeId;
+  preferredProvingLocation?: AgentProfileState["preferredProvingLocation"];
+}): Promise<EnrollmentTicketResponse> {
+  return request<EnrollmentTicketResponse>("/api/enrollment/tickets", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
 }
 
 export function submitHireRequest(

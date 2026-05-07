@@ -130,6 +130,9 @@ type RegisterAgentRequestBody = {
   trustModeId?: unknown;
   preferredProvingLocation?: unknown;
 };
+type EnrollmentTicketRedeemBody = {
+  ticket?: unknown;
+};
 type ProfileRequestBody = {
   agentName?: unknown;
   representedPrincipal?: unknown;
@@ -352,6 +355,48 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
         preferredProvingLocation: body.preferredProvingLocation
       }
     : {};
+}
+
+function parseEnrollmentTicketRedeemRequest(body: unknown): EnrollmentTicketRedeemBody {
+  return isRecord(body)
+    ? {
+        ticket: body.ticket
+      }
+    : {};
+}
+
+function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typeof controlPlane.registerAgent>[0] {
+  const payoutWallets = parsePayoutWallets(body.payoutWallets);
+  const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
+  const paymentProfile = parsePaymentProfile(body.paymentProfile);
+  const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
+  const trustModeId: TrustModeId | undefined =
+    body.trustModeId === "fast" ||
+    body.trustModeId === "private" ||
+    body.trustModeId === "verified" ||
+    body.trustModeId === "team-governed"
+      ? body.trustModeId
+      : undefined;
+  const preferredProvingLocation =
+    body.preferredProvingLocation === "client" ||
+    body.preferredProvingLocation === "server" ||
+    body.preferredProvingLocation === "sovereign-rollup"
+      ? body.preferredProvingLocation
+      : undefined;
+
+  return {
+    agentName: typeof body.agentName === "string" ? body.agentName : "",
+    headline: typeof body.headline === "string" ? body.headline : "",
+    openClawUrl: typeof body.openClawUrl === "string" ? body.openClawUrl : "",
+    ...(typeof body.payoutAddress === "string" ? { payoutAddress: body.payoutAddress } : {}),
+    ...(payoutWallets ? { payoutWallets } : {}),
+    ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
+    ...(paymentProfile ? { paymentProfile } : {}),
+    ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
+    ...(typeof body.representedPrincipal === "string" ? { representedPrincipal: body.representedPrincipal } : {}),
+    ...(trustModeId ? { trustModeId } : {}),
+    ...(preferredProvingLocation ? { preferredProvingLocation } : {})
+  };
 }
 
 function parseProfileRequest(body: unknown): ProfileRequestBody {
@@ -1387,41 +1432,10 @@ app.post("/api/console/trust-mode", route(async (request, response) => {
 
 app.post("/api/console/register", route(async (request, response) => {
   const body = parseRegisterAgentRequest(request.body ?? null);
-  const payoutWallets = parsePayoutWallets(body.payoutWallets);
-  const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
-  const paymentProfile = parsePaymentProfile(body.paymentProfile);
-  const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
-  const trustModeId =
-    body.trustModeId === "fast" ||
-    body.trustModeId === "private" ||
-    body.trustModeId === "verified" ||
-    body.trustModeId === "team-governed"
-      ? body.trustModeId
-      : undefined;
-  const preferredProvingLocation: AgentProfileState["preferredProvingLocation"] | undefined =
-    body.preferredProvingLocation === "client" ||
-    body.preferredProvingLocation === "server" ||
-    body.preferredProvingLocation === "sovereign-rollup"
-      ? body.preferredProvingLocation
-      : undefined;
 
   try {
     enforceRegistrationRateLimit(request);
-    response.json(
-      await controlPlane.registerAgent({
-        agentName: typeof body.agentName === "string" ? body.agentName : "",
-        headline: typeof body.headline === "string" ? body.headline : "",
-        openClawUrl: typeof body.openClawUrl === "string" ? body.openClawUrl : "",
-        ...(typeof body.payoutAddress === "string" ? { payoutAddress: body.payoutAddress } : {}),
-        ...(payoutWallets ? { payoutWallets } : {}),
-        ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
-        ...(paymentProfile ? { paymentProfile } : {}),
-        ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
-        ...(typeof body.representedPrincipal === "string" ? { representedPrincipal: body.representedPrincipal } : {}),
-        ...(trustModeId ? { trustModeId } : {}),
-        ...(preferredProvingLocation ? { preferredProvingLocation } : {})
-      })
-    );
+    response.json(await controlPlane.registerAgent(registerOptionsFromBody(body)));
   } catch (error) {
     if (error instanceof DuplicateOpenClawUrlError) {
       response.status(409).json({
@@ -1445,6 +1459,65 @@ app.post("/api/console/register", route(async (request, response) => {
     }
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to register agent."
+    });
+  }
+}));
+
+app.post("/api/enrollment/tickets", route(async (request, response) => {
+  const body = parseRegisterAgentRequest(request.body ?? null);
+
+  try {
+    enforceRegistrationRateLimit(request);
+    response.json(await controlPlane.issueEnrollmentTicket(registerOptionsFromBody(body)));
+  } catch (error) {
+    if (error instanceof DuplicateOpenClawUrlError) {
+      response.status(409).json({
+        error: error.message,
+        code: "openclaw_url_registered",
+        agentId: error.existingAgentId,
+        canReclaim: error.canReclaim
+      });
+      return;
+    }
+    const retryAfterSeconds =
+      error instanceof Error && "retryAfterSeconds" in error
+        ? (error as Error & { retryAfterSeconds?: number }).retryAfterSeconds
+        : undefined;
+    if (retryAfterSeconds) {
+      response.set("retry-after", String(retryAfterSeconds));
+      response.status(429).json({
+        error: error instanceof Error ? error.message : "Too many enrollment ticket attempts."
+      });
+      return;
+    }
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create enrollment ticket."
+    });
+  }
+}));
+
+app.post("/api/enrollment/redeem", route(async (request, response) => {
+  const body = parseEnrollmentTicketRedeemRequest(request.body ?? null);
+  const ticket = optionalString(body.ticket);
+  if (!ticket) {
+    response.status(400).json({ error: "ticket is required." });
+    return;
+  }
+
+  try {
+    response.json(await controlPlane.redeemEnrollmentTicket(ticket));
+  } catch (error) {
+    if (error instanceof DuplicateOpenClawUrlError) {
+      response.status(409).json({
+        error: error.message,
+        code: "openclaw_url_registered",
+        agentId: error.existingAgentId,
+        canReclaim: error.canReclaim
+      });
+      return;
+    }
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to redeem enrollment ticket."
     });
   }
 }));

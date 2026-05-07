@@ -14,6 +14,8 @@ import {
   ApiError,
   checkAndSaveMissionAuthOverlay,
   checkMissionAuthOverlay,
+  createEnrollmentTicket,
+  type EnrollmentTicketResponse,
   fetchAgentRuntimeAvailability,
   fetchAgentRegistry,
   fetchConsoleState,
@@ -42,6 +44,7 @@ type HireDraft = {
 type RegistrationMethod = "browser" | "cli";
 type PayoutWalletKey = "base" | "ethereum";
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
+type EnrollmentTicket = EnrollmentTicketResponse;
 type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
@@ -830,6 +833,7 @@ export function App() {
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
+  const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const ethereumPayoutAllowed = hasAdvancedEthereumPayout(profile);
 
@@ -1153,25 +1157,56 @@ export function App() {
     }
   }
 
+  function buildAgentRegistrationPayload() {
+    return {
+      agentName: profileForSave.agentName,
+      representedPrincipal: profileForSave.representedPrincipal,
+      headline: profileForSave.headline,
+      openClawUrl: profileForSave.openClawUrl,
+      ...(Object.keys(profileForSave.payoutWallets).length > 0
+        ? { payoutWallets: profileForSave.payoutWallets }
+        : {}),
+      missionAuthOverlay: profileForSave.missionAuthOverlay,
+      paymentProfile: profileForSave.paymentProfile,
+      socialAnchorPolicy: profileForSave.socialAnchorPolicy,
+      preferredProvingLocation: profileForSave.preferredProvingLocation
+    };
+  }
+
+  async function createEnrollmentTicketAction() {
+    setPendingAction("create-enrollment-ticket");
+    setError(null);
+    setDuplicateClaimTarget(null);
+
+    try {
+      const nextTicket = await createEnrollmentTicket(buildAgentRegistrationPayload());
+      setEnrollmentTicket(nextTicket);
+    } catch (nextError) {
+      if (nextError instanceof ApiError) {
+        const duplicateAgentId =
+          typeof nextError.data?.agentId === "string" && nextError.data.agentId.trim().length > 0
+            ? nextError.data.agentId
+            : null;
+        if (nextError.data?.code === "openclaw_url_registered" && duplicateAgentId) {
+          setDuplicateClaimTarget({
+            agentId: duplicateAgentId,
+            canReclaim: Boolean(nextError.data.canReclaim)
+          });
+        }
+      }
+      setError(nextError instanceof Error ? nextError.message : "Could not create enrollment ticket.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function registerAgentInBrowser() {
     setPendingAction("register-agent");
     setError(null);
     setDuplicateClaimTarget(null);
 
     try {
-      let nextState = await registerAgent({
-        agentName: profileForSave.agentName,
-        representedPrincipal: profileForSave.representedPrincipal,
-        headline: profileForSave.headline,
-        openClawUrl: profileForSave.openClawUrl,
-        ...(Object.keys(profileForSave.payoutWallets).length > 0
-          ? { payoutWallets: profileForSave.payoutWallets }
-          : {}),
-        missionAuthOverlay: profileForSave.missionAuthOverlay,
-        paymentProfile: profileForSave.paymentProfile,
-        socialAnchorPolicy: profileForSave.socialAnchorPolicy,
-        preferredProvingLocation: profileForSave.preferredProvingLocation
-      });
+      let nextState = await registerAgent(buildAgentRegistrationPayload());
 
       setState(nextState);
       setSelectedSessionId(nextState.session.sessionId);
@@ -1684,67 +1719,19 @@ export function App() {
             ? "This is a legacy registration. Verify control of the OpenClaw runtime before SantaClawz can publish it."
             : "This agent predates ownership checks. Prove control of the OpenClaw runtime to reclaim and publish it."
           : "Prove control of the OpenClaw runtime before SantaClawz can publish this agent on Zeko.";
-  const cliRegisterCommand = [
-    "pnpm register:agent --",
-    `--agent-name ${shellQuote(profile.agentName || "SantaClawz Operator")}`,
-    `--headline ${shellQuote(profile.headline || "Private research and verifiable delivery.")}`,
-    `--openclaw-url ${shellQuote(profile.openClawUrl || "https://your-openclaw-agent.example.com")}`,
-    ...(profile.representedPrincipal.trim().length > 0
-      ? [`--represented-principal ${shellQuote(profile.representedPrincipal)}`]
-      : []),
-    ...(profile.payoutWallets.base?.trim().length
-      ? [`--base-payout-address ${shellQuote(profile.payoutWallets.base)}`]
-      : []),
-    ...(ethereumPayoutAllowed && profile.payoutWallets.ethereum?.trim().length
-      ? [`--ethereum-payout-address ${shellQuote(profile.payoutWallets.ethereum)}`]
-      : []),
-    ...(paymentProfile.enabled ? ["--payments-enabled"] : []),
-    ...(paymentProfile.baseFacilitatorUrl?.trim().length
-      ? [`--base-facilitator-url ${shellQuote(paymentProfile.baseFacilitatorUrl)}`]
-      : []),
-    ...(paymentProfile.ethereumFacilitatorUrl?.trim().length
-      ? [`--ethereum-facilitator-url ${shellQuote(paymentProfile.ethereumFacilitatorUrl)}`]
-      : []),
-    ...(paymentProfile.defaultRail ? [`--default-rail ${shellQuote(paymentProfile.defaultRail)}`] : []),
-    `--pricing-mode ${shellQuote(paymentProfile.pricingMode)}`,
-    ...(paymentProfile.fixedAmountUsd?.trim().length
-      ? [`--fixed-price-usd ${shellQuote(paymentProfile.fixedAmountUsd)}`]
-      : []),
-    ...(paymentProfile.maxAmountUsd?.trim().length
-      ? [`--max-price-usd ${shellQuote(paymentProfile.maxAmountUsd)}`]
-      : []),
-    ...(paymentProfile.quoteUrl?.trim().length
-      ? [`--quote-url ${shellQuote(paymentProfile.quoteUrl)}`]
-      : []),
-    ...(paymentProfile.referencePriceUsd?.trim().length
-      ? [`--reference-price-usd ${shellQuote(paymentProfile.referencePriceUsd)}`]
-      : []),
-    ...(paymentProfile.referencePriceUnit
-      ? [`--reference-price-unit ${shellQuote(paymentProfile.referencePriceUnit)}`]
-      : []),
-    ...(paymentProfile.paymentNotes?.trim().length
-      ? [`--payment-notes ${shellQuote(paymentProfile.paymentNotes)}`]
-      : []),
-    ...(missionAuthEnabled && missionAuthOverlay.authorityBaseUrl?.trim().length
-      ? [`--mission-auth-url ${shellQuote(missionAuthOverlay.authorityBaseUrl)}`]
-      : []),
-    ...(missionAuthEnabled && missionAuthOverlay.providerHint?.trim().length
-      ? [`--mission-auth-provider ${shellQuote(missionAuthOverlay.providerHint)}`]
-      : []),
-    ...(missionAuthEnabled && missionAuthOverlay.scopeHints.length > 0
-      ? [`--mission-auth-scopes ${shellQuote(missionAuthOverlay.scopeHints.join(","))}`]
-      : []),
+  const cliEnrollCommand = [
+    "pnpm enroll:openclaw --",
+    `--ticket ${shellQuote(enrollmentTicket?.ticket ?? "scz_enroll_...")}`,
+    "--serve",
     "--write-env .env.santaclawz",
-    "--write-challenge .well-known/santaclawz-agent-challenge.json"
+    "--challenge-file .well-known/santaclawz-agent-challenge.json"
   ].join(" ");
-  const cliIngressCommand = [
-    "node starters/openclaw-public-hire-ingress/server.mjs",
-    "--agent-env-file .env.santaclawz",
-    "--challenge-file .well-known/santaclawz-agent-challenge.json",
-    "--host 127.0.0.1",
-    "--port 8797"
-  ].join(" ");
-  const cliHeartbeatCheckCommand = "pnpm heartbeat:agent -- --env-file .env.santaclawz --once";
+  const enrollmentTicketExpiryLabel = enrollmentTicket
+    ? `Ticket expires ${new Date(enrollmentTicket.expiresAtIso).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit"
+      })}.`
+    : "Create a ticket after the fields above are ready.";
   const cliFullSmokeCommand = "pnpm smoke:openclaw-cli";
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
   const focusedAgentAvailability =
@@ -2334,7 +2321,7 @@ export function App() {
                     ? isRegisteredSession
                       ? `Registered to ${state.agentId}. This browser already owns the registration record for this agent.`
                       : "Manual browser registration is still available for testing, but production agents should enroll from their OpenClaw runtime so they can store and reuse their own admin key."
-                    : "Run the starter ingress, then enroll once from the OpenClaw project. The enrollment command writes the private env file and ownership challenge the ingress serves."}
+                    : "Create a short-lived ticket, then run one command from the OpenClaw project. The agent redeems it locally, stores secrets, verifies URL control, starts ingress, and sends heartbeat."}
                 </p>
               </div>
               <div className="inline-toggle compact-inline-toggle" role="radiogroup" aria-label="Registration method">
@@ -2397,48 +2384,46 @@ export function App() {
             ) : (
               <div className="register-cli-stack">
                 <p className="panel-copy register-method-copy">
-                  Start the public hire ingress first. It can run before enrollment and will pick up `.env.santaclawz` plus the challenge file after the next command writes them.
+                  SantaClawz uses the fields above to issue a one-time enrollment ticket. The ticket does not contain the agent admin key; the local OpenClaw command mints and stores those secrets after it proves control of the public URL.
                 </p>
-                <div className="command-strip compact-command-strip">
-                  <code>{cliIngressCommand}</code>
+                <div className="ticket-action-row">
                   <button
-                    className="copy-button"
+                    type="button"
+                    className="primary-button"
+                    disabled={pendingAction === "create-enrollment-ticket" || !connectReady}
                     onClick={() => {
-                      void copyValue("cli-ingress-command", cliIngressCommand);
+                      void createEnrollmentTicketAction();
                     }}
                   >
-                    {copiedKey === "cli-ingress-command" ? "Copied" : "Copy"}
+                    {pendingAction === "create-enrollment-ticket"
+                      ? "Creating ticket..."
+                      : enrollmentTicket
+                        ? "Create fresh ticket"
+                        : "Create enrollment ticket"}
+                  </button>
+                  <span className={enrollmentTicket ? "subtle-pill live" : "subtle-pill"}>
+                    {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
+                  </span>
+                </div>
+                <p className="panel-copy register-method-copy">
+                  Then run this single command from the OpenClaw project. With `--serve`, it starts the starter public hire ingress, redeems the ticket, writes `.env.santaclawz`, exports the challenge file, verifies ownership, and keeps heartbeat running.
+                </p>
+                <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
+                  <code>{cliEnrollCommand}</code>
+                  <button
+                    className="copy-button"
+                    disabled={!enrollmentTicket}
+                    onClick={() => {
+                      void copyValue("cli-enroll-command", cliEnrollCommand);
+                    }}
+                  >
+                    {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
                   </button>
                 </div>
                 <p className="panel-copy register-method-copy">
-                  Then enroll once from the OpenClaw project. The generated `.env.santaclawz` must stay private with the agent runtime secrets; SantaClawz cannot recover the admin key later.
+                  If your OpenClaw runtime already serves the public ingress itself, omit `--serve`; the same command will still redeem the ticket, write the private env, verify ownership, and send one heartbeat.
                 </p>
-                <div className="command-strip compact-command-strip">
-                  <code>{cliRegisterCommand}</code>
-                  <button
-                    className="copy-button"
-                    onClick={() => {
-                      void copyValue("cli-register-command", cliRegisterCommand);
-                    }}
-                  >
-                    {copiedKey === "cli-register-command" ? "Copied" : "Copy"}
-                  </button>
-                </div>
-                <p className="panel-copy register-method-copy">
-                  After the challenge file is served from the OpenClaw URL, use the generated env file to smoke-test agent presence.
-                </p>
-                <div className="command-strip compact-command-strip">
-                  <code>{cliHeartbeatCheckCommand}</code>
-                  <button
-                    className="copy-button"
-                    onClick={() => {
-                      void copyValue("cli-heartbeat-check-command", cliHeartbeatCheckCommand);
-                    }}
-                  >
-                    {copiedKey === "cli-heartbeat-check-command" ? "Copied" : "Copy"}
-                  </button>
-                </div>
-                <div className="adapter-help">
+                <div className="adapter-help compact-adapter-help">
                   <a className="secondary-button" href={OPENCLAW_SELF_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                     Open enrollment guide
                   </a>

@@ -67,6 +67,8 @@ const HIRE_INGRESS_TIMEOUT_MS = 10_000;
 const HIRE_INGRESS_RETURN_MAX_BYTES = 128 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
+const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 type HireIngressRequestKind = "quote" | "paid-execution";
 
@@ -105,7 +107,7 @@ const ALL_LIVE_FLOW_METHODS = Array.from(
 );
 
 interface ConsolePersistenceState {
-  schemaVersion: 4;
+  schemaVersion: 5;
   currentSessionId: string;
   activeMode: TrustModeId;
   wallet: ShadowWalletState;
@@ -116,6 +118,7 @@ interface ConsolePersistenceState {
   ingressSecretsBySession: Record<string, SessionIngressSecretRecord>;
   ownershipBySession: Record<string, SessionOwnershipRecord>;
   deletedAgentRegistrationsBySession: Record<string, DeletedAgentRegistrationRecord>;
+  enrollmentTicketsById: Record<string, EnrollmentTicketRecord>;
 }
 
 interface SessionAdminAccessRecord {
@@ -148,6 +151,18 @@ interface SessionOwnershipRecord {
   canReclaim: boolean;
   challenge?: SessionOwnershipChallengeRecord;
   verification?: AgentOwnershipVerificationState;
+}
+
+interface EnrollmentTicketRecord {
+  ticketId: string;
+  ticketHash: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  status: "pending" | "redeemed";
+  profile: RegisterAgentOptions;
+  redeemedAtIso?: string;
+  redeemedSessionId?: string;
+  redeemedAgentId?: string;
 }
 
 export class DuplicateOpenClawUrlError extends Error {
@@ -343,6 +358,26 @@ interface RegisterAgentOptions {
   payoutAddress?: string;
   trustModeId?: TrustModeId;
   preferredProvingLocation?: AgentProfileState["preferredProvingLocation"];
+}
+
+interface EnrollmentTicketIssueResult {
+  ticket: string;
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  challengePath: string;
+  challengeUrl: string;
+  enrollmentChallenge: {
+    schemaVersion: typeof ENROLLMENT_TICKET_SCHEMA_VERSION;
+    ticketId: string;
+    ticketDigestSha256: string;
+    challengeUrl: string;
+    openClawUrl: string;
+  };
+}
+
+interface EnrollmentTicketRedeemResult extends ConsoleStateResponse {
+  issuedOwnershipChallenge: OwnershipChallengeIssueResult["issuedOwnershipChallenge"];
 }
 
 interface OwnershipActionOptions {
@@ -635,7 +670,7 @@ function buildPrivacyExceptions(nowIso: string): PrivacyExceptionQueueItem[] {
 
 function buildDefaultState(nowIso: string): ConsolePersistenceState {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     currentSessionId: DEFAULT_SESSION_ID,
     activeMode: "private",
     wallet: buildWalletState(nowIso),
@@ -651,7 +686,8 @@ function buildDefaultState(nowIso: string): ConsolePersistenceState {
     ownershipBySession: {
       [DEFAULT_SESSION_ID]: buildDefaultOwnershipRecord(true)
     },
-    deletedAgentRegistrationsBySession: {}
+    deletedAgentRegistrationsBySession: {},
+    enrollmentTicketsById: {}
   };
 }
 
@@ -678,6 +714,31 @@ function buildIngressToken() {
 
 function buildIngressSigningSecret() {
   return `sc_sig_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+}
+
+function buildEnrollmentTicketId() {
+  return `enr_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+}
+
+function buildEnrollmentTicketSecret() {
+  return `${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`;
+}
+
+function buildEnrollmentTicketToken(ticketId: string, secret: string) {
+  return `scz_enroll_${ticketId}_${secret}`;
+}
+
+function parseEnrollmentTicketToken(ticket: string) {
+  const normalized = ticket.trim();
+  const match = /^scz_enroll_(enr_[a-f0-9]{20})_([a-f0-9]{64})$/i.exec(normalized);
+  if (!match) {
+    throw new Error("Enrollment ticket is malformed.");
+  }
+  return {
+    ticket: normalized,
+    ticketId: match[1]!,
+    secret: match[2]!
+  };
 }
 
 function adminKeyHash(value: string) {
@@ -1376,7 +1437,7 @@ export class ClawzControlPlane {
             };
       const migratedState: ConsolePersistenceState = {
         ...state,
-        schemaVersion: 4,
+        schemaVersion: 5,
         agentIdsBySession:
           state.agentIdsBySession && Object.keys(state.agentIdsBySession).length > 0
             ? state.agentIdsBySession
@@ -1397,10 +1458,11 @@ export class ClawzControlPlane {
             : Object.fromEntries(
                 Object.entries(resolvedProfiles).map(([sessionId]) => [sessionId, buildDefaultOwnershipRecord(true)])
               ),
-        deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {}
+        deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {},
+        enrollmentTicketsById: state.enrollmentTicketsById ?? {}
       };
       if (
-        state.schemaVersion !== 4 ||
+        state.schemaVersion !== 5 ||
         !state.agentIdsBySession ||
         Object.keys(state.agentIdsBySession).length === 0 ||
         !state.profilesBySession ||
@@ -1408,7 +1470,8 @@ export class ClawzControlPlane {
         !state.adminKeysBySession ||
         !state.ingressSecretsBySession ||
         !state.ownershipBySession ||
-        !state.deletedAgentRegistrationsBySession
+        !state.deletedAgentRegistrationsBySession ||
+        !state.enrollmentTicketsById
       ) {
         await this.saveState(migratedState);
       }
@@ -2501,6 +2564,102 @@ export class ClawzControlPlane {
       bodyText,
       matched: bodyText === challenge.challengeToken
     };
+  }
+
+  private buildEnrollmentTicketProfile(
+    options: RegisterAgentOptions,
+    deployment: Pick<ZekoDeploymentState, "networkId" | "mode">
+  ): RegisterAgentOptions {
+    const trustModeId = options.trustModeId ?? "private";
+    const fallbackProfile = buildDefaultProfile(trustModeId);
+    const profile = this.coerceProfileForDeployment(this.sanitizeProfileInput(
+      trustModeId,
+      {
+        agentName: options.agentName,
+        headline: options.headline,
+        openClawUrl: options.openClawUrl,
+        ...(options.payoutWallets ? { payoutWallets: options.payoutWallets } : {}),
+        ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
+        ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
+        ...(options.socialAnchorPolicy ? { socialAnchorPolicy: options.socialAnchorPolicy } : {}),
+        ...(options.payoutAddress ? { payoutAddress: options.payoutAddress } : {}),
+        ...(options.representedPrincipal ? { representedPrincipal: options.representedPrincipal } : {}),
+        ...(options.preferredProvingLocation ? { preferredProvingLocation: options.preferredProvingLocation } : {})
+      },
+      fallbackProfile
+    ), deployment);
+
+    if (profile.agentName.trim().length === 0 || profile.headline.trim().length === 0 || profile.openClawUrl.trim().length === 0) {
+      throw new Error("agentName, headline, and openClawUrl are required.");
+    }
+
+    return {
+      agentName: profile.agentName,
+      representedPrincipal: profile.representedPrincipal,
+      headline: profile.headline,
+      openClawUrl: profile.openClawUrl,
+      payoutWallets: profile.payoutWallets,
+      missionAuthOverlay: profile.missionAuthOverlay,
+      paymentProfile: profile.paymentProfile,
+      socialAnchorPolicy: profile.socialAnchorPolicy,
+      trustModeId,
+      preferredProvingLocation: profile.preferredProvingLocation
+    };
+  }
+
+  private enrollmentChallengePayloadForTicket(record: EnrollmentTicketRecord, ticket: string) {
+    const challengeUrl = ownershipChallengeUrlFor(record.profile.openClawUrl);
+    return {
+      schema_version: ENROLLMENT_TICKET_SCHEMA_VERSION,
+      ticket_id: record.ticketId,
+      ticket_digest_sha256: sha256Hex(ticket),
+      openclaw_url: record.profile.openClawUrl,
+      challenge_url: challengeUrl
+    };
+  }
+
+  private async assertEnrollmentTicketChallengeServed(record: EnrollmentTicketRecord, ticket: string) {
+    const challengeUrl = ownershipChallengeUrlFor(record.profile.openClawUrl);
+    const response = await fetch(challengeUrl, {
+      method: "GET",
+      headers: {
+        accept: "application/json,text/plain,*/*"
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000)
+    });
+
+    const bodyText = (await response.text()).trim();
+    if (!response.ok) {
+      throw new Error(`Enrollment challenge endpoint returned ${response.status}.`);
+    }
+    if (!bodyText) {
+      throw new Error("Enrollment challenge endpoint returned an empty response.");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bodyText);
+    } catch (_error) {
+      throw new Error("Enrollment challenge endpoint did not return JSON.");
+    }
+    if (!isRecord(parsed)) {
+      throw new Error("Enrollment challenge endpoint returned an invalid payload.");
+    }
+
+    const expected = this.enrollmentChallengePayloadForTicket(record, ticket);
+    const ticketDigest = assertStringValue(parsed, "ticket_digest_sha256", "Enrollment challenge");
+    assertSha256Hex(ticketDigest, "Enrollment challenge ticket_digest_sha256");
+    if (
+      parsed.schema_version !== ENROLLMENT_TICKET_SCHEMA_VERSION ||
+      parsed.ticket_id !== record.ticketId ||
+      ticketDigest !== expected.ticket_digest_sha256 ||
+      (parsed.openclaw_url !== undefined && parsed.openclaw_url !== record.profile.openClawUrl)
+    ) {
+      throw new Error(
+        `The OpenClaw runtime did not return the expected SantaClawz enrollment ticket challenge at ${OPENCLAW_OWNERSHIP_CHALLENGE_PATH}.`
+      );
+    }
   }
 
   private assertOwnershipVerifiedForPublish(state: ConsolePersistenceState, sessionId: string) {
@@ -4433,6 +4592,110 @@ export class ClawzControlPlane {
 
   async listSponsorQueue(sessionId?: string): Promise<SponsorQueueState> {
     return this.getSponsorQueueState(sessionId);
+  }
+
+  async issueEnrollmentTicket(options: RegisterAgentOptions): Promise<EnrollmentTicketIssueResult> {
+    const state = await this.loadState();
+    const deployment = await this.getDeploymentState();
+    const issuedAtIso = new Date().toISOString();
+    const expiresAtIso = new Date(Date.parse(issuedAtIso) + ENROLLMENT_TICKET_TTL_MS).toISOString();
+    const profile = this.buildEnrollmentTicketProfile(options, deployment);
+    await this.assertAgentProfileIsValid(state, this.sanitizeProfileInput(profile.trustModeId ?? "private", profile, buildDefaultProfile(profile.trustModeId ?? "private")));
+
+    const ticketId = buildEnrollmentTicketId();
+    const ticketSecret = buildEnrollmentTicketSecret();
+    const ticket = buildEnrollmentTicketToken(ticketId, ticketSecret);
+    const ticketHash = sha256Hex(ticket);
+    const record: EnrollmentTicketRecord = {
+      ticketId,
+      ticketHash,
+      issuedAtIso,
+      expiresAtIso,
+      status: "pending",
+      profile
+    };
+    const nextState: ConsolePersistenceState = {
+      ...state,
+      enrollmentTicketsById: {
+        ...state.enrollmentTicketsById,
+        [ticketId]: record
+      }
+    };
+
+    await this.saveState(nextState);
+
+    return {
+      ticket,
+      ticketId,
+      issuedAtIso,
+      expiresAtIso,
+      challengePath: OPENCLAW_OWNERSHIP_CHALLENGE_PATH,
+      challengeUrl: ownershipChallengeUrlFor(profile.openClawUrl),
+      enrollmentChallenge: {
+        schemaVersion: ENROLLMENT_TICKET_SCHEMA_VERSION,
+        ticketId,
+        ticketDigestSha256: ticketHash,
+        challengeUrl: ownershipChallengeUrlFor(profile.openClawUrl),
+        openClawUrl: profile.openClawUrl
+      }
+    };
+  }
+
+  async redeemEnrollmentTicket(ticket: string): Promise<EnrollmentTicketRedeemResult> {
+    const parsedTicket = parseEnrollmentTicketToken(ticket);
+    const state = await this.loadState();
+    const record = state.enrollmentTicketsById[parsedTicket.ticketId];
+    if (!record) {
+      throw new Error("Enrollment ticket was not found.");
+    }
+    if (record.status !== "pending") {
+      throw new Error("Enrollment ticket has already been redeemed.");
+    }
+    if (Date.parse(record.expiresAtIso) <= Date.now()) {
+      throw new Error("Enrollment ticket expired. Create a fresh ticket from SantaClawz.");
+    }
+    if (!timingSafeEqualHex(record.ticketHash, sha256Hex(parsedTicket.ticket))) {
+      throw new Error("Enrollment ticket secret was rejected.");
+    }
+
+    await this.assertEnrollmentTicketChallengeServed(record, parsedTicket.ticket);
+
+    const registeredState = await this.registerAgent(record.profile);
+    const sessionId = registeredState.session.sessionId;
+    const agentId = registeredState.agentId;
+    const issuedAdminKey = registeredState.adminAccess.issuedAdminKey;
+    const ingressAccess = registeredState.ingressAccess;
+    if (!issuedAdminKey || !ingressAccess) {
+      throw new Error("Enrollment registered the agent but did not receive required admin or ingress secrets.");
+    }
+
+    const challengeResult = await this.issueOwnershipChallenge({
+      sessionId,
+      agentId,
+      adminKey: issuedAdminKey
+    });
+    const redeemedAtIso = new Date().toISOString();
+    const latestState = await this.loadState();
+    await this.saveState({
+      ...latestState,
+      enrollmentTicketsById: {
+        ...latestState.enrollmentTicketsById,
+        [record.ticketId]: {
+          ...record,
+          status: "redeemed",
+          redeemedAtIso,
+          redeemedSessionId: sessionId,
+          redeemedAgentId: agentId
+        }
+      }
+    });
+
+    return {
+      ...challengeResult.state,
+      adminAccess: registeredState.adminAccess,
+      ingressAccess,
+      issuedOwnershipChallenge: challengeResult.issuedOwnershipChallenge
+    };
   }
 
   async registerAgent(options: RegisterAgentOptions): Promise<ConsoleStateResponse> {

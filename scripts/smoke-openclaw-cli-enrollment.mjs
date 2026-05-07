@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const serverEntry = path.join(repoRoot, "apps", "indexer", "dist", "apps", "indexer", "src", "server.js");
-const registerEntry = path.join(repoRoot, "scripts", "register-agent.mjs");
+const enrollEntry = path.join(repoRoot, "scripts", "enroll-openclaw-agent.mjs");
 const heartbeatEntry = path.join(repoRoot, "scripts", "agent-heartbeat.mjs");
 const ingressEntry = path.join(repoRoot, "starters", "openclaw-public-hire-ingress", "server.mjs");
 const SERVER_READY_TIMEOUT_MS = 30_000;
@@ -183,6 +183,31 @@ function runNodeJson(entry, args, options = {}) {
   });
 }
 
+async function loadEnvFile(filePath) {
+  const contents = await readFile(filePath, "utf8");
+  const env = {};
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
 async function main() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-cli-smoke-indexer-"));
   const agentDir = await mkdtemp(path.join(os.tmpdir(), "clawz-cli-smoke-agent-"));
@@ -196,53 +221,61 @@ async function main() {
     await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, indexer);
     await waitForJson(`${ingress.baseUrl}/health`, SERVER_READY_TIMEOUT_MS, ingress);
 
-    const registration = await runNodeJson(registerEntry, [
+    const ticket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "OpenClaw CLI Enrollment Smoke",
+        headline: "CLI enrolled OpenClaw ingress returning signed quote packages.",
+        representedPrincipal: "SantaClawz smoke operator",
+        openClawUrl: ingress.baseUrl,
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "quote-required",
+          referencePriceUsd: "0.20",
+          referencePriceUnit: "minimum",
+          settlementTrigger: "upfront"
+        },
+        socialAnchorPolicy: {
+          mode: "shared-batched"
+        },
+        trustModeId: "private",
+        preferredProvingLocation: "client"
+      })
+    });
+    assert.equal(ticket.status, 200);
+    assert.match(ticket.payload.ticket, /^scz_enroll_/);
+
+    const enrollment = await runNodeJson(enrollEntry, [
       "--api-base",
       baseUrl,
       "--site-base",
       "http://127.0.0.1:5173",
-      "--agent-name",
-      "OpenClaw CLI Enrollment Smoke",
-      "--headline",
-      "CLI enrolled OpenClaw ingress returning signed quote packages.",
-      "--represented-principal",
-      "SantaClawz smoke operator",
-      "--openclaw-url",
-      ingress.baseUrl,
-      "--payments-enabled",
-      "--base-payout-address",
-      "0x1908217952D7117f5aeFBbd91AeBf04566D286f9",
-      "--pricing-mode",
-      "quote-required",
-      "--reference-price-usd",
-      "0.20",
-      "--reference-price-unit",
-      "minimum",
-      "--settlement-trigger",
-      "upfront",
+      "--ticket",
+      ticket.payload.ticket,
       "--write-env",
       ingress.envFile,
-      "--write-challenge",
-      ingress.challengeFile,
-      "--json"
+      "--challenge-file",
+      ingress.challengeFile
     ]);
+    const enrollmentEnv = await loadEnvFile(ingress.envFile);
+    const registration = {
+      ...enrollment,
+      adminKey: enrollmentEnv.CLAWZ_AGENT_ADMIN_KEY,
+      ingressToken: enrollmentEnv.CLAWZ_AGENT_INGRESS_TOKEN,
+      signingSecret: enrollmentEnv.CLAWZ_AGENT_SIGNING_SECRET
+    };
 
     assert.equal(typeof registration.agentId, "string");
     assert.equal(typeof registration.adminKey, "string");
     assert.equal(typeof registration.ingressToken, "string");
     assert.equal(typeof registration.signingSecret, "string");
     assert.notEqual(registration.ingressToken, registration.signingSecret);
-
-    const verified = await requestJson(`${baseUrl}/api/ownership/verify`, {
-      method: "POST",
-      headers: { "x-clawz-admin-key": registration.adminKey },
-      body: JSON.stringify({
-        sessionId: registration.sessionId,
-        agentId: registration.agentId
-      })
-    });
-    assert.equal(verified.status, 200);
-    assert.equal(verified.payload.ownership.status, "verified");
+    assert.equal(registration.ownershipVerified, true);
 
     const published = await requestJson(`${baseUrl}/api/events/ingest`, {
       method: "POST",
@@ -303,7 +336,7 @@ async function main() {
 
     console.log("ok - OpenClaw CLI enrollment smoke passed");
     console.log(`agentId=${registration.agentId}`);
-    console.log("flow=template ingress -> CLI enroll -> env/challenge -> verify -> publish -> anchor -> heartbeat -> quote -> anchor quote");
+    console.log("flow=ticket -> template ingress -> one CLI enroll -> env/challenge -> verify -> publish -> anchor -> heartbeat -> quote -> anchor quote");
   } finally {
     await stopProcess(indexer.child);
     await stopProcess(ingress.child);

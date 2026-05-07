@@ -1706,6 +1706,19 @@ h3 {
   color: var(--muted);
 }
 
+.subtle-pill.live {
+  background: rgba(22, 113, 88, 0.12);
+  color: var(--success);
+}
+
+.ticket-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .command-strip {
   display: flex;
   justify-content: space-between;
@@ -1721,6 +1734,14 @@ h3 {
 .command-strip code {
   font-size: 0.9rem;
   overflow-wrap: anywhere;
+}
+
+.disabled-command-strip {
+  opacity: 0.58;
+}
+
+.disabled-command-strip .copy-button {
+  cursor: not-allowed;
 }
 
 .copy-button,
@@ -1967,6 +1988,10 @@ h3 {
 .adapter-help {
   display: grid;
   gap: 10px;
+}
+
+.compact-adapter-help {
+  margin-top: 12px;
 }
 
 .choice-grid {
