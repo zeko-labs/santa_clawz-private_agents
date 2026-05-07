@@ -2051,42 +2051,44 @@ export function App() {
               </button>
             </div>
 
-            <label className="field field-wide">
-              <span>Pricing method</span>
-              <select
-                className="text-input"
-                value={paymentProfile.pricingMode}
-                onChange={(event: ValueInputEvent) => {
-                  const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
-                  const nextPaymentProfile = {
-                    ...profile.paymentProfile,
-                    pricingMode: nextPricingMode,
-                    referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
-                  };
-                  if (nextPricingMode === "fixed-exact") {
-                    delete nextPaymentProfile.quoteUrl;
-                    delete nextPaymentProfile.maxAmountUsd;
-                  }
-                  if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
-                    delete nextPaymentProfile.fixedAmountUsd;
-                    delete nextPaymentProfile.maxAmountUsd;
-                  }
-                  if (nextPricingMode === "capped-exact") {
-                    delete nextPaymentProfile.fixedAmountUsd;
-                    delete nextPaymentProfile.quoteUrl;
-                  }
-                  setProfile({
-                    ...profile,
-                    paymentProfile: nextPaymentProfile
-                  });
-                }}
-              >
-                <option value="quote-required">Quote required</option>
-                <option value="fixed-exact">Fixed price</option>
-                <option value="capped-exact">Capped price</option>
-                <option value="agent-negotiated">Negotiated by agent</option>
-              </select>
-            </label>
+            {paymentProfile.enabled ? (
+              <label className="field field-wide">
+                <span>Pricing method</span>
+                <select
+                  className="text-input"
+                  value={paymentProfile.pricingMode}
+                  onChange={(event: ValueInputEvent) => {
+                    const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
+                    const nextPaymentProfile = {
+                      ...profile.paymentProfile,
+                      pricingMode: nextPricingMode,
+                      referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
+                    };
+                    if (nextPricingMode === "fixed-exact") {
+                      delete nextPaymentProfile.quoteUrl;
+                      delete nextPaymentProfile.maxAmountUsd;
+                    }
+                    if (nextPricingMode === "quote-required" || nextPricingMode === "agent-negotiated") {
+                      delete nextPaymentProfile.fixedAmountUsd;
+                      delete nextPaymentProfile.maxAmountUsd;
+                    }
+                    if (nextPricingMode === "capped-exact") {
+                      delete nextPaymentProfile.fixedAmountUsd;
+                      delete nextPaymentProfile.quoteUrl;
+                    }
+                    setProfile({
+                      ...profile,
+                      paymentProfile: nextPaymentProfile
+                    });
+                  }}
+                >
+                  <option value="quote-required">Quote required</option>
+                  <option value="fixed-exact">Fixed price</option>
+                  <option value="capped-exact">Capped price</option>
+                  <option value="agent-negotiated">Negotiated by agent</option>
+                </select>
+              </label>
+            ) : null}
 
             {paymentProfile.enabled ? (
               <label className="field">
