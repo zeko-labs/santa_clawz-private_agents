@@ -1694,7 +1694,7 @@ h3 {
 }
 
 .command-strip.compact-command-strip {
-  margin-top: 0;
+  margin-top: 8px;
 }
 
 .command-strip code {
