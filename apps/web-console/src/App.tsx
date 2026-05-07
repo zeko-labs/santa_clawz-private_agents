@@ -2405,7 +2405,7 @@ export function App() {
                 </label>
                 <button
                   type="submit"
-                  className={manageTargetReady ? "primary-button" : "secondary-button"}
+                  className="primary-button"
                   disabled={pendingAction === "open-manage-agent" || !manageTargetReady}
                 >
                   {pendingAction === "open-manage-agent" ? "Viewing..." : "View agent"}

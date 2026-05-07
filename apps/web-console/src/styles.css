@@ -2075,6 +2075,7 @@ h3 {
   flex: 1 1 420px;
 }
 
+.ticket-action-row .primary-button,
 .manage-agent-open-form .primary-button {
   min-height: 50px;
 }
