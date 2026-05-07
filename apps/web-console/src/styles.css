@@ -846,7 +846,7 @@ pre,
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  align-items: start;
+  align-items: center;
 }
 
 .mission-auth-copy strong {
