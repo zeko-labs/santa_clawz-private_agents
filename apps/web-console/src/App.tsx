@@ -2178,7 +2178,7 @@ export function App() {
               <div className="mission-auth-body">
                 <div className="field-grid compact-field-grid mission-auth-grid">
                   <label className="field field-wide">
-                    <span>Mission auth URL</span>
+                    <span>Agent Mission Auth URL</span>
                     <input
                       className="text-input"
                       value={missionAuthOverlay.authorityBaseUrl ?? ""}
@@ -2218,7 +2218,7 @@ export function App() {
                   </label>
 
                   <label className="field">
-                    <span>Scope hints</span>
+                    <span>Mission scopes (optional)</span>
                     <input
                       className="text-input"
                       value={missionAuthOverlay.scopeHints.join(", ")}
@@ -2234,7 +2234,7 @@ export function App() {
                           }
                         });
                       }}
-                      placeholder="drive.readonly, github:repo, compute:clinical"
+                      placeholder="e.g. drive.readonly, github:repo, compute:clinical"
                     />
                   </label>
                 </div>
