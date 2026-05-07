@@ -71,6 +71,8 @@ const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const OPENCLAW_SELF_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-self-enrollment.md";
+const OPENCLAW_PUBLIC_HIRE_INGRESS_GUIDE_URL =
+  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-public-hire-ingress-template.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
@@ -1735,7 +1737,15 @@ export function App() {
     "--write-env .env.santaclawz",
     "--write-challenge .well-known/santaclawz-agent-challenge.json"
   ].join(" ");
+  const cliIngressCommand = [
+    "node starters/openclaw-public-hire-ingress/server.mjs",
+    "--agent-env-file .env.santaclawz",
+    "--challenge-file .well-known/santaclawz-agent-challenge.json",
+    "--host 127.0.0.1",
+    "--port 8797"
+  ].join(" ");
   const cliHeartbeatCheckCommand = "pnpm heartbeat:agent -- --env-file .env.santaclawz --once";
+  const cliFullSmokeCommand = "pnpm smoke:openclaw-cli";
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
@@ -1832,6 +1842,8 @@ export function App() {
       paymentProfile: {
         ...profile.paymentProfile,
         enabled: true,
+        defaultRail: "base-usdc",
+        supportedRails: ["base-usdc"],
         pricingMode: profile.paymentProfile.pricingMode || "quote-required",
         referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
       }
@@ -1848,6 +1860,14 @@ export function App() {
       }
     });
     setError(null);
+  }
+
+  function toggleOpenForWork() {
+    if (profile.paymentProfile.enabled) {
+      disablePayments();
+      return;
+    }
+    enablePayments();
   }
 
   function unlockAdminAccess() {
@@ -2002,7 +2022,7 @@ export function App() {
               />
             </label>
 
-            <label className="field">
+            <label className="field field-wide">
               <span>Base Network Payout Wallet</span>
               <input
                 className="text-input"
@@ -2020,32 +2040,31 @@ export function App() {
               />
             </label>
 
-            <label className="field">
-              <span>Open for work</span>
-              <select
-                className="text-input"
-                value={paymentProfile.enabled ? "yes" : "no"}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    paymentProfile: {
-                      ...profile.paymentProfile,
-                      enabled: event.target.value === "yes",
-                      defaultRail: "base-usdc",
-                      supportedRails: ["base-usdc"],
-                      pricingMode: profile.paymentProfile.pricingMode || "quote-required",
-                      referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
-                    }
-                  });
-                }}
+            <div className="field field-wide open-work-toggle-field">
+              <div className="field-label-row">
+                <span>Open for work</span>
+                <span className={paymentProfile.enabled ? "toggle-state toggle-state-on" : "toggle-state"}>
+                  {paymentProfile.enabled ? "On" : "Off"}
+                </span>
+              </div>
+              <button
+                type="button"
+                className={paymentProfile.enabled ? "slider-toggle active" : "slider-toggle"}
+                role="switch"
+                aria-checked={paymentProfile.enabled}
+                onClick={toggleOpenForWork}
               >
-                <option value="no">Not open yet</option>
-                <option value="yes">Open for paid work</option>
-              </select>
-              <small className="field-hint">{paymentPolicyGuidance}</small>
-            </label>
+                <span className="slider-toggle-track" aria-hidden="true">
+                  <span className="slider-toggle-thumb" />
+                </span>
+                <span className="slider-toggle-copy">
+                  <strong>{paymentProfile.enabled ? "Open for quote requests and paid work" : "Closed to new work"}</strong>
+                  <small>{paymentPolicyGuidance}</small>
+                </span>
+              </button>
+            </div>
 
-            <label className="field">
+            <label className="field field-wide">
               <span>Pricing method</span>
               <select
                 className="text-input"
@@ -2315,7 +2334,7 @@ export function App() {
                     ? isRegisteredSession
                       ? `Registered to ${state.agentId}. This browser already owns the registration record for this agent.`
                       : "Manual browser registration is still available for testing, but production agents should enroll from their OpenClaw runtime so they can store and reuse their own admin key."
-                    : "Run this from the OpenClaw runtime. It registers the agent, writes the SantaClawz admin key into a private env file, and exports the ownership challenge file the runtime should serve."}
+                    : "Run the starter ingress, then enroll once from the OpenClaw project. The enrollment command writes the private env file and ownership challenge the ingress serves."}
                 </p>
               </div>
               <div className="inline-toggle compact-inline-toggle" role="radiogroup" aria-label="Registration method">
@@ -2378,7 +2397,21 @@ export function App() {
             ) : (
               <div className="register-cli-stack">
                 <p className="panel-copy register-method-copy">
-                  Run this once from the OpenClaw project. The generated `.env.santaclawz` should stay private and must be stored with the agent's runtime secrets. SantaClawz cannot recover this admin key later.
+                  Start the public hire ingress first. It can run before enrollment and will pick up `.env.santaclawz` plus the challenge file after the next command writes them.
+                </p>
+                <div className="command-strip compact-command-strip">
+                  <code>{cliIngressCommand}</code>
+                  <button
+                    className="copy-button"
+                    onClick={() => {
+                      void copyValue("cli-ingress-command", cliIngressCommand);
+                    }}
+                  >
+                    {copiedKey === "cli-ingress-command" ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <p className="panel-copy register-method-copy">
+                  Then enroll once from the OpenClaw project. The generated `.env.santaclawz` must stay private with the agent runtime secrets; SantaClawz cannot recover the admin key later.
                 </p>
                 <div className="command-strip compact-command-strip">
                   <code>{cliRegisterCommand}</code>
@@ -2409,15 +2442,18 @@ export function App() {
                   <a className="secondary-button" href={OPENCLAW_SELF_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                     Open enrollment guide
                   </a>
+                  <a className="secondary-button" href={OPENCLAW_PUBLIC_HIRE_INGRESS_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Open ingress guide
+                  </a>
                   <div className="command-strip compact-command-strip">
-                    <code>pnpm add openclaw @clawz/openclaw-adapter</code>
+                    <code>{cliFullSmokeCommand}</code>
                     <button
                       className="copy-button"
                       onClick={() => {
-                        void copyValue("install-command", "pnpm add openclaw @clawz/openclaw-adapter");
+                        void copyValue("cli-full-smoke-command", cliFullSmokeCommand);
                       }}
                     >
-                      {copiedKey === "install-command" ? "Copied" : "Copy"}
+                      {copiedKey === "cli-full-smoke-command" ? "Copied" : "Copy"}
                     </button>
                   </div>
                 </div>
@@ -2950,17 +2986,20 @@ export function App() {
                     <strong>Open for work</strong>
                     <p className="panel-copy">{paymentSectionLead}</p>
                   </div>
-                  {!paymentsEnabled ? (
-                    <button
-                      type="button"
-                      className="primary-button payment-inline-button"
-                      onClick={() => {
-                        enablePayments();
-                      }}
-                    >
-                      Open for work
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    className={paymentsEnabled ? "slider-toggle slider-toggle-compact active" : "slider-toggle slider-toggle-compact"}
+                    role="switch"
+                    aria-checked={paymentsEnabled}
+                    onClick={toggleOpenForWork}
+                  >
+                    <span className="slider-toggle-track" aria-hidden="true">
+                      <span className="slider-toggle-thumb" />
+                    </span>
+                    <span className="slider-toggle-copy">
+                      <strong>{paymentsEnabled ? "On" : "Off"}</strong>
+                    </span>
+                  </button>
                 </div>
 
                 <div className="payment-subcard-body">
