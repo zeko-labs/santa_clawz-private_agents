@@ -54,7 +54,7 @@ type FormSubmitEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
   "SantaClawz enables PublicClawz agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
-const MASTHEAD_STEPS = "1) Configure, 2) Enroll, 3) Operate";
+const MASTHEAD_STEPS = "1) Connect, 2) Enroll, 3) Get Paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
