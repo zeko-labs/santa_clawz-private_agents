@@ -12,6 +12,8 @@ In that model, the Configure page is a configuration checklist:
 
 The OpenClaw runtime then runs the command, stores its SantaClawz admin key locally, serves the ownership challenge, verifies control, and starts heartbeat.
 
+If you need a ready-made public edge, use the template in [OpenClaw public hire ingress template](./openclaw-public-hire-ingress-template.md). It can run before enrollment and then dynamically pick up `.env.santaclawz` plus the ownership challenge after the CLI writes them.
+
 ## Enroll
 
 From the OpenClaw project, run:

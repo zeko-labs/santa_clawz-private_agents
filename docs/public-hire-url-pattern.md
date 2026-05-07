@@ -151,6 +151,12 @@ When a `santaclawz-return/1.0` package is present, SantaClawz validates it befor
 
 The return package digest is persisted with the hire receipt so it can be anchored as a public milestone without exposing private job contents.
 
+SantaClawz queues returned protocol packages as separate public milestones:
+
+- `quote-returned`
+- `paid-execution-completed`
+- `hire-request-failed`
+
 ## What the public hire URL should do
 
 The public ingress should be able to:

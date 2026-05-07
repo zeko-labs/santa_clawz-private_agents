@@ -971,6 +971,12 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Payment terms live";
     case "hire-request-submitted":
       return "Hire request received";
+    case "quote-returned":
+      return "Quote returned";
+    case "paid-execution-completed":
+      return "Paid execution completed";
+    case "hire-request-failed":
+      return "Hire request failed";
     case "operator-dispatch":
       return "Operator dispatch updated";
   }
@@ -4842,11 +4848,51 @@ export class ClawzControlPlane {
       payload: {
         requestId,
         agentId: options.agentId,
-        requesterContact: nextRecord.requesterContact,
-        status: hireStatus,
-        ...(ingressProtocolReturn ? { protocolReturnDigestSha256: ingressProtocolReturn.digestSha256 } : {})
+        requesterContactDigestSha256: sha256Hex(nextRecord.requesterContact),
+        status: hireStatus
       }
     });
+    if (ingressProtocolReturn) {
+      const returnKind: SocialAnchorCandidateKind =
+        ingressProtocolReturn.status === "quoted"
+          ? "quote-returned"
+          : ingressProtocolReturn.status === "completed"
+            ? "paid-execution-completed"
+            : "hire-request-failed";
+      const returnSummary =
+        ingressProtocolReturn.status === "quoted"
+          ? `${profile.agentName} returned an exact quote for a SantaClawz hire request.`
+          : ingressProtocolReturn.status === "completed"
+            ? `${profile.agentName} returned a verified output package for paid execution.`
+            : `${profile.agentName} returned a failed hire result through SantaClawz.`;
+      await this.enqueueSocialAnchorCandidate({
+        sessionId,
+        kind: returnKind,
+        summary: returnSummary,
+        occurredAtIso: submittedAtIso,
+        payload: {
+          requestId,
+          agentId: options.agentId,
+          protocolReturnDigestSha256: ingressProtocolReturn.digestSha256,
+          status: ingressProtocolReturn.status,
+          ...(ingressProtocolReturn.quote
+            ? {
+                quoteAmountUsd: ingressProtocolReturn.quote.amountUsd,
+                quoteCurrency: ingressProtocolReturn.quote.currency,
+                quoteExpiresAtIso: ingressProtocolReturn.quote.expiresAtIso
+              }
+            : {}),
+          ...(ingressProtocolReturn.verifiedOutput
+            ? {
+                verifiedOutputPackageHash: ingressProtocolReturn.verifiedOutput.packageHash,
+                verifiedOutputDeliverableCount: ingressProtocolReturn.verifiedOutput.deliverableCount,
+                zekoAttestationIncluded: ingressProtocolReturn.verifiedOutput.zekoAttestationIncluded
+              }
+            : {}),
+          ...(ingressProtocolReturn.incidentId ? { incidentId: ingressProtocolReturn.incidentId } : {})
+        }
+      });
+    }
 
     return {
       requestId,

@@ -21,6 +21,7 @@
     "test:interop-sdk": "pnpm run build && node packages/agent-sdk/test/client.test.mjs",
     "test:hardening": "pnpm run test:contracts && pnpm run test:key-broker && pnpm run test:enterprise-kms && pnpm run test:privacy-gateway && pnpm run test:indexer",
     "smoke:openclaw-agent": "pnpm --filter @clawz/indexer build && node scripts/smoke-openclaw-public-agent.mjs",
+    "smoke:openclaw-cli": "pnpm --filter @clawz/indexer build && node scripts/smoke-openclaw-cli-enrollment.mjs",
     "typecheck": "pnpm -r typecheck",
     "dev:web": "pnpm --filter @clawz/web-console dev",
     "dev:indexer": "pnpm --filter @clawz/indexer dev",

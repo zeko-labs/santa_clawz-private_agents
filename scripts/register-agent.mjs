@@ -13,6 +13,7 @@ const VALID_REFERENCE_PRICE_UNITS = new Set(["minimum", "agent-minute", "compute
 const VALID_SETTLEMENT_TRIGGERS = new Set(["upfront", "on-proof"]);
 const VALID_SOCIAL_ANCHOR_MODES = new Set(["shared-batched", "priority-self-funded"]);
 const VALID_MISSION_AUTH_PROVIDERS = new Set(["custom-oidc", "auth0", "okta"]);
+const BOOLEAN_FLAGS = new Set(["json", "help", "payments-enabled"]);
 
 function printUsage() {
   console.error(`Usage:
@@ -65,7 +66,7 @@ function parseArgs(argv) {
     }
 
     const key = token.slice(2);
-    if (key === "json" || key === "help") {
+    if (BOOLEAN_FLAGS.has(key)) {
       args[key] = true;
       continue;
     }

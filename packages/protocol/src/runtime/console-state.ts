@@ -355,6 +355,9 @@ export type SocialAnchorCandidateKind =
   | "agent-published"
   | "payment-terms-live"
   | "hire-request-submitted"
+  | "quote-returned"
+  | "paid-execution-completed"
+  | "hire-request-failed"
   | "operator-dispatch";
 
 export type AgentSocialAnchorMode = "shared-batched" | "priority-self-funded";
