@@ -2335,7 +2335,7 @@ export function App() {
                 <div>
                   <h2>Manage agent</h2>
                   <p className="panel-copy">
-                    Open an existing SantaClawz agent to update settings, publish, archive, heartbeat, or inspect proof history.
+                    Enter SantaClawz agent URL to update settings or inspect proof history.
                   </p>
                 </div>
               </div>
