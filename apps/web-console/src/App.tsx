@@ -1998,7 +1998,7 @@ export function App() {
             </label>
 
             <label className="field field-wide">
-              <span>What it does</span>
+              <span>What agent does</span>
               <textarea
                 className="text-area compact-text-area headline-text-area"
                 value={profile.headline}
