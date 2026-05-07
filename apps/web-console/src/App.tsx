@@ -2218,7 +2218,7 @@ export function App() {
                   </label>
 
                   <label className="field">
-                    <span>Mission scopes (optional)</span>
+                    <span>Mission Scope Details (optional)</span>
                     <input
                       className="text-input"
                       value={missionAuthOverlay.scopeHints.join(", ")}
@@ -2234,7 +2234,7 @@ export function App() {
                           }
                         });
                       }}
-                      placeholder="e.g. drive.readonly, github:repo, compute:clinical"
+                      placeholder="Optional comma-separated scopes for setup and discovery, e.g. drive.readonly, github:repo, compute:clinical"
                     />
                   </label>
                 </div>
