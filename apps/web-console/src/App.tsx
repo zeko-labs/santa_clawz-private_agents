@@ -2277,7 +2277,7 @@ export function App() {
               <div>
                 <strong>Enroll agent to go live and get paid</strong>
                 <p className="panel-copy">
-                  Create a one-time enrollment ticket from the fields above, then run the pnpm command from the OpenClaw agent. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
+                  Create a one-time enrollment ticket from the fields above, then run the pnpm command from the PublicClawz agent. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
                 </p>
               </div>
             </div>
