@@ -61,7 +61,7 @@ The command:
 `X402BaseUSDCReserveEscrowV4` is non-upgradeable, uses an immutable USDC token address, and enforces
 `MAX_PROTOCOL_FEE_BPS = 100` in contract code. That cap is a safety ceiling: SantaClawz can charge
 less through policy, but a bad app or relayer configuration cannot push a reserve-release protocol
-fee above 1%.
+fee above the 100 bps ceiling.
 
 ## Required env vars
 

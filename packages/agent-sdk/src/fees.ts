@@ -1,6 +1,7 @@
 import type { AgentFeePreview, AgentPaymentRail, AgentX402Plan } from "@clawz/protocol";
 
-export const CLAWZ_PROTOCOL_FEE_MIN_BPS = 100;
+export const CLAWZ_PROTOCOL_OWNER_FEE_BPS_ENV = "CLAWZ_PROTOCOL_OWNER_FEE_BPS";
+export const CLAWZ_PROTOCOL_FEE_DEFAULT_FLOOR_BPS = 0;
 export const CLAWZ_DEPLOYER_FEE_MAX_BPS = 300;
 export const CLAWZ_TOTAL_FEE_MAX_BPS = 400;
 
@@ -15,6 +16,7 @@ export interface ClawzDeployerFeeConfig {
 
 export interface ClawzFeeCompatibilityReport {
   protocolFeeFloorSatisfied: boolean;
+  protocolFeeFloorBps: number;
   deployerFeeCapSatisfied: boolean;
   totalFeeCapSatisfied: boolean;
   compatible: boolean;
@@ -60,19 +62,24 @@ function formatUsdAtomic(value: bigint): string {
   return `${whole}.${fraction.toString().padStart(6, "0").replace(/0+$/, "")}`;
 }
 
+// Runtime protocol fee bps comes from x402 plan previews, which the indexer builds from
+// CLAWZ_PROTOCOL_OWNER_FEE_BPS. SDK callers can pass a stricter floor for their own fork policy.
 export function validateClawzFeeCompatibility(input: {
   protocolFeeBps: number;
   deployerFeeBps?: number;
+  minimumProtocolFeeBps?: number;
 }): ClawzFeeCompatibilityReport {
   const protocolFeeBps = normalizeFeeBps(input.protocolFeeBps);
   const deployerFeeBps = normalizeFeeBps(input.deployerFeeBps);
+  const protocolFeeFloorBps = normalizeFeeBps(input.minimumProtocolFeeBps);
   const totalFeeBps = protocolFeeBps + deployerFeeBps;
-  const protocolFeeFloorSatisfied = protocolFeeBps >= CLAWZ_PROTOCOL_FEE_MIN_BPS;
+  const protocolFeeFloorSatisfied = protocolFeeBps >= protocolFeeFloorBps;
   const deployerFeeCapSatisfied = deployerFeeBps <= CLAWZ_DEPLOYER_FEE_MAX_BPS;
   const totalFeeCapSatisfied = totalFeeBps <= CLAWZ_TOTAL_FEE_MAX_BPS;
 
   return {
     protocolFeeFloorSatisfied,
+    protocolFeeFloorBps,
     deployerFeeCapSatisfied,
     totalFeeCapSatisfied,
     compatible: protocolFeeFloorSatisfied && deployerFeeCapSatisfied && totalFeeCapSatisfied

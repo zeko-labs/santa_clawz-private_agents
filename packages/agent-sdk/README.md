@@ -17,15 +17,18 @@ Its job is to keep downstream apps, forks, and white-label deployers on the same
 
 ## Fee model expectation
 
-Downstream consumers should treat the fee stack as:
+Downstream consumers should treat the live x402 plan as the source of truth for SantaClawz fees.
 
-- `1%` mandatory SantaClawz protocol fee
+- SantaClawz protocol fee bps is configured on the indexer with `CLAWZ_PROTOCOL_OWNER_FEE_BPS`.
+- The current public deployment target is `10` bps, or `0.1%`.
+- Hosted payments still use the higher of the configured protocol percentage or `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`.
 - `0%` to `3%` optional deployer / UI fee
 - `4%` total max fee stack
 
 Important boundary:
 
-- the `1%` protocol fee belongs in core SantaClawz runtime code
+- the SantaClawz protocol fee belongs in the core runtime path and is exposed through x402 plan/fee previews
+- the indexer has a local/dev fallback if `CLAWZ_PROTOCOL_OWNER_FEE_BPS` is missing, but agents should not use that fallback for pricing strategy
 - the optional deployer/UI fee belongs in this SDK layer
 
 The SDK exposes helpers for:

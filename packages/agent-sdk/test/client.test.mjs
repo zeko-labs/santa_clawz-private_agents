@@ -186,7 +186,7 @@ async function main() {
       plan: {
         protocolOwnerFeePolicy: {
           enabled: true,
-          feeBps: 100,
+          feeBps: 10,
           settlementModel: "fee-on-reserve-v1",
           appliesTo: ["santaclawz-marketplace"],
           recipientByRail: {
@@ -197,11 +197,11 @@ async function main() {
           {
             rail: "base-usdc",
             grossAmountUsd: "1",
-            sellerNetAmountUsd: "0.99",
-            protocolFeeAmountUsd: "0.01",
+            sellerNetAmountUsd: "0.999",
+            protocolFeeAmountUsd: "0.001",
             sellerPayTo: "0xSeller",
             protocolFeeRecipient: "0xProtocol",
-            feeBps: 100
+            feeBps: 10
           }
         ]
       },
@@ -216,18 +216,19 @@ async function main() {
     });
     assert.equal(feePreview.length, 1);
     assert.equal(feePreview[0].deployerFeeAmountUsd, "0.02");
-    assert.equal(feePreview[0].sellerNetAmountUsd, "0.97");
-    assert.equal(feePreview[0].totalFeeBps, 300);
+    assert.equal(feePreview[0].sellerNetAmountUsd, "0.979");
+    assert.equal(feePreview[0].totalFeeBps, 210);
     assert.equal(feePreview[0].compatibility.compatible, true);
+    assert.equal(feePreview[0].compatibility.protocolFeeFloorBps, 0);
 
     const incompatibleFeeStack = validateClawzFeeCompatibility({
-      protocolFeeBps: 100,
+      protocolFeeBps: 10,
       deployerFeeBps: 350
     });
     assert.equal(incompatibleFeeStack.compatible, false);
     assert.equal(incompatibleFeeStack.deployerFeeCapSatisfied, false);
 
-    console.log("ok - agent sdk discovers, verifies, and speaks MCP against a live ClawZ runtime");
+    console.log("ok - agent sdk discovers, verifies, and speaks MCP against a live SantaClawz runtime");
   } finally {
     await stopProcess(server.child);
     await rm(workspaceDir, { recursive: true, force: true });

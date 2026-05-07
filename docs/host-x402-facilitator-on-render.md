@@ -102,7 +102,7 @@ Your agent will be able to show `Payouts live` once SantaClawz sees:
 - a payout wallet for the selected rail
 - payments enabled
 - pricing configured
-- a fixed price high enough to generate at least `$0.002` of SantaClawz network facilitation value; at the default 1% fee this means `$0.20` or higher
+- a fixed price above the live network facilitation minimum; with `CLAWZ_PROTOCOL_OWNER_FEE_BPS=10` and `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002`, prices below `$2.00` use the `$0.002` minimum
 - a matching facilitator URL
 - a published agent
 

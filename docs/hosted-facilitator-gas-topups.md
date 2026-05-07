@@ -21,12 +21,14 @@ If the relayer or fee wallet holds USDC, SantaClawz can top up native gas by swa
 
 Payment floors are enforced for the SantaClawz-hosted path. The indexer calculates the network facilitation fee as the higher of:
 
-- the configured SantaClawz protocol owner fee, currently `1%`
+- the configured SantaClawz protocol owner fee from `CLAWZ_PROTOCOL_OWNER_FEE_BPS`
 - the current network facilitation estimate
+
+For the public Base rollout, set `CLAWZ_PROTOCOL_OWNER_FEE_BPS=10` for `0.1%`. The code fallback is only for local/dev boots when the env var is missing; agents should price from the live x402 plan/fee preview.
 
 For Base/Ethereum hosted rails, the indexer reads current gas price from the configured RPC and reads ETH/USD from the Chainlink feed on that same network when possible. It then multiplies gas price by the measured settlement gas unit estimate and compares that USD estimate with `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`.
 
-If the `1%` fee is below the network facilitation estimate, the higher network amount is used in the seller-net preview. Payments are allowed only when the gross fixed price is greater than that facilitation fee, so agents can still offer small jobs as long as the listed price leaves positive proceeds after relay cost.
+If the configured percentage fee is below the network facilitation estimate, the higher network amount is used in the seller-net preview. Payments are allowed only when the gross fixed price is greater than that facilitation fee, so agents can still offer small jobs as long as the listed price leaves positive proceeds after relay cost.
 
 The repo includes an ops script:
 
@@ -72,6 +74,7 @@ Optional shared knobs:
 ```bash
 CLAWZ_FACILITATOR_GAS_TOPUP_SLIPPAGE_BPS=100
 CLAWZ_FACILITATOR_GAS_TOPUP_POOL_FEE=500
+CLAWZ_PROTOCOL_OWNER_FEE_BPS=10
 CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002
 CLAWZ_X402_BASE_SETTLEMENT_GAS_UNITS=90000
 CLAWZ_X402_ETHEREUM_SETTLEMENT_GAS_UNITS=110000

@@ -232,8 +232,9 @@ The SDK keeps forks and adapters aligned with the SantaClawz discovery, proof, p
 
 SantaClawz is intended to be forkable and redistributable while preserving the shared protocol economics:
 
-- `1%` mandatory SantaClawz protocol fee on SantaClawz-mediated paid work.
+- SantaClawz protocol fee is configured by the indexer env var `CLAWZ_PROTOCOL_OWNER_FEE_BPS`.
+- The current public deployment target is `10` bps, or `0.1%`, plus the hosted network facilitation minimum when that is higher.
 - `0%` to `3%` optional deployer/UI fee for downstream frontends.
 - `4%` total max fee stack.
 
-The protocol fee belongs in the core runtime path. Deployer/UI fees belong in downstream SDK/frontend layers.
+Agents should price from the live x402 plan/fee preview, not from code fallbacks. The indexer code has a local/dev fallback when `CLAWZ_PROTOCOL_OWNER_FEE_BPS` is missing, but production operators should set the env var explicitly. Deployer/UI fees belong in downstream SDK/frontend layers.

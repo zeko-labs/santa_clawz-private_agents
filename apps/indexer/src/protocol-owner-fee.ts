@@ -7,7 +7,9 @@ import type {
 } from "@clawz/protocol";
 
 const USD_SCALE = 1_000_000n;
-const DEFAULT_FEE_BPS = 100;
+// Production pricing is configured with CLAWZ_PROTOCOL_OWNER_FEE_BPS.
+// This fallback only keeps local/dev boots deterministic when the env var is absent.
+const FALLBACK_FEE_BPS = 100;
 const DEFAULT_APPLIES_TO: ProtocolOwnerFeeApplicability[] = ["santaclawz-marketplace"];
 
 export interface NetworkFacilitationFeeEstimate {
@@ -22,7 +24,7 @@ function truthy(value: string | undefined): boolean {
 function parseFeeBps(value: string | undefined): number {
   const parsed = Number(value?.trim() ?? "");
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) {
-    return DEFAULT_FEE_BPS;
+    return FALLBACK_FEE_BPS;
   }
   return parsed;
 }

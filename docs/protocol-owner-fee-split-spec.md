@@ -1,8 +1,10 @@
 # SantaClawz Protocol Owner Fee Split Spec
 
 > Update: the live direction now uses `fee-on-reserve-v1` with reserve-release `v4`. SantaClawz takes its protocol fee when the reservation is created, and only the seller net remains in escrow for later release or refund.
+>
+> Current public-fee policy is runtime-configured by `CLAWZ_PROTOCOL_OWNER_FEE_BPS`. The Base rollout target is `10` bps (`0.1%`), with `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD` still acting as the hosted-relayer minimum when that is higher. Code defaults are fallbacks for missing env vars, not the source agents should use for pricing.
 
-This document defines the exact implementation shape for a SantaClawz protocol owner fee of `1%` on paid x402 marketplace flows.
+This document defines the exact implementation shape for an env-configured SantaClawz protocol owner fee on paid x402 marketplace flows.
 
 The goal is simple:
 
@@ -21,7 +23,7 @@ This spec assumes:
 
 ## Product decision
 
-SantaClawz should treat the `1%` protocol fee as:
+SantaClawz should treat the configured protocol fee as:
 
 - a **SantaClawz-originated marketplace fee**
 - applied only when a payment requirement is created through SantaClawz
@@ -53,7 +55,7 @@ Why:
 
 - current exact EIP-3009 settlement sends one transfer to one `payTo`
 - the reserve-release contract is already the right seller-risk boundary
-- SantaClawz should not take seller execution risk for the `1%` protocol fee
+- SantaClawz should not take seller execution risk for the configured protocol fee
 - the cleanest model is to skim the fee at reservation time and leave only seller net in escrow
 
 So the live recommendation is:
@@ -70,9 +72,9 @@ That keeps the fee path enforceable without requiring two buyer signatures or a 
 - `MAX_PROTOCOL_FEE_BPS = 100`
 
 This is a safety cap. It protects buyers and sellers from an app, relayer, or deployer accidentally
-reserving a job with a protocol fee above the initial 1% policy. The contract also requires the
+reserving a job with a protocol fee above the current contract safety ceiling. The contract also requires the
 submitted `protocolFeeAmount` to match `grossAmount * feeBps / 10_000`, so the bps metadata cannot
-say `100` while the actual token split takes more.
+say one value while the actual token split takes more.
 
 ## SantaClawz schema changes
 
@@ -156,7 +158,7 @@ Add to the indexer/runtime:
 
 ```text
 CLAWZ_PROTOCOL_OWNER_FEE_ENABLED=true
-CLAWZ_PROTOCOL_OWNER_FEE_BPS=100
+CLAWZ_PROTOCOL_OWNER_FEE_BPS=10
 CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT=0x...
 CLAWZ_PROTOCOL_FEE_ETHEREUM_RECIPIENT=0x...
 ```
@@ -203,7 +205,7 @@ SantaClawz should show:
 
 - buyers see the gross amount
 - operators see:
-  - `Protocol fee: 1%`
+  - `Protocol fee: configured bps`
   - `Seller receives: ...`
 
 This should be visible in:
@@ -520,8 +522,8 @@ For a SantaClawz marketplace job on Base:
 6. work runs
 7. SantaClawz verifies proof / result
 8. facilitator calls `releaseReservedPayment(...)`
-9. seller receives `99%`
-10. SantaClawz treasury receives `1%`
+9. seller receives gross minus the configured fee/minimum
+10. SantaClawz treasury receives the configured fee/minimum
 
 Refund path:
 
@@ -547,7 +549,7 @@ Use the fee treasury manually first.
 
 SantaClawz should publish a very clear compatibility rule for forks and white-label deployers:
 
-- the SantaClawz protocol fee floor remains `1%`
+- the SantaClawz protocol fee bps is explicit and configured by `CLAWZ_PROTOCOL_OWNER_FEE_BPS`
 - downstream deployers may add an extra UI / deployer fee of up to `3%`
 - the combined fee stack must not exceed `4%`
 
@@ -557,7 +559,7 @@ This keeps the shared intelligence layer funded while still letting downstream b
 
 A deployment should only describe itself as `SantaClawz-compatible` if it preserves:
 
-- `protocol fee >= 100 bps`
+- protocol fee bps comes from `CLAWZ_PROTOCOL_OWNER_FEE_BPS` and is exposed in the x402 plan/fee preview
 - `deployer fee <= 300 bps`
 - `protocol fee + deployer fee <= 400 bps`
 
@@ -608,7 +610,7 @@ Instead:
 - SantaClawz indexer/runtime continues to expose the canonical protocol fee preview
 - downstream frontends or white-label deployers use the SDK to overlay their own fee
 - SDK-level compatibility helpers reject:
-  - protocol fee below `100`
+  - missing or hidden protocol fee metadata
   - deployer fee above `300`
   - total fee above `400`
 
@@ -635,11 +637,11 @@ This is important enough to document bluntly:
 
 - if every fork can drop the SantaClawz fee to `0%`, the shared Zeko trust layer is economically hollow
 - if forks cannot charge anything on top, distribution incentives weaken
-- a `1% + up to 3%` split is a pragmatic middle ground
+- a configured SantaClawz protocol fee plus up to 3% deployer fee is a pragmatic middle ground
 
 That means the docs should treat:
 
-- the `1%` protocol fee as non-negotiable for compatibility
+- explicit `CLAWZ_PROTOCOL_OWNER_FEE_BPS` policy as non-negotiable for compatibility
 - the extra `0%–3%` deployer fee as an SDK-level downstream layer until later enforcement work
 
 ## SDK packaging recommendation
@@ -662,7 +664,7 @@ Recommended package shape:
 The goal is simple:
 
 1. every deployer consumes the same proof surface
-2. every fork understands the mandatory `1%` protocol fee
+2. every fork understands that SantaClawz protocol fee bps comes from `CLAWZ_PROTOCOL_OWNER_FEE_BPS`
 3. every white-label frontend can add its own capped fee consistently
 4. the shared intelligence layer becomes portable without losing protocol economics
 
@@ -672,7 +674,7 @@ The goal is simple:
 
 - SantaClawz schema + proof/discovery fee metadata
 - Base fee recipient envs
-- x402 plan preview shows 1% protocol fee
+- x402 plan preview shows the configured protocol fee
 
 ### Phase 2
 
@@ -711,4 +713,4 @@ Those can come later if needed.
 5. wire facilitator verify/settle to the new split-aware settlement payload
 6. switch SantaClawz marketplace-paid jobs to the fee-aware Base reserve-release rail
 
-That is the shortest path to a real, enforceable `1%` protocol owner fee.
+That is the shortest path to a real, enforceable env-configured protocol owner fee.
