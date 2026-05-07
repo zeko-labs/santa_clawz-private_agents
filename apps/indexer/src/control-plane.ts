@@ -12,7 +12,10 @@ import {
 } from "@clawz/contracts";
 import { createTenantKeyBroker, type TenantKeyBrokerRuntimeDescriptor, TenantKeyBroker } from "@clawz/key-broker";
 import {
+  SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION,
+  assertValidSantaClawzHirePolicy,
   canonicalDigest,
+  paymentStatusForHireRequest,
   type AgentRuntimeHeartbeatState,
   type AgentRuntimeStatus,
   type AgentRuntimeAvailabilityState,
@@ -30,6 +33,7 @@ import {
   type ArtifactSummary,
   type ClawzEvent,
   type ConsoleStateResponse,
+  type SantaClawzHireRequestType,
   type LiveFlowDisclosureTarget,
   type LiveSessionTurnFlowState,
   type LiveFlowTargets,
@@ -62,7 +66,7 @@ const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
 const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
 const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
 const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
-const HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0";
+const HIRE_REQUEST_SCHEMA_VERSION = SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION;
 const HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0";
 const HIRE_INGRESS_TIMEOUT_MS = 10_000;
 const HIRE_INGRESS_RETURN_MAX_BYTES = 128 * 1024;
@@ -71,7 +75,7 @@ const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
-type HireIngressRequestKind = "quote" | "paid-execution";
+type HireIngressRequestKind = SantaClawzHireRequestType;
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
   "first-turn": [
@@ -541,6 +545,10 @@ interface HireRequestRecord {
   sessionId: string;
   networkId: string;
   submittedAtIso: string;
+  requestType: HireRequestReceipt["requestType"];
+  pricingMode: HireRequestReceipt["pricingMode"];
+  paymentStatus: HireRequestReceipt["paymentStatus"];
+  settledAmountUsd?: string;
   status: HireRequestReceipt["status"];
   taskPrompt: string;
   budgetMina?: string;
@@ -2419,10 +2427,27 @@ export class ClawzControlPlane {
     paymentAuthorization: HirePaymentAuthorization;
   }) {
     const ingressUrl = this.hireIngressUrlFor(input.profile.openClawUrl);
-    const requestKind: HireIngressRequestKind =
+    const requestType: HireIngressRequestKind =
       isQuotedPricingMode(input.profile.paymentProfile.pricingMode) && input.paymentAuthorization.status === "not-required"
-        ? "quote"
-        : "paid-execution";
+        ? "quote_intake"
+        : "paid_execution";
+    const paymentStatus = paymentStatusForHireRequest({
+      requestType,
+      paymentStatus: input.paymentAuthorization.status
+    });
+    const settledAmountUsd = requestType === "paid_execution" ? input.paymentAuthorization.amountUsd : undefined;
+    assertValidSantaClawzHirePolicy({
+      request_type: requestType,
+      pricing_mode: input.profile.paymentProfile.pricingMode,
+      payment_status: paymentStatus,
+      paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
+      ...(settledAmountUsd ? { settled_amount_usd: settledAmountUsd } : {}),
+      ...(input.paymentAuthorization.rail === "base-usdc" ||
+      input.paymentAuthorization.rail === "ethereum-usdc" ||
+      input.paymentAuthorization.rail === "zeko-native"
+        ? { rail: input.paymentAuthorization.rail }
+        : {})
+    });
     const envelope = {
       schema_version: HIRE_REQUEST_SCHEMA_VERSION,
       request_id: input.requestId,
@@ -2432,13 +2457,13 @@ export class ClawzControlPlane {
       service: "agent_job_pack",
       verification_required: true,
       return_channel: "santaclawz",
-      request_kind: requestKind,
+      request_type: requestType,
+      pricing_mode: input.profile.paymentProfile.pricingMode,
+      payment_status: paymentStatus,
+      ...(settledAmountUsd ? { settled_amount_usd: settledAmountUsd } : {}),
       paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
       payment: {
-        status:
-          requestKind === "quote"
-            ? "quote-requested"
-            : input.paymentAuthorization.status,
+        status: paymentStatus,
         ...(input.paymentAuthorization.rail ? { rail: input.paymentAuthorization.rail } : {}),
         ...(input.paymentAuthorization.amountUsd ? { amount_usd: input.paymentAuthorization.amountUsd } : {}),
         ...(input.paymentAuthorization.authorizationId ? { authorization_id: input.paymentAuthorization.authorizationId } : {}),
@@ -2466,7 +2491,7 @@ export class ClawzControlPlane {
 
     return {
       ingressUrl,
-      requestKind,
+      requestKind: requestType,
       body,
       bodyDigestSha256,
       headers: {
@@ -2521,10 +2546,10 @@ export class ClawzControlPlane {
     if (status !== "quoted" && status !== "completed" && status !== "failed") {
       throw new Error("SantaClawz return package has an unsupported status.");
     }
-    if (input.requestKind === "quote" && status === "completed") {
+    if (input.requestKind === "quote_intake" && status === "completed") {
       throw new Error("Quote intake cannot return completed paid execution.");
     }
-    if (input.requestKind === "paid-execution" && status === "quoted") {
+    if (input.requestKind === "paid_execution" && status === "quoted") {
       throw new Error("Paid execution cannot return quote-only status.");
     }
 
@@ -2626,6 +2651,7 @@ export class ClawzControlPlane {
     if (process.env.CLAWZ_HIRE_FORWARDING_ENABLED === "false") {
       return {
         deliveryStatus: "recorded" as const,
+        requestKind: signedRequest.requestKind,
         ingressUrl: signedRequest.ingressUrl,
         bodyDigestSha256: signedRequest.bodyDigestSha256
       };
@@ -2653,6 +2679,7 @@ export class ClawzControlPlane {
 
     return {
       deliveryStatus: "forwarded" as const,
+      requestKind: signedRequest.requestKind,
       ingressUrl: signedRequest.ingressUrl,
       bodyDigestSha256: signedRequest.bodyDigestSha256,
       responseStatusCode: response.status,
@@ -5637,6 +5664,12 @@ export class ClawzControlPlane {
     const ingressProtocolReturn = "protocolReturn" in ingressDelivery ? ingressDelivery.protocolReturn : undefined;
     const ingressResponseStatusCode =
       "responseStatusCode" in ingressDelivery ? ingressDelivery.responseStatusCode : undefined;
+    const requestType = ingressDelivery.requestKind;
+    const paymentStatus = paymentStatusForHireRequest({
+      requestType,
+      paymentStatus: paymentAuthorization.status
+    });
+    const settledAmountUsd = requestType === "paid_execution" ? paymentAuthorization.amountUsd : undefined;
     const hireStatus: HireRequestReceipt["status"] = ingressProtocolReturn?.status ?? "submitted";
     const nextRecord: HireRequestRecord = {
       requestId,
@@ -5644,6 +5677,10 @@ export class ClawzControlPlane {
       sessionId,
       networkId: deployment.networkId,
       submittedAtIso,
+      requestType,
+      pricingMode: profile.paymentProfile.pricingMode,
+      paymentStatus,
+      ...(settledAmountUsd ? { settledAmountUsd } : {}),
       status: hireStatus,
       taskPrompt,
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
@@ -5670,6 +5707,10 @@ export class ClawzControlPlane {
         requestId,
         agentId: options.agentId,
         requesterContactDigestSha256: sha256Hex(nextRecord.requesterContact),
+        requestType,
+        pricingMode: profile.paymentProfile.pricingMode,
+        paymentStatus,
+        ...(settledAmountUsd ? { settledAmountUsd } : {}),
         status: hireStatus
       }
     });
@@ -5721,6 +5762,10 @@ export class ClawzControlPlane {
       sessionId,
       networkId: deployment.networkId,
       submittedAtIso,
+      requestType,
+      pricingMode: profile.paymentProfile.pricingMode,
+      paymentStatus,
+      ...(settledAmountUsd ? { settledAmountUsd } : {}),
       status: hireStatus,
       deliveryTarget: ingressDelivery.ingressUrl,
       deliveryStatus: ingressDelivery.deliveryStatus,
@@ -5734,7 +5779,7 @@ export class ClawzControlPlane {
       },
       ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
       payment: {
-        status: paymentAuthorization.status,
+        status: paymentStatus,
         ...(paymentAuthorization.rail ? { rail: paymentAuthorization.rail } : {}),
         ...(paymentAuthorization.amountUsd ? { amountUsd: paymentAuthorization.amountUsd } : {}),
         ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),

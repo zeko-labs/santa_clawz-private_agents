@@ -235,6 +235,35 @@ async function startHireIngress(port) {
           response.end(JSON.stringify({ error: "bad schema" }));
           return;
         }
+        if (parsed.request_type === "quote_intake") {
+          if (
+            parsed.pricing_mode !== "quote-required" ||
+            parsed.payment_status !== "quote_requested" ||
+            parsed.payment?.status !== "quote_requested" ||
+            parsed.paid_or_escrowed !== false ||
+            parsed.settled_amount_usd !== undefined
+          ) {
+            response.statusCode = 400;
+            response.end(JSON.stringify({ error: "bad quote intake policy" }));
+            return;
+          }
+        } else if (parsed.request_type === "paid_execution") {
+          if (
+            parsed.pricing_mode !== "fixed-exact" ||
+            !["settled", "paid", "escrowed"].includes(parsed.payment_status) ||
+            parsed.payment?.status !== parsed.payment_status ||
+            parsed.payment?.amount_usd !== parsed.settled_amount_usd ||
+            parsed.paid_or_escrowed !== true
+          ) {
+            response.statusCode = 402;
+            response.end(JSON.stringify({ error: "bad paid execution policy" }));
+            return;
+          }
+        } else {
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "bad request_type" }));
+          return;
+        }
         receivedHireRequestIds.add(requestId);
         if (nextProtocolReturnFactory) {
           const protocolReturn = nextProtocolReturnFactory({ requestId, request: parsed });
@@ -1334,6 +1363,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(accepted.status, 200);
+    assert.equal(accepted.payload.requestType, "quote_intake");
+    assert.equal(accepted.payload.pricingMode, "quote-required");
+    assert.equal(accepted.payload.paymentStatus, "quote_requested");
     assert.equal(accepted.payload.status, "submitted");
     assert.equal(accepted.payload.deliveryStatus, "forwarded");
     assert.equal(accepted.payload.ingress.signatureHeader, "X-SantaClawz-Signature");
@@ -1359,6 +1391,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(quoted.status, 200);
+    assert.equal(quoted.payload.requestType, "quote_intake");
+    assert.equal(quoted.payload.paymentStatus, "quote_requested");
     assert.equal(quoted.payload.status, "quoted");
     assert.equal(quoted.payload.protocolReturn.status, "quoted");
     assert.equal(quoted.payload.protocolReturn.quote.amountUsd, "0.42");

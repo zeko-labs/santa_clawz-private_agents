@@ -525,6 +525,10 @@ export interface HireRequestReceipt {
   sessionId: string;
   networkId: string;
   submittedAtIso: string;
+  requestType: "quote_intake" | "paid_execution";
+  pricingMode: AgentPricingMode;
+  paymentStatus: "quote_requested" | "settled" | "paid" | "escrowed";
+  settledAmountUsd?: string;
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
@@ -554,7 +558,7 @@ export interface HireRequestReceipt {
     incidentId?: string;
   };
   payment?: {
-    status: "not-required" | "authorized" | "settled";
+    status: "quote_requested" | "settled" | "paid" | "escrowed";
     rail?: string;
     amountUsd?: string;
     authorizationId?: string;

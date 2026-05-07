@@ -258,6 +258,43 @@ function assertSignedSantaClawzRequest(config, request, body) {
   return requestId;
 }
 
+function assertHirePolicy(payload) {
+  const requestType = payload.request_type;
+  const pricingMode = payload.pricing_mode;
+  const paymentStatus = payload.payment_status;
+  const payment = isRecord(payload.payment) ? payload.payment : {};
+  if (!["quote_intake", "paid_execution"].includes(String(requestType))) {
+    throw Object.assign(new Error("unsupported request_type"), { statusCode: 400 });
+  }
+  if (!["quote-required", "fixed-exact"].includes(String(pricingMode))) {
+    throw Object.assign(new Error("unsupported pricing_mode"), { statusCode: 400 });
+  }
+  if (payment.status !== paymentStatus) {
+    throw Object.assign(new Error("payment.status must match payment_status"), { statusCode: 400 });
+  }
+
+  if (requestType === "quote_intake") {
+    if (pricingMode !== "quote-required" || paymentStatus !== "quote_requested" || payload.paid_or_escrowed !== false) {
+      throw Object.assign(new Error("quote_intake policy mismatch"), { statusCode: 400 });
+    }
+    if (payload.settled_amount_usd !== undefined) {
+      throw Object.assign(new Error("quote_intake must not include settled_amount_usd"), { statusCode: 400 });
+    }
+    return requestType;
+  }
+
+  if (pricingMode !== "fixed-exact" || !["settled", "paid", "escrowed"].includes(String(paymentStatus))) {
+    throw Object.assign(new Error("paid_execution policy mismatch"), { statusCode: 400 });
+  }
+  if (!payload.paid_or_escrowed || !/^[0-9]+(\.[0-9]{1,6})?$/.test(String(payload.settled_amount_usd ?? ""))) {
+    throw Object.assign(new Error("paid_execution requires settled_amount_usd"), { statusCode: 402 });
+  }
+  if (!isRecord(payment) || payment.amount_usd !== payload.settled_amount_usd || !payment.rail) {
+    throw Object.assign(new Error("payment object must match paid_execution policy fields"), { statusCode: 402 });
+  }
+  return requestType;
+}
+
 function quoteReturnPackage(config, requestId) {
   if (!/^[0-9]+(\.[0-9]{1,6})?$/.test(config.quoteAmountUsd)) {
     throw Object.assign(new Error("quote amount is misconfigured"), { statusCode: 500 });
@@ -334,20 +371,15 @@ async function handleHire(request, response, args) {
       throw Object.assign(new Error("bad SantaClawz request schema"), { statusCode: 400 });
     }
 
-    const requestKind = payload.request_kind;
-    if (requestKind === "quote") {
+    const requestType = assertHirePolicy(payload);
+    if (requestType === "quote_intake") {
       const quote = quoteReturnPackage(config, requestId);
       appendAudit(config, { type: "quote-returned", requestId, quoteAmountUsd: quote.quote.amount_usd });
       jsonResponse(response, 200, quote);
       return;
     }
 
-    if (requestKind !== "paid-execution") {
-      throw Object.assign(new Error("unsupported request kind"), { statusCode: 400 });
-    }
-    const payment = isRecord(payload.payment) ? payload.payment : {};
-    const paymentStatus = payment.status;
-    if (!payload.paid_or_escrowed || !["settled", "paid", "escrowed"].includes(String(paymentStatus))) {
+    if (!payload.paid_or_escrowed || !["settled", "paid", "escrowed"].includes(String(payload.payment_status))) {
       throw Object.assign(new Error("paid execution requires settled payment or escrow"), { statusCode: 402 });
     }
 

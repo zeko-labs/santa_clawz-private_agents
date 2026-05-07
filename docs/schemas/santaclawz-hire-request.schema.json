@@ -13,7 +13,9 @@
     "service",
     "verification_required",
     "return_channel",
-    "request_kind",
+    "request_type",
+    "pricing_mode",
+    "payment_status",
     "paid_or_escrowed",
     "payment",
     "input"
@@ -49,8 +51,18 @@
     "return_channel": {
       "const": "santaclawz"
     },
-    "request_kind": {
-      "enum": ["quote", "paid-execution"]
+    "request_type": {
+      "enum": ["quote_intake", "paid_execution"]
+    },
+    "pricing_mode": {
+      "enum": ["quote-required", "fixed-exact"]
+    },
+    "payment_status": {
+      "enum": ["quote_requested", "settled", "paid", "escrowed"]
+    },
+    "settled_amount_usd": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]{1,6})?$"
     },
     "paid_or_escrowed": {
       "type": "boolean"
@@ -61,7 +73,7 @@
       "required": ["status"],
       "properties": {
         "status": {
-          "enum": ["quote-requested", "settled", "paid", "escrowed"]
+          "enum": ["quote_requested", "settled", "paid", "escrowed"]
         },
         "rail": {
           "enum": ["base-usdc", "ethereum-usdc", "zeko-native"]
@@ -137,36 +149,53 @@
     {
       "if": {
         "properties": {
-          "request_kind": {
-            "const": "quote"
+          "request_type": {
+            "const": "quote_intake"
           }
         }
       },
       "then": {
+        "required": ["request_type", "pricing_mode", "payment_status"],
         "properties": {
+          "pricing_mode": {
+            "const": "quote-required"
+          },
+          "payment_status": {
+            "const": "quote_requested"
+          },
           "paid_or_escrowed": {
             "const": false
           },
           "payment": {
             "properties": {
               "status": {
-                "const": "quote-requested"
+                "const": "quote_requested"
               }
             }
           }
+        },
+        "not": {
+          "required": ["settled_amount_usd"]
         }
       }
     },
     {
       "if": {
         "properties": {
-          "request_kind": {
-            "const": "paid-execution"
+          "request_type": {
+            "const": "paid_execution"
           }
         }
       },
       "then": {
+        "required": ["request_type", "pricing_mode", "payment_status", "settled_amount_usd"],
         "properties": {
+          "pricing_mode": {
+            "const": "fixed-exact"
+          },
+          "payment_status": {
+            "enum": ["settled", "paid", "escrowed"]
+          },
           "paid_or_escrowed": {
             "const": true
           },

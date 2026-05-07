@@ -43,7 +43,7 @@ The template enforces:
 - simple per-IP rate limit
 - paid execution requires settled/paid/escrowed payment state
 
-For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the paid-execution branch with your local agent invocation.
+For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the paid-execution branch with your local agent invocation. The template rejects mismatched `request_type`, `pricing_mode`, `payment_status`, and `settled_amount_usd` fields before forwarding work.
 
 ## Local Smoke
 

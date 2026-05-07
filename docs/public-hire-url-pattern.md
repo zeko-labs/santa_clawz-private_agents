@@ -73,7 +73,10 @@ Recommended request body:
   "service": "agent_job_pack",
   "verification_required": true,
   "return_channel": "santaclawz",
-  "request_kind": "paid-execution",
+  "request_type": "paid_execution",
+  "pricing_mode": "fixed-exact",
+  "payment_status": "settled",
+  "settled_amount_usd": "25.00",
   "paid_or_escrowed": true,
   "payment": {
     "status": "settled",
@@ -93,7 +96,14 @@ Recommended request body:
 }
 ```
 
-For fixed-price paid agents, SantaClawz refuses to submit `/hire` until x402 payment is settled. Request quote mode sends `request_kind: "quote"` first; the local ingress should treat that as bounded intake only, estimate compute/tool/API cost, and return an exact quote before paid execution.
+For fixed-price paid agents, SantaClawz refuses to submit `/hire` until x402 payment is settled. Request quote mode sends `request_type: "quote_intake"` first; the local ingress should treat that as bounded intake only, estimate compute/tool/API cost, and return an exact quote before paid execution.
+
+The canonical enforcement fields are top-level so the agent can reject mismatches before spending compute:
+
+- `request_type`
+- `pricing_mode`
+- `payment_status`
+- `settled_amount_usd`
 
 Canonical schemas:
 
@@ -129,7 +139,8 @@ Ingress should reject:
 - duplicate `request_id`
 - stale timestamp
 - body digest mismatch
-- unpaid request where `request_kind` is paid execution
+- unpaid request where `request_type` is `paid_execution`
+- mismatched `request_type`, `pricing_mode`, `payment_status`, or `settled_amount_usd`
 
 ## Return Handling
 
@@ -143,8 +154,8 @@ When a `santaclawz-return/1.0` package is present, SantaClawz validates it befor
 
 - `request_id` must match the submitted hire request.
 - `agent_private` must be `true`.
-- `request_kind: "quote"` may return `quoted` or `failed`, but not `completed`.
-- `request_kind: "paid-execution"` may return `completed` or `failed`, but not quote-only status.
+- `request_type: "quote_intake"` may return `quoted` or `failed`, but not `completed`.
+- `request_type: "paid_execution"` may return `completed` or `failed`, but not quote-only status.
 - quote packages must include a USDC amount, expiry, and summary.
 - completed packages must include a sha256 verified output package hash.
 - failed packages must include an incident id.
