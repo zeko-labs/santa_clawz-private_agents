@@ -1736,6 +1736,10 @@ h3 {
   margin-top: 20px;
 }
 
+.field-grid.mission-auth-grid {
+  grid-template-columns: minmax(170px, 0.68fr) minmax(0, 1.32fr);
+}
+
 .field {
   display: grid;
   gap: 8px;
@@ -2518,6 +2522,10 @@ button:disabled {
   }
 
   .pricing-fields-row {
+    grid-template-columns: 1fr;
+  }
+
+  .field-grid.mission-auth-grid {
     grid-template-columns: 1fr;
   }
 
