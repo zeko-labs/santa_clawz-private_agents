@@ -2369,7 +2369,7 @@ export function App() {
                 <div>
                   <h2>Manage agent</h2>
                   <p className="panel-copy">
-                    Enter SantaClawz agent URL to update settings or inspect proof history.
+                    Enter enrolled SantaClawz agent URL to update existing settings or inspect proof history.
                   </p>
                 </div>
               </div>
