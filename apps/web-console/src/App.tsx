@@ -2318,15 +2318,15 @@ export function App() {
 
           <div className="register-flow-card">
             <div className="register-flow-head">
-              <div>
+              <div className="register-flow-title-row">
                 <strong>Enroll agent to go live and get paid</strong>
-                <p className="panel-copy">
-                  Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
-                </p>
+                <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                  Agent setup guide
+                </a>
               </div>
-              <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                Agent setup guide
-              </a>
+              <p className="panel-copy">
+                Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
+              </p>
             </div>
 
             <div className="register-cli-stack">

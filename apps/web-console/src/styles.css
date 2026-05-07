@@ -873,12 +873,24 @@ pre,
   width: min(100%, 42rem);
 }
 
-.register-flow-head,
 .payment-subcard-head {
   display: flex;
   justify-content: space-between;
   gap: 16px;
   align-items: start;
+}
+
+.register-flow-head {
+  display: grid;
+  gap: 4px;
+}
+
+.register-flow-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  width: 100%;
 }
 
 .register-flow-head strong,
