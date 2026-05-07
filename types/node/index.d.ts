@@ -130,8 +130,10 @@ declare namespace JSX {
 
 declare module "react" {
   export type ReactNode = unknown;
+  export type SetStateAction<T> = T | ((prevState: T) => T);
+  export type Dispatch<A> = (value: A) => void;
 
-  export function useState<T>(initialValue: T): [T, (nextValue: T) => void];
+  export function useState<T>(initialValue: T): [T, Dispatch<SetStateAction<T>>];
   export function useEffect(effect: () => void | (() => void), dependencies?: unknown[]): void;
   export function useMemo<T>(factory: () => T, dependencies: unknown[]): T;
   export function useDeferredValue<T>(value: T): T;

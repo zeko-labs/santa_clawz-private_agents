@@ -74,6 +74,8 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
+const EXPLORE_REGISTRY_POLL_MS = 8_000;
+const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
 Repo: https://github.com/zeko-labs/x402-zeko
 Build: corepack enable && pnpm install --frozen-lockfile
@@ -119,6 +121,41 @@ function shorten(value: string, head = 8, tail = 6) {
     return value;
   }
   return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function registryEntryWithAvailability(
+  agent: AgentRegistryEntry,
+  availability: AgentRuntimeAvailabilityState
+): AgentRegistryEntry {
+  const reason = availability.reason ?? availability.heartbeat.reason;
+  const nextAgent: AgentRegistryEntry = {
+    ...agent,
+    runtimeStatus: availability.runtimeStatus,
+    runtimeStatusUpdatedAtIso: availability.checkedAtIso
+  };
+
+  if (availability.heartbeat.lastHeartbeatAtIso) {
+    nextAgent.lastHeartbeatAtIso = availability.heartbeat.lastHeartbeatAtIso;
+  } else {
+    delete nextAgent.lastHeartbeatAtIso;
+  }
+
+  if (reason) {
+    nextAgent.runtimeStatusReason = reason;
+  } else {
+    delete nextAgent.runtimeStatusReason;
+  }
+
+  return nextAgent;
+}
+
+function mergeAvailabilityIntoRegistry(
+  currentRegistry: AgentRegistryEntry[],
+  availability: AgentRuntimeAvailabilityState
+): AgentRegistryEntry[] {
+  return currentRegistry.map((agent) =>
+    agent.agentId === availability.agentId ? registryEntryWithAvailability(agent, availability) : agent
+  );
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
@@ -1001,27 +1038,49 @@ export function App() {
   }, [profile, profileSessionId, state]);
 
   useEffect(() => {
-    if (activeSection !== "explore") {
+    if (activeSection !== "explore" || sharedAgentId) {
       return;
     }
 
     let cancelled = false;
-    void fetchAgentRegistry()
-      .then((nextRegistry) => {
-        if (!cancelled) {
-          setRegistry(nextRegistry);
-        }
-      })
-      .catch((nextError: Error) => {
-        if (!cancelled) {
-          setError(nextError.message);
-        }
-      });
+    let intervalId: number | undefined;
+
+    const refreshRegistry = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
+      void fetchAgentRegistry()
+        .then((nextRegistry) => {
+          if (!cancelled) {
+            setRegistry(nextRegistry);
+          }
+        })
+        .catch((nextError: Error) => {
+          if (!cancelled) {
+            setError(nextError.message);
+          }
+        });
+    };
+
+    refreshRegistry();
+    intervalId = window.setInterval(refreshRegistry, EXPLORE_REGISTRY_POLL_MS);
+
+    const refreshWhenVisible = () => {
+      if (!document.hidden) {
+        refreshRegistry();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [activeSection, state?.session.sessionId]);
+  }, [activeSection, sharedAgentId, state?.session.sessionId]);
 
   useEffect(() => {
     if (activeSection !== "explore" || !sharedAgentId) {
@@ -1031,27 +1090,58 @@ export function App() {
     }
 
     let cancelled = false;
-    setAgentAvailabilityLoading(true);
-    void fetchAgentRuntimeAvailability(sharedAgentId)
-      .then((availability) => {
-        if (!cancelled) {
-          setAgentAvailability(availability);
-        }
-      })
-      .catch((nextError: Error) => {
-        if (!cancelled) {
-          setAgentAvailability(null);
-          setError(nextError.message);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setAgentAvailabilityLoading(false);
-        }
-      });
+    let intervalId: number | undefined;
+    let requestInFlight = false;
+
+    const refreshAvailability = (showLoading = false) => {
+      if (requestInFlight || (typeof document !== "undefined" && document.hidden)) {
+        return;
+      }
+
+      requestInFlight = true;
+      if (showLoading) {
+        setAgentAvailabilityLoading(true);
+      }
+
+      void fetchAgentRuntimeAvailability(sharedAgentId)
+        .then((availability) => {
+          if (!cancelled) {
+            setAgentAvailability(availability);
+            setRegistry((currentRegistry) => mergeAvailabilityIntoRegistry(currentRegistry, availability));
+          }
+        })
+        .catch((nextError: Error) => {
+          if (!cancelled) {
+            setAgentAvailability(null);
+            setError(nextError.message);
+          }
+        })
+        .finally(() => {
+          requestInFlight = false;
+          if (!cancelled) {
+            setAgentAvailabilityLoading(false);
+          }
+        });
+    };
+
+    refreshAvailability(true);
+    intervalId = window.setInterval(() => {
+      refreshAvailability(false);
+    }, AGENT_PROFILE_AVAILABILITY_POLL_MS);
+
+    const refreshWhenVisible = () => {
+      if (!document.hidden) {
+        refreshAvailability(true);
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [activeSection, sharedAgentId, state?.profile.openClawUrl]);
 
