@@ -1898,7 +1898,7 @@ export function App() {
               <span className="step-number">1</span>
               <div>
                 <h2>Connect agent</h2>
-                <p className="panel-copy">Check the requirements, enter policy details, and generate the enrollment command your PublicClawz agent can run.</p>
+                <p className="panel-copy">Enter OpenClaw agent info and policy details to generate the enrollment command for your agent.</p>
               </div>
             </div>
           </div>
