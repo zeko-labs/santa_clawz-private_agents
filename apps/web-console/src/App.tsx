@@ -47,7 +47,7 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "all" | "open-for-work" | "owner-verified" | "mission-auth-verified" | "published-on-zeko";
+type ExploreFilterKey = "open-for-work" | "mission-auth-verified";
 
 type ValueInputEvent = { target: { value: string } };
 type FormSubmitEvent = { preventDefault: () => void };
@@ -58,11 +58,8 @@ const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
-  { key: "all", label: "All agents" },
   { key: "open-for-work", label: "Open for work" },
-  { key: "owner-verified", label: "Owner verified" },
-  { key: "mission-auth-verified", label: "Mission auth verified" },
-  { key: "published-on-zeko", label: "Published on Zeko" }
+  { key: "mission-auth-verified", label: "Auth verified" }
 ];
 const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
@@ -75,6 +72,7 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const EXPLORE_REGISTRY_POLL_MS = 8_000;
+const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
 Repo: https://github.com/zeko-labs/x402-zeko
@@ -418,21 +416,15 @@ function formatRelativeTime(value?: string) {
   return new Date(timestamp).toLocaleDateString();
 }
 
-function matchesExploreFilter(agent: AgentRegistryEntry, filter: ExploreFilterKey) {
-  if (filter === "all") {
+function matchesExploreFilter(agent: AgentRegistryEntry, filter: ExploreFilterKey | null) {
+  if (!filter) {
     return true;
   }
   if (filter === "open-for-work") {
     return agent.paymentsEnabled;
   }
-  if (filter === "owner-verified") {
-    return agent.ownershipVerified;
-  }
   if (filter === "mission-auth-verified") {
     return agent.missionAuthVerified;
-  }
-  if (filter === "published-on-zeko") {
-    return agent.published;
   }
   return false;
 }
@@ -482,6 +474,35 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
     return `Published on Zeko • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   return `Joined SantaClawz • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+}
+
+function agentTopicForAgent(agent: AgentRegistryEntry) {
+  if (agent.missionAuthVerified) {
+    return "Auth-backed mission";
+  }
+  if (agent.paymentsEnabled) {
+    return agent.pricingMode === "quote-required" ? "Quote channel" : "Fixed-price work";
+  }
+  if (agent.published) {
+    return "Proof milestone";
+  }
+  return "New agent";
+}
+
+function publicFeedLineForAgent(agent: AgentRegistryEntry) {
+  if (agent.runtimeStatus === "offline") {
+    return `${agent.agentName} is offline right now, but its public proof history stays visible.`;
+  }
+  if (agent.paidJobsEnabled) {
+    return `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`;
+  }
+  if (agent.paymentsEnabled) {
+    return `${agent.agentName} is open for quote requests. Buyers and agents can inspect the profile before starting work.`;
+  }
+  if (agent.published) {
+    return `${agent.agentName} published a proof-backed profile on Zeko.`;
+  }
+  return `${agent.agentName} joined SantaClawz and is preparing its public work surface.`;
 }
 
 function dispatchLineForAgent(agent: AgentRegistryEntry) {
@@ -917,7 +938,7 @@ export function App() {
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
-  const [exploreFilter, setExploreFilter] = useState<ExploreFilterKey>("all");
+  const [exploreFilter, setExploreFilter] = useState<ExploreFilterKey | null>(null);
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
@@ -925,6 +946,15 @@ export function App() {
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const ethereumPayoutAllowed = hasAdvancedEthereumPayout(profile);
+  const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
+  const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
+    ? registry
+      .filter((agent) => matchesExploreFilter(agent, exploreFilter) && matchesExploreQuery(agent, normalizedExploreQuery))
+      .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
+      .slice(0, 8)
+      .map((agent) => agent.agentId)
+    : [];
+  const exploreAvailabilityKey = exploreAvailabilityAgentIds.join("|");
 
   useEffect(() => {
     let cancelled = false;
@@ -1086,6 +1116,63 @@ export function App() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [activeSection, sharedAgentId, state?.session.sessionId]);
+
+  useEffect(() => {
+    if (activeSection !== "explore" || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: number | undefined;
+    let requestInFlight = false;
+
+    const refreshVisibleAvailability = () => {
+      if (requestInFlight || (typeof document !== "undefined" && document.hidden)) {
+        return;
+      }
+
+      requestInFlight = true;
+      void Promise.allSettled(exploreAvailabilityAgentIds.map((agentId) => fetchAgentRuntimeAvailability(agentId)))
+        .then((results) => {
+          if (cancelled) {
+            return;
+          }
+          const availabilities = results.flatMap((result) =>
+            result.status === "fulfilled" ? [result.value] : []
+          );
+          if (availabilities.length === 0) {
+            return;
+          }
+          setRegistry((currentRegistry) =>
+            availabilities.reduce(
+              (nextRegistry, availability) => mergeAvailabilityIntoRegistry(nextRegistry, availability),
+              currentRegistry
+            )
+          );
+        })
+        .finally(() => {
+          requestInFlight = false;
+        });
+    };
+
+    refreshVisibleAvailability();
+    intervalId = window.setInterval(refreshVisibleAvailability, EXPLORE_VISIBLE_AVAILABILITY_POLL_MS);
+
+    const refreshWhenVisible = () => {
+      if (!document.hidden) {
+        refreshVisibleAvailability();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [activeSection, sharedAgentId, exploreAvailabilityKey]);
 
   useEffect(() => {
     if (activeSection !== "explore" || !sharedAgentId) {
@@ -1616,14 +1703,6 @@ export function App() {
           </section>
         ) : (
           <section id="explore" className="panel explore-panel">
-            <div className="section-head">
-              <div>
-                <p className="eyebrow">Explore</p>
-                <h2>Browse other agents</h2>
-              </div>
-              <span className="subtle-pill">Directory preview</span>
-            </div>
-
             <div className="explore-grid">
               <article className="explore-card explore-card-featured">
                 <div className="explore-card-head">
@@ -1777,7 +1856,6 @@ export function App() {
   const socialAnchorActionLabel = pendingAction === "settle-social-anchors"
     ? "Anchoring..."
     : "Anchor queued milestones";
-  const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
   const filteredRegistry = registry.filter(
     (agent) => matchesExploreFilter(agent, exploreFilter) && matchesExploreQuery(agent, normalizedExploreQuery)
   );
@@ -1795,20 +1873,11 @@ export function App() {
     .slice(0, 3);
   const liveActivityAgents = [...filteredRegistry]
     .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
-    .slice(0, 6);
-  const socialOpenLineAgent = dispatchAgents[0] ?? featuredAgents[0] ?? recentAgents[0] ?? filteredRegistry[0] ?? null;
+    .slice(0, 10);
   const highlightAgent = featuredAgents[0] ?? recentAgents[0] ?? filteredRegistry[0] ?? null;
   const feedAgents = [...filteredRegistry]
     .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
     .slice(0, 8);
-  const openForWorkAgents = [...filteredRegistry]
-    .filter((agent) => agent.paymentsEnabled)
-    .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
-    .slice(0, 4);
-  const verifiedAgents = [...filteredRegistry]
-    .filter((agent) => agent.ownershipVerified)
-    .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
-    .slice(0, 4);
   const ownershipChallengePreview =
     issuedOwnershipChallenge?.challengeResponseJson ??
     (state.ownership.status === "challenge-issued"
@@ -3314,13 +3383,12 @@ export function App() {
         </section>
       ) : (
         <section id="explore" className="panel explore-panel">
-          <div className="section-head">
-            <div>
-              <p className="eyebrow">Explore</p>
-              <h2>{sharedAgentId ? "Agent profile" : "Browse live agents"}</h2>
-            </div>
-            <div className="profile-head-actions">
-              {sharedAgentId ? (
+          {sharedAgentId ? (
+            <div className="section-head">
+              <div>
+                <h2>Agent profile</h2>
+              </div>
+              <div className="profile-head-actions">
                 <button
                   type="button"
                   className="secondary-button profile-back-button"
@@ -3330,12 +3398,10 @@ export function App() {
                 >
                   Back to directory
                 </button>
-              ) : null}
-              <span className="subtle-pill">
-                {sharedAgentId ? "Shared profile" : `${filteredRegistry.length} of ${registry.length} agents`}
-              </span>
+                <span className="subtle-pill">Shared profile</span>
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {sharedAgentId ? (
             <div className="explore-grid">
@@ -3544,9 +3610,9 @@ export function App() {
                 <div className="explore-activity-head">
                   <div className="explore-card-head">
                     <strong>Live activity</strong>
-                    <span className="subtle-pill">{liveActivityAgents.length} updates</span>
+                    <span className="subtle-pill">Streaming</span>
                   </div>
-                  <p className="panel-copy">See who just published, who turned on payouts, and who is building trust in public.</p>
+                  <p className="panel-copy">Public agent milestones, status changes, and quote-ready signals. Visible cards are checked for runtime reachability every few seconds.</p>
                 </div>
                 <div className="explore-activity-rail">
                   {liveActivityAgents.length === 0 ? (
@@ -3562,11 +3628,14 @@ export function App() {
                           showAgentProfile(agent.agentId);
                         }}
                       >
-                        <strong>{agent.agentName}</strong>
+                        <span className={`activity-dot ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true" />
+                        <span className="activity-copy">
+                          <strong>{agent.agentName}</strong>
+                          <span>{activityLineForAgent(agent)}</span>
+                        </span>
                         <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
                           {runtimeStatusLabel(agent.runtimeStatus)}
                         </span>
-                        <span>{activityLineForAgent(agent)}</span>
                       </button>
                     ))
                   )}
@@ -3585,14 +3654,15 @@ export function App() {
                     placeholder="Search by agent, operator, rail, or capability"
                   />
                 </label>
-                <div className="explore-chip-row" role="tablist" aria-label="Explore verified status filters">
+                <div className="explore-chip-row" role="group" aria-label="Explore filters">
                   {EXPLORE_FILTERS.map((filter) => (
                     <button
                       key={filter.key}
                       type="button"
                       className={`explore-filter-chip${exploreFilter === filter.key ? " active" : ""}`}
+                      aria-pressed={exploreFilter === filter.key}
                       onClick={() => {
-                        setExploreFilter(filter.key);
+                        setExploreFilter(exploreFilter === filter.key ? null : filter.key);
                       }}
                     >
                       {filter.label}
@@ -3615,73 +3685,19 @@ export function App() {
                     <strong>No agents match this view</strong>
                     <span className="subtle-pill">Try another chip</span>
                   </div>
-                  <p className="panel-copy">Reset the status filter or broaden your search to pull more live agents back into the feed.</p>
+                  <p className="panel-copy">Clear the selected filter or broaden your search to pull more agents back into the feed.</p>
                 </article>
               ) : (
                 <>
                   <div className="explore-social-layout explore-social-layout-simple">
                     <div className="explore-main-column">
-                      {highlightAgent ? (
-                        <section className="explore-section-block">
-                          <div className="section-head compact-head">
-                            <div>
-                              <p className="eyebrow">Featured today</p>
-                              <h3 className="explore-section-title">A good place to start</h3>
-                            </div>
-                            <span className="subtle-pill">{exploreStatusLabel(highlightAgent)}</span>
-                          </div>
-                          <article className="explore-card explore-card-social explore-card-hero">
-                            <div className="explore-card-topline">
-                              <div className="explore-card-avatar">{agentInitials(highlightAgent.agentName)}</div>
-                              <div className="explore-card-meta">
-                                <strong>{highlightAgent.agentName}</strong>
-                                <span>{highlightAgent.representedPrincipal || "Independent operator"}</span>
-                              </div>
-                            </div>
-                            <p className="explore-card-quote">“{highlightAgent.headline}”</p>
-                            <p className="panel-copy">{socialProofLineForAgent(highlightAgent)}</p>
-                            <div className="explore-tag-row">
-                              <span className="explore-tag">{exploreStatusLabel(highlightAgent)}</span>
-                              <span className={`runtime-status-pill compact ${runtimeStatusClass(highlightAgent.runtimeStatus)}`}>
-                                {runtimeStatusLabel(highlightAgent.runtimeStatus)}
-                              </span>
-                              <span className="explore-tag">{highlightAgent.proofLevel}</span>
-                              {highlightAgent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(highlightAgent)}</span> : null}
-                              {highlightAgent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
-                              {highlightAgent.paymentRail ? <span className="explore-tag">{railLabel(highlightAgent.paymentRail)}</span> : null}
-                              {highlightAgent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}
-                            </div>
-                            <div className="explore-action-row">
-                              <button
-                                type="button"
-                                className="secondary-button"
-                                onClick={() => {
-                                  showAgentProfile(highlightAgent.agentId);
-                                }}
-                              >
-                                View profile
-                              </button>
-                              <button
-                                type="button"
-                                className="primary-button"
-                                onClick={() => {
-                                  showAgentProfile(highlightAgent.agentId, "hire");
-                                }}
-                              >
-                                Hire
-                              </button>
-                            </div>
-                          </article>
-                        </section>
-                      ) : null}
-
                       <section className="explore-section-block">
                         <div className="section-head compact-head">
                           <div>
-                            <p className="eyebrow">Agent feed</p>
-                            <h3 className="explore-section-title">Recent updates from verified agents</h3>
+                            <p className="eyebrow">Public agent chatter</p>
+                            <h3 className="explore-section-title">What agents are signaling now</h3>
                           </div>
-                          <span className="subtle-pill">{feedAgents.length} stories</span>
+                          <span className="subtle-pill">{feedAgents.length} public cards</span>
                         </div>
                         <div className="explore-story-feed">
                           {feedAgents.map((agent) => (
@@ -3696,26 +3712,19 @@ export function App() {
                                 </div>
                                 <span className="explore-story-time">{formatRelativeTime(agent.lastUpdatedAtIso)}</span>
                               </div>
-                              <p className="explore-story-action">
-                                {agent.paidJobsEnabled
-                                  ? `${agent.agentName} is now accepting paid jobs.`
-                                  : agent.paymentsEnabled
-                                    ? `${agent.agentName} is open for quote requests.`
-                                  : agent.published
-                                    ? `${agent.agentName} published on Zeko.`
-                                    : `${agent.agentName} joined SantaClawz.`}
-                              </p>
+                              <div className="explore-topic-row">
+                                <span className="explore-tag">{agentTopicForAgent(agent)}</span>
+                                <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                                  {runtimeStatusLabel(agent.runtimeStatus)}
+                                </span>
+                              </div>
+                              <p className="explore-story-action">{publicFeedLineForAgent(agent)}</p>
                               <p className="panel-copy">{dispatchLineForAgent(agent)}</p>
                               <p className="panel-copy explore-story-proof">{socialProofLineForAgent(agent)}</p>
                               <div className="explore-tag-row">
                                 <span className="explore-tag">{exploreStatusLabel(agent)}</span>
-                                <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
-                                  {runtimeStatusLabel(agent.runtimeStatus)}
-                                </span>
-                                {agent.paymentRail ? <span className="explore-tag">{railLabel(agent.paymentRail)}</span> : null}
                                 {agent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(agent)}</span> : null}
-                                {agent.ownershipVerified ? <span className="explore-tag">owner verified</span> : null}
-                                {agent.missionAuthVerified ? <span className="explore-tag">mission auth verified</span> : null}
+                                {agent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
                               </div>
                               <div className="explore-card-foot">
                                 <span>{activityLineForAgent(agent)}</span>
@@ -3748,69 +3757,59 @@ export function App() {
                     </div>
 
                     <aside className="explore-side-column">
-                      <section className="explore-section-block explore-rail-card">
-                        <div className="section-head compact-head">
-                          <div>
-                            <p className="eyebrow">Open for work</p>
-                            <h3 className="explore-section-title">Agents ready to quote</h3>
+                      {highlightAgent ? (
+                        <section className="explore-section-block explore-rail-card">
+                          <div className="section-head compact-head">
+                            <div>
+                              <p className="eyebrow">Featured agent</p>
+                              <h3 className="explore-section-title">Good place to start</h3>
+                            </div>
+                            <span className={`runtime-status-pill compact ${runtimeStatusClass(highlightAgent.runtimeStatus)}`}>
+                              {runtimeStatusLabel(highlightAgent.runtimeStatus)}
+                            </span>
                           </div>
-                          <span className="subtle-pill">{openForWorkAgents.length}</span>
-                        </div>
-                        <div className="explore-sidebar-list">
-                          {openForWorkAgents.length === 0 ? (
-                            <article className="explore-card explore-sidebar-card">
-                              <p className="panel-copy">No agents are open for work yet in this view.</p>
-                            </article>
-                          ) : (
-                            openForWorkAgents.map((agent) => (
+                          <article className="explore-card explore-card-social explore-card-hero explore-featured-sidebar-card">
+                            <div className="explore-card-topline">
+                              <div className="explore-card-avatar">{agentInitials(highlightAgent.agentName)}</div>
+                              <div className="explore-card-meta">
+                                <strong>{highlightAgent.agentName}</strong>
+                                <span>{highlightAgent.representedPrincipal || "Independent operator"}</span>
+                              </div>
+                            </div>
+                            <p className="explore-card-quote">“{highlightAgent.headline}”</p>
+                            <div className="explore-tag-row">
+                              <span className="explore-tag">{exploreStatusLabel(highlightAgent)}</span>
+                              {highlightAgent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(highlightAgent)}</span> : null}
+                              {highlightAgent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
+                            </div>
+                            <div className="explore-action-row">
                               <button
-                                key={`open-for-work-${agent.agentId}`}
                                 type="button"
-                                className="explore-sidebar-list-item"
+                                className="secondary-button"
                                 onClick={() => {
-                                  showAgentProfile(agent.agentId);
+                                  showAgentProfile(highlightAgent.agentId);
                                 }}
                               >
-                                <strong>{agent.agentName}</strong>
-                                <span>{referencePriceLine(agent)}</span>
+                                View profile
                               </button>
-                            ))
-                          )}
-                        </div>
-                      </section>
+                              <button
+                                type="button"
+                                className="primary-button"
+                                onClick={() => {
+                                  showAgentProfile(highlightAgent.agentId, "hire");
+                                }}
+                              >
+                                Hire
+                              </button>
+                            </div>
+                          </article>
+                        </section>
+                      ) : null}
 
                       <section className="explore-section-block explore-rail-card">
                         <div className="section-head compact-head">
                           <div>
-                            <p className="eyebrow">Verified filters</p>
-                            <h3 className="explore-section-title">Browse by live status</h3>
-                          </div>
-                          <span className="subtle-pill">Programmatic</span>
-                        </div>
-                        <div className="explore-sidebar-list">
-                          {EXPLORE_FILTERS.filter((filter) => filter.key !== "all").map((filter) => {
-                            const count = registry.filter((agent) => matchesExploreFilter(agent, filter.key)).length;
-                            return (
-                              <button
-                                key={`lane-${filter.key}`}
-                                type="button"
-                                className={`explore-sidebar-list-item${exploreFilter === filter.key ? " active" : ""}`}
-                                onClick={() => {
-                                  setExploreFilter(filter.key);
-                                }}
-                              >
-                                <strong>{filter.label}</strong>
-                                <span>{count} agents</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </section>
-
-                      <section className="explore-section-block explore-rail-card">
-                        <div className="section-head compact-head">
-                          <div>
-                            <p className="eyebrow">Operator dispatches</p>
+                            <p className="eyebrow">Agent dispatches</p>
                             <h3 className="explore-section-title">Short public notes</h3>
                           </div>
                           <span className="subtle-pill">{dispatchAgents.length}</span>
@@ -3837,53 +3836,22 @@ export function App() {
                       <section className="explore-section-block explore-rail-card">
                         <div className="section-head compact-head">
                           <div>
-                            <p className="eyebrow">Trust signals</p>
-                            <h3 className="explore-section-title">Ownership and proof</h3>
-                          </div>
-                          <span className="subtle-pill">{verifiedAgents.length} verified</span>
-                        </div>
-                        <div className="explore-sidebar-list">
-                          {verifiedAgents.length === 0 ? (
-                            <article className="explore-card explore-sidebar-card">
-                              <p className="panel-copy">Ownership-verified agents appear here first.</p>
-                            </article>
-                          ) : (
-                            verifiedAgents.map((agent) => (
-                              <button
-                                key={`verified-${agent.agentId}`}
-                                type="button"
-                                className="explore-sidebar-list-item"
-                                onClick={() => {
-                                  showAgentProfile(agent.agentId);
-                                }}
-                              >
-                                <strong>{agent.agentName}</strong>
-                                <span>{agent.proofLevel === "proof-backed" ? "proof-backed" : "ownership verified"}</span>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </section>
-
-                      <section className="explore-section-block explore-rail-card">
-                        <div className="section-head compact-head">
-                          <div>
                             <p className="eyebrow">Public conversations</p>
-                            <h3 className="explore-section-title">Simple at first</h3>
+                            <h3 className="explore-section-title">Opt-in chat surface</h3>
                           </div>
-                          <span className="subtle-pill">Opt-in later</span>
+                          <span className="subtle-pill">Coming next</span>
                         </div>
                         <article className="explore-card explore-sidebar-card">
                           <p className="panel-copy">
-                            Humans should be able to talk with agents in public only if operators opt in. For now, the clean path is still: view profile, verify trust, and send a hire request.
+                            Public agent chats can become proof-backed dispatches when operators opt in. For now, use profiles to inspect the agent and start quote or hire requests.
                           </p>
-                          {socialOpenLineAgent ? (
+                          {highlightAgent ? (
                             <div className="explore-action-row">
                               <button
                                 type="button"
                                 className="secondary-button"
                                 onClick={() => {
-                                  showAgentProfile(socialOpenLineAgent.agentId);
+                                  showAgentProfile(highlightAgent.agentId);
                                 }}
                               >
                                 Open profile
@@ -3892,7 +3860,7 @@ export function App() {
                                 type="button"
                                 className="primary-button"
                                 onClick={() => {
-                                  showAgentProfile(socialOpenLineAgent.agentId, "hire");
+                                  showAgentProfile(highlightAgent.agentId, "hire");
                                 }}
                               >
                                 Start a hire chat
