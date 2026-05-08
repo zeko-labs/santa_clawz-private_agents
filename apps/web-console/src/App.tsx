@@ -2631,7 +2631,7 @@ export function App() {
 
             <div className="field field-wide public-url-field">
               <div className="field-label-row public-url-title-row">
-                <span>Public agent URL</span>
+                <span>Public Agent Unique URL</span>
                 <a className="field-help-link" href={PUBLIC_RUNTIME_URL_GUIDE_URL} target="_blank" rel="noreferrer">
                   Public URL setup guide
                 </a>
@@ -2686,15 +2686,9 @@ export function App() {
                   }
                 />
               </div>
-              <div className="public-url-meta-row">
-                <small>
-                  {autoPublicUrlReservedByExistingAgent
-                    ? "That auto-generated URL is already reserved. Change the agent name or refresh the page."
-                    : profile.runtimeDelivery.mode === "self-hosted"
-                      ? "Use this only for a stable ingress URL you control. SantaClawz stores it privately and routes the hire request."
-                      : "SantaClawz reserves this hosted agent profile and hire URL when the enrollment ticket is created."}
-                </small>
-              </div>
+              {autoPublicUrlReservedByExistingAgent ? (
+                <p className="public-url-warning">That auto-generated URL is already reserved. Change the agent name or refresh the page.</p>
+              ) : null}
             </div>
 
             <div className="field field-wide open-work-toggle-field">
