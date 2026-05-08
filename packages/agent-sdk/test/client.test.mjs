@@ -165,6 +165,18 @@ async function main() {
     assert.equal(pricingUpdate.profile.paymentProfile.referencePriceUsd, "0.35");
     assert.equal(pricingUpdate.profile.payoutWallets.base, "0x1908217952D7117f5aeFBbd91AeBf04566D286f9");
 
+    const archiveUpdate = await adminClient.archiveAgent({
+      agentId: pricingUpdate.agentId,
+      sessionId: pricingUpdate.sessionId
+    });
+    assert.equal(archiveUpdate.profile.availability, "archived");
+
+    const restoreUpdate = await adminClient.restoreAgent({
+      agentId: pricingUpdate.agentId,
+      sessionId: pricingUpdate.sessionId
+    });
+    assert.equal(restoreUpdate.profile.availability, "active");
+
     const currentBundle = await client.getProofBundle();
     assert.notEqual(currentBundle.bundleDigest.sha256Hex, bundle.bundleDigest.sha256Hex);
 

@@ -84,6 +84,12 @@ export interface ClawzAgentPricingUpdate {
   paymentNotes?: string;
 }
 
+export interface ClawzAgentArchiveUpdate {
+  sessionId?: string;
+  agentId: string;
+  archived?: boolean;
+}
+
 let nextRpcId = 1;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -327,6 +333,38 @@ export class ClawzAgentClient {
         })
       }
     );
+  }
+
+  async setAgentArchiveStatus(input: ClawzAgentArchiveUpdate): Promise<ConsoleStateResponse> {
+    if (!this.adminKey) {
+      throw new Error("setAgentArchiveStatus requires an adminKey from the agent's private .env.santaclawz file.");
+    }
+    const agentId = input.agentId.trim();
+    if (!agentId) {
+      throw new Error("setAgentArchiveStatus requires agentId.");
+    }
+
+    return this.readJson<ConsoleStateResponse>(
+      withQuery(this.baseUrl, `/api/agents/${encodeURIComponent(agentId)}/archive`),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          archived: input.archived !== false
+        })
+      }
+    );
+  }
+
+  async archiveAgent(input: Omit<ClawzAgentArchiveUpdate, "archived">): Promise<ConsoleStateResponse> {
+    return this.setAgentArchiveStatus({ ...input, archived: true });
+  }
+
+  async restoreAgent(input: Omit<ClawzAgentArchiveUpdate, "archived">): Promise<ConsoleStateResponse> {
+    return this.setAgentArchiveStatus({ ...input, archived: false });
   }
 
   async getDeployment(): Promise<unknown> {

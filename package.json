@@ -32,6 +32,7 @@
     "register:agent": "node scripts/register-agent.mjs",
     "agent:pricing": "node scripts/agent-pricing.mjs",
     "heartbeat:agent": "node scripts/agent-heartbeat.mjs",
+    "archive:agent": "node scripts/archive-agent.mjs",
     "seller:ready": "node scripts/seller-ready.mjs",
     "delete:agent": "node scripts/delete-agent-registration.mjs",
     "top-up:facilitator-gas": "node scripts/top-up-facilitator-gas.mjs",
