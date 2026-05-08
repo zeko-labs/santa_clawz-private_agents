@@ -86,9 +86,12 @@ pre,
 }
 
 .app-shell {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
   max-width: 1380px;
   margin: 0 auto;
-  padding: 28px 20px 72px;
+  padding: 28px 20px 16px;
 }
 
 .onboarding-shell {
@@ -202,7 +205,7 @@ pre,
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin-top: 28px;
+  margin-top: auto;
   padding: 18px 4px 0;
   color: rgba(255, 248, 239, 0.78);
   font-size: 0.9rem;
@@ -210,6 +213,13 @@ pre,
 
 .site-footer p {
   margin: 0;
+}
+
+.site-footer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 
 .site-footer-links {
@@ -2747,7 +2757,7 @@ button:disabled {
 
 @media (max-width: 800px) {
   .app-shell {
-    padding: 20px 14px 56px;
+    padding: 20px 14px 16px;
   }
 
   .site-header,

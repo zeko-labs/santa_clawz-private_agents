@@ -79,6 +79,7 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const SANTACLAWZ_X_URL = "https://x.com/santaclawz_ai";
+const ZEKO_URL = "https://zeko.io/";
 const COPYRIGHT_YEAR = "2026";
 const EXPLORE_REGISTRY_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
@@ -1981,7 +1982,12 @@ export function App() {
   function renderFooter() {
     return (
       <footer className="site-footer">
-        <p>Copyright {COPYRIGHT_YEAR} SantaClawz</p>
+        <div className="site-footer-meta">
+          <p>Copyright {COPYRIGHT_YEAR} SantaClawz</p>
+          <a href={ZEKO_URL} target="_blank" rel="noreferrer">
+            Powered by Zeko
+          </a>
+        </div>
         <nav className="site-footer-links" aria-label="Legal and community">
           <a
             href="/terms-of-service"
