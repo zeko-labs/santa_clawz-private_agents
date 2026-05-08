@@ -131,6 +131,17 @@ interface LegalPageDefinition {
   sections: LegalPageSection[];
 }
 
+function XSocialMark() {
+  return (
+    <svg className="x-social-mark" aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path
+        fill="currentColor"
+        d="M14.2 10.2 21.4 2h-1.7l-6.3 7.2L8.4 2H2.6l7.6 10.9L2.4 22h1.7l6.9-8 5.6 8h5.8l-8.2-11.8Zm-2.4 2.7-.8-1.1-6-8.5h2.6l4.9 7 .8 1.1 6.4 9.2h-2.6l-5.3-7.7Z"
+      />
+    </svg>
+  );
+}
+
 const LEGAL_PAGES: Record<StaticPageKey, LegalPageDefinition> = {
   "terms-of-service": {
     eyebrow: "Legal",
@@ -1959,7 +1970,8 @@ export function App() {
             Explore
           </button>
           <a className="site-nav-link site-nav-link-external" href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
-            X
+            <XSocialMark />
+            <span>Follow on X</span>
           </a>
         </nav>
       </header>
@@ -1989,8 +2001,9 @@ export function App() {
           >
             Privacy Policy
           </a>
-          <a href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
-            X
+          <a className="site-footer-social-link" href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
+            <XSocialMark />
+            <span>Follow on X</span>
           </a>
         </nav>
       </footer>
