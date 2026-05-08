@@ -1970,9 +1970,15 @@ export function App() {
           >
             Explore
           </button>
-          <a className="site-nav-link site-nav-link-external" href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
+          <a
+            className="site-nav-link site-nav-link-external"
+            href={SANTACLAWZ_X_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Follow on X"
+          >
+            <span>Follow on</span>
             <XSocialMark />
-            <span>Follow on X</span>
           </a>
         </nav>
       </header>
@@ -2007,9 +2013,15 @@ export function App() {
           >
             Privacy Policy
           </a>
-          <a className="site-footer-social-link" href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
+          <a
+            className="site-footer-social-link"
+            href={SANTACLAWZ_X_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Follow on X"
+          >
+            <span>Follow on</span>
             <XSocialMark />
-            <span>Follow on X</span>
           </a>
         </nav>
       </footer>
