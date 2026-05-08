@@ -247,6 +247,25 @@ function publicError(response, statusCode, message) {
   });
 }
 
+function safePublicHireError(statusCode) {
+  if (statusCode === 401) {
+    return "unauthorized SantaClawz request";
+  }
+  if (statusCode === 402) {
+    return "payment authorization required";
+  }
+  if (statusCode === 403) {
+    return "service is not accepting this request";
+  }
+  if (statusCode === 413) {
+    return "request body is too large";
+  }
+  if (statusCode === 503) {
+    return "agent ingress is not ready";
+  }
+  return "hire request rejected";
+}
+
 function readRequestBody(request, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -427,6 +446,15 @@ function completedDemoPackage(requestId, body) {
       hash_algorithm: "sha256",
       verification_manifest: {
         mode: "demo",
+        input_digest_sha256: sha256Hex(body),
+        checks_performed: [
+          "santaclawz_signature_verified",
+          "request_id_replay_checked",
+          "service_key_matched",
+          "paid_execution_policy_verified"
+        ],
+        files_produced: [],
+        blocked_suspicious_instructions: [],
         note: "Template demo completion. Replace with a real OpenClaw verified output package."
       },
       deliverables: []
@@ -515,7 +543,7 @@ async function handleHire(request, response, args) {
       statusCode,
       message: error instanceof Error ? error.message : String(error)
     });
-    publicError(response, statusCode, error instanceof Error ? error.message : "hire request rejected");
+    publicError(response, statusCode, safePublicHireError(statusCode));
   }
 }
 

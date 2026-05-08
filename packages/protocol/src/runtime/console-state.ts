@@ -562,6 +562,7 @@ export interface HireRequestReceipt {
     verifiedOutput?: {
       packageHash: string;
       deliverableCount: number;
+      verificationManifestDigestSha256?: string;
       zekoAttestationIncluded: boolean;
     };
     incidentId?: string;

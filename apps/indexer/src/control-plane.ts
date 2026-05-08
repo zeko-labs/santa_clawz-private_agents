@@ -2760,6 +2760,23 @@ export class ClawzControlPlane {
       if (verifiedOutput.hash_algorithm !== "sha256") {
         throw new Error("SantaClawz verified_output hash_algorithm must be sha256.");
       }
+      const verificationManifest = verifiedOutput.verification_manifest;
+      if (!isRecord(verificationManifest)) {
+        throw new Error("SantaClawz verified_output must include verification_manifest.");
+      }
+      assertSha256Hex(
+        assertStringValue(verificationManifest, "input_digest_sha256", "SantaClawz verification_manifest"),
+        "SantaClawz verification_manifest input_digest_sha256"
+      );
+      if (!Array.isArray(verificationManifest.checks_performed)) {
+        throw new Error("SantaClawz verification_manifest checks_performed must be an array.");
+      }
+      if (!Array.isArray(verificationManifest.files_produced)) {
+        throw new Error("SantaClawz verification_manifest files_produced must be an array.");
+      }
+      if (!Array.isArray(verificationManifest.blocked_suspicious_instructions)) {
+        throw new Error("SantaClawz verification_manifest blocked_suspicious_instructions must be an array.");
+      }
       if (!Array.isArray(verifiedOutput.deliverables)) {
         throw new Error("SantaClawz verified_output deliverables must be an array.");
       }
@@ -2780,6 +2797,7 @@ export class ClawzControlPlane {
         verifiedOutput: {
           packageHash,
           deliverableCount: verifiedOutput.deliverables.length,
+          verificationManifestDigestSha256: canonicalDigest(verificationManifest).sha256Hex,
           zekoAttestationIncluded: isRecord(verifiedOutput.zeko_attestation)
         }
       };
@@ -5143,7 +5161,10 @@ export class ClawzControlPlane {
       ? profile
       : {
           ...profile,
-          openClawUrl: ""
+          openClawUrl: "",
+          runtimeDelivery: {
+            mode: profile.runtimeDelivery.mode
+          }
         };
     const responseOwnership = adminAccess.hasAdminAccess
       ? ownership
@@ -6084,6 +6105,7 @@ export class ClawzControlPlane {
         : {}),
       paymentAuthorization
     });
+    const publicDeliveryTarget = publicAgentHireUrlFor(options.agentId);
     const ingressProtocolReturn = "protocolReturn" in ingressDelivery ? ingressDelivery.protocolReturn : undefined;
     const ingressResponseStatusCode =
       "responseStatusCode" in ingressDelivery ? ingressDelivery.responseStatusCode : undefined;
@@ -6110,7 +6132,7 @@ export class ClawzControlPlane {
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
         : {}),
       requesterContact,
-      deliveryTarget: ingressDelivery.ingressUrl,
+      deliveryTarget: publicDeliveryTarget,
       deliveryStatus: ingressDelivery.deliveryStatus,
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
       ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
@@ -6171,6 +6193,12 @@ export class ClawzControlPlane {
             ? {
                 verifiedOutputPackageHash: ingressProtocolReturn.verifiedOutput.packageHash,
                 verifiedOutputDeliverableCount: ingressProtocolReturn.verifiedOutput.deliverableCount,
+                ...(ingressProtocolReturn.verifiedOutput.verificationManifestDigestSha256
+                  ? {
+                      verificationManifestDigestSha256:
+                        ingressProtocolReturn.verifiedOutput.verificationManifestDigestSha256
+                    }
+                  : {}),
                 zekoAttestationIncluded: ingressProtocolReturn.verifiedOutput.zekoAttestationIncluded
               }
             : {}),
@@ -6190,10 +6218,10 @@ export class ClawzControlPlane {
       paymentStatus,
       ...(settledAmountUsd ? { settledAmountUsd } : {}),
       status: hireStatus,
-      deliveryTarget: ingressDelivery.ingressUrl,
+      deliveryTarget: publicDeliveryTarget,
       deliveryStatus: ingressDelivery.deliveryStatus,
       ingress: {
-        url: ingressDelivery.ingressUrl,
+        url: publicDeliveryTarget,
         requestId,
         timestamp: submittedAtIso,
         bodyDigestSha256: ingressDelivery.bodyDigestSha256,

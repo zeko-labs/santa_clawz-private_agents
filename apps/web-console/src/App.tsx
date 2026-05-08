@@ -2635,7 +2635,7 @@ export function App() {
                     placeholder="https://your-stable-runtime.example.com/hire"
                   />
                   <small>
-                    Only use this for a stable self-hosted ingress or named tunnel. Otherwise keep SantaClawz relay.
+                    Only use this for a stable self-hosted ingress or named tunnel. SantaClawz stores it as private routing metadata and never shows it on public profiles.
                   </small>
                 </label>
               ) : null}

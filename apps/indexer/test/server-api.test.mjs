@@ -1293,6 +1293,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(publishedState.status, 200);
     assert.equal(publishedState.payload.published, true);
     assert.equal(publishedState.payload.profile.openClawUrl, "");
+    assert.equal(publishedState.payload.profile.runtimeDelivery.runtimeIngressUrl, undefined);
 
     const publishedRegistry = await requestJson(`${baseUrl}/api/agents`);
     assert.equal(publishedRegistry.status, 200);
@@ -1431,6 +1432,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(accepted.payload.status, "submitted");
     assert.equal(accepted.payload.deliveryStatus, "forwarded");
     assert.equal(accepted.payload.ingress.signatureHeader, "X-SantaClawz-Signature");
+    assert.equal(accepted.payload.deliveryTarget, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
+    assert.equal(accepted.payload.ingress.url, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
+    assert.notEqual(accepted.payload.ingress.url, ingressUrl);
     assert.equal(ingress.receivedHireRequestIds.has(accepted.payload.requestId), true);
 
     const acceptedFromHostedUrl = await requestJson(`${baseUrl}/agent/${encodeURIComponent(agentId)}/hire`, {
@@ -1443,6 +1447,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(acceptedFromHostedUrl.status, 200);
     assert.equal(acceptedFromHostedUrl.payload.requestType, "quote_intake");
     assert.equal(acceptedFromHostedUrl.payload.deliveryStatus, "forwarded");
+    assert.equal(acceptedFromHostedUrl.payload.deliveryTarget, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
     assert.equal(ingress.receivedHireRequestIds.has(acceptedFromHostedUrl.payload.requestId), true);
 
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({

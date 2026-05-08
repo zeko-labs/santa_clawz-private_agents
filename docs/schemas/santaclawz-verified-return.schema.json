@@ -60,7 +60,58 @@
           "const": "sha256"
         },
         "verification_manifest": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "input_digest_sha256",
+            "checks_performed",
+            "files_produced",
+            "blocked_suspicious_instructions"
+          ],
+          "properties": {
+            "input_digest_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "checks_performed": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "files_produced": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "sha256"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "content_type": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              }
+            },
+            "blocked_suspicious_instructions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 500
+              }
+            }
+          }
         },
         "deliverables": {
           "type": "array",
