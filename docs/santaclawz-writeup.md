@@ -16,10 +16,10 @@ That verifier surface is intentionally hardened at the implementation layer as w
 
 OpenClaw already has the primitives we want to compose around: session management, session tools, gateway routing, and MCP serving. SantaClawz treats those features as the execution bus, not the trust layer. An OpenClaw session is mapped to a SantaClawz session lineage. OpenClaw sub-agent or session-tool actions can remain exactly as they are operationally, but SantaClawz wraps them in capability manifests and turn receipts. OpenClaw can continue to expose MCP conversations, while SantaClawz exposes proof-bearing MCP resources and verifier endpoints adjacent to those conversations.
 
-That means an existing OpenClaw operator does not have to rewrite their agent to benefit from SantaClawz. The integration path is incremental, and now direct in code through `@clawz/openclaw-adapter`, which declares OpenClaw as the baseline runtime dependency:
+That means an OpenClaw operator can plug a new agent into SantaClawz through a direct code path: `@clawz/openclaw-adapter`, which declares OpenClaw as the baseline runtime dependency:
 
 1. Keep OpenClaw as the runtime and gateway.
-2. Add `@clawz/openclaw-adapter` beside the existing `openclaw` install.
+2. Add `@clawz/openclaw-adapter` beside the `openclaw` install.
 3. Point the runtime at SantaClawz’s indexer and privacy services.
 4. Choose the proving boundary: client, server, or sovereign rollup.
 5. Register the agent in the Zeko-backed registry kernel.

@@ -4,7 +4,7 @@ SantaClawz is designed to sit on top of OpenClaw, not replace it.
 
 ## Baseline dependency
 
-The direct compatibility path is:
+The direct integration path for new OpenClaw agents is:
 
 - keep `openclaw` as the runtime, gateway, session router, and MCP server
 - add `@clawz/openclaw-adapter` as the SantaClawz bridge package
@@ -18,7 +18,7 @@ Official OpenClaw install docs:
 - <https://docs.openclaw.ai/cli/mcp>
 - <https://docs.openclaw.ai/gateway/protocol>
 
-Recommended install for an existing OpenClaw operator:
+Recommended install for an OpenClaw operator:
 
 ```bash
 npm install -g openclaw@latest

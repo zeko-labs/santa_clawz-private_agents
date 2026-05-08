@@ -1823,8 +1823,8 @@ export function App() {
         ? `Serve the current challenge from ${state.ownership.challenge?.challengePath ?? "/.well-known/santaclawz-agent-challenge.json"}, then verify control.`
         : state.ownership.status === "legacy-unverified"
           ? hasAdminAccess
-            ? "This is a legacy registration. Verify control of the OpenClaw ingress before SantaClawz can publish it."
-            : "This agent predates ownership checks. Prove control of the OpenClaw ingress to reclaim and publish it."
+            ? "Verify control of the OpenClaw ingress before SantaClawz can publish this agent."
+            : "Use the current enrollment flow so the agent can prove URL control, store its admin key locally, and publish on Zeko."
           : "Prove control of the OpenClaw ingress before SantaClawz can publish this agent on Zeko.";
   const cliEnrollCommand = [
     "pnpm enroll:openclaw --",
