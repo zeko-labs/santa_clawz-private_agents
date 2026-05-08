@@ -165,6 +165,7 @@ Core production environment areas:
 - Zeko social anchor: `CLAWZ_SOCIAL_ANCHOR_PUBLIC_KEY`, `CLAWZ_SOCIAL_ANCHOR_SUBMITTER_PRIVATE_KEY`, `SOCIAL_ANCHOR_PRIVATE_KEY`
 - Base x402 facilitator: `CLAWZ_X402_BASE_FACILITATOR_URL`, `CLAWZ_PROTOCOL_OWNER_FEE_BPS`, `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`
 - Base gas top-up worker: `CLAWZ_BASE_FACILITATOR_GAS_TREASURY_PRIVATE_KEY`, `CLAWZ_BASE_FACILITATOR_GAS_TARGET_ADDRESS`, `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MIN_NATIVE_ETH`, `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_TARGET_NATIVE_ETH`, `CLAWZ_BASE_FACILITATOR_GAS_TOPUP_MAX_USDC`
+- frontend starter service: optionally set `VITE_CLAWZ_STARTER_AGENT_ID` to the persistent public `agent_job_pack` agent id. If unset, Explore still tries to feature a registered agent with service key `agent_job_pack`.
 
 See the deployment docs for the full Render checklist.
 

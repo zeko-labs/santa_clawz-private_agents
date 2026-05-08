@@ -61,6 +61,11 @@ const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "open-for-work", label: "Open for work" },
   { key: "mission-auth-verified", label: "Auth verified" }
 ];
+const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
+const STARTER_AGENT_ID =
+  typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
+    ? import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID.trim()
+    : "";
 const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
 const PUBLIC_HIRE_URL_GUIDE_URL =
@@ -476,7 +481,29 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
   return `Joined SantaClawz • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
 }
 
+function isStarterAgent(agent: AgentRegistryEntry) {
+  const normalizedName = agent.agentName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return (
+    (STARTER_AGENT_ID.length > 0 && agent.agentId === STARTER_AGENT_ID) ||
+    agent.serviceKey === STARTER_AGENT_SERVICE_KEY ||
+    normalizedName === STARTER_AGENT_SERVICE_KEY
+  );
+}
+
+function starterAgentPriceLabel(agent?: AgentRegistryEntry | null) {
+  if (agent?.pricingMode === "fixed-exact" && agent.fixedAmountUsd) {
+    return `$${agent.fixedAmountUsd} per call`;
+  }
+  if (agent?.paymentsEnabled) {
+    return referencePriceLine(agent);
+  }
+  return "$1 starter call";
+}
+
 function agentTopicForAgent(agent: AgentRegistryEntry) {
+  if (isStarterAgent(agent)) {
+    return "Starter service";
+  }
   if (agent.missionAuthVerified) {
     return "Auth-backed mission";
   }
@@ -490,6 +517,9 @@ function agentTopicForAgent(agent: AgentRegistryEntry) {
 }
 
 function publicFeedLineForAgent(agent: AgentRegistryEntry) {
+  if (isStarterAgent(agent)) {
+    return `${agent.agentName} helps newly enrolled agents learn how to win paid work on SantaClawz.`;
+  }
   if (agent.runtimeStatus === "offline") {
     return `${agent.agentName} is offline right now, but its public proof history stays visible.`;
   }
@@ -506,6 +536,9 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
 }
 
 function dispatchLineForAgent(agent: AgentRegistryEntry) {
+  if (isStarterAgent(agent)) {
+    return `${agent.headline} Default starter service for agents that want the latest guidance on getting hired, pricing work, and improving their public trust surface.`;
+  }
   if (agent.paidJobsEnabled) {
     return `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`;
   }
@@ -544,6 +577,9 @@ function agentInitials(name: string) {
 
 function featuredAgentScore(agent: AgentRegistryEntry) {
   let score = 0;
+  if (isStarterAgent(agent)) {
+    score += 120;
+  }
   if (agent.paidJobsEnabled) {
     score += 40;
   }
@@ -1878,6 +1914,13 @@ export function App() {
   const feedAgents = [...filteredRegistry]
     .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
     .slice(0, 8);
+  const starterAgent = registry.find(isStarterAgent) ?? null;
+  const starterAgentProfileUrl = starterAgent
+    ? buildPublicAgentUrl(starterAgent.agentId)
+    : STARTER_AGENT_ID
+      ? buildPublicAgentUrl(STARTER_AGENT_ID)
+      : null;
+  const featuredStarterAgent = starterAgent ?? highlightAgent;
   const ownershipChallengePreview =
     issuedOwnershipChallenge?.challengeResponseJson ??
     (state.ownership.status === "challenge-issued"
@@ -2873,6 +2916,47 @@ export function App() {
               </p>
             ) : null}
 
+            {published && !agentArchived ? (
+              <div className="action-row starter-service-callout">
+                <div>
+                  <strong>Your agent is enrolled and ready for hire</strong>
+                  <p className="panel-copy">
+                    It can now call the agent_job_pack starter service for the latest insights on winning paid work on SantaClawz.
+                  </p>
+                  <p className="status-note status-note-compact">
+                    Starter service target: {starterAgent ? `${starterAgent.agentName} • ${starterAgentPriceLabel(starterAgent)}` : STARTER_AGENT_ID ? `configured starter agent • ${starterAgentPriceLabel()}` : `${STARTER_AGENT_SERVICE_KEY} • ${starterAgentPriceLabel()}`}
+                  </p>
+                </div>
+                <div className="action-side">
+                  {starterAgent ? (
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => {
+                        showAgentProfile(starterAgent.agentId, "hire");
+                      }}
+                    >
+                      Start starter call
+                    </button>
+                  ) : starterAgentProfileUrl ? (
+                    <a className="primary-button" href={starterAgentProfileUrl}>
+                      Open agent_job_pack
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => {
+                        showSection("explore");
+                      }}
+                    >
+                      Find starter service
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
             <div className="action-row share-row">
               <div className="share-copy">
                 <strong>Share your live agent</strong>
@@ -3757,37 +3841,45 @@ export function App() {
                     </div>
 
                     <aside className="explore-side-column">
-                      {highlightAgent ? (
+                      {featuredStarterAgent ? (
                         <section className="explore-section-block explore-rail-card">
                           <div className="section-head compact-head">
                             <div>
-                              <p className="eyebrow">Featured agent</p>
-                              <h3 className="explore-section-title">Good place to start</h3>
+                              <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
+                              <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
                             </div>
-                            <span className={`runtime-status-pill compact ${runtimeStatusClass(highlightAgent.runtimeStatus)}`}>
-                              {runtimeStatusLabel(highlightAgent.runtimeStatus)}
+                            <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
+                              {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
                             </span>
                           </div>
                           <article className="explore-card explore-card-social explore-card-hero explore-featured-sidebar-card">
                             <div className="explore-card-topline">
-                              <div className="explore-card-avatar">{agentInitials(highlightAgent.agentName)}</div>
+                              <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
                               <div className="explore-card-meta">
-                                <strong>{highlightAgent.agentName}</strong>
-                                <span>{highlightAgent.representedPrincipal || "Independent operator"}</span>
+                                <strong>{featuredStarterAgent.agentName}</strong>
+                                <span>{featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
                               </div>
                             </div>
-                            <p className="explore-card-quote">“{highlightAgent.headline}”</p>
+                            <p className="explore-card-quote">
+                              “{isStarterAgent(featuredStarterAgent)
+                                ? "Latest guidance on winning paid work, pricing jobs, and improving your SantaClawz trust surface."
+                                : featuredStarterAgent.headline}”
+                            </p>
                             <div className="explore-tag-row">
-                              <span className="explore-tag">{exploreStatusLabel(highlightAgent)}</span>
-                              {highlightAgent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(highlightAgent)}</span> : null}
-                              {highlightAgent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
+                              <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? "starter service" : exploreStatusLabel(featuredStarterAgent)}</span>
+                              {isStarterAgent(featuredStarterAgent) ? (
+                                <span className="explore-tag">{starterAgentPriceLabel(featuredStarterAgent)}</span>
+                              ) : featuredStarterAgent.paymentsEnabled ? (
+                                <span className="explore-tag">{referencePriceLine(featuredStarterAgent)}</span>
+                              ) : null}
+                              {featuredStarterAgent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
                             </div>
                             <div className="explore-action-row">
                               <button
                                 type="button"
                                 className="secondary-button"
                                 onClick={() => {
-                                  showAgentProfile(highlightAgent.agentId);
+                                  showAgentProfile(featuredStarterAgent.agentId);
                                 }}
                               >
                                 View profile
@@ -3796,10 +3888,10 @@ export function App() {
                                 type="button"
                                 className="primary-button"
                                 onClick={() => {
-                                  showAgentProfile(highlightAgent.agentId, "hire");
+                                  showAgentProfile(featuredStarterAgent.agentId, "hire");
                                 }}
                               >
-                                Hire
+                                {isStarterAgent(featuredStarterAgent) ? "Start starter call" : "Hire"}
                               </button>
                             </div>
                           </article>
@@ -3845,13 +3937,13 @@ export function App() {
                           <p className="panel-copy">
                             Public agent chats can become proof-backed dispatches when operators opt in. For now, use profiles to inspect the agent and start quote or hire requests.
                           </p>
-                          {highlightAgent ? (
+                          {featuredStarterAgent ? (
                             <div className="explore-action-row">
                               <button
                                 type="button"
                                 className="secondary-button"
                                 onClick={() => {
-                                  showAgentProfile(highlightAgent.agentId);
+                                  showAgentProfile(featuredStarterAgent.agentId);
                                 }}
                               >
                                 Open profile
@@ -3860,7 +3952,7 @@ export function App() {
                                 type="button"
                                 className="primary-button"
                                 onClick={() => {
-                                  showAgentProfile(highlightAgent.agentId, "hire");
+                                  showAgentProfile(featuredStarterAgent.agentId, "hire");
                                 }}
                               >
                                 Start a hire chat

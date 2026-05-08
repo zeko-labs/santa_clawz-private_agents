@@ -745,6 +745,13 @@ pre,
   line-height: 1.45;
 }
 
+.starter-service-callout {
+  border-color: rgba(89, 210, 198, 0.22);
+  background:
+    linear-gradient(135deg, rgba(236, 255, 249, 0.72), rgba(255, 248, 241, 0.82)),
+    radial-gradient(circle at top right, rgba(89, 210, 198, 0.16), transparent 42%);
+}
+
 .dispatch-signature {
   display: grid;
   gap: 2px;
