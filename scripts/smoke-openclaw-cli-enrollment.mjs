@@ -183,6 +183,55 @@ function runNodeJson(entry, args, options = {}) {
   });
 }
 
+function startNodeJsonProcess(entry, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const stdout = [];
+    const stderr = [];
+    const child = spawn("node", [entry, ...args], {
+      cwd: options.cwd ?? repoRoot,
+      env: {
+        ...process.env,
+        ...(options.env ?? {})
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill("SIGTERM");
+      reject(new Error(`${path.basename(entry)} did not print JSON output in time\n${stderr.join("")}`));
+    }, SERVER_READY_TIMEOUT_MS);
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve({ child, stdout, stderr, value });
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout.push(String(chunk));
+      try {
+        finish(JSON.parse(stdout.join("")));
+      } catch {
+        // Pretty-printed JSON may arrive across several chunks.
+      }
+    });
+    child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
+    child.once("exit", (exitCode) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error(`${path.basename(entry)} exited before enrollment completed with ${exitCode}\n${stderr.join("")}`));
+    });
+  });
+}
+
 async function loadEnvFile(filePath) {
   const contents = await readFile(filePath, "utf8");
   const env = {};
@@ -215,6 +264,7 @@ async function main() {
   const ingressPort = await reservePort();
   const indexer = startIndexer(workspaceDir, indexerPort);
   const ingress = startIngress(agentDir, ingressPort);
+  let enrollmentProcess = null;
 
   try {
     const baseUrl = `http://127.0.0.1:${indexerPort}`;
@@ -249,24 +299,27 @@ async function main() {
     assert.equal(ticket.status, 200);
     assert.match(ticket.payload.ticket, /^scz_enroll_/);
 
-    const enrollment = await runNodeJson(enrollEntry, [
+    enrollmentProcess = await startNodeJsonProcess(enrollEntry, [
       "--api-base",
       baseUrl,
       "--site-base",
       "http://127.0.0.1:5173",
       "--ticket",
       ticket.payload.ticket,
-      "--runtime-ingress-url",
-      ingress.baseUrl,
+      "--connect-relay",
       "--write-env",
       ingress.envFile,
       "--challenge-file",
       ingress.challengeFile,
       "--publish-local-only"
-    ]);
+    ], {
+      env: {
+        CLAWZ_LOCAL_INGRESS_URL: ingress.baseUrl
+      }
+    });
     const enrollmentEnv = await loadEnvFile(ingress.envFile);
     const registration = {
-      ...enrollment,
+      ...enrollmentProcess.value,
       adminKey: enrollmentEnv.CLAWZ_AGENT_ADMIN_KEY,
       ingressToken: enrollmentEnv.CLAWZ_AGENT_INGRESS_TOKEN,
       signingSecret: enrollmentEnv.CLAWZ_AGENT_SIGNING_SECRET
@@ -317,8 +370,11 @@ async function main() {
 
     console.log("ok - OpenClaw CLI enrollment smoke passed");
     console.log(`agentId=${registration.agentId}`);
-    console.log("flow=ticket -> template ingress -> one CLI enroll -> env/challenge -> verify -> publish -> anchor -> heartbeat -> quote -> anchor quote");
+    console.log("flow=ticket -> relay CLI enroll -> env/challenge -> publish -> relay heartbeat -> quote over relay -> anchor quote");
   } finally {
+    if (enrollmentProcess?.child) {
+      await stopProcess(enrollmentProcess.child);
+    }
     await stopProcess(indexer.child);
     await stopProcess(ingress.child);
     await rm(workspaceDir, { recursive: true, force: true });

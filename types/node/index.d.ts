@@ -4,7 +4,13 @@ declare class Buffer extends Uint8Array {
   static alloc(size: number): Buffer;
   static byteLength(data: string, encoding?: string): number;
   readonly byteLength: number;
+  copy(target: Buffer, targetStart?: number, sourceStart?: number, sourceEnd?: number): number;
+  readUInt16BE(offset: number): number;
+  readBigUInt64BE(offset: number): bigint;
+  subarray(start?: number, end?: number): Buffer;
   toString(encoding?: string): string;
+  writeUInt16BE(value: number, offset: number): number;
+  writeBigUInt64BE(value: bigint, offset: number): number;
 }
 
 declare const console: {
@@ -22,7 +28,7 @@ declare const process: {
 
 declare module "node:crypto" {
   export function createHash(name: string): {
-    update(value: string, encoding?: string): { digest(encoding: "hex"): string };
+    update(value: string, encoding?: string): { digest(encoding: "hex" | "base64"): string };
   };
 
   export function createHmac(name: string, key: string | Buffer): {
@@ -61,6 +67,35 @@ declare module "node:crypto" {
     final(): Buffer;
     setAuthTag(tag: Buffer): void;
   };
+}
+
+declare module "node:http" {
+  import type { Socket } from "node:net";
+
+  export interface IncomingMessage {
+    headers: Record<string, string | string[] | undefined>;
+    method?: string;
+    url?: string;
+  }
+
+  export interface Server {
+    on(event: "upgrade", listener: (request: IncomingMessage, socket: Socket) => void): this;
+    listen(port: number, host: string, listener?: () => void): this;
+  }
+
+  export function createServer(app?: unknown): Server;
+}
+
+declare module "node:net" {
+  export interface Socket {
+    destroyed: boolean;
+    destroy(): void;
+    end(): void;
+    on(event: "data", listener: (chunk: Buffer) => void): this;
+    on(event: "close" | "error", listener: () => void): this;
+    once(event: "close" | "error", listener: () => void): this;
+    write(data: string | Buffer): void;
+  }
 }
 
 declare module "node:fs/promises" {

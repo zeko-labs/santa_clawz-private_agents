@@ -1,5 +1,7 @@
 import express from "express";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage } from "node:http";
+import type { Socket } from "node:net";
 
 import {
   type AgentProfileState,
@@ -123,6 +125,7 @@ type RegisterAgentRequestBody = {
   headline?: unknown;
   publicClawzUrl?: unknown;
   openClawUrl?: unknown;
+  runtimeDelivery?: unknown;
   payoutAddress?: unknown;
   payoutWallets?: unknown;
   missionAuthOverlay?: unknown;
@@ -142,6 +145,7 @@ type ProfileRequestBody = {
   headline?: unknown;
   publicClawzUrl?: unknown;
   openClawUrl?: unknown;
+  runtimeDelivery?: unknown;
   payoutAddress?: unknown;
   payoutWallets?: unknown;
   missionAuthOverlay?: unknown;
@@ -332,6 +336,25 @@ function parseSocialAnchorPolicy(value: unknown): Partial<AgentProfileState["soc
     : undefined;
 }
 
+function parseRuntimeDelivery(value: unknown): Partial<AgentProfileState["runtimeDelivery"]> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const mode =
+    value.mode === "self-hosted" || value.mode === "santaclawz-relay"
+      ? value.mode
+      : undefined;
+  if (!mode) {
+    return undefined;
+  }
+  return {
+    mode,
+    ...(typeof value.runtimeIngressUrl === "string" && value.runtimeIngressUrl.trim().length > 0
+      ? { runtimeIngressUrl: value.runtimeIngressUrl.trim() }
+      : {})
+  };
+}
+
 function parseTrustModeRequest(body: unknown): TrustModeRequestBody {
   return isRecord(body)
     ? {
@@ -349,6 +372,7 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
         headline: body.headline,
         publicClawzUrl: body.publicClawzUrl,
         openClawUrl: body.openClawUrl,
+        runtimeDelivery: body.runtimeDelivery,
         payoutAddress: body.payoutAddress,
         payoutWallets: body.payoutWallets,
         missionAuthOverlay: body.missionAuthOverlay,
@@ -374,6 +398,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
   const payoutWallets = parsePayoutWallets(body.payoutWallets);
   const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
   const paymentProfile = parsePaymentProfile(body.paymentProfile);
+  const runtimeDelivery = parseRuntimeDelivery(body.runtimeDelivery);
   const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
   const trustModeId: TrustModeId | undefined =
     body.trustModeId === "fast" ||
@@ -402,6 +427,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
     ...(payoutWallets ? { payoutWallets } : {}),
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
+    ...(runtimeDelivery ? { runtimeDelivery } : {}),
     ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
     ...(typeof body.representedPrincipal === "string" ? { representedPrincipal: body.representedPrincipal } : {}),
     ...(trustModeId ? { trustModeId } : {}),
@@ -410,10 +436,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
 }
 
 function enrollmentTicketOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typeof controlPlane.issueEnrollmentTicket>[0] {
-  return {
-    ...registerOptionsFromBody(body),
-    openClawUrl: ""
-  };
+  return registerOptionsFromBody(body);
 }
 
 function parseProfileRequest(body: unknown): ProfileRequestBody {
@@ -424,6 +447,7 @@ function parseProfileRequest(body: unknown): ProfileRequestBody {
           headline: body.headline,
           publicClawzUrl: body.publicClawzUrl,
           openClawUrl: body.openClawUrl,
+          runtimeDelivery: body.runtimeDelivery,
           payoutAddress: body.payoutAddress,
           payoutWallets: body.payoutWallets,
           missionAuthOverlay: body.missionAuthOverlay,
@@ -1526,13 +1550,9 @@ app.post("/api/enrollment/redeem", route(async (request, response) => {
     response.status(400).json({ error: "ticket is required." });
     return;
   }
-  if (!openClawUrl) {
-    response.status(400).json({ error: "runtimeIngressUrl is required." });
-    return;
-  }
 
   try {
-    response.json(await controlPlane.redeemEnrollmentTicket(ticket, { openClawUrl }));
+    response.json(await controlPlane.redeemEnrollmentTicket(ticket, { ...(openClawUrl ? { openClawUrl } : {}) }));
   } catch (error) {
     if (error instanceof DuplicatePublicClawzUrlError) {
       response.status(409).json({
@@ -1555,6 +1575,7 @@ app.post("/api/console/profile", route(async (request, response) => {
   const payoutWallets = parsePayoutWallets(body.payoutWallets);
   const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
   const paymentProfile = parsePaymentProfile(body.paymentProfile);
+  const runtimeDelivery = parseRuntimeDelivery(body.runtimeDelivery);
   const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
   const preferredProvingLocation =
     body.preferredProvingLocation === "client" ||
@@ -1574,6 +1595,7 @@ app.post("/api/console/profile", route(async (request, response) => {
     ...(payoutWallets ? { payoutWallets } : {}),
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
+    ...(runtimeDelivery ? { runtimeDelivery } : {}),
     ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
     ...(typeof body.payoutAddress === "string"
       ? {
@@ -2006,9 +2028,367 @@ app.post("/api/events/ingest", route(async (request, response) => {
   }
 }));
 
+const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const RELAY_RESPONSE_TIMEOUT_MS = 15_000;
+const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
+
+function websocketAcceptKey(key: string) {
+  return createHash("sha1").update(`${key}${WEBSOCKET_GUID}`).digest("base64");
+}
+
+function encodeWebSocketFrame(opcode: number, payload: Buffer) {
+  const length = payload.length;
+  const headerLength = length < 126 ? 2 : length <= 0xffff ? 4 : 10;
+  const header = Buffer.alloc(headerLength);
+  header[0] = 0x80 | opcode;
+  if (length < 126) {
+    header[1] = length;
+  } else if (length <= 0xffff) {
+    header[1] = 126;
+    header.writeUInt16BE(length, 2);
+  } else {
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(length), 2);
+  }
+  return Buffer.concat([header, payload]);
+}
+
+function extractAdminKeyFromUpgrade(request: IncomingMessage) {
+  const direct = request.headers["x-clawz-admin-key"];
+  if (typeof direct === "string" && direct.trim().length > 0) {
+    return direct.trim();
+  }
+  const authorization = request.headers.authorization;
+  const bearerPrefix = "bearer ";
+  if (typeof authorization === "string" && authorization.toLowerCase().startsWith(bearerPrefix)) {
+    return authorization.slice(bearerPrefix.length).trim();
+  }
+  return undefined;
+}
+
+type RelayPendingRequest = {
+  resolve(value: { statusCode: number; body: string; deliveryTarget: string }): void;
+  reject(error: Error): void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+class AgentRelayConnection {
+  private buffer = Buffer.alloc(0);
+  private readonly pending = new Map<string, RelayPendingRequest>();
+
+  constructor(
+    readonly agentId: string,
+    readonly sessionId: string,
+    readonly adminKey: string,
+    private readonly socket: Socket,
+    private readonly onMessage: (message: unknown) => void,
+    private readonly onClose: () => void
+  ) {
+    socket.on("data", (chunk) => {
+      this.receive(chunk);
+    });
+    socket.on("close", () => {
+      this.rejectPending("Relay connection closed.");
+      this.onClose();
+    });
+    socket.on("error", () => {
+      this.rejectPending("Relay connection errored.");
+      this.onClose();
+    });
+  }
+
+  get connected() {
+    return !this.socket.destroyed;
+  }
+
+  sendJson(payload: unknown) {
+    if (!this.connected) {
+      throw new Error("Relay connection is closed.");
+    }
+    const body = Buffer.from(JSON.stringify(payload), "utf8");
+    this.socket.write(encodeWebSocketFrame(0x1, body));
+  }
+
+  sendPong(payload: Buffer) {
+    if (this.connected) {
+      this.socket.write(encodeWebSocketFrame(0xA, payload));
+    }
+  }
+
+  close(code = 1000, reason = "closing") {
+    if (!this.connected) {
+      return;
+    }
+    const reasonBuffer = Buffer.from(reason.slice(0, 120), "utf8");
+    const payload = Buffer.alloc(2 + reasonBuffer.length);
+    payload.writeUInt16BE(code, 0);
+    reasonBuffer.copy(payload, 2);
+    this.socket.write(encodeWebSocketFrame(0x8, payload));
+    this.socket.end();
+  }
+
+  async deliverHire(input: {
+    signedRequest: {
+      ingressUrl: string;
+      requestKind: string;
+      body: string;
+      bodyDigestSha256: string;
+      headers: Record<string, string>;
+    };
+  }) {
+    const messageId = `relay_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+    return new Promise<{ statusCode: number; body: string; deliveryTarget: string }>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(messageId);
+        reject(new Error("Timed out waiting for agent relay response."));
+      }, RELAY_RESPONSE_TIMEOUT_MS);
+      this.pending.set(messageId, { resolve, reject, timeout });
+      try {
+        this.sendJson({
+          type: "hire_request",
+          messageId,
+          request: {
+            method: "POST",
+            url: input.signedRequest.ingressUrl,
+            requestKind: input.signedRequest.requestKind,
+            headers: input.signedRequest.headers,
+            body: input.signedRequest.body,
+            bodyDigestSha256: input.signedRequest.bodyDigestSha256
+          }
+        });
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(messageId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  handleResponse(message: Record<string, unknown>) {
+    const messageId = typeof message.messageId === "string" ? message.messageId : "";
+    const pending = this.pending.get(messageId);
+    if (!pending) {
+      return;
+    }
+    this.pending.delete(messageId);
+    clearTimeout(pending.timeout);
+    const statusCode = typeof message.statusCode === "number" && Number.isFinite(message.statusCode)
+      ? Math.round(message.statusCode)
+      : 502;
+    const body = typeof message.body === "string" ? message.body.slice(0, RELAY_MESSAGE_MAX_BYTES) : "";
+    pending.resolve({
+      statusCode,
+      body,
+      deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(this.agentId)}`
+    });
+  }
+
+  private receive(chunk: Buffer) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    while (this.buffer.length >= 2) {
+      const first = this.buffer[0]!;
+      const second = this.buffer[1]!;
+      const opcode = first & 0x0f;
+      const masked = (second & 0x80) !== 0;
+      let offset = 2;
+      let payloadLength = second & 0x7f;
+      if (payloadLength === 126) {
+        if (this.buffer.length < offset + 2) {
+          return;
+        }
+        payloadLength = this.buffer.readUInt16BE(offset);
+        offset += 2;
+      } else if (payloadLength === 127) {
+        if (this.buffer.length < offset + 8) {
+          return;
+        }
+        const bigLength = this.buffer.readBigUInt64BE(offset);
+        if (bigLength > BigInt(RELAY_MESSAGE_MAX_BYTES)) {
+          this.close(1009, "message too large");
+          return;
+        }
+        payloadLength = Number(bigLength);
+        offset += 8;
+      }
+      const maskOffset = offset;
+      if (masked) {
+        offset += 4;
+      }
+      if (payloadLength > RELAY_MESSAGE_MAX_BYTES) {
+        this.close(1009, "message too large");
+        return;
+      }
+      if (this.buffer.length < offset + payloadLength) {
+        return;
+      }
+      const mask = masked ? this.buffer.subarray(maskOffset, maskOffset + 4) : undefined;
+      const frame = this.buffer.subarray(offset, offset + payloadLength);
+      this.buffer = this.buffer.subarray(offset + payloadLength);
+      const payload = Buffer.from(frame);
+      if (mask) {
+        for (let index = 0; index < payload.length; index += 1) {
+          payload[index] = payload[index]! ^ mask[index % 4]!;
+        }
+      }
+      if (opcode === 0x8) {
+        this.close();
+        return;
+      }
+      if (opcode === 0x9) {
+        this.sendPong(payload);
+        continue;
+      }
+      if (opcode !== 0x1) {
+        continue;
+      }
+      try {
+        this.onMessage(JSON.parse(payload.toString("utf8")));
+      } catch {
+        this.close(1003, "invalid json");
+        return;
+      }
+    }
+  }
+
+  private rejectPending(message: string) {
+    for (const [messageId, pending] of this.pending.entries()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(message));
+      this.pending.delete(messageId);
+    }
+  }
+}
+
+class AgentRelayHub {
+  private readonly connectionsByAgent = new Map<string, AgentRelayConnection>();
+
+  constructor(private readonly plane: ClawzControlPlane) {}
+
+  isConnected(agentId: string) {
+    return this.connectionsByAgent.get(agentId)?.connected === true;
+  }
+
+  async deliverHire(input: {
+    agentId: string;
+    sessionId: string;
+    signedRequest: {
+      ingressUrl: string;
+      requestKind: string;
+      body: string;
+      bodyDigestSha256: string;
+      headers: Record<string, string>;
+    };
+  }) {
+    const connection = this.connectionsByAgent.get(input.agentId);
+    if (!connection?.connected) {
+      throw new Error("SantaClawz relay is waiting for this agent to connect.");
+    }
+    return connection.deliverHire({ signedRequest: input.signedRequest });
+  }
+
+  async handleUpgrade(request: IncomingMessage, socket: Socket) {
+    const baseUrl = `http://${request.headers.host ?? "localhost"}`;
+    const url = new URL(request.url ?? "/", baseUrl);
+    if (url.pathname !== "/api/agent-relay/connect") {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const key = request.headers["sec-websocket-key"];
+    const agentId = url.searchParams.get("agentId")?.trim() ?? "";
+    const adminKey = extractAdminKeyFromUpgrade(request);
+    if (typeof key !== "string" || key.length === 0 || !agentId || !adminKey) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const auth = await this.plane.authenticateAgentRelayConnection({ agentId, adminKey });
+    socket.write(
+      [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${websocketAcceptKey(key)}`,
+        "\r\n"
+      ].join("\r\n")
+    );
+    const existing = this.connectionsByAgent.get(agentId);
+    existing?.close(1012, "new relay connection");
+    let connection!: AgentRelayConnection;
+    connection = new AgentRelayConnection(
+      auth.agentId,
+      auth.sessionId,
+      adminKey,
+      socket,
+      (message) => {
+        void this.handleMessage(connection, message);
+      },
+      () => {
+        if (this.connectionsByAgent.get(agentId) === connection) {
+          this.connectionsByAgent.delete(agentId);
+          void this.plane.recordAgentRuntimeHeartbeat({
+            agentId,
+            sessionId: auth.sessionId,
+            adminKey,
+            status: "waiting",
+            ttlSeconds: 30,
+            note: "SantaClawz relay disconnected."
+          }).catch(() => undefined);
+        }
+      }
+    );
+    this.connectionsByAgent.set(agentId, connection);
+    await this.plane.recordAgentRuntimeHeartbeat({
+      agentId,
+      sessionId: auth.sessionId,
+      adminKey,
+      status: "live",
+      ttlSeconds: 30,
+      note: "SantaClawz relay connected."
+    });
+    connection.sendJson({
+      type: "relay_ready",
+      agentId: auth.agentId,
+      sessionId: auth.sessionId,
+      serviceKey: auth.serviceKey
+    });
+  }
+
+  private async handleMessage(connection: AgentRelayConnection, message: unknown) {
+    if (!isRecord(message)) {
+      return;
+    }
+    if (message.type === "hire_response") {
+      connection.handleResponse(message);
+      return;
+    }
+    if (message.type === "heartbeat") {
+      await this.plane.recordAgentRuntimeHeartbeat({
+        agentId: connection.agentId,
+        sessionId: connection.sessionId,
+        adminKey: connection.adminKey,
+        status: parseAgentRuntimeStatus(message.status) ?? "live",
+        ttlSeconds: typeof message.ttlSeconds === "number" ? message.ttlSeconds : 30,
+        note: "SantaClawz relay heartbeat."
+      }).catch(() => undefined);
+    }
+  }
+}
+
 const port = Number(process.env.PORT ?? 4318);
 const host = process.env.HOST ?? "127.0.0.1";
+const relayHub = new AgentRelayHub(controlPlane);
+controlPlane.setRelayRuntimeStatusProvider((agentId) => relayHub.isConnected(agentId));
+controlPlane.setRelayHireDeliveryHandler((input) => relayHub.deliverHire(input));
 
-app.listen(port, host, () => {
+const server = createServer(app);
+server.on("upgrade", (request, socket) => {
+  void relayHub.handleUpgrade(request, socket).catch((error) => {
+    socket.write(`HTTP/1.1 400 Bad Request\r\ncontent-type: text/plain\r\n\r\n${error instanceof Error ? error.message : "relay failed"}`);
+    socket.destroy();
+  });
+});
+
+server.listen(port, host, () => {
   console.log(`ClawZ indexer listening on http://${host}:${port}`);
 });

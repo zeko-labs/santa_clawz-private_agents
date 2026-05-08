@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
 import { readinessErrorMessage, runSellerReadiness } from "./lib/santaclawz-readiness.mjs";
@@ -21,6 +23,7 @@ const BOOLEAN_FLAGS = new Set([
   "help",
   "json",
   "serve",
+  "connect-relay",
   "no-verify",
   "no-heartbeat",
   "no-readiness",
@@ -34,6 +37,7 @@ function printUsage() {
   pnpm enroll:openclaw -- \\
     --ticket scz_enroll_... \\
     [--serve] \\
+    [--connect-relay] \\
     [--write-env .env.santaclawz] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
     [--runtime-ingress-url https://your-agent.example.com/hire] \\
@@ -47,9 +51,9 @@ function printUsage() {
     [--json]
 
 Notes:
-  --serve starts the SantaClawz runtime ingress starter and keeps sending heartbeats.
-  The runtime ingress URL can be passed with --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
-  Without --serve, your existing OpenClaw ingress must serve the challenge file path.
+  Default mode is the SantaClawz outbound relay: no public tunnel is required.
+  --serve starts the starter local ingress and --connect-relay keeps an outbound relay open.
+  Advanced self-hosting can pass --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
   By default the command sends heartbeat, anchors pending seller milestones, checks x402 published=true,
   and exits non-zero if the seller is not hireable yet. Use --allow-incomplete for diagnostics only.
 `);
@@ -161,6 +165,9 @@ function serviceKeyFromOpenClawUrl(openClawUrl) {
 }
 
 function serviceKeyForEnrollment(profile, agentId) {
+  if (profile?.runtimeDelivery?.mode === "santaclawz-relay") {
+    return serviceKeySlug(profile?.agentName || String(agentId ?? "").split("--")[0] || "agent");
+  }
   return (
     serviceKeyFromOpenClawUrl(profile?.openClawUrl) ||
     serviceKeySlug(profile?.agentName || String(agentId ?? "").split("--")[0] || "agent")
@@ -197,6 +204,7 @@ function buildAgentEnvFile(input) {
     `CLAWZ_AGENT_ADMIN_KEY=${envQuote(input.adminKey)}`,
     `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(input.ingressToken)}`,
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(input.signingSecret)}`,
+    `CLAWZ_AGENT_RUNTIME_DELIVERY_MODE=${envQuote(input.runtimeDeliveryMode ?? "santaclawz-relay")}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(input.publicAgentUrl)}`,
     `CLAWZ_AGENT_PUBLIC_HIRE_URL=${envQuote(input.publicHireUrl)}`,
     `CLAWZ_AGENT_RUNTIME_INGRESS_URL=${envQuote(input.runtimeIngressUrl)}`,
@@ -225,6 +233,180 @@ async function requestJson(url, init = {}) {
     throw new Error(payload?.error ?? `Request failed with status ${response.status}`);
   }
   return payload;
+}
+
+function websocketUrlForApiBase(apiBase, agentId) {
+  const url = new URL("/api/agent-relay/connect", apiBase);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("agentId", agentId);
+  return url;
+}
+
+function encodeClientWebSocketFrame(payload) {
+  const body = Buffer.from(JSON.stringify(payload), "utf8");
+  const length = body.length;
+  const headerLength = length < 126 ? 2 : length <= 0xffff ? 4 : 10;
+  const header = Buffer.alloc(headerLength);
+  header[0] = 0x81;
+  if (length < 126) {
+    header[1] = 0x80 | length;
+  } else if (length <= 0xffff) {
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(length, 2);
+  } else {
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(length), 2);
+  }
+  const mask = randomBytes(4);
+  const masked = Buffer.from(body);
+  for (let index = 0; index < masked.length; index += 1) {
+    masked[index] = masked[index] ^ mask[index % 4];
+  }
+  return Buffer.concat([header, mask, masked]);
+}
+
+function localHireUrlFor(baseUrl) {
+  const url = new URL(baseUrl);
+  const normalizedPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = normalizedPath.endsWith("/hire")
+    ? normalizedPath
+    : `${normalizedPath.length > 0 ? normalizedPath : ""}/hire`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+async function connectRelay(options) {
+  const relayUrl = websocketUrlForApiBase(options.apiBase, options.agentId);
+  const key = randomBytes(16).toString("base64");
+  const port = relayUrl.port ? Number(relayUrl.port) : relayUrl.protocol === "wss:" ? 443 : 80;
+  const socket = relayUrl.protocol === "wss:"
+    ? tls.connect({ host: relayUrl.hostname, port, servername: relayUrl.hostname })
+    : net.connect({ host: relayUrl.hostname, port });
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("secureConnect", resolve);
+    socket.once("error", reject);
+  });
+  const pathWithSearch = `${relayUrl.pathname}${relayUrl.search}`;
+  socket.write([
+    `GET ${pathWithSearch} HTTP/1.1`,
+    `Host: ${relayUrl.host}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Key: ${key}`,
+    "Sec-WebSocket-Version: 13",
+    `X-ClawZ-Admin-Key: ${options.adminKey}`,
+    "\r\n"
+  ].join("\r\n"));
+  let handshakeBuffer = Buffer.alloc(0);
+  await new Promise((resolve, reject) => {
+    const onData = (chunk) => {
+      handshakeBuffer = Buffer.concat([handshakeBuffer, chunk]);
+      const end = handshakeBuffer.indexOf("\r\n\r\n");
+      if (end === -1) {
+        return;
+      }
+      socket.off("data", onData);
+      const header = handshakeBuffer.subarray(0, end).toString("utf8");
+      if (!header.startsWith("HTTP/1.1 101")) {
+        reject(new Error(`Relay websocket handshake failed: ${header.split("\r\n")[0] ?? "unknown"}`));
+        return;
+      }
+      const rest = handshakeBuffer.subarray(end + 4);
+      if (rest.length > 0) {
+        socket.unshift(rest);
+      }
+      resolve();
+    };
+    socket.on("data", onData);
+    socket.once("error", reject);
+  });
+
+  let frameBuffer = Buffer.alloc(0);
+  const closed = new Promise((resolve) => {
+    socket.once("close", resolve);
+  });
+  const sendJson = (payload) => {
+    socket.write(encodeClientWebSocketFrame(payload));
+  };
+  socket.on("data", (chunk) => {
+    frameBuffer = Buffer.concat([frameBuffer, chunk]);
+    while (frameBuffer.length >= 2) {
+      const opcode = frameBuffer[0] & 0x0f;
+      let offset = 2;
+      let payloadLength = frameBuffer[1] & 0x7f;
+      if (payloadLength === 126) {
+        if (frameBuffer.length < offset + 2) return;
+        payloadLength = frameBuffer.readUInt16BE(offset);
+        offset += 2;
+      } else if (payloadLength === 127) {
+        if (frameBuffer.length < offset + 8) return;
+        payloadLength = Number(frameBuffer.readBigUInt64BE(offset));
+        offset += 8;
+      }
+      if (frameBuffer.length < offset + payloadLength) return;
+      const payload = frameBuffer.subarray(offset, offset + payloadLength);
+      frameBuffer = frameBuffer.subarray(offset + payloadLength);
+      if (opcode === 0x8) {
+        socket.end();
+        return;
+      }
+      if (opcode !== 0x1) {
+        continue;
+      }
+      void handleRelayMessage(JSON.parse(payload.toString("utf8")), options.localHireUrl, sendJson);
+    }
+  });
+  const heartbeatInterval = setInterval(() => {
+    sendJson({ type: "heartbeat", status: "live", ttlSeconds: 30 });
+  }, HEARTBEAT_INTERVAL_MS);
+  socket.once("close", () => {
+    clearInterval(heartbeatInterval);
+  });
+  sendJson({ type: "heartbeat", status: "live", ttlSeconds: 30 });
+  return { socket, closed, relayUrl: relayUrl.toString() };
+}
+
+async function handleRelayMessage(message, localHireUrl, sendJson) {
+  if (!message || typeof message !== "object" || message.type !== "hire_request") {
+    return;
+  }
+  const request = message.request && typeof message.request === "object" ? message.request : {};
+  try {
+    const response = await fetch(localHireUrl, {
+      method: "POST",
+      headers: request.headers && typeof request.headers === "object" ? request.headers : {},
+      body: typeof request.body === "string" ? request.body : "{}"
+    });
+    sendJson({
+      type: "hire_response",
+      messageId: message.messageId,
+      statusCode: response.status,
+      body: await response.text()
+    });
+  } catch (error) {
+    sendJson({
+      type: "hire_response",
+      messageId: message.messageId,
+      statusCode: 502,
+      body: JSON.stringify({
+        schema_version: "santaclawz-return/1.0",
+        request_id: (() => {
+          try {
+            const parsed = JSON.parse(typeof request.body === "string" ? request.body : "{}");
+            return typeof parsed.request_id === "string" ? parsed.request_id : "unknown";
+          } catch {
+            return "unknown";
+          }
+        })(),
+        status: "failed",
+        agent_private: true,
+        incident_id: `relay_forward_${Date.now()}`,
+        error: error instanceof Error ? error.message : "relay forward failed"
+      })
+    });
+  }
 }
 
 async function waitForHealth(baseUrl, logs, timeoutMs = 15_000) {
@@ -331,6 +513,8 @@ const challengeFile =
 const ingressHost = typeof args["ingress-host"] === "string" ? args["ingress-host"].trim() : DEFAULT_INGRESS_HOST;
 const ingressPort = typeof args["ingress-port"] === "string" ? args["ingress-port"].trim() : DEFAULT_INGRESS_PORT;
 const shouldServe = Boolean(args.serve);
+const requestedRuntimeIngressUrl = runtimeIngressUrlFromArgs(args, "");
+const shouldUseRelay = Boolean(args["connect-relay"]) || !requestedRuntimeIngressUrl;
 const shouldVerify = !args["no-verify"];
 const shouldHeartbeat = !args["no-heartbeat"];
 const shouldReadiness = !args["no-readiness"];
@@ -340,6 +524,7 @@ const allowIncomplete = Boolean(args["allow-incomplete"]);
 
 let ingress = null;
 let heartbeatInterval = null;
+let relay = null;
 
 try {
   if (shouldServe) {
@@ -353,10 +538,16 @@ try {
   }
 
   const localOnlyFallback = shouldServe && isLocalUrl(apiBase) ? ingress?.baseUrl : "";
-  const runtimeIngressUrl = runtimeIngressUrlFromArgs(args, localOnlyFallback);
-  if (!runtimeIngressUrl) {
-    throw new Error("Set --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL so SantaClawz can route signed requests to this agent.");
+  const runtimeIngressUrl = shouldUseRelay ? "" : runtimeIngressUrlFromArgs(args, localOnlyFallback);
+  const relayLocalIngressTarget = shouldUseRelay
+    ? shouldServe && ingress?.baseUrl
+      ? ingress.baseUrl
+      : process.env.CLAWZ_LOCAL_INGRESS_URL?.trim() || process.env.OPENCLAW_LOCAL_INGRESS_URL?.trim() || ""
+    : "";
+  if (shouldUseRelay && !relayLocalIngressTarget) {
+    throw new Error("Relay mode needs --serve or CLAWZ_LOCAL_INGRESS_URL so signed jobs have a local ingress target.");
   }
+  const relayLocalHireUrl = shouldUseRelay ? localHireUrlFor(relayLocalIngressTarget) : "";
 
   const preEnrollmentChallenge = buildPreEnrollmentChallenge(ticket, runtimeIngressUrl);
   const preEnrollmentChallengePath = writePrivateFile(
@@ -366,7 +557,7 @@ try {
 
   const redeemed = await requestJson(`${apiBase}/api/enrollment/redeem`, {
     method: "POST",
-    body: JSON.stringify({ ticket, runtimeIngressUrl })
+    body: JSON.stringify({ ticket, ...(runtimeIngressUrl ? { runtimeIngressUrl } : {}) })
   });
   const sessionId = redeemed.session?.sessionId;
   const agentId = redeemed.agentId;
@@ -374,7 +565,7 @@ try {
   const ingressToken = redeemed.ingressAccess?.issuedIngressToken;
   const signingSecret = redeemed.ingressAccess?.issuedSigningSecret;
   const ownershipChallenge = redeemed.issuedOwnershipChallenge;
-  if (!sessionId || !agentId || !adminKey || !ingressToken || !signingSecret || !ownershipChallenge?.challengeResponseJson) {
+  if (!sessionId || !agentId || !adminKey || !ingressToken || !signingSecret) {
     throw new Error("Enrollment redeemed but SantaClawz response was missing required agent secrets or challenge data.");
   }
 
@@ -388,7 +579,8 @@ try {
     signingSecret,
     serviceKey: serviceKeyForEnrollment(redeemed.profile, agentId),
     networkId: redeemed.deployment?.networkId,
-    runtimeIngressUrl,
+    runtimeDeliveryMode: shouldUseRelay ? "santaclawz-relay" : "self-hosted",
+    runtimeIngressUrl: runtimeIngressUrl || "santaclawz-relay",
     publicAgentUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}`,
     publicHireUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}/hire`,
     discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
@@ -397,10 +589,12 @@ try {
   };
 
   const envPath = writePrivateFile(envFile, buildAgentEnvFile(result));
-  const ownershipChallengePath = writePrivateFile(challengeFile, `${ownershipChallenge.challengeResponseJson}\n`);
+  const ownershipChallengePath = ownershipChallenge?.challengeResponseJson
+    ? writePrivateFile(challengeFile, `${ownershipChallenge.challengeResponseJson}\n`)
+    : preEnrollmentChallengePath;
 
   let ownershipVerification = null;
-  if (shouldVerify) {
+  if (shouldVerify && ownershipChallenge?.challengeResponseJson) {
     ownershipVerification = await requestJson(`${apiBase}/api/ownership/verify`, {
       method: "POST",
       headers: {
@@ -408,6 +602,16 @@ try {
       },
       body: JSON.stringify({ sessionId, agentId })
     });
+  }
+
+  if (shouldUseRelay) {
+    relay = await connectRelay({
+      apiBase,
+      agentId,
+      adminKey,
+      localHireUrl: relayLocalHireUrl
+    });
+    console.error(`SantaClawz relay connected at ${relay.relayUrl}. Forwarding signed jobs to ${relayLocalHireUrl}.`);
   }
 
   let heartbeat = null;
@@ -446,6 +650,7 @@ try {
     sessionId,
     publicAgentUrl: result.publicAgentUrl,
     runtimeIngressUrl,
+    runtimeDeliveryMode: result.runtimeDeliveryMode,
     envFile: envPath,
     challengeFile: ownershipChallengePath,
     preEnrollmentChallengeFile: preEnrollmentChallengePath,
@@ -460,9 +665,9 @@ try {
 
   console.log(JSON.stringify(summary, null, 2));
 
-  if (shouldServe) {
+  if (shouldServe || shouldUseRelay) {
     console.error(
-      `SantaClawz enrollment complete for ${agentId}. Runtime ingress is running at ${ingress.baseUrl}. Press Ctrl-C to stop.`
+      `SantaClawz enrollment complete for ${agentId}.${shouldServe && ingress?.baseUrl ? ` Runtime ingress is running at ${ingress.baseUrl}.` : ""} Press Ctrl-C to stop.`
     );
     if (shouldHeartbeat) {
       heartbeatInterval = setInterval(() => {
@@ -475,7 +680,12 @@ try {
       const stop = () => resolve();
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
-      ingress.child.once("exit", stop);
+      if (ingress?.child) {
+        ingress.child.once("exit", stop);
+      }
+      if (relay) {
+        relay.closed.then(stop).catch(stop);
+      }
     });
   }
 } finally {
@@ -484,5 +694,8 @@ try {
   }
   if (ingress) {
     stopChild(ingress.child);
+  }
+  if (relay?.socket) {
+    relay.socket.end();
   }
 }

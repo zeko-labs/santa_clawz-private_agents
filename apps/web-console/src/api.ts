@@ -193,6 +193,9 @@ function normalizeConsoleStateResponse(payload: ConsoleStateResponse): ConsoleSt
     },
     socialAnchorPolicy: payload.profile?.socialAnchorPolicy ?? {
       mode: "shared-batched" as const
+    },
+    runtimeDelivery: payload.profile?.runtimeDelivery ?? {
+      mode: "santaclawz-relay" as const
     }
   };
   return {
@@ -383,6 +386,8 @@ export function createEnrollmentTicket(input: {
   agentName: string;
   representedPrincipal?: string;
   headline: string;
+  openClawUrl?: string;
+  runtimeDelivery?: AgentProfileState["runtimeDelivery"];
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
   paymentProfile?: AgentProfileState["paymentProfile"];

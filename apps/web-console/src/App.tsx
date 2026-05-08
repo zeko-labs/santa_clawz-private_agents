@@ -74,6 +74,8 @@ const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
+const PUBLIC_RUNTIME_URL_GUIDE_URL =
+  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const SANTACLAWZ_X_URL = "https://x.com/santaclawz_ai";
@@ -1024,6 +1026,16 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
     representedPrincipal: typeof input?.representedPrincipal === "string" ? input.representedPrincipal : "",
     headline: typeof input?.headline === "string" ? input.headline : "",
     openClawUrl: typeof input?.openClawUrl === "string" ? input.openClawUrl : "",
+    runtimeDelivery: {
+      mode:
+        input?.runtimeDelivery?.mode === "self-hosted"
+          ? "self-hosted"
+          : "santaclawz-relay",
+      ...(typeof input?.runtimeDelivery?.runtimeIngressUrl === "string" &&
+      input.runtimeDelivery.runtimeIngressUrl.trim().length > 0
+        ? { runtimeIngressUrl: input.runtimeDelivery.runtimeIngressUrl }
+        : {})
+    },
     availability: input?.availability === "archived" ? "archived" : "active",
     ...(typeof input?.archivedAtIso === "string" && input.archivedAtIso.trim().length > 0
       ? { archivedAtIso: input.archivedAtIso }
@@ -1659,10 +1671,18 @@ export function App() {
   }
 
   function buildAgentRegistrationPayload() {
+    const usesSelfHostedRuntime = profileForSave.runtimeDelivery.mode === "self-hosted";
+    const runtimeIngressUrl = profileForSave.runtimeDelivery.runtimeIngressUrl?.trim() ?? "";
     return {
       agentName: profileForSave.agentName,
       representedPrincipal: profileForSave.representedPrincipal,
       headline: profileForSave.headline,
+      runtimeDelivery: profileForSave.runtimeDelivery,
+      ...(usesSelfHostedRuntime && runtimeIngressUrl
+        ? {
+            openClawUrl: runtimeIngressUrl
+          }
+        : {}),
       ...(Object.keys(profileForSave.payoutWallets).length > 0
         ? { payoutWallets: profileForSave.payoutWallets }
         : {}),
@@ -2322,6 +2342,9 @@ export function App() {
     "pnpm enroll:openclaw --",
     `--ticket ${shellQuote(enrollmentTicket?.ticket ?? "scz_enroll_...")}`,
     "--serve",
+    profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
+      ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
+      : "--connect-relay",
     "--write-env .env.santaclawz",
     "--challenge-file .well-known/santaclawz-agent-challenge.json"
   ].join(" ");
@@ -2561,6 +2584,62 @@ export function App() {
                 placeholder="Enter description: e.g. private research, governed execution, and verifiable outputs."
               />
             </label>
+
+            <div className="field field-wide runtime-delivery-card">
+              <div>
+                <div className="field-label-row runtime-delivery-title-row">
+                  <span>Runtime connection</span>
+                  <a className="field-help-link" href={PUBLIC_RUNTIME_URL_GUIDE_URL} target="_blank" rel="noreferrer">
+                    Public URL setup guide
+                  </a>
+                </div>
+                <p className="panel-copy">
+                  Default: SantaClawz relay. Your agent connects outbound, so no public tunnel is required.
+                </p>
+              </div>
+              <label className="advanced-runtime-toggle">
+                <input
+                  type="checkbox"
+                  checked={profile.runtimeDelivery.mode === "self-hosted"}
+                  onChange={(event: { target: { checked: boolean } }) => {
+                    setProfile({
+                      ...profile,
+                      runtimeDelivery: event.target.checked
+                        ? {
+                            mode: "self-hosted",
+                            runtimeIngressUrl: profile.runtimeDelivery.runtimeIngressUrl ?? ""
+                          }
+                        : {
+                            mode: "santaclawz-relay"
+                          }
+                    });
+                  }}
+                />
+                <span>Use my own runtime URL</span>
+              </label>
+              {profile.runtimeDelivery.mode === "self-hosted" ? (
+                <label className="field self-hosted-runtime-field">
+                  <span>Advanced runtime URL</span>
+                  <input
+                    className="text-input"
+                    value={profile.runtimeDelivery.runtimeIngressUrl ?? ""}
+                    onChange={(event: ValueInputEvent) => {
+                      setProfile({
+                        ...profile,
+                        runtimeDelivery: {
+                          mode: "self-hosted",
+                          runtimeIngressUrl: event.target.value
+                        }
+                      });
+                    }}
+                    placeholder="https://your-stable-runtime.example.com/hire"
+                  />
+                  <small>
+                    Only use this for a stable self-hosted ingress or named tunnel. Otherwise keep SantaClawz relay.
+                  </small>
+                </label>
+              ) : null}
+            </div>
 
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">
@@ -2875,7 +2954,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. SantaClawz reserves the public URL; the agent supplies its private ingress, stores its key locally, and keeps heartbeat status live.
+                Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. SantaClawz reserves the public URL; the agent connects by relay unless you choose a self-hosted runtime URL.
               </p>
             </div>
 

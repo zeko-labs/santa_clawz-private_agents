@@ -333,7 +333,7 @@ export interface AgentOwnershipVerificationState {
   challengeId: string;
   challengePath: string;
   challengeUrl: string;
-  verificationMethod: "well-known-http";
+  verificationMethod: "well-known-http" | "santaclawz-relay-ticket";
   verifiedAtIso: string;
   verifiedPublicClawzUrl: string;
   challengeResponseDigestSha256: string;
@@ -472,6 +472,10 @@ export interface AgentProfileState {
   representedPrincipal: string;
   headline: string;
   openClawUrl: string;
+  runtimeDelivery: {
+    mode: "santaclawz-relay" | "self-hosted";
+    runtimeIngressUrl?: string;
+  };
   availability: "active" | "archived";
   archivedAtIso?: string;
   payoutWallets: AgentPayoutWallets;
@@ -491,6 +495,7 @@ export interface AgentRegistryEntry {
   publicAgentUrl?: string;
   publicHireUrl?: string;
   openClawUrl: string;
+  runtimeDeliveryMode?: "santaclawz-relay" | "self-hosted";
   serviceKey: string;
   trustModeId: TrustModeId;
   trustModeLabel: string;
@@ -589,6 +594,7 @@ export interface AgentRuntimeAvailabilityState {
   agentId: string;
   sessionId: string;
   openClawUrl: string;
+  runtimeDeliveryMode?: "santaclawz-relay" | "self-hosted";
   checkedAtIso: string;
   reachable: boolean;
   status: "online" | "offline" | "not-configured" | "check-disabled";

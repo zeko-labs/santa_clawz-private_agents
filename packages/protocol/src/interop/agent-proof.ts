@@ -62,7 +62,7 @@ export interface AgentOwnershipClaim {
   legacyRegistration: boolean;
   canReclaim: boolean;
   challengePath: string;
-  verificationMethod?: "well-known-http";
+  verificationMethod?: "well-known-http" | "santaclawz-relay-ticket";
   challengeId?: string;
   challengeUrl?: string;
   verifiedAtIso?: string;

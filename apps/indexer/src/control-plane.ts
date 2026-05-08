@@ -77,6 +77,24 @@ const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 type HireIngressRequestKind = SantaClawzHireRequestType;
+type RuntimeDeliveryMode = AgentProfileState["runtimeDelivery"]["mode"];
+interface SignedHireIngressRequest {
+  ingressUrl: string;
+  requestKind: HireIngressRequestKind;
+  body: string;
+  bodyDigestSha256: string;
+  headers: Record<string, string>;
+}
+type RelayRuntimeStatusProvider = (agentId: string) => boolean;
+type RelayHireDeliveryHandler = (input: {
+  agentId: string;
+  sessionId: string;
+  signedRequest: SignedHireIngressRequest;
+}) => Promise<{
+  statusCode: number;
+  body: string;
+  deliveryTarget: string;
+}>;
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
   "first-turn": [
@@ -396,7 +414,8 @@ interface RegisterAgentOptions {
   agentName: string;
   representedPrincipal?: string;
   headline: string;
-  openClawUrl: string;
+  openClawUrl?: string;
+  runtimeDelivery?: Partial<AgentProfileState["runtimeDelivery"]>;
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
   paymentProfile?: Partial<AgentProfileState["paymentProfile"]>;
@@ -427,7 +446,7 @@ interface EnrollmentTicketIssueResult {
 }
 
 interface EnrollmentTicketRedeemResult extends ConsoleStateResponse {
-  issuedOwnershipChallenge: OwnershipChallengeIssueResult["issuedOwnershipChallenge"];
+  issuedOwnershipChallenge?: OwnershipChallengeIssueResult["issuedOwnershipChallenge"];
 }
 
 interface OwnershipActionOptions {
@@ -449,9 +468,10 @@ interface DeleteAgentRegistrationOptions {
   reason?: string;
 }
 
-type AgentProfileInput = Partial<Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay">> & {
+type AgentProfileInput = Partial<Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay" | "runtimeDelivery">> & {
   missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
   paymentProfile?: Partial<AgentProfileState["paymentProfile"]>;
+  runtimeDelivery?: Partial<AgentProfileState["runtimeDelivery"]>;
   socialAnchorPolicy?: Partial<AgentProfileState["socialAnchorPolicy"]>;
   payoutAddress?: unknown;
 };
@@ -483,6 +503,7 @@ interface AgentRuntimeReachabilityState {
   agentId: string;
   sessionId: string;
   openClawUrl: string;
+  runtimeDeliveryMode: NonNullable<AgentRuntimeAvailabilityState["runtimeDeliveryMode"]>;
   checkedAtIso: string;
   reachable: boolean;
   status: AgentRuntimeAvailabilityState["status"];
@@ -767,7 +788,35 @@ function serviceKeySlug(value: string): string {
   return normalized.length > 0 ? normalized : "agent";
 }
 
-function serviceKeyForAgent(profile: Pick<AgentProfileState, "agentName" | "openClawUrl">, agentId: string): string {
+function normalizeRuntimeDelivery(input: Partial<AgentProfileState["runtimeDelivery"]> | undefined, fallback?: AgentProfileState["runtimeDelivery"]): AgentProfileState["runtimeDelivery"] {
+  const rawMode = input?.mode ?? fallback?.mode ?? "santaclawz-relay";
+  const mode: RuntimeDeliveryMode = rawMode === "self-hosted" ? "self-hosted" : "santaclawz-relay";
+  const runtimeIngressUrl =
+    typeof input?.runtimeIngressUrl === "string" && input.runtimeIngressUrl.trim().length > 0
+      ? input.runtimeIngressUrl.trim().slice(0, 280)
+      : typeof fallback?.runtimeIngressUrl === "string" && fallback.runtimeIngressUrl.trim().length > 0
+        ? fallback.runtimeIngressUrl.trim().slice(0, 280)
+        : undefined;
+
+  return {
+    mode,
+    ...(mode === "self-hosted" && runtimeIngressUrl ? { runtimeIngressUrl } : {})
+  };
+}
+
+function isRelayDeliveryProfile(profile: Pick<AgentProfileState, "runtimeDelivery">) {
+  return profile.runtimeDelivery.mode === "santaclawz-relay";
+}
+
+function relayDeliveryTargetForAgent(agentId: string) {
+  return `santaclawz-relay://agent/${encodeURIComponent(agentId)}`;
+}
+
+function serviceKeyForAgent(profile: Pick<AgentProfileState, "agentName" | "openClawUrl" | "runtimeDelivery">, agentId: string): string {
+  if (isRelayDeliveryProfile(profile)) {
+    return serviceKeySlug(profile.agentName || agentId.split("--")[0] || agentId);
+  }
+
   try {
     const url = new URL(profile.openClawUrl);
     const pathSegments = url.pathname
@@ -979,6 +1028,9 @@ function buildDefaultProfile(trustModeId: TrustModeId): AgentProfileState {
     representedPrincipal: "Existing OpenClaw operator",
     headline: "Private, verifiable agent work on Zeko.",
     openClawUrl: "",
+    runtimeDelivery: {
+      mode: "santaclawz-relay"
+    },
     availability: "active",
     payoutWallets: {},
     missionAuthOverlay: {
@@ -1539,6 +1591,8 @@ export class ClawzControlPlane {
   private sharedSocialAnchorIntervalHandle: ReturnType<typeof setInterval> | null = null;
   private readonly sharedSocialAnchorIntervalMs: number;
   private readonly prioritySocialAnchorRuns = new Map<string, Promise<void>>();
+  private relayRuntimeStatusProvider: RelayRuntimeStatusProvider | undefined;
+  private relayHireDeliveryHandler: RelayHireDeliveryHandler | undefined;
 
   constructor(private readonly baseDir: string) {
     this.workspaceRoot = findWorkspaceRoot(path.dirname(fileURLToPath(import.meta.url)));
@@ -1579,6 +1633,14 @@ export class ClawzControlPlane {
     const controlPlane = new ClawzControlPlane(baseDir);
     await controlPlane.ensureBootstrapped();
     return controlPlane;
+  }
+
+  setRelayRuntimeStatusProvider(provider: RelayRuntimeStatusProvider) {
+    this.relayRuntimeStatusProvider = provider;
+  }
+
+  setRelayHireDeliveryHandler(handler: RelayHireDeliveryHandler) {
+    this.relayHireDeliveryHandler = handler;
   }
 
   startSharedSocialAnchorDrainer(): void {
@@ -2400,10 +2462,27 @@ export class ClawzControlPlane {
         agentId,
         sessionId: input.sessionId,
         openClawUrl,
+        runtimeDeliveryMode: input.profile.runtimeDelivery.mode,
         checkedAtIso,
         reachable: false,
         status: "not-configured",
         reason: "This agent has no PublicClawz URL configured."
+      };
+    }
+
+    if (isRelayDeliveryProfile(input.profile)) {
+      const connected = this.relayRuntimeStatusProvider?.(agentId) ?? false;
+      return {
+        agentId,
+        sessionId: input.sessionId,
+        openClawUrl,
+        runtimeDeliveryMode: input.profile.runtimeDelivery.mode,
+        checkedAtIso,
+        reachable: connected,
+        status: connected ? "online" : "offline",
+        reason: connected
+          ? "SantaClawz relay has an active outbound agent connection."
+          : "SantaClawz relay is waiting for this agent to connect."
       };
     }
 
@@ -2414,6 +2493,7 @@ export class ClawzControlPlane {
         agentId,
         sessionId: input.sessionId,
         openClawUrl,
+        runtimeDeliveryMode: input.profile.runtimeDelivery.mode,
         checkedAtIso,
         reachable: false,
         status: "offline",
@@ -2426,6 +2506,7 @@ export class ClawzControlPlane {
         agentId,
         sessionId: input.sessionId,
         openClawUrl,
+        runtimeDeliveryMode: input.profile.runtimeDelivery.mode,
         checkedAtIso,
         reachable: true,
         status: "check-disabled",
@@ -2448,6 +2529,7 @@ export class ClawzControlPlane {
         agentId,
         sessionId: input.sessionId,
         openClawUrl,
+        runtimeDeliveryMode: input.profile.runtimeDelivery.mode,
         checkedAtIso,
         reachable,
         status: reachable ? "online" : "offline",
@@ -2462,6 +2544,7 @@ export class ClawzControlPlane {
         agentId,
         sessionId: input.sessionId,
         openClawUrl,
+        runtimeDeliveryMode: input.profile.runtimeDelivery.mode,
         checkedAtIso,
         reachable: false,
         status: "offline",
@@ -2502,8 +2585,10 @@ export class ClawzControlPlane {
     requesterContact: string;
     budgetMina?: string;
     paymentAuthorization: HirePaymentAuthorization;
-  }) {
-    const ingressUrl = this.hireIngressUrlFor(input.profile.openClawUrl);
+  }): SignedHireIngressRequest {
+    const ingressUrl = isRelayDeliveryProfile(input.profile)
+      ? relayDeliveryTargetForAgent(input.agentId)
+      : this.hireIngressUrlFor(input.profile.openClawUrl);
     const requestType: HireIngressRequestKind =
       isQuotedPricingMode(input.profile.paymentProfile.pricingMode) && input.paymentAuthorization.status === "not-required"
         ? "quote_intake"
@@ -2740,12 +2825,26 @@ export class ClawzControlPlane {
       };
     }
 
-    const response = await fetch(signedRequest.ingressUrl, {
-      method: "POST",
-      headers: signedRequest.headers,
-      body: signedRequest.body,
-      signal: AbortSignal.timeout(HIRE_INGRESS_TIMEOUT_MS)
-    });
+    const relayResponse = isRelayDeliveryProfile(input.profile)
+      ? await this.forwardHireRequestToRelay({
+          agentId: input.agentId,
+          sessionId: input.sessionId,
+          signedRequest
+        })
+      : undefined;
+
+    const response = relayResponse
+      ? {
+          ok: relayResponse.statusCode >= 200 && relayResponse.statusCode < 300,
+          status: relayResponse.statusCode,
+          text: async () => relayResponse.body
+        }
+      : await fetch(signedRequest.ingressUrl, {
+          method: "POST",
+          headers: signedRequest.headers,
+          body: signedRequest.body,
+          signal: AbortSignal.timeout(HIRE_INGRESS_TIMEOUT_MS)
+        });
 
     if (!response.ok) {
       const responseText = await response.text().catch(() => "");
@@ -2763,11 +2862,22 @@ export class ClawzControlPlane {
     return {
       deliveryStatus: "forwarded" as const,
       requestKind: signedRequest.requestKind,
-      ingressUrl: signedRequest.ingressUrl,
+      ingressUrl: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
       bodyDigestSha256: signedRequest.bodyDigestSha256,
       responseStatusCode: response.status,
       ...(protocolReturn ? { protocolReturn } : {})
     };
+  }
+
+  private async forwardHireRequestToRelay(input: {
+    agentId: string;
+    sessionId: string;
+    signedRequest: SignedHireIngressRequest;
+  }) {
+    if (!this.relayHireDeliveryHandler) {
+      throw new Error("SantaClawz relay is not enabled on this backend.");
+    }
+    return this.relayHireDeliveryHandler(input);
   }
 
   private buildOwnershipChallengeRecord(openClawUrl: string, issuedAtIso: string): SessionOwnershipChallengeRecord {
@@ -2856,7 +2966,8 @@ export class ClawzControlPlane {
       {
         agentName: options.agentName,
         headline: options.headline,
-        openClawUrl: options.openClawUrl,
+        ...(options.openClawUrl ? { openClawUrl: options.openClawUrl } : {}),
+        ...(options.runtimeDelivery ? { runtimeDelivery: options.runtimeDelivery } : {}),
         ...(options.payoutWallets ? { payoutWallets: options.payoutWallets } : {}),
         ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
         ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
@@ -2877,6 +2988,7 @@ export class ClawzControlPlane {
       representedPrincipal: profile.representedPrincipal,
       headline: profile.headline,
       openClawUrl: profile.openClawUrl,
+      runtimeDelivery: profile.runtimeDelivery,
       payoutWallets: profile.payoutWallets,
       missionAuthOverlay: profile.missionAuthOverlay,
       paymentProfile: profile.paymentProfile,
@@ -2960,6 +3072,13 @@ export class ClawzControlPlane {
         ? input.preferredProvingLocation
         : fallback.preferredProvingLocation;
     const legacyPayoutAddress = (input as { payoutAddress?: unknown }).payoutAddress;
+    const openClawUrl = typeof input.openClawUrl === "string" ? input.openClawUrl.trim().slice(0, 280) : fallback.openClawUrl;
+    const runtimeDelivery =
+      input.runtimeDelivery
+        ? normalizeRuntimeDelivery(input.runtimeDelivery, fallback.runtimeDelivery)
+        : openClawUrl.trim().length > 0 && fallback.runtimeDelivery.mode === "santaclawz-relay"
+          ? { mode: "self-hosted" as const, runtimeIngressUrl: openClawUrl }
+          : normalizeRuntimeDelivery(undefined, fallback.runtimeDelivery);
     const availability =
       input.availability === "archived" || input.availability === "active" ? input.availability : fallback.availability;
     const archivedAtIso =
@@ -2976,7 +3095,8 @@ export class ClawzControlPlane {
           ? input.representedPrincipal.trim().slice(0, 160)
           : fallback.representedPrincipal,
       headline: typeof input.headline === "string" ? input.headline.trim().slice(0, 280) : fallback.headline,
-      openClawUrl: typeof input.openClawUrl === "string" ? input.openClawUrl.trim().slice(0, 280) : fallback.openClawUrl,
+      openClawUrl,
+      runtimeDelivery,
       availability,
       ...(archivedAtIso ? { archivedAtIso } : {}),
       payoutWallets: sanitizePayoutWallets(input.payoutWallets, fallback.payoutWallets, legacyPayoutAddress),
@@ -5100,7 +5220,9 @@ export class ClawzControlPlane {
       trustModeId,
       ...(heartbeatRecord ? { record: heartbeatRecord } : {})
     });
-    const runtimeStatus: AgentRuntimeStatus = reachability.reachable ? heartbeat.status : "offline";
+    const relayAgentId = this.agentIdForSession(state, sessionId, trustModeId);
+    const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(relayAgentId) ?? false);
+    const runtimeStatus: AgentRuntimeStatus = relayConnected ? "live" : reachability.reachable ? heartbeat.status : "offline";
     return {
       ...reachability,
       runtimeStatus,
@@ -5150,6 +5272,31 @@ export class ClawzControlPlane {
     }, receivedAtIso);
   }
 
+  async authenticateAgentRelayConnection(options: {
+    agentId: string;
+    adminKey?: string;
+  }): Promise<{
+    agentId: string;
+    sessionId: string;
+    serviceKey: string;
+  }> {
+    const state = await this.loadState();
+    const sessionId = this.resolveSessionIdFromAgentId(state, options.agentId);
+    if (!sessionId) {
+      throw new Error(`Unknown agent: ${options.agentId}`);
+    }
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const profile = this.profileForSession(state, sessionId);
+    if (!isRelayDeliveryProfile(profile)) {
+      throw new Error("This agent is configured for self-hosted runtime URL delivery, not SantaClawz relay delivery.");
+    }
+    return {
+      agentId: options.agentId,
+      sessionId,
+      serviceKey: serviceKeyForAgent(profile, options.agentId)
+    };
+  }
+
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
@@ -5190,6 +5337,7 @@ export class ClawzControlPlane {
           ...(heartbeatRecord ? { record: heartbeatRecord } : {})
         });
         const agentId = this.agentIdForSession(state, sessionId, trustModeId);
+        const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
         return {
           agentId,
           sessionId,
@@ -5200,6 +5348,7 @@ export class ClawzControlPlane {
           publicAgentUrl: publicAgentUrlFor(agentId),
           publicHireUrl: publicAgentHireUrlFor(agentId),
           openClawUrl: "",
+          runtimeDeliveryMode: profile.runtimeDelivery.mode,
           serviceKey: serviceKeyForAgent(profile, agentId),
           trustModeId,
           trustModeLabel: trustMode.label,
@@ -5235,10 +5384,14 @@ export class ClawzControlPlane {
           ownershipVerified: ownership.status === "verified",
           availability: profile.availability,
           ...(profile.archivedAtIso ? { archivedAtIso: profile.archivedAtIso } : {}),
-          runtimeStatus: runtimeHeartbeat.status,
+          runtimeStatus: relayConnected ? "live" : runtimeHeartbeat.status,
           runtimeStatusUpdatedAtIso: runtimeHeartbeat.checkedAtIso,
           ...(runtimeHeartbeat.lastHeartbeatAtIso ? { lastHeartbeatAtIso: runtimeHeartbeat.lastHeartbeatAtIso } : {}),
-          ...(runtimeHeartbeat.reason ? { runtimeStatusReason: runtimeHeartbeat.reason } : {}),
+          ...(relayConnected
+            ? { runtimeStatusReason: "SantaClawz relay has an active outbound agent connection." }
+            : runtimeHeartbeat.reason
+              ? { runtimeStatusReason: runtimeHeartbeat.reason }
+              : {}),
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "confirmed").length,
@@ -5296,13 +5449,30 @@ export class ClawzControlPlane {
     const deployment = await this.getDeploymentState();
     const issuedAtIso = new Date().toISOString();
     const expiresAtIso = new Date(Date.parse(issuedAtIso) + ENROLLMENT_TICKET_TTL_MS).toISOString();
-    const profile = this.buildEnrollmentTicketProfile(options, deployment);
-    await this.assertAgentProfileIsValid(state, this.sanitizeProfileInput(profile.trustModeId ?? "private", profile, buildDefaultProfile(profile.trustModeId ?? "private")));
-
+    const requestedProfile = this.buildEnrollmentTicketProfile(options, deployment);
     const reservedSessionId = `session_agent_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    const reservedAgentId = buildStableAgentId(profile.agentName, reservedSessionId);
+    const reservedAgentId = buildStableAgentId(requestedProfile.agentName, reservedSessionId);
     const publicAgentUrl = publicAgentUrlFor(reservedAgentId);
     const publicHireUrl = publicAgentHireUrlFor(reservedAgentId);
+    const requestedOpenClawUrl = requestedProfile.openClawUrl?.trim() ?? "";
+    const profile: RegisterAgentOptions = requestedOpenClawUrl.length > 0
+      ? {
+          ...requestedProfile,
+          openClawUrl: requestedOpenClawUrl,
+          runtimeDelivery: {
+            mode: "self-hosted",
+            runtimeIngressUrl: requestedOpenClawUrl
+          }
+        }
+      : {
+          ...requestedProfile,
+          openClawUrl: publicAgentUrl,
+          runtimeDelivery: {
+            mode: "santaclawz-relay"
+          }
+        };
+    await this.assertAgentProfileIsValid(state, this.sanitizeProfileInput(profile.trustModeId ?? "private", profile, buildDefaultProfile(profile.trustModeId ?? "private")));
+
     const ticketId = buildEnrollmentTicketId();
     const ticketSecret = buildEnrollmentTicketSecret();
     const ticket = buildEnrollmentTicketToken(ticketId, ticketSecret);
@@ -5350,7 +5520,7 @@ export class ClawzControlPlane {
     };
   }
 
-  async redeemEnrollmentTicket(ticket: string, options: { openClawUrl: string }): Promise<EnrollmentTicketRedeemResult> {
+  async redeemEnrollmentTicket(ticket: string, options: { openClawUrl?: string }): Promise<EnrollmentTicketRedeemResult> {
     const parsedTicket = parseEnrollmentTicketToken(ticket);
     const state = await this.loadState();
     const record = state.enrollmentTicketsById[parsedTicket.ticketId];
@@ -5367,16 +5537,28 @@ export class ClawzControlPlane {
       throw new Error("Enrollment ticket secret was rejected.");
     }
 
-    const openClawUrl = options.openClawUrl.trim();
-    if (!openClawUrl) {
-      throw new Error("OpenClaw runtime ingress URL is required to redeem this enrollment ticket.");
-    }
+    const openClawUrl = options.openClawUrl?.trim() ?? "";
+    const usesSelfHostedIngress = openClawUrl.length > 0;
     const profileForRegistration: RegisterAgentOptions = {
       ...record.profile,
-      openClawUrl
+      ...(usesSelfHostedIngress
+        ? {
+            openClawUrl,
+            runtimeDelivery: {
+              mode: "self-hosted",
+              runtimeIngressUrl: openClawUrl
+            }
+          }
+        : {
+            runtimeDelivery: {
+              mode: "santaclawz-relay"
+            }
+          })
     };
 
-    await this.assertEnrollmentTicketChallengeServed(record, parsedTicket.ticket, openClawUrl);
+    if (usesSelfHostedIngress) {
+      await this.assertEnrollmentTicketChallengeServed(record, parsedTicket.ticket, openClawUrl);
+    }
 
     const registeredState = await this.registerAgent(profileForRegistration, {
       sessionId: record.reservedSessionId,
@@ -5390,17 +5572,19 @@ export class ClawzControlPlane {
       throw new Error("Enrollment registered the agent but did not receive required admin or ingress secrets.");
     }
 
-    const challengeResult = await this.issueOwnershipChallenge({
-      sessionId,
-      agentId,
-      adminKey: issuedAdminKey
-    });
+    const challengeResult = usesSelfHostedIngress
+      ? await this.issueOwnershipChallenge({
+          sessionId,
+          agentId,
+          adminKey: issuedAdminKey
+        })
+      : undefined;
     const redeemedAtIso = new Date().toISOString();
-    const latestState = await this.loadState();
+    const stateBeforeTicketRedeemSave = await this.loadState();
     await this.saveState({
-      ...latestState,
+      ...stateBeforeTicketRedeemSave,
       enrollmentTicketsById: {
-        ...latestState.enrollmentTicketsById,
+        ...stateBeforeTicketRedeemSave.enrollmentTicketsById,
         [record.ticketId]: {
           ...record,
           profile: profileForRegistration,
@@ -5412,11 +5596,27 @@ export class ClawzControlPlane {
       }
     });
 
+    if (!usesSelfHostedIngress) {
+      await this.verifyRelayEnrollmentOwnership({
+        sessionId,
+        agentId,
+        ticketId: record.ticketId,
+        publicAgentUrl: record.publicAgentUrl,
+        verifiedAtIso: redeemedAtIso
+      });
+    }
+
+    const redeemedState = await this.getConsoleState({
+      sessionId,
+      adminKey: issuedAdminKey,
+      exposeIssuedAdminKey: issuedAdminKey,
+      ...(ingressAccess.issuedIngressToken ? { exposeIssuedIngressToken: ingressAccess.issuedIngressToken } : {}),
+      ...(ingressAccess.issuedSigningSecret ? { exposeIssuedSigningSecret: ingressAccess.issuedSigningSecret } : {})
+    });
+
     return {
-      ...challengeResult.state,
-      adminAccess: registeredState.adminAccess,
-      ingressAccess,
-      issuedOwnershipChallenge: challengeResult.issuedOwnershipChallenge
+      ...redeemedState,
+      ...(challengeResult ? { issuedOwnershipChallenge: challengeResult.issuedOwnershipChallenge } : {})
     };
   }
 
@@ -5432,7 +5632,8 @@ export class ClawzControlPlane {
       {
         agentName: options.agentName,
         headline: options.headline,
-        openClawUrl: options.openClawUrl,
+        ...(options.openClawUrl ? { openClawUrl: options.openClawUrl } : {}),
+        ...(options.runtimeDelivery ? { runtimeDelivery: options.runtimeDelivery } : {}),
         ...(options.payoutWallets ? { payoutWallets: options.payoutWallets } : {}),
         ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
         ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
@@ -5448,7 +5649,9 @@ export class ClawzControlPlane {
       throw new Error("agentName, headline, and openClawUrl are required.");
     }
     await this.assertAgentProfileIsValid(state, profile);
-    await this.validatePublicClawzAgentHealth(profile.openClawUrl);
+    if (!isRelayDeliveryProfile(profile)) {
+      await this.validatePublicClawzAgentHealth(profile.openClawUrl);
+    }
 
     const agentId = reservedIds?.agentId ?? buildStableAgentId(profile.agentName, sessionId);
     const adminKey = buildAdminKey();
@@ -5547,6 +5750,9 @@ export class ClawzControlPlane {
     const sessionId = this.resolveOwnedSessionId(state, options);
 
     const profile = this.profileForSession(state, sessionId);
+    if (isRelayDeliveryProfile(profile)) {
+      throw new Error("This agent uses the SantaClawz relay. Ownership is verified when the enrollment ticket is redeemed by the agent.");
+    }
     if (!profile.openClawUrl.trim()) {
       throw new Error("This agent still needs a PublicClawz agent URL before ownership can be verified.");
     }
@@ -5604,6 +5810,9 @@ export class ClawzControlPlane {
     const sessionId = this.resolveOwnedSessionId(state, options);
 
     const profile = this.profileForSession(state, sessionId);
+    if (isRelayDeliveryProfile(profile)) {
+      throw new Error("This agent uses the SantaClawz relay. Ownership is verified when the enrollment ticket is redeemed by the agent.");
+    }
     if (!profile.openClawUrl.trim()) {
       throw new Error("This agent still needs a PublicClawz agent URL before ownership can be verified.");
     }
@@ -5709,6 +5918,79 @@ export class ClawzControlPlane {
         : options.adminKey
           ? { adminKey: options.adminKey }
           : {})
+    });
+  }
+
+  private async verifyRelayEnrollmentOwnership(input: {
+    sessionId: string;
+    agentId: string;
+    ticketId: string;
+    publicAgentUrl: string;
+    verifiedAtIso: string;
+  }) {
+    const state = await this.loadState();
+    const profile = this.profileForSession(state, input.sessionId);
+    const challengeResponseDigestSha256 = canonicalDigest({
+      ticketId: input.ticketId,
+      agentId: input.agentId,
+      publicAgentUrl: input.publicAgentUrl,
+      runtimeDeliveryMode: "santaclawz-relay"
+    }).sha256Hex;
+    const attestationDigestSha256 = canonicalDigest({
+      sessionId: input.sessionId,
+      agentId: input.agentId,
+      publicClawzUrl: input.publicAgentUrl,
+      challengeId: input.ticketId,
+      challengePath: "/api/agent-relay/connect",
+      challengeUrl: input.publicAgentUrl,
+      verificationMethod: "santaclawz-relay-ticket",
+      challengeResponseDigestSha256,
+      verifiedAtIso: input.verifiedAtIso
+    }).sha256Hex;
+    const verification: AgentOwnershipVerificationState = {
+      challengeId: input.ticketId,
+      challengePath: "/api/agent-relay/connect",
+      challengeUrl: input.publicAgentUrl,
+      verificationMethod: "santaclawz-relay-ticket",
+      verifiedAtIso: input.verifiedAtIso,
+      verifiedPublicClawzUrl: input.publicAgentUrl,
+      challengeResponseDigestSha256,
+      attestationDigestSha256
+    };
+    await this.saveState({
+      ...state,
+      ownershipBySession: {
+        ...state.ownershipBySession,
+        [input.sessionId]: {
+          status: "verified",
+          legacyRegistration: false,
+          canReclaim: false,
+          verification
+        }
+      }
+    });
+    await this.appendEvent(
+      "SessionCheckpointed",
+      {
+        sessionId: input.sessionId,
+        ownershipVerified: true,
+        relayEnrollmentVerified: true,
+        ownershipChallengeId: input.ticketId
+      },
+      input.verifiedAtIso
+    );
+    await this.enqueueSocialAnchorCandidate({
+      sessionId: input.sessionId,
+      kind: "ownership-verified",
+      summary: `${profile.agentName} verified its SantaClawz relay enrollment.`,
+      occurredAtIso: input.verifiedAtIso,
+      payload: {
+        agentId: input.agentId,
+        ticketId: input.ticketId,
+        attestationDigestSha256,
+        verifiedPublicClawzUrl: input.publicAgentUrl,
+        runtimeDeliveryMode: "santaclawz-relay"
+      }
     });
   }
 
@@ -6013,7 +6295,7 @@ export class ClawzControlPlane {
       ...currentProfile
     }), deployment);
     await this.assertAgentProfileIsValid(state, nextProfile, focus.sessionId);
-    if (nextProfile.openClawUrl !== currentProfile.openClawUrl) {
+    if (nextProfile.openClawUrl !== currentProfile.openClawUrl && !isRelayDeliveryProfile(nextProfile)) {
       await this.validatePublicClawzAgentHealth(nextProfile.openClawUrl);
     }
     const nextState: ConsolePersistenceState = {
