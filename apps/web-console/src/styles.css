@@ -2115,8 +2115,25 @@ h3 {
   grid-template-columns: minmax(108px, auto) minmax(0, 1fr);
   align-items: stretch;
   min-height: 54px;
-  border-radius: 18px;
-  filter: drop-shadow(0 10px 22px rgba(18, 35, 54, 0.05));
+  border: 1px solid rgba(18, 35, 54, 0.13);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 10px 22px rgba(18, 35, 54, 0.045);
+  overflow: hidden;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.public-url-control:focus-within {
+  border-color: rgba(18, 35, 54, 0.24);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 12px 28px rgba(18, 35, 54, 0.07);
 }
 
 .url-mode-button {
@@ -2126,20 +2143,25 @@ h3 {
   gap: 8px;
   min-width: 108px;
   padding: 0 18px;
-  border: 1px solid rgba(18, 35, 54, 0.16);
-  border-radius: 18px 0 0 18px;
+  border: 0;
+  border-right: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 18px;
+  margin: 5px 0 5px 5px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(247, 249, 249, 0.96));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 248, 0.94));
   color: var(--ink);
   font-size: 0.88rem;
+  line-height: 1;
   font-weight: 800;
   text-transform: lowercase;
   cursor: pointer;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 10px 24px rgba(18, 35, 54, 0.08);
+    0 6px 14px rgba(18, 35, 54, 0.055);
   transition:
+    transform 160ms ease,
     background 160ms ease,
+    box-shadow 160ms ease,
     color 160ms ease,
     border-color 160ms ease;
 }
@@ -2148,11 +2170,15 @@ h3 {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 1), rgba(250, 252, 252, 1));
   color: var(--ink);
-  border-color: rgba(18, 35, 54, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 18px rgba(18, 35, 54, 0.075);
+  transform: translateY(-1px);
 }
 
 .url-lock-icon {
   position: relative;
+  top: 1px;
   width: 10px;
   height: 8px;
   border: 1.5px solid currentColor;
@@ -2179,25 +2205,22 @@ h3 {
 
 .public-url-input {
   min-height: 54px;
-  border: 1px solid rgba(18, 35, 54, 0.16);
-  border-left: 0;
-  border-radius: 0 18px 18px 0;
-  background: rgba(255, 255, 255, 0.96);
+  border: 0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.86);
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .public-url-control.auto .public-url-input {
   background:
-    repeating-linear-gradient(
-      -45deg,
-      rgba(18, 35, 54, 0.042) 0,
-      rgba(18, 35, 54, 0.042) 8px,
-      rgba(239, 244, 243, 0.88) 8px,
-      rgba(239, 244, 243, 0.88) 16px
-    ),
-    rgba(237, 242, 242, 0.96);
+    linear-gradient(90deg, rgba(18, 35, 54, 0.045), transparent 18px),
+    linear-gradient(180deg, rgba(244, 248, 248, 0.82), rgba(250, 252, 252, 0.9));
   color: var(--muted);
   cursor: default;
-  box-shadow: inset 0 1px 9px rgba(18, 35, 54, 0.045);
+  box-shadow: inset 5px 0 14px rgba(18, 35, 54, 0.035);
 }
 
 .public-url-control.manual .url-mode-button {
@@ -2205,7 +2228,6 @@ h3 {
 }
 
 .public-url-control.manual .public-url-input {
-  border-left: 0;
   background: rgba(255, 255, 255, 1);
 }
 
