@@ -2663,28 +2663,29 @@ export function App() {
                   />
                   <span>{profile.runtimeDelivery.mode === "self-hosted" ? "manual" : "auto"}</span>
                 </button>
-                <input
-                  className="text-input public-url-input"
-                  readOnly={profile.runtimeDelivery.mode !== "self-hosted"}
-                  value={profile.runtimeDelivery.mode === "self-hosted" ? (profile.runtimeDelivery.runtimeIngressUrl ?? "") : autoPublicAgentUrl}
-                  onChange={(event: ValueInputEvent) => {
-                    if (profile.runtimeDelivery.mode !== "self-hosted") {
-                      return;
-                    }
-                    setProfile({
-                      ...profile,
-                      runtimeDelivery: {
-                        mode: "self-hosted",
-                        runtimeIngressUrl: event.target.value
-                      }
-                    });
-                  }}
-                  placeholder={
-                    profile.runtimeDelivery.mode === "self-hosted"
-                      ? "Enter agent-owned URL"
-                      : "Enter agent name to preview SantaClawz URL"
-                  }
-                />
+                {profile.runtimeDelivery.mode === "self-hosted" ? (
+                  <input
+                    className="text-input public-url-input"
+                    value={profile.runtimeDelivery.runtimeIngressUrl ?? ""}
+                    onChange={(event: ValueInputEvent) => {
+                      setProfile({
+                        ...profile,
+                        runtimeDelivery: {
+                          mode: "self-hosted",
+                          runtimeIngressUrl: event.target.value
+                        }
+                      });
+                    }}
+                    placeholder="Enter agent-owned URL"
+                  />
+                ) : (
+                  <div className="public-url-generated-field" aria-label="Generated SantaClawz public agent URL">
+                    <span className="public-url-generated-value">
+                      {autoPublicAgentUrl || "Enter agent name to preview SantaClawz URL"}
+                    </span>
+                    <span className="public-url-generated-pill">generated</span>
+                  </div>
+                )}
               </div>
               {autoPublicUrlReservedByExistingAgent ? (
                 <p className="public-url-warning">That auto-generated URL is already reserved. Change the agent name or refresh the page.</p>

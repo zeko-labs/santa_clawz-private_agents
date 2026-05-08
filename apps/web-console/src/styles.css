@@ -2214,13 +2214,41 @@ h3 {
     box-shadow 180ms ease;
 }
 
-.public-url-control.auto .public-url-input {
+.public-url-generated-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 14px 0 16px;
   background:
-    linear-gradient(90deg, rgba(18, 35, 54, 0.045), transparent 18px),
     linear-gradient(180deg, rgba(244, 248, 248, 0.82), rgba(250, 252, 252, 0.9));
   color: var(--muted);
-  cursor: default;
-  box-shadow: inset 5px 0 14px rgba(18, 35, 54, 0.035);
+  box-shadow: inset 5px 0 14px rgba(18, 35, 54, 0.026);
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.public-url-generated-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.public-url-generated-pill {
+  padding: 6px 10px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(244, 247, 247, 0.7));
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
 }
 
 .public-url-control.manual .url-mode-button {
@@ -3001,6 +3029,16 @@ button:disabled {
   .url-mode-button {
     min-width: 88px;
     padding: 0 12px;
+  }
+
+  .public-url-generated-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 8px 12px 8px 14px;
+  }
+
+  .public-url-generated-pill {
+    width: fit-content;
   }
 
   .command-strip,
