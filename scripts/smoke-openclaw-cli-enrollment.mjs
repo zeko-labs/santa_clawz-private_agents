@@ -261,7 +261,8 @@ async function main() {
       "--write-env",
       ingress.envFile,
       "--challenge-file",
-      ingress.challengeFile
+      ingress.challengeFile,
+      "--publish-local-only"
     ]);
     const enrollmentEnv = await loadEnvFile(ingress.envFile);
     const registration = {
@@ -277,32 +278,11 @@ async function main() {
     assert.equal(typeof registration.signingSecret, "string");
     assert.notEqual(registration.ingressToken, registration.signingSecret);
     assert.equal(registration.ownershipVerified, true);
+    assert.equal(registration.sellerHireable, true);
 
-    const published = await requestJson(`${baseUrl}/api/events/ingest`, {
-      method: "POST",
-      body: JSON.stringify({
-        id: `evt_cli_smoke_published_${Date.now()}`,
-        type: "TurnFinalized",
-        occurredAtIso: new Date().toISOString(),
-        payload: {
-          sessionId: registration.sessionId,
-          turnId: "turn_cli_smoke_001"
-        }
-      })
-    });
-    assert.equal(published.status, 202);
-
-    const firstAnchor = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
-      method: "POST",
-      headers: { "x-clawz-admin-key": registration.adminKey },
-      body: JSON.stringify({
-        sessionId: registration.sessionId,
-        agentId: registration.agentId,
-        localOnly: true
-      })
-    });
-    assert.equal(firstAnchor.status, 200);
-    assert.ok(firstAnchor.payload.anchoredCount > 0);
+    const published = await requestJson(`${baseUrl}/api/console/state?sessionId=${encodeURIComponent(registration.sessionId)}`);
+    assert.equal(published.status, 200);
+    assert.equal(published.payload.published, true);
 
     const heartbeat = await runNodeJson(heartbeatEntry, ["--env-file", ingress.envFile, "--ttl-seconds", "10", "--once"]);
     assert.equal(heartbeat.status, "live");

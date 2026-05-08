@@ -4,6 +4,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readinessErrorMessage, runSellerReadiness } from "./lib/santaclawz-readiness.mjs";
+
 const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 const DEFAULT_SITE_BASE = process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
@@ -15,7 +17,17 @@ const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const ingressEntry = path.join(repoRoot, "starters", "openclaw-public-hire-ingress", "server.mjs");
 
-const BOOLEAN_FLAGS = new Set(["help", "json", "serve", "no-verify", "no-heartbeat"]);
+const BOOLEAN_FLAGS = new Set([
+  "help",
+  "json",
+  "serve",
+  "no-verify",
+  "no-heartbeat",
+  "no-readiness",
+  "no-publish",
+  "publish-local-only",
+  "allow-incomplete"
+]);
 
 function printUsage() {
   console.error(`Usage:
@@ -28,11 +40,16 @@ function printUsage() {
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
+    [--no-publish] \\
+    [--publish-local-only] \\
+    [--allow-incomplete] \\
     [--json]
 
 Notes:
   --serve starts the SantaClawz public hire ingress starter and keeps sending heartbeats.
   Without --serve, your existing OpenClaw ingress must serve the challenge file path.
+  By default the command sends heartbeat, anchors pending seller milestones, checks x402 published=true,
+  and exits non-zero if the seller is not hireable yet. Use --allow-incomplete for diagnostics only.
 `);
 }
 
@@ -284,6 +301,10 @@ const ingressPort = typeof args["ingress-port"] === "string" ? args["ingress-por
 const shouldServe = Boolean(args.serve);
 const shouldVerify = !args["no-verify"];
 const shouldHeartbeat = !args["no-heartbeat"];
+const shouldReadiness = !args["no-readiness"];
+const shouldPublish = !args["no-publish"];
+const publishLocalOnly = Boolean(args["publish-local-only"]);
+const allowIncomplete = Boolean(args["allow-incomplete"]);
 
 let ingress = null;
 let heartbeatInterval = null;
@@ -350,7 +371,28 @@ try {
   }
 
   let heartbeat = null;
-  if (shouldHeartbeat) {
+  let readiness = null;
+  if (shouldReadiness) {
+    readiness = await runSellerReadiness({
+      apiBase,
+      agentId,
+      sessionId,
+      adminKey,
+      heartbeat: shouldHeartbeat,
+      publish: shouldPublish,
+      localOnly: publishLocalOnly,
+      operatorNote: "OpenClaw enrollment readiness publish"
+    });
+    heartbeat = readiness.heartbeat?.attempted
+      ? {
+          status: readiness.heartbeat.status,
+          staleAtIso: readiness.heartbeat.staleAtIso
+        }
+      : null;
+    if (!readiness.hireable && !allowIncomplete) {
+      throw new Error(readinessErrorMessage(readiness));
+    }
+  } else if (shouldHeartbeat) {
     heartbeat = await sendHeartbeatOnce({
       apiBase,
       agentId,
@@ -366,8 +408,12 @@ try {
     envFile: envPath,
     challengeFile: ownershipChallengePath,
     preEnrollmentChallengeFile: preEnrollmentChallengePath,
-    ownershipVerified: ownershipVerification?.ownership?.status === "verified",
+    ownershipVerified: readiness?.checks?.ownershipVerified ?? ownershipVerification?.ownership?.status === "verified",
     heartbeatStatus: heartbeat?.status,
+    publishedOnZeko: readiness?.checks?.publishedOnZeko,
+    sellerHireable: readiness?.hireable,
+    ...(readiness?.blockingReason ? { blockingReason: readiness.blockingReason } : {}),
+    ...(readiness ? { readiness } : {}),
     servingIngress: shouldServe ? ingress?.baseUrl : undefined
   };
 
@@ -377,11 +423,13 @@ try {
     console.error(
       `SantaClawz enrollment complete for ${agentId}. Public hire ingress is running at ${ingress.baseUrl}. Press Ctrl-C to stop.`
     );
-    heartbeatInterval = setInterval(() => {
-      void sendHeartbeatOnce({ apiBase, agentId, sessionId, adminKey }).catch((error) => {
-        console.error(error instanceof Error ? error.message : String(error));
-      });
-    }, HEARTBEAT_INTERVAL_MS);
+    if (shouldHeartbeat) {
+      heartbeatInterval = setInterval(() => {
+        void sendHeartbeatOnce({ apiBase, agentId, sessionId, adminKey }).catch((error) => {
+          console.error(error instanceof Error ? error.message : String(error));
+        });
+      }, HEARTBEAT_INTERVAL_MS);
+    }
     await new Promise((resolve) => {
       const stop = () => resolve();
       process.once("SIGINT", stop);
