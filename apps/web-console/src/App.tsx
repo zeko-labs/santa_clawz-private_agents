@@ -70,8 +70,6 @@ const STARTER_AGENT_ID =
     : "";
 const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
-const PUBLIC_HIRE_URL_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
@@ -506,40 +504,6 @@ function buildPublicAgentUrl(agentId: string) {
 
 function buildPublicAgentHireUrl(agentId: string) {
   return `${buildPublicAgentUrl(agentId)}/hire`;
-}
-
-function classifyRuntimeIngressUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return {
-      tone: "neutral" as const,
-      message:
-        "SantaClawz creates the public profile and hire URL after enrollment. Paste the OpenClaw runtime ingress here so SantaClawz can route signed requests privately."
-    };
-  }
-
-  try {
-    const url = new URL(trimmed);
-    const hostname = url.hostname.toLowerCase();
-    if (hostname === "santaclawz.ai" || hostname.endsWith(".santaclawz.ai")) {
-      return {
-        tone: "warning" as const,
-        message:
-          "This looks like a SantaClawz public URL. Keep that for buyers; paste the OpenClaw runtime ingress here so SantaClawz can forward signed requests after payment and verification checks."
-      };
-    }
-
-    return {
-      tone: "info" as const,
-      message:
-        "Self-hosted runtime ingress. SantaClawz will keep this URL off the public profile and use signed requests, but the operator is still responsible for uptime, auth, replay protection, and rate limits."
-    };
-  } catch {
-    return {
-      tone: "warning" as const,
-      message: "Enter a valid HTTPS OpenClaw runtime URL. SantaClawz will create the public /agent/... URL automatically."
-    };
-  }
 }
 
 function buildShareOnXUrl(callbackUrl: string, agentId: string) {
@@ -1699,8 +1663,6 @@ export function App() {
       agentName: profileForSave.agentName,
       representedPrincipal: profileForSave.representedPrincipal,
       headline: profileForSave.headline,
-      publicClawzUrl: profileForSave.openClawUrl,
-      openClawUrl: profileForSave.openClawUrl,
       ...(Object.keys(profileForSave.payoutWallets).length > 0
         ? { payoutWallets: profileForSave.payoutWallets }
         : {}),
@@ -1713,7 +1675,7 @@ export function App() {
 
   async function createEnrollmentTicketAction() {
     if (!connectReady) {
-      setError("Add the agent name, OpenClaw runtime URL, and description before creating an enrollment ticket.");
+      setError("Add the agent name and description before creating an enrollment ticket.");
       return;
     }
     if (!paymentEnrollmentReady) {
@@ -2189,17 +2151,14 @@ export function App() {
     typeof profile.archivedAtIso === "string" && profile.archivedAtIso.trim().length > 0
       ? ` on ${new Date(profile.archivedAtIso).toLocaleString()}`
       : "";
-  const runtimeIngressUrlStatus = classifyRuntimeIngressUrl(profile.openClawUrl);
-  const runtimeIngressUrlRejected = runtimeIngressUrlStatus.tone === "warning";
   const connectReady =
     profile.agentName.trim().length > 0 &&
-    profile.openClawUrl.trim().length > 0 &&
-    !runtimeIngressUrlRejected &&
     profile.headline.trim().length > 0;
   const paymentEnrollmentReady = paymentProfileEnrollmentReady(profile);
   const enrollmentReady = connectReady && paymentEnrollmentReady;
-  const canPreparePublish = isRegisteredSession && connectReady;
-  const canPublish = isRegisteredSession && connectReady && hasSponsoredBalance && recoveryReady && ownershipVerified;
+  const registeredRuntimeConfigured = !isRegisteredSession || profile.openClawUrl.trim().length > 0;
+  const canPreparePublish = isRegisteredSession && connectReady && registeredRuntimeConfigured;
+  const canPublish = isRegisteredSession && connectReady && registeredRuntimeConfigured && hasSponsoredBalance && recoveryReady && ownershipVerified;
   const hasAdminAccess = state.adminAccess.hasAdminAccess;
   const savedPaymentsEnabled = state.paymentsEnabled;
   const savedPaymentProfileReady = state.paymentProfileReady;
@@ -2589,29 +2548,6 @@ export function App() {
             </label>
 
             <label className="field field-wide">
-              <div className="field-label-row">
-                <span>OpenClaw runtime URL</span>
-                <a className="field-help-link" href={PUBLIC_HIRE_URL_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Advanced URL setup guide
-                </a>
-              </div>
-              <input
-                className="text-input"
-                value={profile.openClawUrl}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    openClawUrl: event.target.value
-                  });
-                }}
-                placeholder="https://your-openclaw-ingress.example.com/hire"
-              />
-              <p className={`status-note status-note-compact ingress-url-note ingress-url-note-${runtimeIngressUrlStatus.tone}`}>
-                {runtimeIngressUrlStatus.message}
-              </p>
-            </label>
-
-            <label className="field field-wide">
               <span>What agent does</span>
               <textarea
                 className="text-area compact-text-area headline-text-area"
@@ -2939,7 +2875,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. The agent stores its key locally, proves URL control, starts ingress, and keeps heartbeat status live. The browser never receives the admin key.
+                Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. SantaClawz reserves the public URL; the agent supplies its private ingress, stores its key locally, and keeps heartbeat status live.
               </p>
             </div>
 
@@ -2963,6 +2899,11 @@ export function App() {
                     {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
                   </span>
                 </div>
+                {enrollmentTicket ? (
+                  <p className="status-note status-note-compact">
+                    Reserved public profile: {enrollmentTicket.publicAgentUrl}
+                  </p>
+                ) : null}
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
                     <div>

@@ -36,6 +36,7 @@ function printUsage() {
     [--serve] \\
     [--write-env .env.santaclawz] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
+    [--runtime-ingress-url https://your-agent.example.com/hire] \\
     [--api-base https://api.santaclawz.ai] \\
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
@@ -47,6 +48,7 @@ function printUsage() {
 
 Notes:
   --serve starts the SantaClawz runtime ingress starter and keeps sending heartbeats.
+  The runtime ingress URL can be passed with --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
   Without --serve, your existing OpenClaw ingress must serve the challenge file path.
   By default the command sends heartbeat, anchors pending seller milestones, checks x402 published=true,
   and exits non-zero if the seller is not hireable yet. Use --allow-incomplete for diagnostics only.
@@ -82,6 +84,33 @@ function parseArgs(argv) {
 
 function normalizeBaseUrl(value) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function runtimeIngressUrlFromArgs(args, fallbackUrl = "") {
+  const candidates = [
+    args["runtime-ingress-url"],
+    args["openclaw-url"],
+    args["publicclawz-url"],
+    process.env.CLAWZ_RUNTIME_INGRESS_URL,
+    process.env.OPENCLAW_RUNTIME_INGRESS_URL,
+    process.env.OPENCLAW_PUBLIC_URL,
+    fallbackUrl
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return normalizeBaseUrl(candidate.trim());
+    }
+  }
+  return "";
+}
+
+function isLocalUrl(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
 }
 
 function sha256Hex(value) {
@@ -145,12 +174,13 @@ function writePrivateFile(filePath, contents) {
   return resolvedPath;
 }
 
-function buildPreEnrollmentChallenge(ticket) {
+function buildPreEnrollmentChallenge(ticket, runtimeIngressUrl) {
   const parsed = parseEnrollmentTicket(ticket);
   return {
     schema_version: ENROLLMENT_TICKET_SCHEMA_VERSION,
     ticket_id: parsed.ticketId,
-    ticket_digest_sha256: sha256Hex(parsed.ticket)
+    ticket_digest_sha256: sha256Hex(parsed.ticket),
+    ...(runtimeIngressUrl ? { publicclawz_url: runtimeIngressUrl } : {})
   };
 }
 
@@ -169,6 +199,7 @@ function buildAgentEnvFile(input) {
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(input.signingSecret)}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(input.publicAgentUrl)}`,
     `CLAWZ_AGENT_PUBLIC_HIRE_URL=${envQuote(input.publicHireUrl)}`,
+    `CLAWZ_AGENT_RUNTIME_INGRESS_URL=${envQuote(input.runtimeIngressUrl)}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(input.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(input.verifyUrl)}`
   ];
@@ -321,7 +352,13 @@ try {
     await waitForHealth(ingress.baseUrl, ingress);
   }
 
-  const preEnrollmentChallenge = buildPreEnrollmentChallenge(ticket);
+  const localOnlyFallback = shouldServe && isLocalUrl(apiBase) ? ingress?.baseUrl : "";
+  const runtimeIngressUrl = runtimeIngressUrlFromArgs(args, localOnlyFallback);
+  if (!runtimeIngressUrl) {
+    throw new Error("Set --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL so SantaClawz can route signed requests to this agent.");
+  }
+
+  const preEnrollmentChallenge = buildPreEnrollmentChallenge(ticket, runtimeIngressUrl);
   const preEnrollmentChallengePath = writePrivateFile(
     challengeFile,
     `${JSON.stringify(preEnrollmentChallenge, null, 2)}\n`
@@ -329,7 +366,7 @@ try {
 
   const redeemed = await requestJson(`${apiBase}/api/enrollment/redeem`, {
     method: "POST",
-    body: JSON.stringify({ ticket })
+    body: JSON.stringify({ ticket, runtimeIngressUrl })
   });
   const sessionId = redeemed.session?.sessionId;
   const agentId = redeemed.agentId;
@@ -351,6 +388,7 @@ try {
     signingSecret,
     serviceKey: serviceKeyForEnrollment(redeemed.profile, agentId),
     networkId: redeemed.deployment?.networkId,
+    runtimeIngressUrl,
     publicAgentUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}`,
     publicHireUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}/hire`,
     discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
@@ -407,6 +445,7 @@ try {
     agentId,
     sessionId,
     publicAgentUrl: result.publicAgentUrl,
+    runtimeIngressUrl,
     envFile: envPath,
     challengeFile: ownershipChallengePath,
     preEnrollmentChallengeFile: preEnrollmentChallengePath,
@@ -423,7 +462,7 @@ try {
 
   if (shouldServe) {
     console.error(
-      `SantaClawz enrollment complete for ${agentId}. Public hire ingress is running at ${ingress.baseUrl}. Press Ctrl-C to stop.`
+      `SantaClawz enrollment complete for ${agentId}. Runtime ingress is running at ${ingress.baseUrl}. Press Ctrl-C to stop.`
     );
     if (shouldHeartbeat) {
       heartbeatInterval = setInterval(() => {

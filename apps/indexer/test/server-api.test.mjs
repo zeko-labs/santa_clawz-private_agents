@@ -946,8 +946,6 @@ async function testPublicOnboardingApiAuth() {
         agentName: "Public Enrollment Auth Smoke",
         headline: "Smoke test ticket creation without operator API key.",
         representedPrincipal: "SantaClawz smoke operator",
-        publicClawzUrl: "http://127.0.0.1:49996/hire",
-        openClawUrl: "http://127.0.0.1:49996/hire",
         payoutWallets: {
           base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
         },

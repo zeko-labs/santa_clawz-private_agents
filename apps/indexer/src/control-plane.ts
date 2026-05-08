@@ -165,6 +165,10 @@ interface EnrollmentTicketRecord {
   issuedAtIso: string;
   expiresAtIso: string;
   status: "pending" | "redeemed";
+  reservedSessionId: string;
+  reservedAgentId: string;
+  publicAgentUrl: string;
+  publicHireUrl: string;
   profile: RegisterAgentOptions;
   redeemedAtIso?: string;
   redeemedSessionId?: string;
@@ -407,14 +411,18 @@ interface EnrollmentTicketIssueResult {
   ticketId: string;
   issuedAtIso: string;
   expiresAtIso: string;
+  reservedSessionId: string;
+  reservedAgentId: string;
+  publicAgentUrl: string;
+  publicHireUrl: string;
   challengePath: string;
-  challengeUrl: string;
   enrollmentChallenge: {
     schemaVersion: typeof ENROLLMENT_TICKET_SCHEMA_VERSION;
     ticketId: string;
     ticketDigestSha256: string;
-    challengeUrl: string;
-    publicClawzUrl: string;
+    challengePath: string;
+    publicAgentUrl: string;
+    publicHireUrl: string;
   };
 }
 
@@ -2860,8 +2868,8 @@ export class ClawzControlPlane {
       fallbackProfile
     ), deployment);
 
-    if (profile.agentName.trim().length === 0 || profile.headline.trim().length === 0 || profile.openClawUrl.trim().length === 0) {
-      throw new Error("agentName, headline, and openClawUrl are required.");
+    if (profile.agentName.trim().length === 0 || profile.headline.trim().length === 0) {
+      throw new Error("agentName and headline are required.");
     }
 
     return {
@@ -2878,19 +2886,19 @@ export class ClawzControlPlane {
     };
   }
 
-  private enrollmentChallengePayloadForTicket(record: EnrollmentTicketRecord, ticket: string) {
-    const challengeUrl = ownershipChallengeUrlFor(record.profile.openClawUrl);
+  private enrollmentChallengePayloadForTicket(record: EnrollmentTicketRecord, ticket: string, openClawUrl: string) {
+    const challengeUrl = ownershipChallengeUrlFor(openClawUrl);
     return {
       schema_version: ENROLLMENT_TICKET_SCHEMA_VERSION,
       ticket_id: record.ticketId,
       ticket_digest_sha256: sha256Hex(ticket),
-      publicclawz_url: record.profile.openClawUrl,
+      publicclawz_url: openClawUrl,
       challenge_url: challengeUrl
     };
   }
 
-  private async assertEnrollmentTicketChallengeServed(record: EnrollmentTicketRecord, ticket: string) {
-    const challengeUrl = ownershipChallengeUrlFor(record.profile.openClawUrl);
+  private async assertEnrollmentTicketChallengeServed(record: EnrollmentTicketRecord, ticket: string, openClawUrl: string) {
+    const challengeUrl = ownershipChallengeUrlFor(openClawUrl);
     const response = await fetch(challengeUrl, {
       method: "GET",
       headers: {
@@ -2918,14 +2926,14 @@ export class ClawzControlPlane {
       throw new Error("Enrollment challenge endpoint returned an invalid payload.");
     }
 
-    const expected = this.enrollmentChallengePayloadForTicket(record, ticket);
+    const expected = this.enrollmentChallengePayloadForTicket(record, ticket, openClawUrl);
     const ticketDigest = assertStringValue(parsed, "ticket_digest_sha256", "Enrollment challenge");
     assertSha256Hex(ticketDigest, "Enrollment challenge ticket_digest_sha256");
     if (
       parsed.schema_version !== ENROLLMENT_TICKET_SCHEMA_VERSION ||
       parsed.ticket_id !== record.ticketId ||
       ticketDigest !== expected.ticket_digest_sha256 ||
-      (parsed.publicclawz_url !== undefined && parsed.publicclawz_url !== record.profile.openClawUrl)
+      (parsed.publicclawz_url !== undefined && parsed.publicclawz_url !== openClawUrl)
     ) {
       throw new Error(
         `The PublicClawz endpoint did not return the expected SantaClawz enrollment ticket challenge at ${PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH}.`
@@ -5291,6 +5299,10 @@ export class ClawzControlPlane {
     const profile = this.buildEnrollmentTicketProfile(options, deployment);
     await this.assertAgentProfileIsValid(state, this.sanitizeProfileInput(profile.trustModeId ?? "private", profile, buildDefaultProfile(profile.trustModeId ?? "private")));
 
+    const reservedSessionId = `session_agent_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const reservedAgentId = buildStableAgentId(profile.agentName, reservedSessionId);
+    const publicAgentUrl = publicAgentUrlFor(reservedAgentId);
+    const publicHireUrl = publicAgentHireUrlFor(reservedAgentId);
     const ticketId = buildEnrollmentTicketId();
     const ticketSecret = buildEnrollmentTicketSecret();
     const ticket = buildEnrollmentTicketToken(ticketId, ticketSecret);
@@ -5301,6 +5313,10 @@ export class ClawzControlPlane {
       issuedAtIso,
       expiresAtIso,
       status: "pending",
+      reservedSessionId,
+      reservedAgentId,
+      publicAgentUrl,
+      publicHireUrl,
       profile
     };
     const nextState: ConsolePersistenceState = {
@@ -5318,19 +5334,23 @@ export class ClawzControlPlane {
       ticketId,
       issuedAtIso,
       expiresAtIso,
+      reservedSessionId,
+      reservedAgentId,
+      publicAgentUrl,
+      publicHireUrl,
       challengePath: PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH,
-      challengeUrl: ownershipChallengeUrlFor(profile.openClawUrl),
       enrollmentChallenge: {
         schemaVersion: ENROLLMENT_TICKET_SCHEMA_VERSION,
         ticketId,
         ticketDigestSha256: ticketHash,
-        challengeUrl: ownershipChallengeUrlFor(profile.openClawUrl),
-        publicClawzUrl: profile.openClawUrl
+        challengePath: PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH,
+        publicAgentUrl,
+        publicHireUrl
       }
     };
   }
 
-  async redeemEnrollmentTicket(ticket: string): Promise<EnrollmentTicketRedeemResult> {
+  async redeemEnrollmentTicket(ticket: string, options: { openClawUrl: string }): Promise<EnrollmentTicketRedeemResult> {
     const parsedTicket = parseEnrollmentTicketToken(ticket);
     const state = await this.loadState();
     const record = state.enrollmentTicketsById[parsedTicket.ticketId];
@@ -5347,9 +5367,21 @@ export class ClawzControlPlane {
       throw new Error("Enrollment ticket secret was rejected.");
     }
 
-    await this.assertEnrollmentTicketChallengeServed(record, parsedTicket.ticket);
+    const openClawUrl = options.openClawUrl.trim();
+    if (!openClawUrl) {
+      throw new Error("OpenClaw runtime ingress URL is required to redeem this enrollment ticket.");
+    }
+    const profileForRegistration: RegisterAgentOptions = {
+      ...record.profile,
+      openClawUrl
+    };
 
-    const registeredState = await this.registerAgent(record.profile);
+    await this.assertEnrollmentTicketChallengeServed(record, parsedTicket.ticket, openClawUrl);
+
+    const registeredState = await this.registerAgent(profileForRegistration, {
+      sessionId: record.reservedSessionId,
+      agentId: record.reservedAgentId
+    });
     const sessionId = registeredState.session.sessionId;
     const agentId = registeredState.agentId;
     const issuedAdminKey = registeredState.adminAccess.issuedAdminKey;
@@ -5371,6 +5403,7 @@ export class ClawzControlPlane {
         ...latestState.enrollmentTicketsById,
         [record.ticketId]: {
           ...record,
+          profile: profileForRegistration,
           status: "redeemed",
           redeemedAtIso,
           redeemedSessionId: sessionId,
@@ -5387,13 +5420,12 @@ export class ClawzControlPlane {
     };
   }
 
-  async registerAgent(options: RegisterAgentOptions): Promise<ConsoleStateResponse> {
+  async registerAgent(options: RegisterAgentOptions, reservedIds?: { sessionId: string; agentId: string }): Promise<ConsoleStateResponse> {
     const state = await this.loadState();
     const deployment = await this.getDeploymentState();
     const registeredAtIso = new Date().toISOString();
     const trustModeId = options.trustModeId ?? "private";
-    const sessionSlug = randomUUID().replace(/-/g, "").slice(0, 12);
-    const sessionId = `session_agent_${sessionSlug}`;
+    const sessionId = reservedIds?.sessionId ?? `session_agent_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const fallbackProfile = buildDefaultProfile(trustModeId);
     const profile = this.coerceProfileForDeployment(this.sanitizeProfileInput(
       trustModeId,
@@ -5418,7 +5450,7 @@ export class ClawzControlPlane {
     await this.assertAgentProfileIsValid(state, profile);
     await this.validatePublicClawzAgentHealth(profile.openClawUrl);
 
-    const agentId = buildStableAgentId(profile.agentName, sessionId);
+    const agentId = reservedIds?.agentId ?? buildStableAgentId(profile.agentName, sessionId);
     const adminKey = buildAdminKey();
     const ingressToken = buildIngressToken();
     const signingSecret = buildIngressSigningSecret();

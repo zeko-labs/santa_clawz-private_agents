@@ -133,6 +133,8 @@ type RegisterAgentRequestBody = {
 };
 type EnrollmentTicketRedeemBody = {
   ticket?: unknown;
+  openClawUrl?: unknown;
+  runtimeIngressUrl?: unknown;
 };
 type ProfileRequestBody = {
   agentName?: unknown;
@@ -361,7 +363,9 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
 function parseEnrollmentTicketRedeemRequest(body: unknown): EnrollmentTicketRedeemBody {
   return isRecord(body)
     ? {
-        ticket: body.ticket
+        ticket: body.ticket,
+        openClawUrl: body.openClawUrl,
+        runtimeIngressUrl: body.runtimeIngressUrl
       }
     : {};
 }
@@ -1510,13 +1514,18 @@ app.post("/api/enrollment/tickets", route(async (request, response) => {
 app.post("/api/enrollment/redeem", route(async (request, response) => {
   const body = parseEnrollmentTicketRedeemRequest(request.body ?? null);
   const ticket = optionalString(body.ticket);
+  const openClawUrl = optionalString(body.runtimeIngressUrl) ?? optionalString(body.openClawUrl);
   if (!ticket) {
     response.status(400).json({ error: "ticket is required." });
     return;
   }
+  if (!openClawUrl) {
+    response.status(400).json({ error: "runtimeIngressUrl is required." });
+    return;
+  }
 
   try {
-    response.json(await controlPlane.redeemEnrollmentTicket(ticket));
+    response.json(await controlPlane.redeemEnrollmentTicket(ticket, { openClawUrl }));
   } catch (error) {
     if (error instanceof DuplicatePublicClawzUrlError) {
       response.status(409).json({

@@ -250,15 +250,18 @@ export interface EnrollmentTicketResponse {
   ticketId: string;
   issuedAtIso: string;
   expiresAtIso: string;
+  reservedSessionId: string;
+  reservedAgentId: string;
+  publicAgentUrl: string;
+  publicHireUrl: string;
   challengePath: string;
-  challengeUrl: string;
   enrollmentChallenge: {
     schemaVersion: "santaclawz-enrollment-ticket/1.0";
     ticketId: string;
     ticketDigestSha256: string;
-    challengeUrl: string;
-    publicClawzUrl: string;
-    openClawUrl?: string;
+    challengePath: string;
+    publicAgentUrl: string;
+    publicHireUrl: string;
   };
 }
 
@@ -381,7 +384,7 @@ export function createEnrollmentTicket(input: {
   representedPrincipal?: string;
   headline: string;
   publicClawzUrl?: string;
-  openClawUrl: string;
+  openClawUrl?: string;
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
   paymentProfile?: AgentProfileState["paymentProfile"];
