@@ -2011,13 +2011,11 @@ export function App() {
   function renderFooter() {
     return (
       <footer className="site-footer">
-        <div className="site-footer-meta">
-          <p>Copyright {COPYRIGHT_YEAR} SantaClawz</p>
-          <a href={ZEKO_URL} target="_blank" rel="noreferrer">
-            Powered by Zeko
-          </a>
-        </div>
-        <nav className="site-footer-links" aria-label="Legal and community">
+        <p>Copyright {COPYRIGHT_YEAR} SantaClawz</p>
+        <a className="site-footer-powered" href={ZEKO_URL} target="_blank" rel="noreferrer">
+          Powered by Zeko
+        </a>
+        <nav className="site-footer-links" aria-label="Legal">
           <a
             href="/terms-of-service"
             onClick={(event: ClickEvent) => {
@@ -2035,16 +2033,6 @@ export function App() {
             }}
           >
             Privacy Policy
-          </a>
-          <a
-            className="site-footer-social-link"
-            href={SANTACLAWZ_X_URL}
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Follow on X"
-          >
-            <span>Follow on</span>
-            <XSocialMark />
           </a>
         </nav>
       </footer>
@@ -2699,21 +2687,12 @@ export function App() {
                 />
               </div>
               <div className="public-url-meta-row">
-                <span className={autoPublicUrlReservedByExistingAgent ? "url-status-pill warning" : "url-status-pill"}>
-                  {profile.runtimeDelivery.mode === "self-hosted"
-                    ? "Advanced self-hosted"
-                    : profile.agentName.trim().length === 0
-                      ? "Awaiting name"
-                      : autoPublicUrlReservedByExistingAgent
-                      ? "Already reserved"
-                      : enrollmentTicket
-                        ? "Reserved"
-                        : "Available"}
-                </span>
                 <small>
-                  {profile.runtimeDelivery.mode === "self-hosted"
-                    ? "Use this only for a stable ingress you control. SantaClawz stores it privately and still signs every hire request."
-                    : "SantaClawz reserves this hosted profile and hire URL when the enrollment ticket is created."}
+                  {autoPublicUrlReservedByExistingAgent
+                    ? "That auto-generated URL is already reserved. Change the agent name or refresh the page."
+                    : profile.runtimeDelivery.mode === "self-hosted"
+                      ? "Use this only for a stable ingress URL you control. SantaClawz stores it privately and routes the hire request."
+                      : "SantaClawz reserves this hosted agent profile and hire URL when the enrollment ticket is created."}
                 </small>
               </div>
             </div>
