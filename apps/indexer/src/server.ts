@@ -409,6 +409,13 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
   };
 }
 
+function enrollmentTicketOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typeof controlPlane.issueEnrollmentTicket>[0] {
+  return {
+    ...registerOptionsFromBody(body),
+    openClawUrl: ""
+  };
+}
+
 function parseProfileRequest(body: unknown): ProfileRequestBody {
   return isRecord(body)
       ? {
@@ -1483,7 +1490,7 @@ app.post("/api/enrollment/tickets", route(async (request, response) => {
 
   try {
     enforceRegistrationRateLimit(request);
-    response.json(await controlPlane.issueEnrollmentTicket(registerOptionsFromBody(body)));
+    response.json(await controlPlane.issueEnrollmentTicket(enrollmentTicketOptionsFromBody(body)));
   } catch (error) {
     if (error instanceof DuplicatePublicClawzUrlError) {
       response.status(409).json({

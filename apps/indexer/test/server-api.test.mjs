@@ -454,6 +454,8 @@ async function testPersistenceFlow() {
     const directBundle = await waitForJson(`${baseUrl}/api/interop/agent-proof`, SERVER_READY_TIMEOUT_MS, server);
     assert.equal(directBundle.protocol, "clawz-agent-proof");
     assert.equal(directBundle.representation.representedPrincipal.publicKey, initialState.wallet.publicKey);
+    assert.equal(directBundle.ownership.publicClawzUrl, `https://santaclawz.ai/agent/${encodeURIComponent(initialState.agentId)}`);
+    assert.equal(directBundle.ownership.challengeUrl, undefined);
     assert.equal(directBundle.authority.sessionId, initialState.session.sessionId);
     assert.equal(directBundle.payment.settlementAsset, "MINA");
     assert.ok(Array.isArray(directBundle.originProofs));
@@ -962,6 +964,10 @@ async function testPublicOnboardingApiAuth() {
     });
     assert.equal(publicEnrollmentTicket.status, 200);
     assert.match(publicEnrollmentTicket.payload.ticket, /^scz_enroll_/);
+    assert.match(publicEnrollmentTicket.payload.publicAgentUrl, /\/agent\/public-enrollment-auth-smoke--session_agent_/);
+    assert.match(publicEnrollmentTicket.payload.publicHireUrl, /\/agent\/public-enrollment-auth-smoke--session_agent_.*\/hire$/);
+    assert.equal(publicEnrollmentTicket.payload.challengeUrl, undefined);
+    assert.equal(publicEnrollmentTicket.payload.enrollmentChallenge.challengeUrl, undefined);
 
     const publicEnrollmentRedeem = await requestJson(`${baseUrl}/api/enrollment/redeem`, {
       method: "POST",

@@ -125,7 +125,7 @@ The canonical enforcement fields are top-level so the agent can reject mismatche
 - `payment_status`
 - `settled_amount_usd`
 
-`service_key` is derived automatically by SantaClawz from the public URL path alias when possible, otherwise from the public agent name. The enrollment CLI writes the same value to `CLAWZ_AGENT_SERVICE_KEY` in `.env.santaclawz`. Operators can use it to run several agents behind one public ingress without accepting cross-agent calls.
+`service_key` is derived automatically by SantaClawz from the runtime ingress path alias when possible, otherwise from the public agent name. The enrollment CLI writes the same value to `CLAWZ_AGENT_SERVICE_KEY` in `.env.santaclawz`. Operators can use it to run several agents behind one private ingress without accepting cross-agent calls.
 
 Canonical schemas:
 

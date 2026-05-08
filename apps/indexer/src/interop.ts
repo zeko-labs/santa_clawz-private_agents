@@ -41,6 +41,14 @@ const KERNEL_VERIFICATION_PATH = [
   "TurnKernel.finalizeTurn"
 ] as const;
 
+function publicSiteBase() {
+  return (process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai").replace(/\/+$/, "");
+}
+
+function publicAgentUrlFor(agentId: string) {
+  return `${publicSiteBase()}/agent/${encodeURIComponent(agentId)}`;
+}
+
 export interface InteropBuildInput {
   baseUrl: string;
   consoleState: ConsoleStateResponse;
@@ -445,7 +453,7 @@ export function buildAgentProofBundle(input: InteropBuildInput): ClawzAgentProof
   };
 
   const ownershipWithoutDigest = {
-    publicClawzUrl: profile.openClawUrl,
+    publicClawzUrl: publicAgentUrlFor(input.consoleState.agentId),
     ownershipStatus: input.consoleState.ownership.status,
     legacyRegistration: input.consoleState.ownership.legacyRegistration,
     canReclaim: input.consoleState.ownership.canReclaim,
@@ -457,11 +465,6 @@ export function buildAgentProofBundle(input: InteropBuildInput): ClawzAgentProof
       ? { challengeId: input.consoleState.ownership.verification.challengeId }
       : input.consoleState.ownership.challenge?.challengeId
         ? { challengeId: input.consoleState.ownership.challenge.challengeId }
-        : {}),
-    ...(input.consoleState.ownership.verification?.challengeUrl
-      ? { challengeUrl: input.consoleState.ownership.verification.challengeUrl }
-      : input.consoleState.ownership.challenge?.challengeUrl
-        ? { challengeUrl: input.consoleState.ownership.challenge.challengeUrl }
         : {}),
     ...(input.consoleState.ownership.verification?.verifiedAtIso
       ? { verifiedAtIso: input.consoleState.ownership.verification.verifiedAtIso }
