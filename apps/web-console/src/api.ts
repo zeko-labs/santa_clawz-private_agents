@@ -386,6 +386,7 @@ export function createEnrollmentTicket(input: {
   agentName: string;
   representedPrincipal?: string;
   headline: string;
+  urlReservationSalt?: string;
   openClawUrl?: string;
   runtimeDelivery?: AgentProfileState["runtimeDelivery"];
   payoutWallets?: AgentProfileState["payoutWallets"];

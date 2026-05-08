@@ -123,6 +123,7 @@ type RegisterAgentRequestBody = {
   agentName?: unknown;
   representedPrincipal?: unknown;
   headline?: unknown;
+  urlReservationSalt?: unknown;
   publicClawzUrl?: unknown;
   openClawUrl?: unknown;
   runtimeDelivery?: unknown;
@@ -417,6 +418,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
   return {
     agentName: typeof body.agentName === "string" ? body.agentName : "",
     headline: typeof body.headline === "string" ? body.headline : "",
+    ...(typeof body.urlReservationSalt === "string" ? { urlReservationSalt: body.urlReservationSalt } : {}),
     openClawUrl:
       typeof body.publicClawzUrl === "string"
         ? body.publicClawzUrl

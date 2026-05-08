@@ -414,6 +414,7 @@ interface RegisterAgentOptions {
   agentName: string;
   representedPrincipal?: string;
   headline: string;
+  urlReservationSalt?: string;
   openClawUrl?: string;
   runtimeDelivery?: Partial<AgentProfileState["runtimeDelivery"]>;
   payoutWallets?: AgentProfileState["payoutWallets"];
@@ -777,6 +778,11 @@ function slugify(value: string): string {
 
 function buildStableAgentId(agentName: string, sessionId: string): string {
   return `${slugify(agentName)}--${sessionId}`;
+}
+
+function normalizeUrlReservationSalt(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return /^[a-f0-9]{12}$/.test(normalized) ? normalized : undefined;
 }
 
 function serviceKeySlug(value: string): string {
@@ -5471,8 +5477,16 @@ export class ClawzControlPlane {
     const issuedAtIso = new Date().toISOString();
     const expiresAtIso = new Date(Date.parse(issuedAtIso) + ENROLLMENT_TICKET_TTL_MS).toISOString();
     const requestedProfile = this.buildEnrollmentTicketProfile(options, deployment);
-    const reservedSessionId = `session_agent_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const requestedSalt = normalizeUrlReservationSalt(options.urlReservationSalt);
+    const reservedSessionId = `session_agent_${requestedSalt ?? randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const reservedAgentId = buildStableAgentId(requestedProfile.agentName, reservedSessionId);
+    const reservedAgentIdAlreadyRegistered = Object.values(state.agentIdsBySession).includes(reservedAgentId);
+    const reservedAgentIdAlreadyPending = Object.values(state.enrollmentTicketsById).some(
+      (record) => record.status === "pending" && record.reservedAgentId === reservedAgentId
+    );
+    if (reservedAgentIdAlreadyRegistered || reservedAgentIdAlreadyPending) {
+      throw new Error("That auto-generated SantaClawz URL is already reserved. Change the agent name or refresh the page for a new salt.");
+    }
     const publicAgentUrl = publicAgentUrlFor(reservedAgentId);
     const publicHireUrl = publicAgentHireUrlFor(reservedAgentId);
     const requestedOpenClawUrl = requestedProfile.openClawUrl?.trim() ?? "";

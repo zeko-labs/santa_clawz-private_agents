@@ -2110,6 +2110,112 @@ h3 {
   line-height: 1.35;
 }
 
+.public-url-field {
+  gap: 9px;
+}
+
+.public-url-title-row {
+  margin-bottom: 0;
+}
+
+.public-url-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.url-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 92px;
+  padding: 0 15px;
+  border: 1px solid rgba(18, 35, 54, 0.14);
+  border-right: 0;
+  border-radius: 16px 0 0 16px;
+  background: rgba(244, 247, 248, 0.95);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: lowercase;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.url-mode-button:hover {
+  background: rgba(255, 255, 255, 0.98);
+  color: var(--ink);
+  border-color: rgba(18, 35, 54, 0.2);
+}
+
+.url-lock-icon {
+  position: relative;
+  width: 10px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.url-lock-icon::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: -7px;
+  width: 5px;
+  height: 6px;
+  border: 1.5px solid currentColor;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+}
+
+.url-lock-icon.unlocked::before {
+  left: 4px;
+  transform: rotate(24deg);
+  transform-origin: bottom left;
+}
+
+.public-url-input {
+  border-radius: 0 16px 16px 0;
+}
+
+.public-url-control.auto .public-url-input {
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted);
+}
+
+.public-url-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.public-url-meta-row small {
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.url-status-pill {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(22, 113, 88, 0.11);
+  color: var(--success);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.url-status-pill.warning {
+  background: rgba(185, 45, 34, 0.1);
+  color: var(--accent);
+}
+
 .slider-toggle {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2864,6 +2970,21 @@ button:disabled {
 
   .field-grid.mission-auth-grid {
     grid-template-columns: 1fr;
+  }
+
+  .public-url-control {
+    grid-template-columns: minmax(78px, auto) minmax(0, 1fr);
+  }
+
+  .url-mode-button {
+    min-width: 78px;
+    padding: 0 10px;
+  }
+
+  .public-url-meta-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .command-strip,

@@ -508,6 +508,34 @@ function buildPublicAgentHireUrl(agentId: string) {
   return `${buildPublicAgentUrl(agentId)}/hire`;
 }
 
+function slugifyAgentName(value: string) {
+  const normalized = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : "agent";
+}
+
+function createUrlReservationSalt() {
+  const fallback = Math.random().toString(16).slice(2).padEnd(12, "0").slice(0, 12);
+  if (typeof crypto === "undefined" || typeof crypto.getRandomValues !== "function") {
+    return fallback;
+  }
+
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function buildAutoPublicAgentId(agentName: string, salt: string) {
+  return `${slugifyAgentName(agentName)}--session_agent_${salt}`;
+}
+
+function buildAutoPublicAgentUrl(agentName: string, salt: string) {
+  return agentName.trim().length > 0 ? buildPublicAgentUrl(buildAutoPublicAgentId(agentName, salt)) : "";
+}
+
 function buildShareOnXUrl(callbackUrl: string, agentId: string) {
   const message = `I just launched my OpenClaw agent on SantaClawz.ai. Agent ID: ${agentId}. Private, verifiable, and open for business 🦞 ${callbackUrl}`;
   return `https://twitter.com/intent/tweet?text=${encodeURIComponent(message)}`;
@@ -1208,6 +1236,7 @@ export function App() {
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
+  const [urlReservationSalt, setUrlReservationSalt] = useState<string>(createUrlReservationSalt());
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const ethereumPayoutAllowed = hasAdvancedEthereumPayout(profile);
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
@@ -1337,7 +1366,7 @@ export function App() {
   }, [profile, profileSessionId, state]);
 
   useEffect(() => {
-    if (activeSection !== "explore" || sharedAgentId) {
+    if (sharedAgentId) {
       return;
     }
 
@@ -1532,7 +1561,7 @@ export function App() {
 
   useEffect(() => {
     setDuplicateClaimTarget(null);
-  }, [profile.openClawUrl]);
+  }, [profile.openClawUrl, profile.runtimeDelivery.runtimeIngressUrl]);
 
   useEffect(() => {
     setHireReceipt(null);
@@ -1670,13 +1699,14 @@ export function App() {
     }
   }
 
-  function buildAgentRegistrationPayload() {
+  function buildAgentRegistrationPayload(nextUrlReservationSalt = urlReservationSalt) {
     const usesSelfHostedRuntime = profileForSave.runtimeDelivery.mode === "self-hosted";
     const runtimeIngressUrl = profileForSave.runtimeDelivery.runtimeIngressUrl?.trim() ?? "";
     return {
       agentName: profileForSave.agentName,
       representedPrincipal: profileForSave.representedPrincipal,
       headline: profileForSave.headline,
+      ...(!usesSelfHostedRuntime ? { urlReservationSalt: nextUrlReservationSalt } : {}),
       runtimeDelivery: profileForSave.runtimeDelivery,
       ...(usesSelfHostedRuntime && runtimeIngressUrl
         ? {
@@ -1695,7 +1725,9 @@ export function App() {
 
   async function createEnrollmentTicketAction() {
     if (!connectReady) {
-      setError("Add the agent name and description before creating an enrollment ticket.");
+      setError(profile.runtimeDelivery.mode === "self-hosted"
+        ? "Add the agent name, description, and agent-owned URL before creating an enrollment ticket."
+        : "Add the agent name and description before creating an enrollment ticket.");
       return;
     }
     if (!paymentEnrollmentReady) {
@@ -1708,7 +1740,16 @@ export function App() {
     setDuplicateClaimTarget(null);
 
     try {
-      const nextTicket = await createEnrollmentTicket(buildAgentRegistrationPayload());
+      const nextUrlReservationSalt =
+        profileForSave.runtimeDelivery.mode === "self-hosted"
+          ? urlReservationSalt
+          : enrollmentTicket
+            ? createUrlReservationSalt()
+            : urlReservationSalt;
+      if (nextUrlReservationSalt !== urlReservationSalt) {
+        setUrlReservationSalt(nextUrlReservationSalt);
+      }
+      const nextTicket = await createEnrollmentTicket(buildAgentRegistrationPayload(nextUrlReservationSalt));
       setEnrollmentTicket(nextTicket);
     } catch (nextError) {
       if (nextError instanceof ApiError) {
@@ -2171,9 +2212,24 @@ export function App() {
     typeof profile.archivedAtIso === "string" && profile.archivedAtIso.trim().length > 0
       ? ` on ${new Date(profile.archivedAtIso).toLocaleString()}`
       : "";
+  const autoPublicAgentId = buildAutoPublicAgentId(profile.agentName, urlReservationSalt);
+  const autoPublicAgentUrl = enrollmentTicket?.publicAgentUrl ?? buildAutoPublicAgentUrl(profile.agentName, urlReservationSalt);
+  const autoPublicUrlReservedByExistingAgent =
+    profile.agentName.trim().length > 0 &&
+    registry.some(
+      (agent) =>
+        agent.agentId === autoPublicAgentId ||
+        agent.publicAgentUrl === buildPublicAgentUrl(autoPublicAgentId)
+    );
+  const selfHostedRuntimeUrl = profile.runtimeDelivery.runtimeIngressUrl?.trim() ?? "";
+  const runtimeConnectionReady =
+    profile.runtimeDelivery.mode === "self-hosted"
+      ? selfHostedRuntimeUrl.length > 0
+      : !autoPublicUrlReservedByExistingAgent;
   const connectReady =
     profile.agentName.trim().length > 0 &&
-    profile.headline.trim().length > 0;
+    profile.headline.trim().length > 0 &&
+    runtimeConnectionReady;
   const paymentEnrollmentReady = paymentProfileEnrollmentReady(profile);
   const enrollmentReady = connectReady && paymentEnrollmentReady;
   const registeredRuntimeConfigured = !isRegisteredSession || profile.openClawUrl.trim().length > 0;
@@ -2585,60 +2641,81 @@ export function App() {
               />
             </label>
 
-            <div className="field field-wide runtime-delivery-card">
-              <div>
-                <div className="field-label-row runtime-delivery-title-row">
-                  <span>Runtime connection</span>
-                  <a className="field-help-link" href={PUBLIC_RUNTIME_URL_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Public URL setup guide
-                  </a>
-                </div>
-                <p className="panel-copy">
-                  Default: SantaClawz relay. Your agent connects outbound, so no public tunnel is required.
-                </p>
+            <div className="field field-wide public-url-field">
+              <div className="field-label-row public-url-title-row">
+                <span>Public agent URL</span>
+                <a className="field-help-link" href={PUBLIC_RUNTIME_URL_GUIDE_URL} target="_blank" rel="noreferrer">
+                  Public URL setup guide
+                </a>
               </div>
-              <label className="advanced-runtime-toggle">
-                <input
-                  type="checkbox"
-                  checked={profile.runtimeDelivery.mode === "self-hosted"}
-                  onChange={(event: { target: { checked: boolean } }) => {
+              <div className={profile.runtimeDelivery.mode === "self-hosted" ? "public-url-control manual" : "public-url-control auto"}>
+                <button
+                  type="button"
+                  className="url-mode-button"
+                  onClick={() => {
+                    setEnrollmentTicket(null);
                     setProfile({
                       ...profile,
-                      runtimeDelivery: event.target.checked
-                        ? {
-                            mode: "self-hosted",
-                            runtimeIngressUrl: profile.runtimeDelivery.runtimeIngressUrl ?? ""
-                          }
-                        : {
-                            mode: "santaclawz-relay"
-                          }
+                      runtimeDelivery:
+                        profile.runtimeDelivery.mode === "self-hosted"
+                          ? {
+                              mode: "santaclawz-relay"
+                            }
+                          : {
+                              mode: "self-hosted",
+                              runtimeIngressUrl: ""
+                            }
                     });
                   }}
-                />
-                <span>Use my own runtime URL</span>
-              </label>
-              {profile.runtimeDelivery.mode === "self-hosted" ? (
-                <label className="field self-hosted-runtime-field">
-                  <span>Advanced runtime URL</span>
-                  <input
-                    className="text-input"
-                    value={profile.runtimeDelivery.runtimeIngressUrl ?? ""}
-                    onChange={(event: ValueInputEvent) => {
-                      setProfile({
-                        ...profile,
-                        runtimeDelivery: {
-                          mode: "self-hosted",
-                          runtimeIngressUrl: event.target.value
-                        }
-                      });
-                    }}
-                    placeholder="https://your-stable-runtime.example.com/hire"
+                  title={profile.runtimeDelivery.mode === "self-hosted" ? "Switch back to the SantaClawz-generated URL" : "Unlock advanced agent-owned URL mode"}
+                >
+                  <span
+                    className={profile.runtimeDelivery.mode === "self-hosted" ? "url-lock-icon unlocked" : "url-lock-icon"}
+                    aria-hidden="true"
                   />
-                  <small>
-                    Only use this for a stable self-hosted ingress or named tunnel. SantaClawz stores it as private routing metadata and never shows it on public profiles.
-                  </small>
-                </label>
-              ) : null}
+                  <span>{profile.runtimeDelivery.mode === "self-hosted" ? "manual" : "auto"}</span>
+                </button>
+                <input
+                  className="text-input public-url-input"
+                  readOnly={profile.runtimeDelivery.mode !== "self-hosted"}
+                  value={profile.runtimeDelivery.mode === "self-hosted" ? (profile.runtimeDelivery.runtimeIngressUrl ?? "") : autoPublicAgentUrl}
+                  onChange={(event: ValueInputEvent) => {
+                    if (profile.runtimeDelivery.mode !== "self-hosted") {
+                      return;
+                    }
+                    setProfile({
+                      ...profile,
+                      runtimeDelivery: {
+                        mode: "self-hosted",
+                        runtimeIngressUrl: event.target.value
+                      }
+                    });
+                  }}
+                  placeholder={
+                    profile.runtimeDelivery.mode === "self-hosted"
+                      ? "Enter agent-owned URL"
+                      : "Enter agent name to preview SantaClawz URL"
+                  }
+                />
+              </div>
+              <div className="public-url-meta-row">
+                <span className={autoPublicUrlReservedByExistingAgent ? "url-status-pill warning" : "url-status-pill"}>
+                  {profile.runtimeDelivery.mode === "self-hosted"
+                    ? "Advanced self-hosted"
+                    : profile.agentName.trim().length === 0
+                      ? "Awaiting name"
+                      : autoPublicUrlReservedByExistingAgent
+                      ? "Already reserved"
+                      : enrollmentTicket
+                        ? "Reserved"
+                        : "Available"}
+                </span>
+                <small>
+                  {profile.runtimeDelivery.mode === "self-hosted"
+                    ? "Use this only for a stable ingress you control. SantaClawz stores it privately and still signs every hire request."
+                    : "SantaClawz reserves this hosted profile and hire URL when the enrollment ticket is created."}
+                </small>
+              </div>
             </div>
 
             <div className="field field-wide open-work-toggle-field">
