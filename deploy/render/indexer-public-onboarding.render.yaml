@@ -3,7 +3,7 @@ services:
     name: clawz-indexer-public-onboarding
     runtime: node
     plan: standard
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... build
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... build
     startCommand: pnpm --filter @clawz/indexer... build && pnpm --filter @clawz/indexer start
     healthCheckPath: /ready
     disk:

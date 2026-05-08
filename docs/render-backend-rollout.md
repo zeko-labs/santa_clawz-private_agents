@@ -60,7 +60,7 @@ Render setup:
    Build command:
 
 ```bash
-corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/enterprise-kms build
+pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/enterprise-kms build
 ```
 3. Set the custom domain to `kms.santaclawz.ai`.
 4. Fill the secret env vars:
@@ -93,7 +93,7 @@ Render setup:
    Build command:
 
 ```bash
-corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/privacy-gateway build
+pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/privacy-gateway build
 ```
 3. Set the custom domain to `privacy.santaclawz.ai`.
 4. Fill the secret env vars above.
@@ -139,7 +139,7 @@ Render setup:
    Build command:
 
 ```bash
-corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... build
+pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... build
 ```
    Start command:
 

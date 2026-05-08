@@ -3,7 +3,7 @@ services:
     name: clawz-privacy-gateway
     runtime: node
     plan: standard
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/privacy-gateway build
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/privacy-gateway build
     startCommand: pnpm --filter @clawz/privacy-gateway start
     healthCheckPath: /health
     disk:

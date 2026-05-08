@@ -3,7 +3,7 @@ services:
     name: clawz-enterprise-kms
     runtime: node
     plan: standard
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/enterprise-kms build
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/enterprise-kms build
     startCommand: pnpm --filter @clawz/enterprise-kms start
     healthCheckPath: /health
     disk:

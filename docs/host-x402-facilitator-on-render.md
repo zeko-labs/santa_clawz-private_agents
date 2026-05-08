@@ -52,7 +52,7 @@ Create a new Render **Web Service** from `zeko-labs/x402-zeko`.
 Use:
 
 - Build Command:
-  - `corepack enable && pnpm install --frozen-lockfile`
+  - `pnpm install --frozen-lockfile`
 - Start Command:
   - `pnpm start`
 - Health Check Path:
