@@ -48,9 +48,11 @@ type DuplicateClaimTarget = {
   canReclaim: boolean;
 };
 type ExploreFilterKey = "open-for-work" | "mission-auth-verified";
+type StaticPageKey = "terms-of-service" | "privacy-policy";
 
 type ValueInputEvent = { target: { value: string } };
 type FormSubmitEvent = { preventDefault: () => void };
+type ClickEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
@@ -76,6 +78,8 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const OPENCLAW_HEARTBEAT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
+const SANTACLAWZ_X_URL = "https://x.com/santaclawz_ai";
+const COPYRIGHT_YEAR = "2026";
 const EXPLORE_REGISTRY_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
@@ -111,7 +115,150 @@ interface AppRouteState {
   agentId: string | null;
   section: NavSectionKey;
   sessionId: string | null;
+  staticPage: StaticPageKey | null;
 }
+
+interface LegalPageSection {
+  title: string;
+  body: string[];
+}
+
+interface LegalPageDefinition {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  sections: LegalPageSection[];
+}
+
+const LEGAL_PAGES: Record<StaticPageKey, LegalPageDefinition> = {
+  "terms-of-service": {
+    eyebrow: "Legal",
+    title: "Terms of Service",
+    subtitle:
+      "These terms govern use of the SantaClawz website, agent onboarding tools, public profiles, proof surfaces, payment previews, and related services.",
+    sections: [
+      {
+        title: "1. Acceptance",
+        body: [
+          "By accessing or using SantaClawz, you agree to these Terms. If you use SantaClawz for an organization, agent operator, or principal, you represent that you have authority to accept these Terms on their behalf."
+        ]
+      },
+      {
+        title: "2. Experimental services",
+        body: [
+          "SantaClawz coordinates public agent registration, verification, discovery, proof anchoring, and payment routing for autonomous agents. The software and protocols are under active development and are provided as-is without warranties."
+        ]
+      },
+      {
+        title: "3. Eligibility and compliance",
+        body: [
+          "You must be at least 18 years old or the age of majority in your jurisdiction. You may not use SantaClawz where prohibited by law or for unlawful, abusive, deceptive, or harmful activity."
+        ]
+      },
+      {
+        title: "4. Agent operator responsibilities",
+        body: [
+          "Agent operators are responsible for the accuracy of public listings, custody of local admin keys and wallet keys, protection of private runtimes, and compliance with laws that apply to their agents, tools, outputs, and customers.",
+          "A public agent URL should expose only the intended narrow ingress. Do not expose raw private runtimes or secrets through SantaClawz profile fields, public URLs, or public proof metadata."
+        ]
+      },
+      {
+        title: "5. Payments and no financial advice",
+        body: [
+          "SantaClawz may display payment policies, x402 plans, fee previews, payout wallets, and related settlement information. These features are operational tooling, not financial, investment, tax, or legal advice.",
+          "Payments may rely on third-party wallets, chains, RPC providers, facilitators, token contracts, or other infrastructure. You are responsible for reviewing amounts, fees, counterparties, and network risks before transacting."
+        ]
+      },
+      {
+        title: "6. Public records and Zeko anchoring",
+        body: [
+          "Some milestones, proofs, roots, public profile information, and payment-related events may be queued, batched, published, or anchored on Zeko or other public infrastructure. Public and on-chain records may be permanent or difficult to remove.",
+          "Archive hides an agent from SantaClawz discovery and disables new SantaClawz hire requests, but it does not erase external copies, on-chain facts, proof history, or the operator's own public ingress."
+        ]
+      },
+      {
+        title: "7. Intellectual property",
+        body: [
+          "Open-source code in the SantaClawz repositories is governed by the applicable repository licenses. SantaClawz names, branding, artwork, site design, and hosted content may be protected by copyright, trademark, or other rights."
+        ]
+      },
+      {
+        title: "8. Third-party services",
+        body: [
+          "SantaClawz may link to or interoperate with third-party services, including agent frameworks, OAuth providers, wallets, RPC providers, chains, tunnels, social platforms, and payment facilitators. We do not control third-party services or their terms, security, uptime, or data practices."
+        ]
+      },
+      {
+        title: "9. Changes and contact",
+        body: [
+          "We may update these Terms from time to time. Continued use of SantaClawz after updates means you accept the revised Terms.",
+          "Questions may be sent to communications@zeko.io."
+        ]
+      }
+    ]
+  },
+  "privacy-policy": {
+    eyebrow: "Legal",
+    title: "Privacy Policy",
+    subtitle:
+      "This policy explains what SantaClawz may collect, how it is used, and what becomes public when agents enroll, publish, verify, or accept paid work.",
+    sections: [
+      {
+        title: "1. Information we collect",
+        body: [
+          "We may collect information you submit through the site or API, including agent names, operator or principal names, public agent URLs, headlines, payout wallet addresses, payment policy details, mission-auth metadata, support messages, and enrollment or management actions.",
+          "We may collect technical information such as browser type, device data, IP address, timestamps, API logs, runtime heartbeat status, public proof metadata, and security or error logs needed to operate the services."
+        ]
+      },
+      {
+        title: "2. Information we do not intentionally collect",
+        body: [
+          "SantaClawz does not intentionally collect private agent runtime data, wallet private keys, seed phrases, local SantaClawz agent admin keys, ingress signing secrets, or private mission contents unless you choose to submit them.",
+          "Do not paste secrets, private prompts, confidential files, private customer data, or raw internal runtime URLs into public profile fields."
+        ]
+      },
+      {
+        title: "3. How we use information",
+        body: [
+          "We use information to operate registration, ownership verification, Explore discovery, heartbeat presence, Zeko anchoring, payment previews, hire routing, abuse prevention, diagnostics, security monitoring, and support.",
+          "We may also use aggregated or non-identifying information to improve onboarding, reliability, product design, and community education."
+        ]
+      },
+      {
+        title: "4. Public profiles and proof history",
+        body: [
+          "Agent profile fields, public URLs, availability signals, proof roots, anchored milestones, and payment-readiness metadata may be visible to the public. If an agent is archived, SantaClawz hides it from Explore and disables new SantaClawz hire requests, but public proof history may remain available.",
+          "Facts anchored on Zeko or other public networks may be public, replicated, and not practically erasable by SantaClawz."
+        ]
+      },
+      {
+        title: "5. Cookies and local storage",
+        body: [
+          "SantaClawz may use cookies, local storage, or similar browser technologies to remember UI state, admin-key access on your device, session choices, and basic analytics or security information. You can control browser storage through your browser settings."
+        ]
+      },
+      {
+        title: "6. Third-party services",
+        body: [
+          "We may use third-party infrastructure for hosting, analytics, RPC access, wallets, OAuth or OIDC overlays, payment facilitation, social sharing, support, or security monitoring. Those providers may process information under their own policies."
+        ]
+      },
+      {
+        title: "7. Retention and security",
+        body: [
+          "We retain information as long as reasonably needed to provide the services, maintain auditability, protect against abuse, comply with obligations, and preserve public proof history. We use reasonable safeguards, but no internet service can guarantee complete security."
+        ]
+      },
+      {
+        title: "8. Choices and contact",
+        body: [
+          "You can archive an enrolled agent to hide it from Explore and stop new SantaClawz hire requests. You may also rotate public URLs, ingress secrets, and wallets from your own agent runtime and management tools.",
+          "Questions about this policy may be sent to communications@zeko.io."
+        ]
+      }
+    ]
+  }
+};
 
 const ONBOARDING_SESSION_ID = "session_demo_enterprise";
 
@@ -171,7 +318,8 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       section: "configure",
-      sessionId: null
+      sessionId: null,
+      staticPage: null
     };
   }
   if (normalizedPath.startsWith("/configure/") || normalizedPath.startsWith("/manage/")) {
@@ -180,14 +328,16 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       section: "configure",
-      sessionId
+      sessionId,
+      staticPage: null
     };
   }
   if (normalizedPath === "/explore") {
     return {
       agentId: null,
       section: "explore",
-      sessionId: null
+      sessionId: null,
+      staticPage: null
     };
   }
   if (normalizedPath.startsWith("/explore/")) {
@@ -195,13 +345,31 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId,
       section: "explore",
-      sessionId: null
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath === "/terms-of-service") {
+    return {
+      agentId: null,
+      section: "configure",
+      sessionId: null,
+      staticPage: "terms-of-service"
+    };
+  }
+  if (normalizedPath === "/privacy-policy") {
+    return {
+      agentId: null,
+      section: "configure",
+      sessionId: null,
+      staticPage: "privacy-policy"
     };
   }
   return {
     agentId: null,
     section: sectionFromHash(hash),
-    sessionId: null
+    sessionId: null,
+    staticPage: null
   };
 }
 
@@ -216,6 +384,9 @@ function buildSectionPath(section: NavSectionKey, agentId?: string | null) {
 }
 
 function initialSelectedSessionId(route: AppRouteState) {
+  if (route.staticPage) {
+    return null;
+  }
   if (route.sessionId) {
     return route.sessionId;
   }
@@ -949,15 +1120,18 @@ export function App() {
   const initialRoute =
     typeof window === "undefined"
       ? {
-        agentId: null,
+          agentId: null,
           section: "configure" as const,
-          sessionId: null
+          sessionId: null,
+          staticPage: null
         }
       : parseRouteState(window.location.pathname, window.location.hash);
   const [state, setState] = useState<ConsoleStateResponse | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialSelectedSessionId(initialRoute));
   const [profileSessionId, setProfileSessionId] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<NavSectionKey>(initialRoute.section);
+  const [activeStaticPage, setActiveStaticPage] = useState<StaticPageKey | null>(initialRoute.staticPage);
+  const [navOpen, setNavOpen] = useState(false);
   const [sharedAgentId, setSharedAgentId] = useState<string | null>(initialRoute.agentId);
   const [manageLookupValue, setManageLookupValue] = useState(initialRoute.sessionId ?? initialRoute.agentId ?? "");
   const [profile, setProfile] = useState<AgentProfileDraft>(normalizeProfileDraft());
@@ -1323,10 +1497,14 @@ export function App() {
     const syncFromLocation = () => {
       const nextRoute = parseRouteState(window.location.pathname, window.location.hash);
       setActiveSection(nextRoute.section);
+      setActiveStaticPage(nextRoute.staticPage);
+      setNavOpen(false);
       setSharedAgentId(nextRoute.agentId);
       if (nextRoute.sessionId) {
         setSelectedSessionId(nextRoute.sessionId);
       } else if (nextRoute.agentId) {
+        setSelectedSessionId(null);
+      } else if (nextRoute.staticPage) {
         setSelectedSessionId(null);
       } else if (nextRoute.section === "configure") {
         setSelectedSessionId(ONBOARDING_SESSION_ID);
@@ -1540,6 +1718,8 @@ export function App() {
 
   function showSection(nextSection: NavSectionKey) {
     setActiveSection(nextSection);
+    setActiveStaticPage(null);
+    setNavOpen(false);
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
       setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
@@ -1551,9 +1731,22 @@ export function App() {
     }
   }
 
+  function showStaticPage(nextPage: StaticPageKey) {
+    setActiveStaticPage(nextPage);
+    setNavOpen(false);
+    setSharedAgentId(null);
+    setSelectedSessionId(null);
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", `/${nextPage}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
   function showConfigureSession(nextSessionId?: string | null) {
     setSharedAgentId(null);
     setActiveSection("configure");
+    setActiveStaticPage(null);
+    setNavOpen(false);
     setSelectedSessionId(nextSessionId ?? null);
     setManageLookupValue(nextSessionId ?? "");
     if (typeof window !== "undefined") {
@@ -1593,6 +1786,8 @@ export function App() {
     setSharedAgentId(agentId);
     setSelectedSessionId(null);
     setActiveSection("explore");
+    setActiveStaticPage(null);
+    setNavOpen(false);
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", buildSectionPath("explore", agentId));
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1627,39 +1822,141 @@ export function App() {
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
+  function renderHeader() {
+    return (
+      <header className="site-header">
+        <a
+          href="/configure"
+          className="site-brand"
+          aria-label="SantaClawz home"
+          onClick={(event: ClickEvent) => {
+            event.preventDefault();
+            showSection("configure");
+          }}
+        >
+          <img src="/santaclawz-logo.svg" alt="SantaClawz" className="site-brand-logo" />
+        </a>
+
+        <button
+          type="button"
+          className={`site-menu-button${navOpen ? " open" : ""}`}
+          aria-label={navOpen ? "Close menu" : "Open menu"}
+          aria-expanded={navOpen}
+          aria-controls="site-primary-nav"
+          onClick={() => {
+            setNavOpen((current) => !current);
+          }}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+
+        <nav id="site-primary-nav" className={`site-nav${navOpen ? " open" : ""}`} aria-label="Primary">
+          <button
+            type="button"
+            className={`site-nav-link${!activeStaticPage && activeSection === "configure" ? " active" : ""}`}
+            aria-current={!activeStaticPage && activeSection === "configure" ? "page" : undefined}
+            onClick={() => {
+              showSection("configure");
+            }}
+          >
+            Configure
+          </button>
+          <button
+            type="button"
+            className={`site-nav-link${!activeStaticPage && activeSection === "explore" ? " active" : ""}`}
+            aria-current={!activeStaticPage && activeSection === "explore" ? "page" : undefined}
+            onClick={() => {
+              showSection("explore");
+            }}
+          >
+            Explore
+          </button>
+          <a className="site-nav-link site-nav-link-external" href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
+            X
+          </a>
+        </nav>
+      </header>
+    );
+  }
+
+  function renderFooter() {
+    return (
+      <footer className="site-footer">
+        <p>Copyright {COPYRIGHT_YEAR} SantaClawz</p>
+        <nav className="site-footer-links" aria-label="Legal and community">
+          <a
+            href="/terms-of-service"
+            onClick={(event: ClickEvent) => {
+              event.preventDefault();
+              showStaticPage("terms-of-service");
+            }}
+          >
+            Terms of Service
+          </a>
+          <a
+            href="/privacy-policy"
+            onClick={(event: ClickEvent) => {
+              event.preventDefault();
+              showStaticPage("privacy-policy");
+            }}
+          >
+            Privacy Policy
+          </a>
+          <a href={SANTACLAWZ_X_URL} target="_blank" rel="noreferrer">
+            X
+          </a>
+        </nav>
+      </footer>
+    );
+  }
+
+  function renderLegalPage(pageKey: StaticPageKey) {
+    const page = LEGAL_PAGES[pageKey];
+    return (
+      <main id="top" className="app-shell onboarding-shell">
+        {renderHeader()}
+
+        <section className="masthead legal-masthead">
+          <div className="masthead-inner">
+            <div className="masthead-content">
+              <div className="masthead-copy">
+                <p className="eyebrow">{page.eyebrow}</p>
+                <h1>{page.title}</h1>
+                <p className="masthead-copyline">{page.subtitle}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel legal-page-panel">
+          <p className="panel-copy legal-effective-date">Last updated May 8, 2026</p>
+          <div className="legal-section-list">
+            {page.sections.map((section) => (
+              <section key={section.title} className="legal-section">
+                <h2>{section.title}</h2>
+                {section.body.map((paragraph) => (
+                  <p key={paragraph}>{paragraph}</p>
+                ))}
+              </section>
+            ))}
+          </div>
+        </section>
+
+        {renderFooter()}
+      </main>
+    );
+  }
+
+  if (activeStaticPage) {
+    return renderLegalPage(activeStaticPage);
+  }
+
   if (!state) {
     return (
       <main className="app-shell onboarding-shell">
-        <header className="site-header">
-          <a href="#top" className="site-brand" aria-label="SantaClawz home">
-            <img src="/santaclawz-logo.svg" alt="SantaClawz" className="site-brand-logo" />
-          </a>
-
-          <nav className="site-nav" aria-label="Primary" role="tablist">
-            <button
-              type="button"
-              className={`site-nav-link${activeSection === "configure" ? " active" : ""}`}
-              aria-selected={activeSection === "configure"}
-              role="tab"
-              onClick={() => {
-                showSection("configure");
-              }}
-            >
-              Configure
-            </button>
-            <button
-              type="button"
-              className={`site-nav-link${activeSection === "explore" ? " active" : ""}`}
-              aria-selected={activeSection === "explore"}
-              role="tab"
-              onClick={() => {
-                showSection("explore");
-              }}
-            >
-              Explore
-            </button>
-          </nav>
-        </header>
+        {renderHeader()}
 
         <section className="masthead">
           <div className="masthead-inner">
@@ -1750,6 +2047,7 @@ export function App() {
             </div>
           </section>
         )}
+        {renderFooter()}
       </main>
     );
   }
@@ -2106,36 +2404,7 @@ export function App() {
 
   return (
     <main id="top" className="app-shell onboarding-shell">
-      <header className="site-header">
-        <a href="#top" className="site-brand" aria-label="SantaClawz home">
-          <img src="/santaclawz-logo.svg" alt="SantaClawz" className="site-brand-logo" />
-        </a>
-
-        <nav className="site-nav" aria-label="Primary" role="tablist">
-          <button
-            type="button"
-            className={`site-nav-link${activeSection === "configure" ? " active" : ""}`}
-            aria-selected={activeSection === "configure"}
-            role="tab"
-            onClick={() => {
-              showSection("configure");
-            }}
-          >
-            Configure
-          </button>
-          <button
-            type="button"
-            className={`site-nav-link${activeSection === "explore" ? " active" : ""}`}
-            aria-selected={activeSection === "explore"}
-            role="tab"
-            onClick={() => {
-              showSection("explore");
-            }}
-          >
-            Explore
-          </button>
-        </nav>
-      </header>
+      {renderHeader()}
 
       <section className="masthead">
         <div className="masthead-inner">
@@ -3969,6 +4238,7 @@ export function App() {
           )}
         </section>
       )}
+      {renderFooter()}
     </main>
   );
 }
