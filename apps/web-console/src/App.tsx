@@ -3028,11 +3028,6 @@ export function App() {
                     {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
                   </span>
                 </div>
-                {enrollmentTicket ? (
-                  <p className="status-note status-note-compact">
-                    Reserved public profile: {enrollmentTicket.publicAgentUrl}
-                  </p>
-                ) : null}
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
                     <div>
