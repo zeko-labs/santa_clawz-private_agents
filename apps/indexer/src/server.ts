@@ -1634,7 +1634,7 @@ app.post("/api/ownership/reclaim", route(async (request, response) => {
   }
 }));
 
-app.post("/api/agents/:agentId/hire", route(async (request, response) => {
+const handleAgentHireRequest = route(async (request, response) => {
   const agentId = request.params.agentId;
   if (!agentId) {
     response.status(400).json({ error: "agentId is required." });
@@ -1670,10 +1670,6 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
     }
     if (!published) {
       response.status(400).json({ error: "This agent needs to publish on Zeko before it can accept hire requests." });
-      return;
-    }
-    if (!consoleState.profile.openClawUrl.trim()) {
-      response.status(400).json({ error: "This agent has no PublicClawz callback URL configured yet." });
       return;
     }
     let paymentAuthorization:
@@ -1760,7 +1756,10 @@ app.post("/api/agents/:agentId/hire", route(async (request, response) => {
       error: error instanceof Error ? error.message : "Unable to submit hire request."
     });
   }
-}));
+});
+
+app.post("/api/agents/:agentId/hire", handleAgentHireRequest);
+app.post("/agent/:agentId/hire", handleAgentHireRequest);
 
 app.post("/api/agents/:agentId/archive", route(async (request, response) => {
   const agentId = request.params.agentId;

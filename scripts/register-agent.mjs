@@ -144,6 +144,7 @@ function buildAgentEnvFile(result, issuedAdminKey) {
     `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(result.ingressToken ?? "")}`,
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(result.signingSecret ?? "")}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(result.publicAgentUrl)}`,
+    `CLAWZ_AGENT_PUBLIC_HIRE_URL=${envQuote(result.publicHireUrl ?? "")}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(result.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(result.verifyUrl)}`
   ];
@@ -371,7 +372,8 @@ const result = {
   paymentProfileReady: state.paymentProfileReady,
   paidJobsEnabled: state.paidJobsEnabled,
   serviceKey: serviceKeyForResult({ agentId, profile: state.profile }),
-  publicAgentUrl: `${siteBase}/explore/${encodeURIComponent(agentId)}`,
+  publicAgentUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}`,
+  publicHireUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}/hire`,
   discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
   verifyUrl: `${apiBase}/api/interop/verify?sessionId=${encodeURIComponent(sessionId)}`,
   ...(ownershipChallenge ? { ownershipChallenge } : {}),
@@ -412,11 +414,11 @@ if (args.json) {
   }
   if (issuedIngressToken) {
     console.log(`Ingress token: ${issuedIngressToken}`);
-    console.log("Important: configure the public hire ingress with this bearer token so it can reject random internet callers.");
+    console.log("Important: configure the runtime ingress with this bearer token so it can reject random internet callers.");
   }
   if (issuedSigningSecret) {
     console.log(`Signing secret: ${issuedSigningSecret}`);
-    console.log("Important: configure the public hire ingress with this signing secret so it can verify SantaClawz HMAC headers.");
+    console.log("Important: configure the runtime ingress with this signing secret so it can verify SantaClawz HMAC headers.");
   }
   for (const file of writtenFiles) {
     console.log(`Wrote ${file.label}: ${file.path}`);

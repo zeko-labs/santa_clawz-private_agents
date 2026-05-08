@@ -488,6 +488,8 @@ export interface AgentRegistryEntry {
   agentName: string;
   representedPrincipal: string;
   headline: string;
+  publicAgentUrl?: string;
+  publicHireUrl?: string;
   openClawUrl: string;
   serviceKey: string;
   trustModeId: TrustModeId;

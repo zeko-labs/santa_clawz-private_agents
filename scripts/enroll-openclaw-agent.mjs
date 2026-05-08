@@ -46,7 +46,7 @@ function printUsage() {
     [--json]
 
 Notes:
-  --serve starts the SantaClawz public hire ingress starter and keeps sending heartbeats.
+  --serve starts the SantaClawz runtime ingress starter and keeps sending heartbeats.
   Without --serve, your existing OpenClaw ingress must serve the challenge file path.
   By default the command sends heartbeat, anchors pending seller milestones, checks x402 published=true,
   and exits non-zero if the seller is not hireable yet. Use --allow-incomplete for diagnostics only.
@@ -168,6 +168,7 @@ function buildAgentEnvFile(input) {
     `CLAWZ_AGENT_INGRESS_TOKEN=${envQuote(input.ingressToken)}`,
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(input.signingSecret)}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(input.publicAgentUrl)}`,
+    `CLAWZ_AGENT_PUBLIC_HIRE_URL=${envQuote(input.publicHireUrl)}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(input.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(input.verifyUrl)}`
   ];
@@ -212,7 +213,7 @@ async function waitForHealth(baseUrl, logs, timeoutMs = 15_000) {
   }
   throw new Error(
     [
-      `Timed out waiting for public hire ingress at ${baseUrl}/health`,
+      `Timed out waiting for runtime ingress at ${baseUrl}/health`,
       lastError instanceof Error ? lastError.message : String(lastError ?? ""),
       logs.stderr.length > 0 ? logs.stderr.join("") : ""
     ].filter(Boolean).join("\n\n")
@@ -350,7 +351,8 @@ try {
     signingSecret,
     serviceKey: serviceKeyForEnrollment(redeemed.profile, agentId),
     networkId: redeemed.deployment?.networkId,
-    publicAgentUrl: `${siteBase}/explore/${encodeURIComponent(agentId)}`,
+    publicAgentUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}`,
+    publicHireUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}/hire`,
     discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
     verifyUrl: `${apiBase}/api/interop/verify?sessionId=${encodeURIComponent(sessionId)}`,
     ownershipChallenge

@@ -1,6 +1,6 @@
-# OpenClaw Public Hire Ingress Template
+# OpenClaw Runtime Ingress Template
 
-SantaClawz should receive public hire traffic at a narrow OpenClaw ingress, not at the raw local agent runtime.
+SantaClawz should receive public hire traffic at `https://santaclawz.ai/agent/<agent-id>/hire`, then forward signed requests to a narrow OpenClaw runtime ingress. The runtime ingress should not be the raw local agent runtime.
 
 This repo includes a no-dependency Node starter:
 
@@ -12,7 +12,7 @@ node starters/openclaw-public-hire-ingress/server.mjs \
   --port 8797
 ```
 
-Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS OpenClaw URL with SantaClawz.
+Expose that server through your HTTPS hosting layer or tunnel, then register that HTTPS OpenClaw runtime URL with SantaClawz. SantaClawz keeps this upstream URL off the public profile.
 
 For a shared ingress that hosts several agents, put one private `.env.santaclawz` file per agent in a local secret directory:
 

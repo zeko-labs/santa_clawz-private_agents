@@ -160,6 +160,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         pathname === "/api/ownership/verify" ||
         pathname === "/api/ownership/reclaim" ||
         (/^\/api\/agents\/[^/]+\/hire$/.test(pathname)) ||
+        (/^\/agent\/[^/]+\/hire$/.test(pathname)) ||
         pathname === "/api/x402/verify" ||
         pathname === "/api/x402/settle" ||
         pathname === "/api/mission-auth/check" ||

@@ -925,6 +925,18 @@ function hostedServiceUrlFor(baseUrl: string, relativePath: string) {
   return new URL(normalizedPath, normalizedBase).toString();
 }
 
+function publicSiteBase() {
+  return (process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai").replace(/\/+$/, "");
+}
+
+function publicAgentUrlFor(agentId: string) {
+  return `${publicSiteBase()}/agent/${encodeURIComponent(agentId)}`;
+}
+
+function publicAgentHireUrlFor(agentId: string) {
+  return `${publicAgentUrlFor(agentId)}/hire`;
+}
+
 async function fetchJsonWithTimeout<T>(url: string, label: string, timeoutMs = 8000): Promise<T> {
   let response: Response;
   try {
@@ -4999,6 +5011,19 @@ export class ClawzControlPlane {
       options.exposeIssuedIngressToken,
       options.exposeIssuedSigningSecret
     );
+    const responseProfile = adminAccess.hasAdminAccess
+      ? profile
+      : {
+          ...profile,
+          openClawUrl: ""
+        };
+    const responseOwnership = adminAccess.hasAdminAccess
+      ? ownership
+      : {
+          status: ownership.status,
+          legacyRegistration: ownership.legacyRegistration,
+          canReclaim: ownership.canReclaim
+        };
 
     return {
       agentId,
@@ -5040,8 +5065,8 @@ export class ClawzControlPlane {
       liveFlow,
       sponsorQueue,
       socialAnchorQueue,
-      profile,
-      ownership
+      profile: responseProfile,
+      ownership: responseOwnership
     };
   }
 
@@ -5164,7 +5189,9 @@ export class ClawzControlPlane {
           agentName: profile.agentName,
           representedPrincipal: profile.representedPrincipal,
           headline: profile.headline,
-          openClawUrl: profile.openClawUrl,
+          publicAgentUrl: publicAgentUrlFor(agentId),
+          publicHireUrl: publicAgentHireUrlFor(agentId),
+          openClawUrl: "",
           serviceKey: serviceKeyForAgent(profile, agentId),
           trustModeId,
           trustModeLabel: trustMode.label,
@@ -5214,7 +5241,7 @@ export class ClawzControlPlane {
       .filter(
         (entry) =>
           entry.availability !== "archived" &&
-          entry.openClawUrl.trim().length > 0 &&
+          this.profileForSession(state, entry.sessionId).openClawUrl.trim().length > 0 &&
           entry.agentName.trim().length > 0 &&
           entry.headline.trim().length > 0
       )

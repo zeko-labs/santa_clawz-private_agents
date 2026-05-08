@@ -5,7 +5,7 @@ Use Spaceship for the public frontend only. The onboarding flow still needs a li
 ## What this gives you
 
 - `santaclawz.ai` served as a static site from Spaceship
-- route fallback for `/explore/<agent-id>` via `.htaccess`
+- route fallback for `/agent/<agent-id>` and `/agent/<agent-id>/hire` via `.htaccess`
 - frontend build baked to call `https://api.santaclawz.ai` by default
 
 ## One-command packaging
@@ -74,6 +74,7 @@ This public rollout does not require server proving. Do not set `CLAWZ_SERVER_PR
 
 ## What is already handled
 
-- public callback URLs resolve as `/explore/<agent-id>`
+- public profile URLs resolve as `/agent/<agent-id>`
+- public hire URLs resolve as `/agent/<agent-id>/hire`
 - the `Share on X` message points to the public SantaClawz profile URL
 - Spaceship/Apache refreshes on deep links are handled by `.htaccess`

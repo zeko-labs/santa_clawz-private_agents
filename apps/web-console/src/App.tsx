@@ -113,6 +113,7 @@ type NavSectionKey = "configure" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
+  agentFocus: "profile" | "hire";
   section: NavSectionKey;
   sessionId: string | null;
   staticPage: StaticPageKey | null;
@@ -159,7 +160,7 @@ const LEGAL_PAGES: Record<StaticPageKey, LegalPageDefinition> = {
         title: "4. Agent operator responsibilities",
         body: [
           "Agent operators are responsible for the accuracy of public listings, custody of local admin keys and wallet keys, protection of private runtimes, and compliance with laws that apply to their agents, tools, outputs, and customers.",
-          "A public agent URL should expose only the intended narrow ingress. Do not expose raw private runtimes or secrets through SantaClawz profile fields, public URLs, or public proof metadata."
+          "An OpenClaw runtime URL should expose only the intended narrow ingress. Do not expose raw private runtimes or secrets through SantaClawz profile fields, public URLs, or public proof metadata."
         ]
       },
       {
@@ -317,6 +318,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
   if (normalizedPath === "/configure" || normalizedPath === "/manage") {
     return {
       agentId: null,
+      agentFocus: "profile",
       section: "configure",
       sessionId: null,
       staticPage: null
@@ -327,6 +329,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     const sessionId = decodeURIComponent(normalizedPath.slice(prefix.length));
     return {
       agentId: null,
+      agentFocus: "profile",
       section: "configure",
       sessionId,
       staticPage: null
@@ -335,6 +338,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
   if (normalizedPath === "/explore") {
     return {
       agentId: null,
+      agentFocus: "profile",
       section: "explore",
       sessionId: null,
       staticPage: null
@@ -344,6 +348,19 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     const agentId = decodeURIComponent(normalizedPath.slice("/explore/".length));
     return {
       agentId,
+      agentFocus: "profile",
+      section: "explore",
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath.startsWith("/agent/")) {
+    const routeRemainder = normalizedPath.slice("/agent/".length);
+    const segments = routeRemainder.split("/").filter(Boolean);
+    const agentId = decodeURIComponent(segments[0] ?? "");
+    return {
+      agentId: agentId || null,
+      agentFocus: segments[1] === "hire" ? "hire" : "profile",
       section: "explore",
       sessionId: null,
       staticPage: null
@@ -352,6 +369,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
   if (normalizedPath === "/terms-of-service") {
     return {
       agentId: null,
+      agentFocus: "profile",
       section: "configure",
       sessionId: null,
       staticPage: "terms-of-service"
@@ -360,6 +378,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
   if (normalizedPath === "/privacy-policy") {
     return {
       agentId: null,
+      agentFocus: "profile",
       section: "configure",
       sessionId: null,
       staticPage: "privacy-policy"
@@ -367,18 +386,23 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
   }
   return {
     agentId: null,
+    agentFocus: "profile",
     section: sectionFromHash(hash),
     sessionId: null,
     staticPage: null
   };
 }
 
-function buildSectionPath(section: NavSectionKey, agentId?: string | null) {
+function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus: "profile" | "hire" = "profile") {
   if (section === "configure") {
     return agentId ? `/configure/${encodeURIComponent(agentId)}` : "/configure";
   }
   if (section === "explore") {
-    return agentId ? `/explore/${encodeURIComponent(agentId)}` : "/explore";
+    if (agentId) {
+      const basePath = `/agent/${encodeURIComponent(agentId)}`;
+      return focus === "hire" ? `${basePath}/hire` : basePath;
+    }
+    return "/explore";
   }
   return "/";
 }
@@ -449,7 +473,9 @@ function parseManageAgentTarget(value: string) {
     }
 
     const segments = url.pathname.split("/").map((segment) => segment.trim()).filter(Boolean);
-    const knownRouteIndex = segments.findIndex((segment) => segment === "configure" || segment === "manage" || segment === "explore");
+    const knownRouteIndex = segments.findIndex((segment) =>
+      segment === "configure" || segment === "manage" || segment === "explore" || segment === "agent"
+    );
     if (knownRouteIndex < 0) {
       return null;
     }
@@ -463,7 +489,45 @@ function parseManageAgentTarget(value: string) {
 }
 
 function buildPublicAgentUrl(agentId: string) {
-  return `https://santaclawz.ai/explore/${encodeURIComponent(agentId)}`;
+  return `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}`;
+}
+
+function buildPublicAgentHireUrl(agentId: string) {
+  return `${buildPublicAgentUrl(agentId)}/hire`;
+}
+
+function classifyRuntimeIngressUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {
+      tone: "neutral" as const,
+      message:
+        "SantaClawz creates the public profile and hire URL after enrollment. Paste the OpenClaw runtime ingress here so SantaClawz can route signed requests privately."
+    };
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "santaclawz.ai" || hostname.endsWith(".santaclawz.ai")) {
+      return {
+        tone: "warning" as const,
+        message:
+          "This looks like a SantaClawz public URL. Keep that for buyers; paste the OpenClaw runtime ingress here so SantaClawz can forward signed requests after payment and verification checks."
+      };
+    }
+
+    return {
+      tone: "info" as const,
+      message:
+        "Self-hosted runtime ingress. SantaClawz will keep this URL off the public profile and use signed requests, but the operator is still responsible for uptime, auth, replay protection, and rate limits."
+    };
+  } catch {
+    return {
+      tone: "warning" as const,
+      message: "Enter a valid HTTPS OpenClaw runtime URL. SantaClawz will create the public /agent/... URL automatically."
+    };
+  }
 }
 
 function buildShareOnXUrl(callbackUrl: string, agentId: string) {
@@ -1121,6 +1185,7 @@ export function App() {
     typeof window === "undefined"
       ? {
           agentId: null,
+          agentFocus: "profile" as const,
           section: "configure" as const,
           sessionId: null,
           staticPage: null
@@ -1133,6 +1198,7 @@ export function App() {
   const [activeStaticPage, setActiveStaticPage] = useState<StaticPageKey | null>(initialRoute.staticPage);
   const [navOpen, setNavOpen] = useState(false);
   const [sharedAgentId, setSharedAgentId] = useState<string | null>(initialRoute.agentId);
+  const [sharedAgentFocus, setSharedAgentFocus] = useState<"profile" | "hire">(initialRoute.agentFocus);
   const [manageLookupValue, setManageLookupValue] = useState(initialRoute.sessionId ?? initialRoute.agentId ?? "");
   const [profile, setProfile] = useState<AgentProfileDraft>(normalizeProfileDraft());
   const [error, setError] = useState<string | null>(null);
@@ -1500,6 +1566,7 @@ export function App() {
       setActiveStaticPage(nextRoute.staticPage);
       setNavOpen(false);
       setSharedAgentId(nextRoute.agentId);
+      setSharedAgentFocus(nextRoute.agentFocus);
       if (nextRoute.sessionId) {
         setSelectedSessionId(nextRoute.sessionId);
       } else if (nextRoute.agentId) {
@@ -1520,6 +1587,21 @@ export function App() {
       window.removeEventListener("popstate", syncFromLocation);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || activeSection !== "explore" || !sharedAgentId) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const targetId = sharedAgentFocus === "hire" ? "hire-this-agent" : "agent-profile-top";
+      document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 140);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeSection, sharedAgentFocus, sharedAgentId, state?.agentId]);
 
   async function runAction(actionKey: string, task: () => Promise<ConsoleStateResponse>) {
     setPendingAction(actionKey);
@@ -1619,7 +1701,7 @@ export function App() {
 
   async function createEnrollmentTicketAction() {
     if (!connectReady) {
-      setError("Add the agent name, OpenClaw URL, and description before creating an enrollment ticket.");
+      setError("Add the agent name, OpenClaw runtime URL, and description before creating an enrollment ticket.");
       return;
     }
     if (!paymentEnrollmentReady) {
@@ -1720,6 +1802,7 @@ export function App() {
     setActiveSection(nextSection);
     setActiveStaticPage(null);
     setNavOpen(false);
+    setSharedAgentFocus("profile");
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
       setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
@@ -1747,6 +1830,7 @@ export function App() {
     setActiveSection("configure");
     setActiveStaticPage(null);
     setNavOpen(false);
+    setSharedAgentFocus("profile");
     setSelectedSessionId(nextSessionId ?? null);
     setManageLookupValue(nextSessionId ?? "");
     if (typeof window !== "undefined") {
@@ -1784,12 +1868,13 @@ export function App() {
 
   function showAgentProfile(agentId: string, focus: "profile" | "hire" = "profile") {
     setSharedAgentId(agentId);
+    setSharedAgentFocus(focus);
     setSelectedSessionId(null);
     setActiveSection("explore");
     setActiveStaticPage(null);
     setNavOpen(false);
     if (typeof window !== "undefined") {
-      window.history.pushState(null, "", buildSectionPath("explore", agentId));
+      window.history.pushState(null, "", buildSectionPath("explore", agentId, focus));
       window.scrollTo({ top: 0, behavior: "smooth" });
       window.setTimeout(() => {
         const targetId = focus === "hire" ? "hire-this-agent" : "agent-profile-top";
@@ -2073,8 +2158,13 @@ export function App() {
     typeof profile.archivedAtIso === "string" && profile.archivedAtIso.trim().length > 0
       ? ` on ${new Date(profile.archivedAtIso).toLocaleString()}`
       : "";
+  const runtimeIngressUrlStatus = classifyRuntimeIngressUrl(profile.openClawUrl);
+  const runtimeIngressUrlRejected = runtimeIngressUrlStatus.tone === "warning";
   const connectReady =
-    profile.agentName.trim().length > 0 && profile.openClawUrl.trim().length > 0 && profile.headline.trim().length > 0;
+    profile.agentName.trim().length > 0 &&
+    profile.openClawUrl.trim().length > 0 &&
+    !runtimeIngressUrlRejected &&
+    profile.headline.trim().length > 0;
   const paymentEnrollmentReady = paymentProfileEnrollmentReady(profile);
   const enrollmentReady = connectReady && paymentEnrollmentReady;
   const canPreparePublish = isRegisteredSession && connectReady;
@@ -2159,6 +2249,8 @@ export function App() {
         : "Save payment setup";
   const publicAgentUrl = registeredAgentId ? buildPublicAgentUrl(registeredAgentId) : null;
   const routedPublicAgentUrl = sharedAgentId ?? state.agentId ? buildPublicAgentUrl(sharedAgentId ?? state.agentId) : null;
+  const routedPublicAgentHireUrl =
+    sharedAgentId ?? state.agentId ? buildPublicAgentHireUrl(sharedAgentId ?? state.agentId) : null;
   const shareOnXUrl = publicAgentUrl && registeredAgentId ? buildShareOnXUrl(publicAgentUrl, registeredAgentId) : null;
   const heartbeatAgentId = registeredAgentId ?? sharedAgentId ?? state.agentId;
   const currentAdminKey = getStoredAdminKey(sessionId, heartbeatAgentId);
@@ -2274,7 +2366,6 @@ export function App() {
     savedPaymentsEnabled &&
     (quoteRequestMode ? savedPaymentProfileReady : paidJobsEnabled) &&
     !manualBrowserPaidExecutionUnavailable &&
-    profile.openClawUrl.trim().length > 0 &&
     !agentRuntimeCheckPending &&
     !agentRuntimeOffline &&
     hireDraft.taskPrompt.trim().length > 0 &&
@@ -2293,7 +2384,7 @@ export function App() {
           ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}. Paid execution requires an x402 buyer client; browser checkout is not live yet.`
           : quoteRequestMode
             ? `This agent is open for quote requests. It advertises ${referencePriceLine(state.profile.paymentProfile).toLowerCase()}, then quotes an exact price before paid execution.`
-          : `Hire requests route to ${profile.openClawUrl}.`
+          : "Hire requests route through SantaClawz to the private OpenClaw ingress after checks."
   ;
   const missionAuthStatusCopy = !missionAuthEnabled
     ? "Add this if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions, verify key checkpoints, and export portable proof bundles."
@@ -2468,9 +2559,9 @@ export function App() {
 
             <label className="field field-wide">
               <div className="field-label-row">
-                <span>OpenClaw agent URL</span>
+                <span>OpenClaw runtime URL</span>
                 <a className="field-help-link" href={PUBLIC_HIRE_URL_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Public URL setup guide
+                  Advanced URL setup guide
                 </a>
               </div>
               <input
@@ -2482,8 +2573,11 @@ export function App() {
                     openClawUrl: event.target.value
                   });
                 }}
-                placeholder="https://your-public-agent.example.com"
+                placeholder="https://your-openclaw-ingress.example.com/hire"
               />
+              <p className={`status-note status-note-compact ingress-url-note ingress-url-note-${runtimeIngressUrlStatus.tone}`}>
+                {runtimeIngressUrlStatus.message}
+              </p>
             </label>
 
             <label className="field field-wide">
@@ -2841,7 +2935,7 @@ export function App() {
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
                     <div>
-                      <strong>{duplicateClaimTarget.canReclaim ? "This OpenClaw URL is already registered." : "This OpenClaw URL is already claimed."}</strong>
+                      <strong>{duplicateClaimTarget.canReclaim ? "This OpenClaw runtime URL is already registered." : "This OpenClaw runtime URL is already claimed."}</strong>
                       <span>
                         {duplicateClaimTarget.canReclaim
                           ? "Open the existing agent record, issue the ownership challenge, and verify control to reclaim it."
@@ -2909,7 +3003,7 @@ export function App() {
                     onChange={(event: ValueInputEvent) => {
                       setManageLookupValue(event.target.value);
                     }}
-                    placeholder="https://santaclawz.ai/explore/... or session_agent_..."
+                    placeholder="https://santaclawz.ai/agent/... or session_agent_..."
                   />
                 </label>
                 <button
@@ -2982,7 +3076,7 @@ export function App() {
                 <div>
                   <span className="metric">OpenClaw heartbeat</span>
                   <p className="panel-copy">
-                    Run this beside the OpenClaw ingress every 10-20 seconds so Explore can show Live. If it stops, the profile falls back to Waiting; if the OpenClaw URL cannot be reached, hire and payment stay disabled.
+                    Run this beside the OpenClaw ingress every 10-20 seconds so Explore can show Live. If it stops, the profile falls back to Waiting; if the OpenClaw runtime URL cannot be reached, hire and payment stay disabled.
                   </p>
                 </div>
                 <div className="command-strip compact-command-strip">
@@ -3037,7 +3131,7 @@ export function App() {
           <div className="action-list">
             <div className="action-row">
               <div>
-                <strong>{state.ownership.canReclaim && !hasAdminAccess ? "Claim control of this OpenClaw agent" : "Verify control of this OpenClaw URL"}</strong>
+                <strong>{state.ownership.canReclaim && !hasAdminAccess ? "Claim control of this OpenClaw agent" : "Verify control of this OpenClaw runtime URL"}</strong>
                 <p className="panel-copy">{ownershipStatusCopy}</p>
                 {!ownershipVerified ? (
                   <div className="ownership-checklist">
@@ -3145,7 +3239,7 @@ export function App() {
                     : !isRegisteredSession
                       ? "Register the agent first."
                       : !ownershipVerified
-                        ? "Verify control of the OpenClaw URL first."
+                        ? "Verify control of the OpenClaw runtime URL first."
                       : canPublish
                         ? "Your agent is ready to publish."
                       : !connectReady
@@ -3237,7 +3331,7 @@ export function App() {
                       : "After Publish on Zeko, SantaClawz will generate the public URL here."}
                 </p>
                 <div className={`share-url-placeholder${publicAgentUrl ? " live" : ""}`}>
-                  {publicAgentUrl ?? "https://santaclawz.ai/explore/your-agent-id"}
+                  {publicAgentUrl ?? "https://santaclawz.ai/agent/your-agent-id"}
                 </div>
               </div>
               <div className="action-side share-actions">
@@ -3816,6 +3910,32 @@ export function App() {
                         }}
                       >
                         {copiedKey === "shared-public-agent-url" ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="action-row">
+                    <div>
+                      <strong>SantaClawz hire URL</strong>
+                      <p className="panel-copy">
+                        {routedPublicAgentHireUrl ??
+                          "This hosted hire URL appears after the agent has a SantaClawz profile."}
+                      </p>
+                      <p className="panel-copy public-routing-note">
+                        Buyers and agents can use this public URL. SantaClawz keeps the upstream OpenClaw runtime URL private and forwards only signed, checked requests.
+                      </p>
+                    </div>
+                    <div className="action-side">
+                      <button
+                        className="secondary-button"
+                        disabled={!routedPublicAgentHireUrl}
+                        onClick={() => {
+                          if (routedPublicAgentHireUrl) {
+                            void copyValue("shared-public-agent-hire-url", routedPublicAgentHireUrl);
+                          }
+                        }}
+                      >
+                        {copiedKey === "shared-public-agent-hire-url" ? "Copied" : "Copy"}
                       </button>
                     </div>
                   </div>

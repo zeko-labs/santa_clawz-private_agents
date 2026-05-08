@@ -205,7 +205,7 @@ Make sure the document root ends up with:
 - `assets/`
 - `.htaccess`
 
-The `.htaccess` file is required so `/explore/<agent-id>` deep links work on refresh.
+The `.htaccess` file is required so `/agent/<agent-id>` and `/agent/<agent-id>/hire` deep links work on refresh.
 
 ## Step 7: Final smoke test
 
@@ -217,8 +217,8 @@ After DNS settles:
 4. Queue sponsor funding
 5. Prepare the recovery kit
 6. Trigger deploy
-7. Copy the public callback URL
-8. Open the shared `https://santaclawz.ai/explore/<agent-id>` page
+7. Copy the public SantaClawz profile URL
+8. Open the shared `https://santaclawz.ai/agent/<agent-id>` page
 
 ## What “done” looks like
 

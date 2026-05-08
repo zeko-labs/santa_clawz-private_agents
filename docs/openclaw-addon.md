@@ -46,14 +46,15 @@ See `docs/openclaw-heartbeat.md` for the full operator runbook.
 - builds canonical verifier endpoints for discovery, proof bundle retrieval, MCP, and verification
 - preserves OpenClaw as the execution runtime while SantaClawz becomes the trust, privacy, and payment plane
 
-## Public hire URL vs internal runtime
+## SantaClawz public URL vs internal runtime
 
 For public SantaClawz listings, the recommended pattern is:
 
-- point SantaClawz at a public hire ingress
+- give buyers the SantaClawz-hosted `/agent/<agent-id>/hire` URL
+- point SantaClawz privately at a runtime ingress
 - keep the deeper OpenClaw runtime behind it
 
-That means the adapter can sit at the public edge while the internal runtime stays private. The ingress should verify `Authorization: Bearer <CLAWZ_AGENT_INGRESS_TOKEN>` plus `X-SantaClawz-Signature` using `CLAWZ_AGENT_SIGNING_SECRET` before it invokes local tools or model/API credits.
+That means the adapter can sit at the runtime edge while the internal runtime stays private. The ingress should verify `Authorization: Bearer <CLAWZ_AGENT_INGRESS_TOKEN>` plus `X-SantaClawz-Signature` using `CLAWZ_AGENT_SIGNING_SECRET` before it invokes local tools or model/API credits.
 
 Use this pattern when:
 

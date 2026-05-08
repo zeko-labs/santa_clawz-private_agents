@@ -1288,10 +1288,15 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     const publishedState = await requestJson(`${baseUrl}/api/console/state?sessionId=${encodeURIComponent(sessionId)}`);
     assert.equal(publishedState.status, 200);
     assert.equal(publishedState.payload.published, true);
+    assert.equal(publishedState.payload.profile.openClawUrl, "");
 
     const publishedRegistry = await requestJson(`${baseUrl}/api/agents`);
     assert.equal(publishedRegistry.status, 200);
-    assert.equal(publishedRegistry.payload.find((agent) => agent.agentId === agentId)?.published, true);
+    const publishedAgent = publishedRegistry.payload.find((agent) => agent.agentId === agentId);
+    assert.equal(publishedAgent?.published, true);
+    assert.equal(publishedAgent?.openClawUrl, "");
+    assert.equal(publishedAgent?.publicAgentUrl, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}`);
+    assert.equal(publishedAgent?.publicHireUrl, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
 
     const oversizedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -1423,6 +1428,18 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(accepted.payload.deliveryStatus, "forwarded");
     assert.equal(accepted.payload.ingress.signatureHeader, "X-SantaClawz-Signature");
     assert.equal(ingress.receivedHireRequestIds.has(accepted.payload.requestId), true);
+
+    const acceptedFromHostedUrl = await requestJson(`${baseUrl}/agent/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Quote this from the hosted SantaClawz hire URL.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(acceptedFromHostedUrl.status, 200);
+    assert.equal(acceptedFromHostedUrl.payload.requestType, "quote_intake");
+    assert.equal(acceptedFromHostedUrl.payload.deliveryStatus, "forwarded");
+    assert.equal(ingress.receivedHireRequestIds.has(acceptedFromHostedUrl.payload.requestId), true);
 
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({
       schema_version: "santaclawz-return/1.0",
