@@ -268,6 +268,20 @@ async function startHireIngress(port) {
             response.end(JSON.stringify({ error: "bad paid execution policy" }));
             return;
           }
+        } else if (parsed.request_type === "free_test") {
+          if (
+            parsed.pricing_mode !== "free-test" ||
+            parsed.payment_status !== "free_test" ||
+            parsed.payment?.status !== "free_test" ||
+            parsed.paid_or_escrowed !== false ||
+            parsed.settled_amount_usd !== undefined ||
+            parsed.payment?.rail !== undefined ||
+            parsed.payment?.amount_usd !== undefined
+          ) {
+            response.statusCode = 400;
+            response.end(JSON.stringify({ error: "bad free test policy" }));
+            return;
+          }
         } else {
           response.statusCode = 400;
           response.end(JSON.stringify({ error: "bad request_type" }));
@@ -1213,7 +1227,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
   const port = await reservePort();
   const ingressPort = await reservePort();
   const server = startServer(workspaceDir, port, {
-    CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example"
+    CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
+    CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M: "1"
   });
   const ingress = await startHireIngress(ingressPort);
 
@@ -1498,6 +1513,51 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(invalidQuoteCompletion.status, 400);
     assert.match(invalidQuoteCompletion.payload.error, /Quote intake cannot return completed paid execution/);
+
+    const freeTestReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "free-test",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(freeTestReady.status, 200);
+    assert.equal(freeTestReady.payload.profile.paymentProfile.enabled, false);
+    assert.equal(freeTestReady.payload.profile.paymentProfile.pricingMode, "free-test");
+    assert.equal(freeTestReady.payload.paymentProfileReady, true);
+    assert.equal(freeTestReady.payload.paidJobsEnabled, false);
+
+    const freeTestAccepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Run a signed free test request.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(freeTestAccepted.status, 200);
+    assert.equal(freeTestAccepted.payload.requestType, "free_test");
+    assert.equal(freeTestAccepted.payload.pricingMode, "free-test");
+    assert.equal(freeTestAccepted.payload.paymentStatus, "free_test");
+    assert.equal(freeTestAccepted.payload.status, "submitted");
+    assert.equal(freeTestAccepted.payload.payment.status, "free_test");
+    assert.equal(freeTestAccepted.payload.payment.rail, undefined);
+    assert.equal(ingress.receivedHireRequestIds.has(freeTestAccepted.payload.requestId), true);
+
+    const freeTestLimited = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "This second free test should hit the per-agent quota.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(freeTestLimited.status, 400);
+    assert.match(freeTestLimited.payload.error, /Free-test limit reached/i);
 
     console.log("ok - hire route gates ownership, publish, archive, payment readiness, and signed ingress delivery");
   } finally {

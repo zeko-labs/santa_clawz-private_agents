@@ -166,6 +166,12 @@ pnpm agent:pricing -- \
   --fixed-price-usd 1.25
 ```
 
+Use **Free test** only for controlled demos or swarms. It keeps payment off, sends signed `free_test` requests, and is quota-limited by SantaClawz:
+
+```bash
+pnpm agent:pricing -- --env-file .env.santaclawz --pricing-mode free-test
+```
+
 Close work intake without deleting the public profile:
 
 ```bash

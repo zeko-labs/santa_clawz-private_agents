@@ -593,6 +593,9 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
   if (!agent.published) {
     return "Publish first";
   }
+  if (agent.pricingMode === "free-test") {
+    return "Free test";
+  }
   if (!agent.paymentsEnabled) {
     return "Not open for work";
   }
@@ -878,12 +881,18 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
   if (mode === "fixed-exact") {
     return "Fixed price";
   }
+  if (mode === "free-test") {
+    return "Free test";
+  }
   return "Request quote";
 }
 
 function pricingModeHelp(mode: AgentProfileState["paymentProfile"]["pricingMode"]) {
   if (mode === "fixed-exact") {
     return "Fixed payment is settled before SantaClawz sends work to your agent.";
+  }
+  if (mode === "free-test") {
+    return "Free-test requests are signed by SantaClawz, quota-limited, and do not request payment.";
   }
   return "Your agent reviews quote requests and returns an exact price before paid execution.";
 }
@@ -897,6 +906,9 @@ function referencePriceLine(input: {
   if (input.pricingMode === "fixed-exact") {
     const fixedAmount = input.fixedAmountUsd?.trim();
     return fixedAmount ? `Fixed price: $${fixedAmount}` : "Fixed price";
+  }
+  if (input.pricingMode === "free-test") {
+    return "Free test";
   }
   const amount = input.referencePriceUsd?.trim();
   if (!amount) {
@@ -940,6 +952,9 @@ function paymentProfileSummary(
   paymentProfileReady: boolean,
   paymentProfile: AgentProfileState["paymentProfile"]
 ) {
+  if (paymentProfile.pricingMode === "free-test") {
+    return "Free-test lane is quota-limited and does not request payment.";
+  }
   if (!paymentProfile.enabled) {
     return "Open for work when the agent is ready to quote and earn.";
   }
@@ -974,6 +989,9 @@ function paymentProfileDraftReady(
   profile: AgentProfileState
 ) {
   const paymentProfile = effectivePaymentProfile(profile);
+  if (paymentProfile.pricingMode === "free-test") {
+    return published;
+  }
   if (!paymentProfile.enabled || !published) {
     return false;
   }
@@ -1000,6 +1018,9 @@ function paymentProfileDraftReady(
 
 function paymentProfileEnrollmentReady(profile: AgentProfileState) {
   const paymentProfile = effectivePaymentProfile(profile);
+  if (paymentProfile.pricingMode === "free-test") {
+    return true;
+  }
   if (!paymentProfile.enabled) {
     return true;
   }
@@ -1046,7 +1067,9 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
       ? ((input as { payoutAddress?: string }).payoutAddress ?? "")
       : "";
   const pricingMode =
-    input?.paymentProfile?.pricingMode === "fixed-exact" || input?.paymentProfile?.pricingMode === "quote-required"
+    input?.paymentProfile?.pricingMode === "fixed-exact" ||
+    input?.paymentProfile?.pricingMode === "quote-required" ||
+    input?.paymentProfile?.pricingMode === "free-test"
       ? input.paymentProfile.pricingMode
       : "quote-required";
   return {
@@ -2233,6 +2256,7 @@ export function App() {
   const fixedPriceExecutionMode =
     savedPaymentsEnabled &&
     state.profile.paymentProfile.pricingMode === "fixed-exact";
+  const freeTestMode = state.profile.paymentProfile.pricingMode === "free-test";
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
   const missionAuthVerified = missionAuthOverlay.status === "verified";
@@ -2253,6 +2277,8 @@ export function App() {
     ? "Archived on SantaClawz"
     : !published
       ? "Publish first"
+      : freeTestMode
+        ? "Free test"
       : !savedPaymentsEnabled
         ? "Not open for work"
         : savedPaymentProfileReady && paidJobsEnabled
@@ -2262,6 +2288,8 @@ export function App() {
             : "Finish work setup";
   const paymentSectionLead = agentArchived
     ? "This agent is archived on SantaClawz."
+    : freeTestMode
+      ? "Free-test requests are signed by SantaClawz and quota-limited."
     : !paymentsEnabled
       ? "Open this agent for paid work when it is ready."
       : paymentProfileReady
@@ -2420,8 +2448,7 @@ export function App() {
     Boolean(sharedAgentId) &&
     !agentArchived &&
     published &&
-    savedPaymentsEnabled &&
-    (quoteRequestMode ? savedPaymentProfileReady : paidJobsEnabled) &&
+    (freeTestMode || (savedPaymentsEnabled && (quoteRequestMode ? savedPaymentProfileReady : paidJobsEnabled))) &&
     !manualBrowserPaidExecutionUnavailable &&
     !agentRuntimeCheckPending &&
     !agentRuntimeOffline &&
@@ -2433,8 +2460,10 @@ export function App() {
       ? "This agent still needs to publish on Zeko before it can accept work."
       : agentRuntimeCheckPending
         ? "Checking that this OpenClaw agent is online before SantaClawz requests payment or submits work."
-        : agentRuntimeOffline
+      : agentRuntimeOffline
           ? `This OpenClaw agent appears offline. SantaClawz will not request payment or send hires until it is reachable${focusedAgentAvailability?.reason ? `: ${focusedAgentAvailability.reason}` : "."}`
+      : freeTestMode
+        ? "Free-test requests are signed by SantaClawz, sent without payment, and quota-limited."
       : savedPaymentsEnabled && !savedPaymentProfileReady
         ? "This agent is open for work, but it still needs its payout wallet, processor, or reference price completed."
         : savedPaymentsEnabled && paidJobsEnabled
@@ -2779,6 +2808,9 @@ export function App() {
                   >
                     <option value="quote-required">Request quote</option>
                     <option value="fixed-exact">Fixed price</option>
+                    {paymentProfile.pricingMode === "free-test" ? (
+                      <option value="free-test">Free test</option>
+                    ) : null}
                   </select>
                 </label>
 
@@ -3731,6 +3763,9 @@ export function App() {
                           >
                             <option value="quote-required">Request quote</option>
                             <option value="fixed-exact">Fixed price</option>
+                            {paymentProfile.pricingMode === "free-test" ? (
+                              <option value="free-test">Free test</option>
+                            ) : null}
                           </select>
                         </label>
                         {showReferencePricingFields ? (
@@ -4086,6 +4121,15 @@ export function App() {
                                 placeholder="0.50"
                               />
                             </label>
+                          ) : freeTestMode ? (
+                            <label className="field">
+                              <span>Mode</span>
+                              <input
+                                className="text-input"
+                                value="Free test"
+                                readOnly
+                              />
+                            </label>
                           ) : (
                             <label className="field">
                               <span>Fixed price</span>
@@ -4129,7 +4173,9 @@ export function App() {
                               void submitHireRequest(sharedAgentId, {
                                 taskPrompt: hireDraft.taskPrompt,
                                 requesterContact: hireDraft.requesterContact,
-                                ...(hireDraft.budgetMina.trim().length > 0 ? { budgetMina: hireDraft.budgetMina } : {})
+                                ...(!freeTestMode && hireDraft.budgetMina.trim().length > 0
+                                  ? { budgetMina: hireDraft.budgetMina }
+                                  : {})
                               })
                                 .then((receipt) => {
                                   setHireReceipt(receipt);
@@ -4154,6 +4200,8 @@ export function App() {
                                     ? "x402 payment required"
                                   : quoteRequestMode
                                     ? "Send quote request"
+                                    : freeTestMode
+                                      ? "Send free test"
                                     : "Send hire request"}
                           </button>
                         </div>
@@ -4163,7 +4211,9 @@ export function App() {
                 </div>
                 {hireReceipt ? (
                   <p className="status-banner status-banner-success">
-                    {hireReceipt.protocolReturn?.status === "quoted" && hireReceipt.protocolReturn.quote
+                    {hireReceipt.requestType === "free_test"
+                      ? `Free-test request ${hireReceipt.requestId} submitted to ${hireReceipt.deliveryTarget}.`
+                      : hireReceipt.protocolReturn?.status === "quoted" && hireReceipt.protocolReturn.quote
                       ? `Quote returned: ${hireReceipt.protocolReturn.quote.amountUsd} USDC for request ${hireReceipt.requestId}.`
                       : hireReceipt.protocolReturn?.status === "completed"
                         ? `Agent completed request ${hireReceipt.requestId}; verified output digest recorded.`

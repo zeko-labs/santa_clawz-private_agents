@@ -56,13 +56,13 @@
       "const": "santaclawz"
     },
     "request_type": {
-      "enum": ["quote_intake", "paid_execution"]
+      "enum": ["quote_intake", "paid_execution", "free_test"]
     },
     "pricing_mode": {
-      "enum": ["quote-required", "fixed-exact"]
+      "enum": ["quote-required", "fixed-exact", "free-test"]
     },
     "payment_status": {
-      "enum": ["quote_requested", "settled", "paid", "escrowed"]
+      "enum": ["quote_requested", "settled", "paid", "escrowed", "free_test"]
     },
     "settled_amount_usd": {
       "type": "string",
@@ -77,7 +77,7 @@
       "required": ["status"],
       "properties": {
         "status": {
-          "enum": ["quote_requested", "settled", "paid", "escrowed"]
+          "enum": ["quote_requested", "settled", "paid", "escrowed", "free_test"]
         },
         "rail": {
           "enum": ["base-usdc", "ethereum-usdc", "zeko-native"]
@@ -150,6 +150,59 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "request_type": {
+            "const": "free_test"
+          }
+        }
+      },
+      "then": {
+        "required": ["request_type", "pricing_mode", "payment_status"],
+        "properties": {
+          "pricing_mode": {
+            "const": "free-test"
+          },
+          "payment_status": {
+            "const": "free_test"
+          },
+          "paid_or_escrowed": {
+            "const": false
+          },
+          "payment": {
+            "properties": {
+              "status": {
+                "const": "free_test"
+              }
+            }
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": ["settled_amount_usd"]
+            },
+            {
+              "required": ["payment"],
+              "properties": {
+                "payment": {
+                  "required": ["rail"]
+                }
+              }
+            },
+            {
+              "required": ["payment"],
+              "properties": {
+                "payment": {
+                  "required": ["amount_usd"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     {
       "if": {
         "properties": {

@@ -206,6 +206,10 @@ function isQuotedPricing(mode: AgentPricingMode): boolean {
   return mode === "quote-required";
 }
 
+function isFreeTestPricing(mode: AgentPricingMode): boolean {
+  return mode === "free-test";
+}
+
 function parseUsdAtomic(value: string | undefined): bigint | null {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -589,6 +593,11 @@ function pushPricingReadiness(
     return {};
   }
 
+  if (profile.paymentProfile.pricingMode === "free-test") {
+    notes.push("Free-test mode does not emit an x402 payment challenge.");
+    return {};
+  }
+
   return {};
 }
 
@@ -615,6 +624,25 @@ function buildBaseRailPlan(
 
   if (profile.availability === "archived") {
     missing.push("Restore this archived agent before accepting new SantaClawz work.");
+  }
+  if (isFreeTestPricing(profile.paymentProfile.pricingMode)) {
+    notes.push("Free-test mode does not emit an x402 payment challenge.");
+    return {
+      rail: "base-usdc",
+      settlementRail: "evm",
+      networkId: BASE_MAINNET.networkId,
+      assetSymbol: BASE_MAINNET.assetSymbol,
+      assetDecimals: BASE_MAINNET.assetDecimals,
+      assetStandard: BASE_MAINNET.assetStandard,
+      assetAddress: BASE_MAINNET.assetAddress,
+      builderHint: "free-test",
+      facilitatorMode: "free-test",
+      settlementModel: "none",
+      executionMode: executionMode(settlementTrigger),
+      ready: false,
+      missing,
+      notes
+    };
   }
 
   if (!payTo) {
@@ -722,6 +750,25 @@ function buildEthereumRailPlan(
   if (profile.availability === "archived") {
     missing.push("Restore this archived agent before accepting new SantaClawz work.");
   }
+  if (isFreeTestPricing(profile.paymentProfile.pricingMode)) {
+    notes.push("Free-test mode does not emit an x402 payment challenge.");
+    return {
+      rail: "ethereum-usdc",
+      settlementRail: "evm",
+      networkId: ETHEREUM_MAINNET.networkId,
+      assetSymbol: ETHEREUM_MAINNET.assetSymbol,
+      assetDecimals: ETHEREUM_MAINNET.assetDecimals,
+      assetStandard: ETHEREUM_MAINNET.assetStandard,
+      assetAddress: ETHEREUM_MAINNET.assetAddress,
+      builderHint: "free-test",
+      facilitatorMode: "free-test",
+      settlementModel: "none",
+      executionMode: executionMode(settlementTrigger),
+      ready: false,
+      missing,
+      notes
+    };
+  }
 
   if (!payTo) {
     missing.push("Add an Ethereum payout wallet.");
@@ -814,6 +861,24 @@ function buildZekoRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
 
   if (profile.availability === "archived") {
     missing.push("Restore this archived agent before accepting new SantaClawz work.");
+  }
+  if (isFreeTestPricing(profile.paymentProfile.pricingMode)) {
+    notes.push("Free-test mode does not emit an x402 payment challenge.");
+    return {
+      rail: "zeko-native",
+      settlementRail: "zeko",
+      networkId: deployment.networkId,
+      assetSymbol: defaultZekoAssetSymbol(deployment.networkId),
+      assetDecimals: 9,
+      assetStandard: "native",
+      builderHint: "free-test",
+      facilitatorMode: "free-test",
+      settlementModel: "none",
+      executionMode: executionMode(profile.paymentProfile.settlementTrigger),
+      ready: false,
+      missing,
+      notes
+    };
   }
 
   if (!beneficiaryAddress) {

@@ -278,7 +278,8 @@ function parsePaymentProfile(value: unknown): Partial<AgentProfileState["payment
       ? { defaultRail: value.defaultRail }
       : {}),
     ...(value.pricingMode === "fixed-exact" ||
-    value.pricingMode === "quote-required"
+    value.pricingMode === "quote-required" ||
+    value.pricingMode === "free-test"
       ? { pricingMode: value.pricingMode }
       : {}),
     ...(typeof value.fixedAmountUsd === "string" ? { fixedAmountUsd: value.fixedAmountUsd } : {}),

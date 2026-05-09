@@ -299,7 +299,11 @@ export class ClawzAgentClient {
           ? "quote-required"
           : undefined);
     const paymentProfile: Record<string, unknown> = {
-      ...(typeof input.openForWork === "boolean" ? { enabled: input.openForWork } : {}),
+      ...(pricingMode === "free-test"
+        ? { enabled: false }
+        : typeof input.openForWork === "boolean"
+          ? { enabled: input.openForWork }
+          : {}),
       ...(pricingMode ? { pricingMode } : {}),
       ...(input.defaultRail ? { defaultRail: input.defaultRail, supportedRails: [input.defaultRail] } : {}),
       ...(input.fixedPriceUsd ? { fixedAmountUsd: input.fixedPriceUsd } : {}),

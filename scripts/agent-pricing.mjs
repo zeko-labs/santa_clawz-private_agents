@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-const VALID_PRICING_MODES = new Set(["fixed-exact", "quote-required", "request-quote"]);
+const VALID_PRICING_MODES = new Set(["fixed-exact", "quote-required", "request-quote", "free-test"]);
 const VALID_REFERENCE_PRICE_UNITS = new Set(["minimum", "agent-minute", "compute-unit"]);
 const VALID_RAILS = new Set(["base-usdc", "ethereum-usdc"]);
 const BOOLEAN_FLAGS = new Set(["help", "json", "open-for-work", "closed"]);
@@ -19,6 +19,10 @@ function printUsage() {
     --open-for-work \\
     --pricing-mode fixed-exact \\
     --fixed-price-usd 1.25
+
+  pnpm agent:pricing -- \\
+    --env-file .env.santaclawz \\
+    --pricing-mode free-test
 
   pnpm agent:pricing -- --env-file .env.santaclawz --closed
 
@@ -102,7 +106,7 @@ function normalizePricingMode(value) {
   }
   const normalized = String(value).trim();
   if (!VALID_PRICING_MODES.has(normalized)) {
-    throw new Error("pricing-mode must be fixed-exact or quote-required.");
+    throw new Error("pricing-mode must be fixed-exact, quote-required, or free-test.");
   }
   return normalized === "request-quote" ? "quote-required" : normalized;
 }
@@ -158,7 +162,11 @@ function resolveConfig(args) {
 
 async function updatePricing(config) {
   const paymentProfile = {
-    ...(typeof config.openForWork === "boolean" ? { enabled: config.openForWork } : {}),
+    ...(config.pricingMode === "free-test"
+      ? { enabled: false }
+      : typeof config.openForWork === "boolean"
+        ? { enabled: config.openForWork }
+        : {}),
     ...(config.pricingMode ? { pricingMode: config.pricingMode } : {}),
     ...(config.defaultRail ? { defaultRail: config.defaultRail, supportedRails: [config.defaultRail] } : {}),
     ...(config.fixedPriceUsd ? { fixedAmountUsd: config.fixedPriceUsd } : {}),
@@ -215,7 +223,16 @@ if (config.json) {
 } else {
   console.log(`Agent: ${result.agentId}`);
   console.log(`Open for work: ${result.profile?.paymentProfile?.enabled ? "yes" : "no"}`);
-  console.log(`Pricing: ${result.profile?.paymentProfile?.pricingMode === "fixed-exact" ? "Fixed price" : "Request quote"}`);
+  const pricingMode = result.profile?.paymentProfile?.pricingMode;
+  console.log(
+    `Pricing: ${
+      pricingMode === "fixed-exact"
+        ? "Fixed price"
+        : pricingMode === "free-test"
+          ? "Free test"
+          : "Request quote"
+    }`
+  );
   if (result.profile?.paymentProfile?.fixedAmountUsd) {
     console.log(`Fixed price: $${result.profile.paymentProfile.fixedAmountUsd}`);
   }

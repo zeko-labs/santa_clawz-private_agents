@@ -160,7 +160,8 @@ function buildEnrollmentFromEnv(env, source) {
     ).trim(),
     quoteExpiresInSeconds: parsePositiveInteger(env.CLAWZ_AGENT_QUOTE_EXPIRES_IN_SECONDS, 15 * 60),
     internalHireUrl: String(env.OPENCLAW_INTERNAL_HIRE_URL ?? "").trim(),
-    demoCompletePaidExecution: String(env.CLAWZ_AGENT_DEMO_COMPLETE_PAID_EXECUTION ?? "").toLowerCase() === "true"
+    demoCompletePaidExecution: String(env.CLAWZ_AGENT_DEMO_COMPLETE_PAID_EXECUTION ?? "").toLowerCase() === "true",
+    demoCompleteFreeTest: String(env.CLAWZ_AGENT_DEMO_COMPLETE_FREE_TEST ?? "").toLowerCase() === "true"
   };
 }
 
@@ -215,7 +216,8 @@ function loadConfig(args) {
     maxTimestampAgeMs: parsePositiveInteger(env.CLAWZ_AGENT_MAX_TIMESTAMP_AGE_MS, DEFAULT_MAX_TIMESTAMP_AGE_MS),
     replayTtlMs: parsePositiveInteger(env.CLAWZ_AGENT_REPLAY_TTL_MS, DEFAULT_REPLAY_TTL_MS),
     rateLimitPerMinute: parsePositiveInteger(env.CLAWZ_AGENT_RATE_LIMIT_PER_MINUTE, DEFAULT_RATE_LIMIT_PER_MINUTE),
-    demoCompletePaidExecution: String(env.CLAWZ_AGENT_DEMO_COMPLETE_PAID_EXECUTION ?? "").toLowerCase() === "true"
+    demoCompletePaidExecution: String(env.CLAWZ_AGENT_DEMO_COMPLETE_PAID_EXECUTION ?? "").toLowerCase() === "true",
+    demoCompleteFreeTest: String(env.CLAWZ_AGENT_DEMO_COMPLETE_FREE_TEST ?? "").toLowerCase() === "true"
   };
 }
 
@@ -382,10 +384,10 @@ function assertHirePolicy(payload) {
   const pricingMode = payload.pricing_mode;
   const paymentStatus = payload.payment_status;
   const payment = isRecord(payload.payment) ? payload.payment : {};
-  if (!["quote_intake", "paid_execution"].includes(String(requestType))) {
+  if (!["quote_intake", "paid_execution", "free_test"].includes(String(requestType))) {
     throw Object.assign(new Error("unsupported request_type"), { statusCode: 400 });
   }
-  if (!["quote-required", "fixed-exact"].includes(String(pricingMode))) {
+  if (!["quote-required", "fixed-exact", "free-test"].includes(String(pricingMode))) {
     throw Object.assign(new Error("unsupported pricing_mode"), { statusCode: 400 });
   }
   if (payment.status !== paymentStatus) {
@@ -398,6 +400,16 @@ function assertHirePolicy(payload) {
     }
     if (payload.settled_amount_usd !== undefined) {
       throw Object.assign(new Error("quote_intake must not include settled_amount_usd"), { statusCode: 400 });
+    }
+    return requestType;
+  }
+
+  if (requestType === "free_test") {
+    if (pricingMode !== "free-test" || paymentStatus !== "free_test" || payload.paid_or_escrowed !== false) {
+      throw Object.assign(new Error("free_test policy mismatch"), { statusCode: 400 });
+    }
+    if (payload.settled_amount_usd !== undefined || payload.payment?.rail || payload.payment?.amount_usd) {
+      throw Object.assign(new Error("free_test must not include paid settlement fields"), { statusCode: 400 });
     }
     return requestType;
   }
@@ -435,7 +447,7 @@ function quoteReturnPackage(config, requestId, enrollment) {
   };
 }
 
-function completedDemoPackage(requestId, body) {
+function completedDemoPackage(requestId, body, mode = "paid_execution") {
   return {
     schema_version: "santaclawz-return/1.0",
     request_id: requestId,
@@ -451,7 +463,7 @@ function completedDemoPackage(requestId, body) {
           "santaclawz_signature_verified",
           "request_id_replay_checked",
           "service_key_matched",
-          "paid_execution_policy_verified"
+          mode === "free_test" ? "free_test_policy_verified" : "paid_execution_policy_verified"
         ],
         files_produced: [],
         blocked_suspicious_instructions: [],
@@ -509,6 +521,30 @@ async function handleHire(request, response, args) {
       const quote = quoteReturnPackage(config, requestId, enrollment);
       appendAudit(config, { type: "quote-returned", requestId, serviceKey: enrollment.serviceKey, quoteAmountUsd: quote.quote.amount_usd });
       jsonResponse(response, 200, quote);
+      return;
+    }
+
+    if (requestType === "free_test") {
+      if (enrollment.demoCompleteFreeTest || config.demoCompleteFreeTest) {
+        const completed = completedDemoPackage(requestId, body, "free_test");
+        appendAudit(config, { type: "free-test-completed", requestId, serviceKey: enrollment.serviceKey, digest: completed.verified_output.package_hash });
+        jsonResponse(response, 200, completed);
+        return;
+      }
+
+      const forwarded = await forwardToInternalRuntime(config, body, request, enrollment);
+      if (forwarded) {
+        response.writeHead(forwarded.statusCode, {
+          "content-type": "application/json",
+          "cache-control": "no-store"
+        });
+        response.end(forwarded.text);
+        appendAudit(config, { type: "free-test-forwarded", requestId, serviceKey: enrollment.serviceKey, statusCode: forwarded.statusCode });
+        return;
+      }
+
+      appendAudit(config, { type: "free-test-accepted", requestId, serviceKey: enrollment.serviceKey });
+      jsonResponse(response, 202, { ok: true, accepted: true, request_id: requestId, request_type: "free_test" });
       return;
     }
 

@@ -247,7 +247,7 @@ export interface AgentPayoutWallets {
 }
 
 export type AgentPaymentRail = "base-usdc" | "ethereum-usdc" | "zeko-native";
-export type AgentPricingMode = "fixed-exact" | "quote-required";
+export type AgentPricingMode = "fixed-exact" | "quote-required" | "free-test";
 export type AgentSettlementTrigger = "upfront" | "on-proof";
 export type AgentReferencePriceUnit = "minimum" | "agent-minute" | "compute-unit";
 export type ProtocolOwnerFeeApplicability = "santaclawz-marketplace";
@@ -357,6 +357,7 @@ export type SocialAnchorCandidateKind =
   | "hire-request-submitted"
   | "quote-returned"
   | "paid-execution-completed"
+  | "free-test-completed"
   | "hire-request-failed"
   | "operator-dispatch";
 
@@ -534,9 +535,9 @@ export interface HireRequestReceipt {
   sessionId: string;
   networkId: string;
   submittedAtIso: string;
-  requestType: "quote_intake" | "paid_execution";
+  requestType: "quote_intake" | "paid_execution" | "free_test";
   pricingMode: AgentPricingMode;
-  paymentStatus: "quote_requested" | "settled" | "paid" | "escrowed";
+  paymentStatus: "quote_requested" | "settled" | "paid" | "escrowed" | "free_test";
   settledAmountUsd?: string;
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
@@ -568,7 +569,7 @@ export interface HireRequestReceipt {
     incidentId?: string;
   };
   payment?: {
-    status: "quote_requested" | "settled" | "paid" | "escrowed";
+    status: "quote_requested" | "settled" | "paid" | "escrowed" | "free_test";
     rail?: string;
     amountUsd?: string;
     authorizationId?: string;

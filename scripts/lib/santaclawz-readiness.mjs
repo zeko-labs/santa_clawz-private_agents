@@ -153,6 +153,7 @@ function buildReadinessSummary(input) {
   const availability = input.availability?.payload ?? {};
   const quoteMode = plan.pricingMode === "quote-required";
   const fixedMode = plan.pricingMode === "fixed-exact";
+  const freeTestMode = plan.pricingMode === "free-test";
   const railReady = Array.isArray(plan.rails) ? plan.rails.some((rail) => rail?.ready === true) : false;
   const ownershipVerified = state.ownership?.status === "verified";
   const paymentsEnabled = plan.paymentsEnabled === true;
@@ -161,7 +162,8 @@ function buildReadinessSummary(input) {
   const publishedOnZeko = plan.published === true;
   const heartbeatLive = input.heartbeat?.payload?.status === "live" || input.heartbeatSkipped === true;
   const runtimeReachable = input.availabilitySkipped === true ? true : availability.reachable === true;
-  const paymentReady = quoteMode ? paymentProfileReady : fixedMode ? railReady : paymentProfileReady;
+  const paymentReady = freeTestMode ? false : quoteMode ? paymentProfileReady : fixedMode ? railReady : paymentProfileReady;
+  const freeTestPolicyReady = freeTestMode && !paymentsEnabled;
   const blockers = [];
 
   if (!ownershipVerified) {
@@ -170,13 +172,13 @@ function buildReadinessSummary(input) {
   if (!publishedOnZeko) {
     blockers.push({ stage: "zeko_publish", message: "Publish/anchor on Zeko has not completed." });
   }
-  if (!paymentsEnabled) {
+  if (!freeTestMode && !paymentsEnabled) {
     blockers.push({ stage: "payments", message: "Agent payments are not turned on." });
   }
-  if (!payoutReady) {
+  if (!freeTestMode && !payoutReady) {
     blockers.push({ stage: "payout", message: "A payout wallet is not configured." });
   }
-  if (!paymentProfileReady) {
+  if (!freeTestMode && !paymentProfileReady) {
     blockers.push({ stage: "pricing", message: "Pricing or payout details are incomplete." });
   }
   if (fixedMode && !railReady) {
@@ -196,11 +198,26 @@ function buildReadinessSummary(input) {
     });
   }
 
-  const hireable = blockers.length === 0;
+  const paidHireable = !freeTestMode && blockers.length === 0 && paymentReady;
+  const freeTestHireable = freeTestMode && blockers.length === 0 && freeTestPolicyReady;
+  const hireable = paidHireable || freeTestHireable;
+  const allowedRequestTypes = freeTestHireable
+    ? ["free_test"]
+    : paidHireable
+      ? quoteMode
+        ? ["quote_intake"]
+        : ["paid_execution"]
+      : [];
   return {
     agentId: configValue(input.config, "agentId"),
     sessionId: configValue(input.config, "sessionId"),
     hireable,
+    paidHireable,
+    freeTestHireable,
+    allowedRequestTypes,
+    blockedRequestTypes: ["quote_intake", "paid_execution", "free_test"].filter(
+      (requestType) => !allowedRequestTypes.includes(requestType)
+    ),
     blockingReason: blockers[0]?.message,
     blockers,
     checks: {
@@ -208,6 +225,7 @@ function buildReadinessSummary(input) {
       ownershipVerified,
       priced: paymentProfileReady,
       payoutReady,
+      freeTestPolicyReady: freeTestMode ? freeTestPolicyReady : undefined,
       heartbeatLive,
       runtimeReachable,
       publishedOnZeko,
@@ -307,7 +325,7 @@ export async function runSellerReadiness(config) {
 
 export function readinessErrorMessage(readiness) {
   const lines = [
-    "Seller is not hireable yet.",
+    "Agent is not hireable yet.",
     ...(readiness.blockingReason ? [`Reason: ${readiness.blockingReason}`] : []),
     ...((readiness.blockers ?? []).slice(0, 4).map((blocker) => `- ${blocker.stage}: ${blocker.message}`)),
     ...(readiness.zekoHealth?.alerts?.length ? [`Zeko alert: ${readiness.zekoHealth.alerts[0]}`] : [])
@@ -321,12 +339,20 @@ export function printReadiness(readiness) {
   console.log(line("Enrollment", checks.enrolled));
   console.log(line("Ownership", checks.ownershipVerified));
   console.log(line("Pricing", checks.priced, readiness.plan?.pricingMode));
-  console.log(line("Payout", checks.payoutReady, readiness.plan?.defaultRail));
+  if (checks.freeTestPolicyReady !== undefined) {
+    console.log(line("Payout", true, "not required for free-test"));
+    console.log(line("Free-test policy", checks.freeTestPolicyReady));
+  } else {
+    console.log(line("Payout", checks.payoutReady, readiness.plan?.defaultRail));
+  }
   console.log(line("Heartbeat", checks.heartbeatLive, readiness.heartbeat?.staleAtIso ? `stale after ${readiness.heartbeat.staleAtIso}` : ""));
   console.log(line("Runtime", checks.runtimeReachable, readiness.availability?.reason ?? readiness.availability?.status ?? ""));
   console.log(line("Zeko publish", checks.publishedOnZeko, readiness.publish?.latestRootDigestSha256 ?? ""));
   console.log(line("Payment gate", checks.paymentReady, readiness.plan?.readyRails?.join(", ") ?? ""));
-  console.log(`Seller hireable: ${readiness.hireable ? "yes" : "no"}`);
+  console.log(`Agent hireable: ${readiness.hireable ? "yes" : "no"}`);
+  if (Array.isArray(readiness.allowedRequestTypes) && readiness.allowedRequestTypes.length > 0) {
+    console.log(`Allowed request types: ${readiness.allowedRequestTypes.join(", ")}`);
+  }
   if (!readiness.hireable && readiness.blockingReason) {
     console.log(`Blocking reason: ${readiness.blockingReason}`);
   }

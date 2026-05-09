@@ -8,7 +8,7 @@ const FACILITATOR_SETUP_GUIDE_URL =
 const VALID_TRUST_MODES = new Set(["fast", "private", "verified", "team-governed"]);
 const VALID_PROVING_LOCATIONS = new Set(["client", "sovereign-rollup"]);
 const VALID_PAYMENT_RAILS = new Set(["base-usdc", "ethereum-usdc", "zeko-native"]);
-const VALID_PRICING_MODES = new Set(["fixed-exact", "quote-required"]);
+const VALID_PRICING_MODES = new Set(["fixed-exact", "quote-required", "free-test"]);
 const VALID_REFERENCE_PRICE_UNITS = new Set(["minimum", "agent-minute", "compute-unit"]);
 const VALID_SETTLEMENT_TRIGGERS = new Set(["upfront", "on-proof"]);
 const VALID_SOCIAL_ANCHOR_MODES = new Set(["shared-batched", "priority-self-funded"]);
@@ -29,7 +29,7 @@ function printUsage() {
     [--base-facilitator-url "https://your-base-facilitator.onrender.com"] \\
     [--ethereum-facilitator-url "https://your-ethereum-facilitator.onrender.com"] \\
     [--default-rail "base-usdc"] \\
-    [--pricing-mode quote-required] \\
+    [--pricing-mode quote-required|fixed-exact|free-test] \\
     [--reference-price-usd "0.20"] \\
     [--reference-price-unit minimum] \\
     [--fixed-price-usd "0.05"] \\
@@ -195,8 +195,9 @@ const supportedRails =
     : derivedSupportedRails.length > 0
       ? derivedSupportedRails
       : ["base-usdc"];
+const requestedPricingMode = typeof args["pricing-mode"] === "string" ? args["pricing-mode"].trim() : "quote-required";
 const paymentProfile = {
-  enabled: Boolean(args["payments-enabled"]),
+  enabled: requestedPricingMode === "free-test" ? false : Boolean(args["payments-enabled"]),
   supportedRails,
   ...(typeof args["base-facilitator-url"] === "string"
     ? { baseFacilitatorUrl: args["base-facilitator-url"].trim() }
@@ -205,7 +206,7 @@ const paymentProfile = {
     ? { ethereumFacilitatorUrl: args["ethereum-facilitator-url"].trim() }
     : {}),
   ...(typeof args["default-rail"] === "string" ? { defaultRail: args["default-rail"].trim() } : {}),
-  pricingMode: typeof args["pricing-mode"] === "string" ? args["pricing-mode"].trim() : "quote-required",
+  pricingMode: requestedPricingMode,
   ...(typeof args["fixed-price-usd"] === "string" ? { fixedAmountUsd: args["fixed-price-usd"].trim() } : {}),
   ...(typeof args["quote-url"] === "string" ? { quoteUrl: args["quote-url"].trim() } : {}),
   ...(typeof args["reference-price-usd"] === "string" ? { referencePriceUsd: args["reference-price-usd"].trim() } : {}),
@@ -427,6 +428,9 @@ if (args.json) {
   console.log(`Payments enabled: ${result.paymentsEnabled ? "yes" : "no"}`);
   console.log(`Payment profile ready: ${result.paymentProfileReady ? "yes" : "no"}`);
   console.log(`Payouts live: ${result.paidJobsEnabled ? "yes" : "no"}`);
+  if (result.profile?.paymentProfile?.pricingMode === "free-test") {
+    console.log("Free-test lane: enabled by pricing mode, payment disabled, quota-limited by SantaClawz.");
+  }
   if (ownershipChallenge) {
     console.log("");
     console.log("Ownership challenge issued");

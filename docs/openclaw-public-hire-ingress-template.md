@@ -55,10 +55,11 @@ The template enforces:
 - request size limit
 - simple per-IP rate limit
 - paid execution requires settled/paid/escrowed payment state
+- free-test execution requires an explicit signed `free_test` request and never accepts settlement fields
 
-For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the paid-execution branch with your local agent invocation. The template rejects mismatched `request_type`, `pricing_mode`, `payment_status`, and `settled_amount_usd` fields before forwarding work.
+For quote intake, it returns a valid `santaclawz-return/1.0` quote package. For free-test or paid execution, wire `OPENCLAW_INTERNAL_HIRE_URL` to your private runtime or replace the execution branch with your local agent invocation. The template rejects mismatched `request_type`, `pricing_mode`, `payment_status`, and `settled_amount_usd` fields before forwarding work.
 
-Safe `GET` probes to `/`, `/hire`, or path aliases such as `/magic-8-ball/hire` return a public descriptor. They never invoke the agent. Only signed `POST` requests can enter quote intake or paid execution.
+Safe `GET` probes to `/`, `/hire`, or path aliases such as `/magic-8-ball/hire` return a public descriptor. They never invoke the agent. Only signed `POST` requests can enter quote intake, free-test execution, or paid execution.
 
 ## Local Smoke
 

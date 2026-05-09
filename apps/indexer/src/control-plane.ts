@@ -73,6 +73,11 @@ const HIRE_INGRESS_TIMEOUT_MS = 10_000;
 const HIRE_INGRESS_RETURN_MAX_BYTES = 128 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const FREE_TEST_HIRE_WINDOW_MS = 10 * 60 * 1000;
+const FREE_TEST_HIRE_LIMIT_PER_AGENT =
+  Number.parseInt(process.env.CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M ?? "", 10) || 10;
+const FREE_TEST_HIRE_LIMIT_GLOBAL =
+  Number.parseInt(process.env.CLAWZ_FREE_TEST_GLOBAL_HIRE_LIMIT_PER_10M ?? "", 10) || 50;
 const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
@@ -1244,6 +1249,8 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Quote returned";
     case "paid-execution-completed":
       return "Paid execution completed";
+    case "free-test-completed":
+      return "Free test completed";
     case "hire-request-failed":
       return "Hire request failed";
     case "operator-dispatch":
@@ -1419,9 +1426,11 @@ function sanitizePaymentProfile(
     (fallback.defaultRail && normalizedRails.includes(fallback.defaultRail) ? fallback.defaultRail : undefined) ??
     normalizedRails[0];
   const pricingMode =
-    input?.pricingMode === "fixed-exact" || input?.pricingMode === "quote-required"
+    input?.pricingMode === "fixed-exact" || input?.pricingMode === "quote-required" || input?.pricingMode === "free-test"
       ? input.pricingMode
-      : fallback.pricingMode === "fixed-exact" || fallback.pricingMode === "quote-required"
+      : fallback.pricingMode === "fixed-exact" ||
+          fallback.pricingMode === "quote-required" ||
+          fallback.pricingMode === "free-test"
         ? fallback.pricingMode
         : "quote-required";
   const settlementTrigger =
@@ -1448,7 +1457,7 @@ function sanitizePaymentProfile(
       : fallback.referencePriceUnit;
 
   return {
-    enabled: typeof input?.enabled === "boolean" ? input.enabled : fallback.enabled,
+    enabled: pricingMode === "free-test" ? false : typeof input?.enabled === "boolean" ? input.enabled : fallback.enabled,
     supportedRails: normalizedRails,
     ...(defaultRail ? { defaultRail } : {}),
     pricingMode,
@@ -1504,7 +1513,14 @@ function isQuotedPricingMode(mode: AgentProfileState["paymentProfile"]["pricingM
   return mode === "quote-required";
 }
 
+function isFreeTestPricingMode(mode: AgentProfileState["paymentProfile"]["pricingMode"]) {
+  return mode === "free-test";
+}
+
 function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
+  if (isFreeTestPricingMode(profile.paymentProfile.pricingMode)) {
+    return true;
+  }
   if (!profile.paymentProfile.enabled) {
     return false;
   }
@@ -1543,6 +1559,28 @@ function computePaidJobsEnabled(
     hasReadyPaymentProfile(profile) &&
     (!isMainnetNetwork(deployment) || hasPayoutAddress(profile))
   );
+}
+
+function assertFreeTestHireQuota(hireRequests: HireRequestFile, agentId: string, nowMs: number): void {
+  const windowStartMs = nowMs - FREE_TEST_HIRE_WINDOW_MS;
+  const recentFreeTestRequests = hireRequests.requests.filter((request) => {
+    if (request.requestType !== "free_test") {
+      return false;
+    }
+    const submittedAtMs = Date.parse(request.submittedAtIso);
+    return !Number.isNaN(submittedAtMs) && submittedAtMs >= windowStartMs;
+  });
+  const recentForAgent = recentFreeTestRequests.filter((request) => request.agentId === agentId);
+  if (recentForAgent.length >= FREE_TEST_HIRE_LIMIT_PER_AGENT) {
+    throw new Error(
+      `Free-test limit reached for this agent. Try again shortly or switch to paid work. Limit: ${FREE_TEST_HIRE_LIMIT_PER_AGENT} requests per 10 minutes.`
+    );
+  }
+  if (recentFreeTestRequests.length >= FREE_TEST_HIRE_LIMIT_GLOBAL) {
+    throw new Error(
+      `SantaClawz free-test capacity is temporarily full. Try again shortly. Limit: ${FREE_TEST_HIRE_LIMIT_GLOBAL} free-test requests per 10 minutes.`
+    );
+  }
 }
 
 function hasConfirmedSocialAnchorKind(
@@ -2595,8 +2633,10 @@ export class ClawzControlPlane {
     const ingressUrl = isRelayDeliveryProfile(input.profile)
       ? relayDeliveryTargetForAgent(input.agentId)
       : this.hireIngressUrlFor(input.profile.openClawUrl);
-    const requestType: HireIngressRequestKind =
-      isQuotedPricingMode(input.profile.paymentProfile.pricingMode) && input.paymentAuthorization.status === "not-required"
+    const requestType: HireIngressRequestKind = isFreeTestPricingMode(input.profile.paymentProfile.pricingMode)
+      ? "free_test"
+      : isQuotedPricingMode(input.profile.paymentProfile.pricingMode) &&
+          input.paymentAuthorization.status === "not-required"
         ? "quote_intake"
         : "paid_execution";
     const paymentStatus = paymentStatusForHireRequest({
@@ -2608,11 +2648,12 @@ export class ClawzControlPlane {
       request_type: requestType,
       pricing_mode: input.profile.paymentProfile.pricingMode,
       payment_status: paymentStatus,
-      paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
+      paid_or_escrowed: requestType === "paid_execution" && input.paymentAuthorization.status !== "not-required",
       ...(settledAmountUsd ? { settled_amount_usd: settledAmountUsd } : {}),
-      ...(input.paymentAuthorization.rail === "base-usdc" ||
+      ...(requestType === "paid_execution" &&
+      (input.paymentAuthorization.rail === "base-usdc" ||
       input.paymentAuthorization.rail === "ethereum-usdc" ||
-      input.paymentAuthorization.rail === "zeko-native"
+      input.paymentAuthorization.rail === "zeko-native")
         ? { rail: input.paymentAuthorization.rail }
         : {})
     });
@@ -2635,17 +2676,25 @@ export class ClawzControlPlane {
       pricing_mode: input.profile.paymentProfile.pricingMode,
       payment_status: paymentStatus,
       ...(settledAmountUsd ? { settled_amount_usd: settledAmountUsd } : {}),
-      paid_or_escrowed: input.paymentAuthorization.status !== "not-required",
+      paid_or_escrowed: requestType === "paid_execution" && input.paymentAuthorization.status !== "not-required",
       payment: {
         status: paymentStatus,
-        ...(input.paymentAuthorization.rail ? { rail: input.paymentAuthorization.rail } : {}),
-        ...(input.paymentAuthorization.amountUsd ? { amount_usd: input.paymentAuthorization.amountUsd } : {}),
-        ...(input.paymentAuthorization.authorizationId ? { authorization_id: input.paymentAuthorization.authorizationId } : {}),
-        ...(input.paymentAuthorization.settlementReference ? { settlement_reference: input.paymentAuthorization.settlementReference } : {}),
-        ...(input.paymentAuthorization.paymentPayloadDigestSha256
+        ...(requestType === "paid_execution" && input.paymentAuthorization.rail
+          ? { rail: input.paymentAuthorization.rail }
+          : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.amountUsd
+          ? { amount_usd: input.paymentAuthorization.amountUsd }
+          : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.authorizationId
+          ? { authorization_id: input.paymentAuthorization.authorizationId }
+          : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.settlementReference
+          ? { settlement_reference: input.paymentAuthorization.settlementReference }
+          : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.paymentPayloadDigestSha256
           ? { payment_payload_digest_sha256: input.paymentAuthorization.paymentPayloadDigestSha256 }
           : {}),
-        ...(input.paymentAuthorization.paymentResponseDigestSha256
+        ...(requestType === "paid_execution" && input.paymentAuthorization.paymentResponseDigestSha256
           ? { payment_response_digest_sha256: input.paymentAuthorization.paymentResponseDigestSha256 }
           : {})
       },
@@ -2725,6 +2774,9 @@ export class ClawzControlPlane {
     }
     if (input.requestKind === "paid_execution" && status === "quoted") {
       throw new Error("Paid execution cannot return quote-only status.");
+    }
+    if (input.requestKind === "free_test" && status === "quoted") {
+      throw new Error("Free-test execution cannot return quote-only status.");
     }
 
     const digestSha256 = sha256Hex(input.responseText);
@@ -6085,7 +6137,8 @@ export class ClawzControlPlane {
     );
     const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
     const paymentAuthorization = options.paymentAuthorization ?? { status: "not-required" as const };
-    if (!profile.paymentProfile.enabled) {
+    const freeTestMode = isFreeTestPricingMode(profile.paymentProfile.pricingMode);
+    if (!profile.paymentProfile.enabled && !freeTestMode) {
       throw new Error("This agent is not open for work yet.");
     }
     const quoteRequestMode = profile.paymentProfile.enabled && isQuotedPricingMode(profile.paymentProfile.pricingMode);
@@ -6097,6 +6150,12 @@ export class ClawzControlPlane {
     }
     if (paidJobsEnabled && paymentAuthorization.status === "not-required") {
       throw new Error("Paid agents require verified x402 payment before SantaClawz submits a hire request.");
+    }
+    if (freeTestMode) {
+      if (paymentAuthorization.status !== "not-required") {
+        throw new Error("Free-test agents do not accept payment authorization on the free-test lane.");
+      }
+      assertFreeTestHireQuota(hireRequests, options.agentId, Date.now());
     }
 
     const submittedAtIso = new Date().toISOString();
@@ -6178,13 +6237,17 @@ export class ClawzControlPlane {
         ingressProtocolReturn.status === "quoted"
           ? "quote-returned"
           : ingressProtocolReturn.status === "completed"
-            ? "paid-execution-completed"
+            ? requestType === "free_test"
+              ? "free-test-completed"
+              : "paid-execution-completed"
             : "hire-request-failed";
       const returnSummary =
         ingressProtocolReturn.status === "quoted"
           ? `${profile.agentName} returned an exact quote for a SantaClawz hire request.`
           : ingressProtocolReturn.status === "completed"
-            ? `${profile.agentName} returned a verified output package for paid execution.`
+            ? requestType === "free_test"
+              ? `${profile.agentName} returned a verified output package for a free test.`
+              : `${profile.agentName} returned a verified output package for paid execution.`
             : `${profile.agentName} returned a failed hire result through SantaClawz.`;
       await this.enqueueSocialAnchorCandidate({
         sessionId,

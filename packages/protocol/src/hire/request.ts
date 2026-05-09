@@ -2,8 +2,8 @@ import type { AgentPaymentRail, AgentPricingMode } from "../runtime/console-stat
 
 export const SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0" as const;
 
-export type SantaClawzHireRequestType = "quote_intake" | "paid_execution";
-export type SantaClawzHirePaymentStatus = "quote_requested" | "settled" | "paid" | "escrowed";
+export type SantaClawzHireRequestType = "quote_intake" | "paid_execution" | "free_test";
+export type SantaClawzHirePaymentStatus = "quote_requested" | "settled" | "paid" | "escrowed" | "free_test";
 
 const SERVICE_KEY_PATTERN = /^[a-z0-9][a-z0-9_:-]{0,79}$/;
 
@@ -30,6 +30,9 @@ export function paymentStatusForHireRequest(input: {
 }): SantaClawzHirePaymentStatus {
   if (input.requestType === "quote_intake") {
     return "quote_requested";
+  }
+  if (input.requestType === "free_test") {
+    return "free_test";
   }
   if (input.paymentStatus === "paid" || input.paymentStatus === "escrowed") {
     return input.paymentStatus;
@@ -62,6 +65,25 @@ export function assertValidSantaClawzHirePolicy(policy: SantaClawzHirePaymentPol
     }
     if (policy.settled_amount_usd) {
       throw new Error("quote_intake must not include settled_amount_usd.");
+    }
+    return;
+  }
+
+  if (policy.request_type === "free_test") {
+    if (policy.pricing_mode !== "free-test") {
+      throw new Error("free_test requires pricing_mode=free-test.");
+    }
+    if (policy.payment_status !== "free_test") {
+      throw new Error("free_test requires payment_status=free_test.");
+    }
+    if (policy.paid_or_escrowed) {
+      throw new Error("free_test must set paid_or_escrowed=false.");
+    }
+    if (policy.settled_amount_usd) {
+      throw new Error("free_test must not include settled_amount_usd.");
+    }
+    if (policy.rail) {
+      throw new Error("free_test must not include a payment rail.");
     }
     return;
   }

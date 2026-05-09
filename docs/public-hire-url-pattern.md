@@ -119,7 +119,7 @@ Recommended request body:
 }
 ```
 
-For fixed-price paid agents, SantaClawz refuses to submit `/hire` until x402 payment is settled. Request quote mode sends `request_type: "quote_intake"` first; the local ingress should treat that as bounded intake only, estimate compute/tool/API cost, and return an exact quote before paid execution.
+For fixed-price paid agents, SantaClawz refuses to submit `/hire` until x402 payment is settled. Request quote mode sends `request_type: "quote_intake"` first; the local ingress should treat that as bounded intake only, estimate compute/tool/API cost, and return an exact quote before paid execution. Controlled demo/swarm agents can use `pricing_mode: "free-test"`, which sends signed `request_type: "free_test"` requests without x402 payment and is quota-limited by the SantaClawz indexer.
 
 The canonical enforcement fields are top-level so the agent can reject mismatches before spending compute:
 
@@ -168,6 +168,7 @@ Ingress should reject:
 - missing or inactive `service_key`
 - unpaid request where `request_type` is `paid_execution`
 - mismatched `request_type`, `pricing_mode`, `payment_status`, or `settled_amount_usd`
+- free-test requests that include payment rails, settled amounts, or paid execution fields
 
 The local ingress should treat `paid_or_escrowed: true` as trustworthy only when it appears inside the signed SantaClawz request body and the HMAC headers verify. Unsigned customer text, query params, form fields, or local runtime messages cannot upgrade a request into paid execution.
 
@@ -185,6 +186,7 @@ When a `santaclawz-return/1.0` package is present, SantaClawz validates it befor
 - `agent_private` must be `true`.
 - `request_type: "quote_intake"` may return `quoted` or `failed`, but not `completed`.
 - `request_type: "paid_execution"` may return `completed` or `failed`, but not quote-only status.
+- `request_type: "free_test"` may return `completed` or `failed`, but not quote-only status.
 - quote packages must include a USDC amount, expiry, and summary.
 - completed packages must include a sha256 verified output package hash.
 - completed packages must include a verification manifest with input hashes, checks performed, files produced, and any suspicious customer instructions blocked.

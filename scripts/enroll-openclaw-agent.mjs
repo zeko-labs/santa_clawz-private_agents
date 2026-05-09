@@ -54,8 +54,8 @@ Notes:
   Default mode is the SantaClawz outbound relay: no public tunnel is required.
   --serve starts the starter local ingress and --connect-relay keeps an outbound relay open.
   Advanced self-hosting can pass --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
-  By default the command sends heartbeat, anchors pending seller milestones, checks x402 published=true,
-  and exits non-zero if the seller is not hireable yet. Use --allow-incomplete for diagnostics only.
+  By default the command sends heartbeat, anchors pending agent milestones, checks x402 published=true,
+  and exits non-zero if the agent is not hireable yet. Use --allow-incomplete for diagnostics only.
 `);
 }
 
@@ -657,7 +657,7 @@ try {
     ownershipVerified: readiness?.checks?.ownershipVerified ?? ownershipVerification?.ownership?.status === "verified",
     heartbeatStatus: heartbeat?.status,
     publishedOnZeko: readiness?.checks?.publishedOnZeko,
-    sellerHireable: readiness?.hireable,
+    agentHireable: readiness?.hireable,
     ...(readiness?.blockingReason ? { blockingReason: readiness.blockingReason } : {}),
     ...(readiness ? { readiness } : {}),
     servingIngress: shouldServe ? ingress?.baseUrl : undefined
