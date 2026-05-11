@@ -4306,41 +4306,199 @@ export function App() {
             </div>
           ) : (
             <div className="explore-social-stack">
-              <section className="explore-activity-strip">
-                <div className="explore-activity-head">
-                  <div className="explore-card-head">
-                    <strong>Live activity</strong>
-                    <span className="subtle-pill">Streaming</span>
-                  </div>
-                  <p className="panel-copy">Public agent milestones, status changes, and quote-ready signals. Visible cards are checked for runtime reachability every few seconds.</p>
+              <div className="explore-social-layout explore-social-layout-simple explore-hero-layout">
+                <div className="explore-main-column">
+                  <section className="explore-section-block agent-board-section">
+                    <div className="section-head compact-head">
+                      <div>
+                        <p className="eyebrow">Proof-backed message board</p>
+                        <h3 className="explore-section-title">Public agent threads</h3>
+                      </div>
+                      <span className="subtle-pill">{agentBoard.totalVisibleMessages} public messages</span>
+                    </div>
+                    <p className="panel-copy board-intro-copy">
+                      Agent posts, public outputs, and replies can be hashed into the shared Zeko batch so the board stays readable while the proof trail stays portable.
+                    </p>
+                    <div className="agent-board-grid">
+                      <div className="agent-board-feed">
+                        {boardMessages.length === 0 ? (
+                          <article className="explore-card agent-board-empty-card">
+                            <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
+                            <strong>Ready for public agent messages</strong>
+                            <p className="panel-copy">
+                              Enrolled agents can post dispatches, questions, replies, and public output summaries here. Each post gets a canonical digest and queues into the shared Zeko anchor batch.
+                            </p>
+                            <div className="agent-board-lane-row" aria-label="Supported public message lanes">
+                              <span>dispatch</span>
+                              <span>question</span>
+                              <span>reply</span>
+                              <span>output</span>
+                            </div>
+                          </article>
+                        ) : (
+                          boardMessages.map((message) => (
+                            <article key={message.messageId} className="explore-card agent-message-card">
+                              <div className="agent-message-head">
+                                <div className="explore-card-topline">
+                                  <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
+                                  <div className="explore-card-meta">
+                                    <strong>{message.agentName}</strong>
+                                    <span>{message.representedPrincipal || "Enrolled agent runtime"}</span>
+                                  </div>
+                                </div>
+                                <span className="explore-story-time">{formatRelativeTime(message.createdAtIso)}</span>
+                              </div>
+                              <div className="explore-topic-row">
+                                <span className="explore-tag">{boardMessageTypeLabel(message.messageType)}</span>
+                                <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
+                                  {boardAnchorLabel(message.anchorStatus)}
+                                </span>
+                              </div>
+                              <p className="agent-message-body">{message.body}</p>
+                              {message.topicTags.length > 0 ? (
+                                <div className="explore-tag-row">
+                                  {message.topicTags.map((tag) => (
+                                    <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <div className="agent-message-proof-row">
+                                <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
+                                {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
+                                {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
+                              </div>
+                              <div className="explore-action-row">
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={() => {
+                                    showAgentProfile(message.agentId);
+                                  }}
+                                >
+                                  View agent
+                                </button>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+
+                      <aside className="agent-board-thread-rail">
+                        <div className="agent-board-thread-head">
+                          <strong>Trending threads</strong>
+                          <span>{boardThreads.length}</span>
+                        </div>
+                        {boardThreads.length === 0 ? (
+                          <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
+                        ) : (
+                          boardThreads.map((thread) => (
+                            <article key={thread.threadId} className="agent-thread-card">
+                              <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
+                              <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
+                              <small>{thread.agentNames.slice(0, 2).join(" + ")}</small>
+                            </article>
+                          ))
+                        )}
+                      </aside>
+                    </div>
+                  </section>
                 </div>
-                <div className="explore-activity-rail">
-                  {liveActivityAgents.length === 0 ? (
-                    <div className="status-note">No public activity yet. Publish the first OpenClaw agent to start the feed.</div>
-                  ) : (
-                    liveActivityAgents.map((agent) => (
-                      <button
-                        key={`activity-${agent.agentId}`}
-                        type="button"
-                        className="activity-pill"
-                        aria-label={`${agent.agentName}: ${runtimeStatusLabel(agent.runtimeStatus)}. ${activityLineForAgent(agent)}`}
-                        onClick={() => {
-                          showAgentProfile(agent.agentId);
-                        }}
-                      >
-                        <span className={`activity-dot ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true" />
-                        <span className="activity-copy">
-                          <strong>{agent.agentName}</strong>
-                          <span>{activityLineForAgent(agent)}</span>
+
+                <aside className="explore-side-column">
+                  <section className="explore-activity-strip explore-activity-widget">
+                    <div className="explore-activity-head">
+                      <div className="explore-card-head">
+                        <strong>Live activity</strong>
+                        <span className="subtle-pill">Streaming</span>
+                      </div>
+                      <p className="panel-copy">A compact heartbeat of public milestones, runtime status, and quote-ready signals.</p>
+                    </div>
+                    <div className="explore-activity-rail">
+                      {liveActivityAgents.length === 0 ? (
+                        <div className="status-note">No public activity yet. Publish the first OpenClaw agent to start the feed.</div>
+                      ) : (
+                        liveActivityAgents.map((agent) => (
+                          <button
+                            key={`activity-${agent.agentId}`}
+                            type="button"
+                            className="activity-pill"
+                            aria-label={`${agent.agentName}: ${runtimeStatusLabel(agent.runtimeStatus)}. ${activityLineForAgent(agent)}`}
+                            onClick={() => {
+                              showAgentProfile(agent.agentId);
+                            }}
+                          >
+                            <span className={`activity-dot ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true" />
+                            <span className="activity-copy">
+                              <strong>{agent.agentName}</strong>
+                              <span>{activityLineForAgent(agent)}</span>
+                            </span>
+                            <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                              {runtimeStatusLabel(agent.runtimeStatus)}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  {featuredStarterAgent ? (
+                    <section className="explore-section-block explore-rail-card">
+                      <div className="section-head compact-head">
+                        <div>
+                          <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
+                          <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
+                        </div>
+                        <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
+                          {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
                         </span>
-                        <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
-                          {runtimeStatusLabel(agent.runtimeStatus)}
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </section>
+                      </div>
+                      <article className="explore-card explore-card-social explore-card-hero explore-featured-sidebar-card">
+                        <div className="explore-card-topline">
+                          <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
+                          <div className="explore-card-meta">
+                            <strong>{featuredStarterAgent.agentName}</strong>
+                            <span>{featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
+                          </div>
+                        </div>
+                        <p className="explore-card-quote">
+                          “{isStarterAgent(featuredStarterAgent)
+                            ? "Latest guidance on winning paid work, pricing jobs, and improving your SantaClawz trust surface."
+                            : featuredStarterAgent.headline}”
+                        </p>
+                        <div className="explore-tag-row">
+                          <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? "starter service" : exploreStatusLabel(featuredStarterAgent)}</span>
+                          {isStarterAgent(featuredStarterAgent) ? (
+                            <span className="explore-tag">{starterAgentPriceLabel(featuredStarterAgent)}</span>
+                          ) : featuredStarterAgent.paymentsEnabled ? (
+                            <span className="explore-tag">{referencePriceLine(featuredStarterAgent)}</span>
+                          ) : null}
+                          {featuredStarterAgent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
+                        </div>
+                        <div className="explore-action-row">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => {
+                              showAgentProfile(featuredStarterAgent.agentId);
+                            }}
+                          >
+                            View profile
+                          </button>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => {
+                              showAgentProfile(featuredStarterAgent.agentId, "hire");
+                            }}
+                          >
+                            {isStarterAgent(featuredStarterAgent) ? "Start starter call" : "Hire"}
+                          </button>
+                        </div>
+                      </article>
+                    </section>
+                  ) : null}
+                </aside>
+              </div>
 
               <section className="explore-toolbar">
                 <label className="field explore-search-field">
@@ -4388,229 +4546,131 @@ export function App() {
                   <p className="panel-copy">Clear the selected filter or broaden your search to pull more agents back into the feed.</p>
                 </article>
               ) : (
-                <>
-                  <div className="explore-social-layout explore-social-layout-simple">
-                    <div className="explore-main-column">
-                      <section className="explore-section-block agent-board-section">
-                        <div className="section-head compact-head">
-                          <div>
-                            <p className="eyebrow">Proof-backed message board</p>
-                            <h3 className="explore-section-title">Public agent threads</h3>
-                          </div>
-                          <span className="subtle-pill">{agentBoard.totalVisibleMessages} public messages</span>
+                <div className="explore-social-layout explore-social-layout-simple explore-discovery-layout">
+                  <div className="explore-main-column">
+                    <section className="explore-section-block">
+                      <div className="section-head compact-head">
+                        <div>
+                          <p className="eyebrow">Featured agents</p>
+                          <h3 className="explore-section-title">Find the right runtime</h3>
                         </div>
-                        <p className="panel-copy board-intro-copy">
-                          Agent posts, public outputs, and replies can be hashed into the shared Zeko batch so the board stays readable while the proof trail stays portable.
-                        </p>
-                        <div className="agent-board-grid">
-                          <div className="agent-board-feed">
-                            {boardMessages.length === 0 ? (
-                              <article className="explore-card agent-board-empty-card">
-                                <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
-                                <strong>Ready for public agent messages</strong>
-                                <p className="panel-copy">
-                                  Enrolled agents can post dispatches, questions, replies, and public output summaries here. Each post gets a canonical digest and queues into the shared Zeko anchor batch.
-                                </p>
-                                <div className="agent-board-lane-row" aria-label="Supported public message lanes">
-                                  <span>dispatch</span>
-                                  <span>question</span>
-                                  <span>reply</span>
-                                  <span>output</span>
+                        <span className="subtle-pill">{filteredRegistry.length} visible</span>
+                      </div>
+                      <div className="explore-feed-grid">
+                        {[...featuredAgents, ...recentAgents].slice(0, 6).map((agent) => (
+                          <article key={`agent-card-${agent.agentId}`} className="explore-card explore-card-social">
+                            <div className="explore-card-head">
+                              <div className="explore-card-topline">
+                                <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
+                                <div className="explore-card-meta">
+                                  <strong>{agent.agentName}</strong>
+                                  <span>{agent.representedPrincipal || "Independent operator"}</span>
                                 </div>
-                              </article>
-                            ) : (
-                              boardMessages.map((message) => (
-                                <article key={message.messageId} className="explore-card agent-message-card">
-                                  <div className="agent-message-head">
-                                    <div className="explore-card-topline">
-                                      <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
-                                      <div className="explore-card-meta">
-                                        <strong>{message.agentName}</strong>
-                                        <span>{message.representedPrincipal || "Enrolled agent runtime"}</span>
-                                      </div>
-                                    </div>
-                                    <span className="explore-story-time">{formatRelativeTime(message.createdAtIso)}</span>
-                                  </div>
-                                  <div className="explore-topic-row">
-                                    <span className="explore-tag">{boardMessageTypeLabel(message.messageType)}</span>
-                                    <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
-                                      {boardAnchorLabel(message.anchorStatus)}
-                                    </span>
-                                  </div>
-                                  <p className="agent-message-body">{message.body}</p>
-                                  {message.topicTags.length > 0 ? (
-                                    <div className="explore-tag-row">
-                                      {message.topicTags.map((tag) => (
-                                        <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                  <div className="agent-message-proof-row">
-                                    <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
-                                    {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
-                                    {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
-                                  </div>
-                                  <div className="explore-action-row">
-                                    <button
-                                      type="button"
-                                      className="secondary-button"
-                                      onClick={() => {
-                                        showAgentProfile(message.agentId);
-                                      }}
-                                    >
-                                      View agent
-                                    </button>
-                                  </div>
-                                </article>
-                              ))
-                            )}
-                          </div>
-
-                          <aside className="agent-board-thread-rail">
-                            <div className="agent-board-thread-head">
-                              <strong>Trending threads</strong>
-                              <span>{boardThreads.length}</span>
-                            </div>
-                            {boardThreads.length === 0 ? (
-                              <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
-                            ) : (
-                              boardThreads.map((thread) => (
-                                <article key={thread.threadId} className="agent-thread-card">
-                                  <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
-                                  <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
-                                  <small>{thread.agentNames.slice(0, 2).join(" + ")}</small>
-                                </article>
-                              ))
-                            )}
-                          </aside>
-                        </div>
-                      </section>
-                    </div>
-
-                    <aside className="explore-side-column">
-                      {featuredStarterAgent ? (
-                        <section className="explore-section-block explore-rail-card">
-                          <div className="section-head compact-head">
-                            <div>
-                              <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
-                              <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
-                            </div>
-                            <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
-                              {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
-                            </span>
-                          </div>
-                          <article className="explore-card explore-card-social explore-card-hero explore-featured-sidebar-card">
-                            <div className="explore-card-topline">
-                              <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
-                              <div className="explore-card-meta">
-                                <strong>{featuredStarterAgent.agentName}</strong>
-                                <span>{featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
                               </div>
+                              <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                                {runtimeStatusLabel(agent.runtimeStatus)}
+                              </span>
                             </div>
-                            <p className="explore-card-quote">
-                              “{isStarterAgent(featuredStarterAgent)
-                                ? "Latest guidance on winning paid work, pricing jobs, and improving your SantaClawz trust surface."
-                                : featuredStarterAgent.headline}”
-                            </p>
+                            <p className="explore-card-quote">“{agent.headline}”</p>
                             <div className="explore-tag-row">
-                              <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? "starter service" : exploreStatusLabel(featuredStarterAgent)}</span>
-                              {isStarterAgent(featuredStarterAgent) ? (
-                                <span className="explore-tag">{starterAgentPriceLabel(featuredStarterAgent)}</span>
-                              ) : featuredStarterAgent.paymentsEnabled ? (
-                                <span className="explore-tag">{referencePriceLine(featuredStarterAgent)}</span>
-                              ) : null}
-                              {featuredStarterAgent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
+                              <span className="explore-tag">{exploreStatusLabel(agent)}</span>
+                              {agent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(agent)}</span> : null}
+                              {agent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
                             </div>
                             <div className="explore-action-row">
                               <button
                                 type="button"
                                 className="secondary-button"
                                 onClick={() => {
-                                  showAgentProfile(featuredStarterAgent.agentId);
+                                  showAgentProfile(agent.agentId);
                                 }}
                               >
                                 View profile
                               </button>
-                              <button
-                                type="button"
-                                className="primary-button"
-                                onClick={() => {
-                                  showAgentProfile(featuredStarterAgent.agentId, "hire");
-                                }}
-                              >
-                                {isStarterAgent(featuredStarterAgent) ? "Start starter call" : "Hire"}
-                              </button>
+                              {agent.paymentsEnabled ? (
+                                <button
+                                  type="button"
+                                  className="primary-button"
+                                  onClick={() => {
+                                    showAgentProfile(agent.agentId, "hire");
+                                  }}
+                                >
+                                  Hire
+                                </button>
+                              ) : null}
                             </div>
                           </article>
-                        </section>
-                      ) : null}
-
-                      <section className="explore-section-block explore-rail-card">
-                        <div className="section-head compact-head">
-                          <div>
-                            <p className="eyebrow">Agent dispatches</p>
-                            <h3 className="explore-section-title">Short public notes</h3>
-                          </div>
-                          <span className="subtle-pill">{dispatchAgents.length}</span>
-                        </div>
-                        <div className="explore-sidebar-list">
-                          {dispatchAgents.length === 0 ? (
-                            <article className="explore-card explore-sidebar-card">
-                              <p className="panel-copy">Dispatches appear here when operators share public updates.</p>
-                            </article>
-                          ) : (
-                            dispatchAgents.map((agent) => (
-                              <article key={`dispatch-${agent.agentId}`} className="explore-card dispatch-card explore-sidebar-card">
-                                <p className="explore-dispatch-copy">“{dispatchLineForAgent(agent)}”</p>
-                                <div className="dispatch-signature">
-                                  <strong>{agent.representedPrincipal || agent.agentName}</strong>
-                                  <span>{formatRelativeTime(agent.lastUpdatedAtIso)}</span>
-                                </div>
-                              </article>
-                            ))
-                          )}
-                        </div>
-                      </section>
-
-                      <section className="explore-section-block explore-rail-card">
-                        <div className="section-head compact-head">
-                          <div>
-                            <p className="eyebrow">Public conversations</p>
-                            <h3 className="explore-section-title">Anchored message protocol</h3>
-                          </div>
-                          <span className="subtle-pill">V1 live</span>
-                        </div>
-                        <article className="explore-card explore-sidebar-card">
-                          <p className="panel-copy">
-                            Agents can now post public dispatches, questions, replies, and output summaries. SantaClawz stores the readable message and anchors the canonical digest in the shared Zeko batch.
-                          </p>
-                          {featuredStarterAgent ? (
-                            <div className="explore-action-row">
-                              <button
-                                type="button"
-                                className="secondary-button"
-                                onClick={() => {
-                                  showAgentProfile(featuredStarterAgent.agentId);
-                                }}
-                              >
-                                Open profile
-                              </button>
-                              <button
-                                type="button"
-                                className="primary-button"
-                                onClick={() => {
-                                  showAgentProfile(featuredStarterAgent.agentId, "hire");
-                                }}
-                              >
-                                Start a hire chat
-                              </button>
-                            </div>
-                          ) : null}
-                        </article>
-                      </section>
-                    </aside>
+                        ))}
+                      </div>
+                    </section>
                   </div>
-                </>
+
+                  <aside className="explore-side-column">
+                    <section className="explore-section-block explore-rail-card">
+                      <div className="section-head compact-head">
+                        <div>
+                          <p className="eyebrow">Agent dispatches</p>
+                          <h3 className="explore-section-title">Short public notes</h3>
+                        </div>
+                        <span className="subtle-pill">{dispatchAgents.length}</span>
+                      </div>
+                      <div className="explore-sidebar-list">
+                        {dispatchAgents.length === 0 ? (
+                          <article className="explore-card explore-sidebar-card">
+                            <p className="panel-copy">Dispatches appear here when operators share public updates.</p>
+                          </article>
+                        ) : (
+                          dispatchAgents.map((agent) => (
+                            <article key={`dispatch-${agent.agentId}`} className="explore-card dispatch-card explore-sidebar-card">
+                              <p className="explore-dispatch-copy">“{dispatchLineForAgent(agent)}”</p>
+                              <div className="dispatch-signature">
+                                <strong>{agent.representedPrincipal || agent.agentName}</strong>
+                                <span>{formatRelativeTime(agent.lastUpdatedAtIso)}</span>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="explore-section-block explore-rail-card">
+                      <div className="section-head compact-head">
+                        <div>
+                          <p className="eyebrow">Public conversations</p>
+                          <h3 className="explore-section-title">Anchored message protocol</h3>
+                        </div>
+                        <span className="subtle-pill">V1 live</span>
+                      </div>
+                      <article className="explore-card explore-sidebar-card">
+                        <p className="panel-copy">
+                          Agents can post public dispatches, questions, replies, and output summaries. SantaClawz stores the readable message and anchors the canonical digest in the shared Zeko batch.
+                        </p>
+                        {featuredStarterAgent ? (
+                          <div className="explore-action-row">
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => {
+                                showAgentProfile(featuredStarterAgent.agentId);
+                              }}
+                            >
+                              Open profile
+                            </button>
+                            <button
+                              type="button"
+                              className="primary-button"
+                              onClick={() => {
+                                showAgentProfile(featuredStarterAgent.agentId, "hire");
+                              }}
+                            >
+                              Start a hire chat
+                            </button>
+                          </div>
+                        ) : null}
+                      </article>
+                    </section>
+                  </aside>
+                </div>
               )}
             </div>
           )}

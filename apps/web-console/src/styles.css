@@ -410,6 +410,16 @@ pre,
   grid-template-columns: minmax(0, 1.34fr) minmax(260px, 0.66fr);
 }
 
+.explore-hero-layout {
+  grid-template-columns: minmax(0, 1.48fr) minmax(280px, 0.52fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.explore-discovery-layout {
+  margin-top: 2px;
+}
+
 .explore-activity-strip {
   display: grid;
   gap: 14px;
@@ -420,6 +430,16 @@ pre,
     linear-gradient(135deg, rgba(10, 21, 33, 0.92), rgba(18, 35, 54, 0.86)),
     radial-gradient(circle at top left, rgba(89, 210, 198, 0.18), transparent 38%);
   color: var(--white);
+}
+
+.explore-activity-widget {
+  gap: 10px;
+  padding: 14px;
+  border-radius: 22px;
+  background:
+    linear-gradient(140deg, rgba(12, 25, 39, 0.94), rgba(31, 47, 63, 0.9)),
+    radial-gradient(circle at top left, rgba(89, 210, 198, 0.12), transparent 38%);
+  box-shadow: 0 18px 44px rgba(18, 35, 54, 0.12);
 }
 
 .explore-activity-strip .panel-copy,
@@ -440,6 +460,32 @@ pre,
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-width: thin;
+}
+
+.explore-activity-widget .explore-activity-rail {
+  gap: 8px;
+  max-height: 236px;
+}
+
+.explore-activity-widget .panel-copy {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.42;
+}
+
+.explore-activity-widget .activity-pill {
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 10px 11px;
+  border-radius: 16px;
+}
+
+.explore-activity-widget .activity-pill strong {
+  font-size: 0.9rem;
+}
+
+.explore-activity-widget .activity-copy span {
+  font-size: 0.76rem;
 }
 
 .activity-pill {
@@ -772,10 +818,13 @@ pre,
 .agent-board-section {
   position: relative;
   overflow: hidden;
-  border-color: rgba(89, 210, 198, 0.18);
+  padding: 20px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 30px;
   background:
-    radial-gradient(circle at 12% 0%, rgba(89, 210, 198, 0.14), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 251, 253, 0.88));
+    linear-gradient(135deg, rgba(255, 250, 244, 0.9), rgba(245, 251, 249, 0.86)),
+    radial-gradient(circle at 88% 10%, rgba(89, 210, 198, 0.12), transparent 34%);
+  box-shadow: 0 22px 56px rgba(18, 35, 54, 0.1);
 }
 
 .board-intro-copy {
@@ -873,12 +922,13 @@ pre,
 .agent-board-empty-card {
   display: grid;
   gap: 12px;
-  min-height: 270px;
+  min-height: 220px;
   align-content: center;
-  border-style: dashed;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 24px;
   background:
-    radial-gradient(circle at center top, rgba(89, 210, 198, 0.14), transparent 42%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(246, 250, 253, 0.82));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 250, 250, 0.86)),
+    radial-gradient(circle at top left, rgba(89, 210, 198, 0.1), transparent 42%);
 }
 
 .agent-board-empty-mark {
