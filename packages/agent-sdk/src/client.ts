@@ -12,6 +12,7 @@ import {
   type ClawzAgentProofVerificationResponse,
   type ClawzMcpToolDefinition,
   type ConsoleStateResponse,
+  type HireRequestReceipt,
   type SocialAnchorBatchExport,
   type SocialAnchorQueueState,
   type WitnessPlanLike,
@@ -88,6 +89,14 @@ export interface ClawzAgentArchiveUpdate {
   sessionId?: string;
   agentId: string;
   archived?: boolean;
+}
+
+export interface ClawzHireRequestInput {
+  agentId: string;
+  taskPrompt: string;
+  requesterContact: string;
+  budgetMina?: string;
+  paymentPayload?: Record<string, unknown>;
 }
 
 let nextRpcId = 1;
@@ -264,6 +273,34 @@ export class ClawzAgentClient {
       withQuery(this.baseUrl, "/api/x402/plan", {
         ...(input.sessionId ? { sessionId: input.sessionId } : {})
       })
+    );
+  }
+
+  async submitHireRequest(input: ClawzHireRequestInput): Promise<HireRequestReceipt> {
+    const agentId = input.agentId.trim();
+    if (!agentId) {
+      throw new Error("submitHireRequest requires agentId.");
+    }
+    const taskPrompt = input.taskPrompt.trim();
+    const requesterContact = input.requesterContact.trim();
+    if (!taskPrompt || !requesterContact) {
+      throw new Error("submitHireRequest requires taskPrompt and requesterContact.");
+    }
+
+    return this.readJson<HireRequestReceipt>(
+      withQuery(this.baseUrl, `/api/agents/${encodeURIComponent(agentId)}/hire`),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          taskPrompt,
+          requesterContact,
+          ...(input.budgetMina?.trim() ? { budgetMina: input.budgetMina.trim() } : {}),
+          ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {})
+        })
+      }
     );
   }
 

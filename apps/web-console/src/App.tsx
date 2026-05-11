@@ -51,6 +51,7 @@ type DuplicateClaimTarget = {
 };
 type ExploreFilterKey = "open-for-work" | "mission-auth-verified";
 type StaticPageKey = "terms-of-service" | "privacy-policy";
+type HiddenPageKey = "sdk";
 
 type ValueInputEvent = { target: { value: string } };
 type FormSubmitEvent = { preventDefault: () => void };
@@ -70,6 +71,45 @@ const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
     ? import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID.trim()
     : "";
+const SDK_WIDGET_AGENT_ID = STARTER_AGENT_ID || "agent_job_pack";
+const SDK_WIDGET_SNIPPET = `import { createClawzAgentClient } from "@clawz/agent-sdk";
+
+const clawz = createClawzAgentClient({
+  baseUrl: "https://www.santaclawz.ai"
+});
+
+const agentId = "${SDK_WIDGET_AGENT_ID}";
+const root = document.querySelector("#santaclawz-hire");
+
+root.innerHTML = [
+  "<form>",
+  "  <label>Task<br><textarea name='taskPrompt' required></textarea></label>",
+  "  <br>",
+  "  <label>Reply contact<br><input name='requesterContact' required></label>",
+  "  <br>",
+  "  <button type='submit'>Send to agent</button>",
+  "  <pre aria-live='polite'></pre>",
+  "</form>"
+].join("");
+
+root.querySelector("form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const output = form.querySelector("pre");
+  const data = new FormData(form);
+  output.textContent = "Sending...";
+
+  try {
+    const receipt = await clawz.submitHireRequest({
+      agentId,
+      taskPrompt: String(data.get("taskPrompt") || ""),
+      requesterContact: String(data.get("requesterContact") || "")
+    });
+    output.textContent = JSON.stringify(receipt, null, 2);
+  } catch (error) {
+    output.textContent = error instanceof Error ? error.message : String(error);
+  }
+});`;
 const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
 const MISSION_AUTH_GUIDE_URL =
@@ -117,6 +157,7 @@ type NavSectionKey = "configure" | "explore";
 interface AppRouteState {
   agentId: string | null;
   agentFocus: "profile" | "hire";
+  hiddenPage: HiddenPageKey | null;
   section: NavSectionKey;
   sessionId: string | null;
   staticPage: StaticPageKey | null;
@@ -322,6 +363,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       agentFocus: "profile",
+      hiddenPage: null,
       section: "configure",
       sessionId: null,
       staticPage: null
@@ -333,6 +375,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       agentFocus: "profile",
+      hiddenPage: null,
       section: "configure",
       sessionId,
       staticPage: null
@@ -342,6 +385,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       agentFocus: "profile",
+      hiddenPage: null,
       section: "explore",
       sessionId: null,
       staticPage: null
@@ -352,6 +396,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId,
       agentFocus: "profile",
+      hiddenPage: null,
       section: "explore",
       sessionId: null,
       staticPage: null
@@ -364,7 +409,18 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: agentId || null,
       agentFocus: segments[1] === "hire" ? "hire" : "profile",
+      hiddenPage: null,
       section: "explore",
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath === "/sdk") {
+    return {
+      agentId: null,
+      agentFocus: "profile",
+      hiddenPage: "sdk",
+      section: "configure",
       sessionId: null,
       staticPage: null
     };
@@ -373,6 +429,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       agentFocus: "profile",
+      hiddenPage: null,
       section: "configure",
       sessionId: null,
       staticPage: "terms-of-service"
@@ -382,6 +439,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
     return {
       agentId: null,
       agentFocus: "profile",
+      hiddenPage: null,
       section: "configure",
       sessionId: null,
       staticPage: "privacy-policy"
@@ -390,6 +448,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
   return {
     agentId: null,
     agentFocus: "profile",
+    hiddenPage: null,
     section: sectionFromHash(hash),
     sessionId: null,
     staticPage: null
@@ -411,7 +470,7 @@ function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus
 }
 
 function initialSelectedSessionId(route: AppRouteState) {
-  if (route.staticPage) {
+  if (route.staticPage || route.hiddenPage) {
     return null;
   }
   if (route.sessionId) {
@@ -1265,6 +1324,7 @@ export function App() {
       ? {
           agentId: null,
           agentFocus: "profile" as const,
+          hiddenPage: null,
           section: "configure" as const,
           sessionId: null,
           staticPage: null
@@ -1275,6 +1335,7 @@ export function App() {
   const [profileSessionId, setProfileSessionId] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<NavSectionKey>(initialRoute.section);
   const [activeStaticPage, setActiveStaticPage] = useState<StaticPageKey | null>(initialRoute.staticPage);
+  const [activeHiddenPage, setActiveHiddenPage] = useState<HiddenPageKey | null>(initialRoute.hiddenPage);
   const [navOpen, setNavOpen] = useState(false);
   const [sharedAgentId, setSharedAgentId] = useState<string | null>(initialRoute.agentId);
   const [sharedAgentFocus, setSharedAgentFocus] = useState<"profile" | "hire">(initialRoute.agentFocus);
@@ -1690,6 +1751,7 @@ export function App() {
       const nextRoute = parseRouteState(window.location.pathname, window.location.hash);
       setActiveSection(nextRoute.section);
       setActiveStaticPage(nextRoute.staticPage);
+      setActiveHiddenPage(nextRoute.hiddenPage);
       setNavOpen(false);
       setSharedAgentId(nextRoute.agentId);
       setSharedAgentFocus(nextRoute.agentFocus);
@@ -1697,7 +1759,7 @@ export function App() {
         setSelectedSessionId(nextRoute.sessionId);
       } else if (nextRoute.agentId) {
         setSelectedSessionId(null);
-      } else if (nextRoute.staticPage) {
+      } else if (nextRoute.staticPage || nextRoute.hiddenPage) {
         setSelectedSessionId(null);
       } else if (nextRoute.section === "configure") {
         setSelectedSessionId(ONBOARDING_SESSION_ID);
@@ -1944,6 +2006,7 @@ export function App() {
   function showSection(nextSection: NavSectionKey) {
     setActiveSection(nextSection);
     setActiveStaticPage(null);
+    setActiveHiddenPage(null);
     setNavOpen(false);
     setSharedAgentFocus("profile");
     if (typeof window !== "undefined") {
@@ -1959,6 +2022,7 @@ export function App() {
 
   function showStaticPage(nextPage: StaticPageKey) {
     setActiveStaticPage(nextPage);
+    setActiveHiddenPage(null);
     setNavOpen(false);
     setSharedAgentId(null);
     setSelectedSessionId(null);
@@ -1972,6 +2036,7 @@ export function App() {
     setSharedAgentId(null);
     setActiveSection("configure");
     setActiveStaticPage(null);
+    setActiveHiddenPage(null);
     setNavOpen(false);
     setSharedAgentFocus("profile");
     setSelectedSessionId(nextSessionId ?? null);
@@ -1997,6 +2062,8 @@ export function App() {
       setSharedAgentId(null);
       setSelectedSessionId(nextState.session.sessionId);
       setActiveSection("configure");
+      setActiveStaticPage(null);
+      setActiveHiddenPage(null);
       setManageLookupValue(target.sessionId ?? target.agentId ?? nextState.session.sessionId);
       if (typeof window !== "undefined") {
         window.history.pushState(null, "", buildSectionPath("configure", nextState.session.sessionId));
@@ -2015,6 +2082,7 @@ export function App() {
     setSelectedSessionId(null);
     setActiveSection("explore");
     setActiveStaticPage(null);
+    setActiveHiddenPage(null);
     setNavOpen(false);
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", buildSectionPath("explore", agentId, focus));
@@ -2083,8 +2151,8 @@ export function App() {
         <nav id="site-primary-nav" className={`site-nav${navOpen ? " open" : ""}`} aria-label="Primary">
           <button
             type="button"
-            className={`site-nav-link${!activeStaticPage && activeSection === "configure" ? " active" : ""}`}
-            aria-current={!activeStaticPage && activeSection === "configure" ? "page" : undefined}
+            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "configure" ? " active" : ""}`}
+            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "configure" ? "page" : undefined}
             onClick={() => {
               showSection("configure");
             }}
@@ -2093,8 +2161,8 @@ export function App() {
           </button>
           <button
             type="button"
-            className={`site-nav-link${!activeStaticPage && activeSection === "explore" ? " active" : ""}`}
-            aria-current={!activeStaticPage && activeSection === "explore" ? "page" : undefined}
+            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "explore" ? " active" : ""}`}
+            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "explore" ? "page" : undefined}
             onClick={() => {
               showSection("explore");
             }}
@@ -2172,6 +2240,88 @@ export function App() {
         {renderFooter()}
       </main>
     );
+  }
+
+  function renderSdkPage() {
+    return (
+      <main id="top" className="app-shell onboarding-shell">
+        {renderHeader()}
+
+        <section className="masthead legal-masthead">
+          <div className="masthead-inner">
+            <div className="masthead-content">
+              <div className="masthead-copy">
+                <p className="eyebrow">Hidden SDK demo</p>
+                <h1>SantaClawz SDK widget</h1>
+                <p className="masthead-copyline">
+                  A tiny, unstyled hire widget that shows how quickly another app can route work to a SantaClawz agent.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel legal-page-panel">
+          <div className="legal-section-list">
+            <section className="legal-section">
+              <h2>What it looks like</h2>
+              <p>
+                This intentionally uses plain browser controls. Apps can wrap the same SDK call with their own design system.
+              </p>
+              <div id="santaclawz-hire">
+                <form
+                  onSubmit={(event: FormSubmitEvent) => {
+                    event.preventDefault();
+                  }}
+                >
+                  <label>
+                    Task
+                    <br />
+                    <textarea name="taskPrompt" defaultValue="Ask this agent for a short quote." />
+                  </label>
+                  <br />
+                  <label>
+                    Reply contact
+                    <br />
+                    <input name="requesterContact" defaultValue="buyer@example.com" />
+                  </label>
+                  <br />
+                  <button type="submit">Send to agent</button>
+                  <pre aria-live="polite">Widget output appears here.</pre>
+                </form>
+              </div>
+            </section>
+
+            <section className="legal-section">
+              <div className="section-head compact-head">
+                <div>
+                  <h2>Drop-in code</h2>
+                  <p>Install `@clawz/agent-sdk`, paste this into your app, and swap in the agent ID you want to hire.</p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("sdk-widget-snippet", SDK_WIDGET_SNIPPET);
+                  }}
+                >
+                  {copiedKey === "sdk-widget-snippet" ? "Copied" : "Copy code"}
+                </button>
+              </div>
+              <pre>
+                <code>{SDK_WIDGET_SNIPPET}</code>
+              </pre>
+            </section>
+          </div>
+        </section>
+
+        {renderFooter()}
+      </main>
+    );
+  }
+
+  if (activeHiddenPage === "sdk") {
+    return renderSdkPage();
   }
 
   if (activeStaticPage) {
