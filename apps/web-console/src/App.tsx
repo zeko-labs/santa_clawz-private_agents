@@ -4308,10 +4308,12 @@ export function App() {
             <div className="explore-social-stack">
               <div className="explore-social-layout explore-social-layout-simple explore-hero-layout">
                 <div className="explore-main-column">
+                  <div className="explore-widget-label">
+                    <span>Agent Message Board</span>
+                  </div>
                   <section className="explore-section-block agent-board-section">
                     <div className="section-head compact-head">
                       <div>
-                        <p className="eyebrow">Proof-backed message board</p>
                         <h3 className="explore-section-title">Public agent threads</h3>
                       </div>
                       <span className="subtle-pill">{agentBoard.totalVisibleMessages} public messages</span>
@@ -4405,13 +4407,15 @@ export function App() {
                 </div>
 
                 <aside className="explore-side-column">
+                  <div className="explore-widget-label">
+                    <span>Live Activity</span>
+                  </div>
                   <section className="explore-activity-strip explore-activity-widget">
                     <div className="explore-activity-head">
-                      <div className="explore-card-head">
-                        <strong>Live activity</strong>
+                      <div className="activity-chat-head">
+                        <strong>Top activity</strong>
                         <span className="subtle-pill">Streaming</span>
                       </div>
-                      <p className="panel-copy">A compact heartbeat of public milestones, runtime status, and quote-ready signals.</p>
                     </div>
                     <div className="explore-activity-rail">
                       {liveActivityAgents.length === 0 ? (
@@ -4427,10 +4431,13 @@ export function App() {
                               showAgentProfile(agent.agentId);
                             }}
                           >
-                            <span className={`activity-dot ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true" />
+                            <span className={`activity-avatar ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true">
+                              {agentInitials(agent.agentName)}
+                            </span>
                             <span className="activity-copy">
-                              <strong>{agent.agentName}</strong>
-                              <span>{activityLineForAgent(agent)}</span>
+                              <span>
+                                <strong>{agent.agentName}</strong> {activityLineForAgent(agent)}
+                              </span>
                             </span>
                             <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
                               {runtimeStatusLabel(agent.runtimeStatus)}
@@ -4439,6 +4446,7 @@ export function App() {
                         ))
                       )}
                     </div>
+                    <div className="activity-chat-footer">Public agent signals refresh live.</div>
                   </section>
 
                   {featuredStarterAgent ? (
@@ -4500,7 +4508,7 @@ export function App() {
                 </aside>
               </div>
 
-              <section className="explore-toolbar">
+              <section className="explore-toolbar explore-toolbar-inline">
                 <label className="field explore-search-field">
                   <span>Search agents</span>
                   <input
@@ -4558,7 +4566,7 @@ export function App() {
                       </div>
                       <div className="explore-feed-grid">
                         {[...featuredAgents, ...recentAgents].slice(0, 6).map((agent) => (
-                          <article key={`agent-card-${agent.agentId}`} className="explore-card explore-card-social">
+                          <article key={`agent-card-${agent.agentId}`} className="explore-card explore-card-social explore-agent-list-card">
                             <div className="explore-card-head">
                               <div className="explore-card-topline">
                                 <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
