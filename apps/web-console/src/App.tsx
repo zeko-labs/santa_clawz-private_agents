@@ -2613,6 +2613,30 @@ export function App() {
                 </a>
               </div>
               <div className={profile.runtimeDelivery.mode === "self-hosted" ? "public-url-control manual" : "public-url-control auto"}>
+                {profile.runtimeDelivery.mode === "self-hosted" ? (
+                  <input
+                    className="text-input public-url-input"
+                    value={profile.runtimeDelivery.runtimeIngressUrl ?? ""}
+                    onChange={(event: ValueInputEvent) => {
+                      setProfile({
+                        ...profile,
+                        runtimeDelivery: {
+                          mode: "self-hosted",
+                          runtimeIngressUrl: event.target.value
+                        }
+                      });
+                    }}
+                    placeholder="Enter agent-owned URL"
+                  />
+                ) : (
+                  <input
+                    className="text-input public-url-generated-input"
+                    value={autoPublicAgentUrl}
+                    readOnly
+                    aria-label="Generated SantaClawz public agent URL"
+                    placeholder="Enter agent name to preview SantaClawz URL"
+                  />
+                )}
                 <button
                   type="button"
                   className="url-mode-button"
@@ -2633,35 +2657,12 @@ export function App() {
                   }}
                   title={profile.runtimeDelivery.mode === "self-hosted" ? "Switch back to the SantaClawz-generated URL" : "Unlock advanced agent-owned URL mode"}
                 >
+                  <span>{profile.runtimeDelivery.mode === "self-hosted" ? "manual" : "auto"}</span>
                   <span
                     className={profile.runtimeDelivery.mode === "self-hosted" ? "url-lock-icon unlocked" : "url-lock-icon"}
                     aria-hidden="true"
                   />
-                  <span>{profile.runtimeDelivery.mode === "self-hosted" ? "manual" : "auto"}</span>
                 </button>
-                {profile.runtimeDelivery.mode === "self-hosted" ? (
-                  <input
-                    className="text-input public-url-input"
-                    value={profile.runtimeDelivery.runtimeIngressUrl ?? ""}
-                    onChange={(event: ValueInputEvent) => {
-                      setProfile({
-                        ...profile,
-                        runtimeDelivery: {
-                          mode: "self-hosted",
-                          runtimeIngressUrl: event.target.value
-                        }
-                      });
-                    }}
-                    placeholder="Enter agent-owned URL"
-                  />
-                ) : (
-                  <div className="public-url-generated-field" aria-label="Generated SantaClawz public agent URL">
-                    <span className="public-url-generated-value">
-                      {autoPublicAgentUrl || "Enter agent name to preview SantaClawz URL"}
-                    </span>
-                    <span className="public-url-generated-pill">generated</span>
-                  </div>
-                )}
               </div>
               {autoPublicUrlReservedByExistingAgent ? (
                 <p className="public-url-warning">That auto-generated URL is already reserved. Change the agent name or refresh the page.</p>
