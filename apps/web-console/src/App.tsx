@@ -1727,7 +1727,6 @@ export function App() {
     const runtimeIngressUrl = profileForSave.runtimeDelivery.runtimeIngressUrl?.trim() ?? "";
     return {
       agentName: profileForSave.agentName,
-      representedPrincipal: profileForSave.representedPrincipal,
       headline: profileForSave.headline,
       ...(!usesSelfHostedRuntime ? { urlReservationSalt: nextUrlReservationSalt } : {}),
       runtimeDelivery: profileForSave.runtimeDelivery,
@@ -2612,8 +2611,8 @@ export function App() {
             </div>
           </div>
 
-          <div className="field-grid compact-field-grid">
-            <label className="field">
+          <div className="field-grid compact-field-grid agent-connect-grid">
+            <label className="field agent-name-field">
               <span>PUBLIC AGENT NAME</span>
               <input
                 className="text-input"
@@ -2628,37 +2627,7 @@ export function App() {
               />
             </label>
 
-            <label className="field">
-              <span>Principal Operator</span>
-              <input
-                className="text-input"
-                value={profile.representedPrincipal}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    representedPrincipal: event.target.value
-                  });
-                }}
-                placeholder="Agent operator"
-              />
-            </label>
-
-            <label className="field field-wide">
-              <span>What agent does</span>
-              <textarea
-                className="text-area compact-text-area headline-text-area"
-                value={profile.headline}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    headline: event.target.value
-                  });
-                }}
-                placeholder="Enter description: e.g. private research, governed execution, and verifiable outputs."
-              />
-            </label>
-
-            <div className="field field-wide public-url-field">
+            <div className="field public-url-field agent-url-field">
               <div className="field-label-row public-url-title-row">
                 <span>Public Agent Unique URL</span>
                 <a className="field-help-link" href={PUBLIC_RUNTIME_URL_GUIDE_URL} target="_blank" rel="noreferrer">
@@ -2720,6 +2689,21 @@ export function App() {
                 <p className="public-url-warning">That auto-generated URL is already reserved. Change the agent name or refresh the page.</p>
               ) : null}
             </div>
+
+            <label className="field field-wide">
+              <span>What agent does</span>
+              <textarea
+                className="text-area compact-text-area headline-text-area"
+                value={profile.headline}
+                onChange={(event: ValueInputEvent) => {
+                  setProfile({
+                    ...profile,
+                    headline: event.target.value
+                  });
+                }}
+                placeholder="Enter description: e.g. private research, governed execution, and verifiable outputs."
+              />
+            </label>
 
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">

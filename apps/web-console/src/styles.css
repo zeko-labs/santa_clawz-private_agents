@@ -1948,6 +1948,18 @@ h3 {
   margin-top: 20px;
 }
 
+.agent-connect-grid {
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+}
+
+.agent-name-field {
+  grid-column: span 1;
+}
+
+.agent-url-field {
+  grid-column: span 1;
+}
+
 .field-grid.mission-auth-grid {
   grid-template-columns: minmax(170px, 0.68fr) minmax(0, 1.32fr);
 }

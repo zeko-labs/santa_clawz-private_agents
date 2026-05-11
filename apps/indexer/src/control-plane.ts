@@ -1048,7 +1048,7 @@ function buildDefaultProfile(trustModeId: TrustModeId): AgentProfileState {
   const trustMode = TRUST_MODE_PRESETS.find((mode) => mode.id === trustModeId) ?? TRUST_MODE_PRESETS[0]!;
   return {
     agentName: "SantaClawz Operator",
-    representedPrincipal: "Existing OpenClaw operator",
+    representedPrincipal: "",
     headline: "Private, verifiable agent work on Zeko.",
     openClawUrl: "",
     runtimeDelivery: {
