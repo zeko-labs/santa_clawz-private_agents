@@ -4,14 +4,16 @@ SantaClawz can run the default x402 facilitator for upfront Base/Ethereum paymen
 
 For V1, prefer Base first. Base gas is low enough to support smaller USDC payments, and the SantaClawz indexer can advertise Base as the default rail once `CLAWZ_X402_BASE_FACILITATOR_URL` is set and agents add a Base payout wallet.
 
-The normal V1 payment path is:
+The normal V1 payment path with SantaClawz fees enabled is:
 
-1. buyer signs an exact USDC payment authorization
-2. the hosted facilitator verifies signature, nonce, balance, amount, rail, and recipient
+1. buyer signs a seller-net USDC authorization and a protocol-fee USDC authorization
+2. the hosted facilitator verifies both signatures, nonces, balance, amounts, rail, and recipients
 3. the facilitator relayer pays native gas
-4. USDC settles directly to the agent payout wallet
+4. USDC settles to the SantaClawz protocol recipient and the agent payout wallet before work is sent
 
 No escrow is required for this path.
+
+Use the SantaClawz hosted facilitator URL for fee-split exact payments. Generic one-leg facilitators such as CDP can only settle the seller payment when no SantaClawz protocol fee split is required.
 
 ## Gas Funding
 
@@ -146,4 +148,4 @@ Use the same QuickNode Base RPC as the hosted x402 facilitator. The cron should 
 
 This top-up script solves facilitator gas funding.
 
-The indexer fee preview and readiness checks make sure agents price jobs above the current facilitation cost. The no-escrow exact x402 rail is still a one-leg USDC settlement to the agent payout wallet; enforceable onchain fee capture requires a split/escrow rail or a separate platform fee leg.
+The indexer fee preview and readiness checks make sure agents price jobs above the current facilitation cost. The no-escrow exact x402 rail uses two EIP-3009 authorization legs so the protocol fee is enforceable without custody. This is not atomic like escrow or a router contract, so escrow remains the stronger path for proof-backed release/refund flows.

@@ -1,6 +1,6 @@
 # SantaClawz Protocol Owner Fee Split Spec
 
-> Update: the live direction now uses `fee-on-reserve-v1` with reserve-release `v4`. SantaClawz takes its protocol fee when the reservation is created, and only the seller net remains in escrow for later release or refund.
+> Update: the live Base prepay direction now uses `x402-exact-evm-fee-split-v1`: the buyer signs two EIP-3009 authorizations, one for seller net and one for the SantaClawz protocol fee. Reserve-release `v4` remains the stronger escrow path for proof-backed release/refund flows.
 >
 > Current public-fee policy is runtime-configured by `CLAWZ_PROTOCOL_OWNER_FEE_BPS`. The Base rollout target is `10` bps (`0.1%`), with `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD` still acting as the hosted-relayer minimum when that is higher. Code defaults are fallbacks for missing env vars, not the source agents should use for pricing.
 
@@ -49,23 +49,19 @@ If SantaClawz only displayed the fee in UI or in discovery metadata, a self-host
 
 ## v1 enforcement strategy
 
-SantaClawz should enforce the fee through the **reserve-release contract path**, not the current direct one-recipient exact transfer path.
+SantaClawz supports two enforceable fee-bearing paths:
 
-Why:
+- `x402-exact-evm-fee-split-v1` for no-escrow upfront payments
+- `x402-base-usdc-reserve-release-v4` / `x402-ethereum-mainnet-usdc-reserve-release-v4` for escrowed proof-backed work
 
-- current exact EIP-3009 settlement sends one transfer to one `payTo`
-- the reserve-release contract is already the right seller-risk boundary
-- SantaClawz should not take seller execution risk for the configured protocol fee
-- the cleanest model is to skim the fee at reservation time and leave only seller net in escrow
+For the current Base prepay path, the exact rail advertises a gross amount plus fee-split metadata. The buyer signs two EIP-3009 authorizations:
 
-So the live recommendation is:
+- seller net amount to the agent payout wallet
+- protocol fee amount to the SantaClawz protocol fee recipient
 
-- keep raw `x402-exact-evm-v1` available in `zeko-x402`
-- but for **SantaClawz fee-bearing paid jobs**, standardize on a new:
-  - `x402-base-usdc-reserve-release-v4`
-  - `x402-ethereum-mainnet-usdc-reserve-release-v4`
+The hosted facilitator verifies both signatures, nonces, recipients, amounts, and the payer balance before settlement. It settles the protocol-fee leg and seller-net leg before SantaClawz sends work to the agent.
 
-That keeps the fee path enforceable without requiring two buyer signatures or a custodial SantaClawz wallet, while preserving the seller-only refund semantics SantaClawz wants.
+This is enforceable without custody, but it is not atomic like a contract. Escrow/router settlement remains the better model when the product needs proof-backed release/refund guarantees.
 
 `X402BaseUSDCReserveEscrowV4` also enforces a contract-level fee ceiling:
 
@@ -700,7 +696,7 @@ This spec does **not** require:
 - arbitrary revenue splits
 - agent-editable protocol fee percentage
 - automatic Zeko treasury replenishment logic
-- raw direct exact-settlement fee splitting in the current v1 one-recipient path
+- arbitrary raw one-recipient exact-settlement fee skimming without a second authorization or contract/router
 
 Those can come later if needed.
 

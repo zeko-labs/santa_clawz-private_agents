@@ -1985,11 +1985,23 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     const microPaymentPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
     assert.equal(microPaymentPlan.status, 200);
     assert.equal(microPaymentPlan.payload.rails[0].ready, true);
+    assert.equal(microPaymentPlan.payload.rails[0].settlementModel, "x402-exact-evm-fee-split-v1");
     assert.equal(microPaymentPlan.payload.feePreviewByRail[0].protocolFeeAmountUsd, "0.002");
     assert.equal(microPaymentPlan.payload.feePreviewByRail[0].nominalProtocolFeeAmountUsd, "0.0001");
     assert.equal(microPaymentPlan.payload.feePreviewByRail[0].networkFacilitationFeeAmountUsd, "0.002");
     assert.equal(microPaymentPlan.payload.feePreviewByRail[0].sellerNetAmountUsd, "0.008");
     assert.equal(microPaymentPlan.payload.feePreviewByRail[0].feeBasis, "network-facilitation-minimum");
+
+    const microPaymentCatalog = await requestJson(`${baseUrl}/.well-known/x402.json?sessionId=session_demo_enterprise`);
+    assert.equal(microPaymentCatalog.status, 200);
+    assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].settlementModel, "x402-exact-evm-fee-split-v1");
+    assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].extensions.evm.feeSplit.grossAmount, "10000");
+    assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].extensions.evm.feeSplit.sellerAmount, "8000");
+    assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].extensions.evm.feeSplit.protocolFeeAmount, "2000");
+    assert.equal(
+      microPaymentCatalog.payload.routes[0].accepts[0].extensions.evm.feeSplit.protocolFeePayTo,
+      "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2"
+    );
 
     const atFloor = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
       method: "POST",
@@ -2006,6 +2018,7 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     const atFloorPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
     assert.equal(atFloorPlan.status, 200);
     assert.equal(atFloorPlan.payload.rails[0].ready, true);
+    assert.equal(atFloorPlan.payload.rails[0].settlementModel, "x402-exact-evm-fee-split-v1");
     assert.equal(atFloorPlan.payload.feePreviewByRail[0].protocolFeeAmountUsd, "0.002");
     assert.equal(atFloorPlan.payload.feePreviewByRail[0].sellerNetAmountUsd, "0.198");
 

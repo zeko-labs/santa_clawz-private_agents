@@ -53,7 +53,17 @@ type SettlementLedger = {
   settle(input: JsonRecord): unknown;
 };
 type ZekoX402Module = {
-  buildBaseMainnetUsdcRail(input: { payTo: string; amount: string; facilitatorUrl?: string }): unknown;
+  buildBaseMainnetUsdcRail(input: {
+    payTo: string;
+    amount: string;
+    facilitatorUrl?: string;
+    protocolFeePayTo?: string;
+    feeBps?: number;
+    grossAmount?: string;
+    sellerAmount?: string;
+    protocolFeeAmount?: string;
+    feeSettlementMode?: string;
+  }): unknown;
   buildBaseMainnetUsdcReserveReleaseFeeRail(input: {
     payTo: string;
     amount: string;
@@ -77,7 +87,17 @@ type ZekoX402Module = {
     facilitatorUrl?: string;
   }): unknown;
   buildCatalog(input: JsonRecord): unknown;
-  buildEthereumMainnetUsdcRail(input: { payTo: string; amount: string; facilitatorUrl?: string }): unknown;
+  buildEthereumMainnetUsdcRail(input: {
+    payTo: string;
+    amount: string;
+    facilitatorUrl?: string;
+    protocolFeePayTo?: string;
+    feeBps?: number;
+    grossAmount?: string;
+    sellerAmount?: string;
+    protocolFeeAmount?: string;
+    feeSettlementMode?: string;
+  }): unknown;
   buildEthereumMainnetUsdcReserveReleaseFeeRail(input: {
     payTo: string;
     amount: string;
@@ -616,7 +636,10 @@ function buildBaseRailPlan(
   const facilitatorUrl =
     operatorFacilitatorUrl || process.env.CLAWZ_X402_BASE_FACILITATOR_URL?.trim();
   const baseCdpFacilitatorConfigured = hasBaseCdpFacilitatorCredentials();
-  const baseHostedFacilitatorConfigured = Boolean(facilitatorUrl || baseCdpFacilitatorConfigured);
+  const baseCdpFacilitatorAllowed = !protocolFeeApplies || settleOnProof;
+  const baseHostedFacilitatorConfigured = Boolean(
+    facilitatorUrl || (baseCdpFacilitatorConfigured && baseCdpFacilitatorAllowed)
+  );
   const hostedFacilitator = Boolean(!operatorFacilitatorUrl && baseHostedFacilitatorConfigured && !settleOnProof);
   const sellerEscrowContract = profile.paymentProfile.baseEscrowContract?.trim();
   const sharedEscrowContract = process.env.CLAWZ_X402_BASE_ESCROW_CONTRACT?.trim();
@@ -652,7 +675,11 @@ function buildBaseRailPlan(
   const pricing = pushPricingReadiness(profile, missing, notes);
 
   if (!baseHostedFacilitatorConfigured) {
-    missing.push("Set CLAWZ_X402_BASE_FACILITATOR_URL, configure CDP x402 credentials, or add a Base facilitator URL for this agent.");
+    missing.push(
+      protocolFeeApplies && !settleOnProof
+        ? "Set CLAWZ_X402_BASE_FACILITATOR_URL to the SantaClawz hosted facilitator so exact Base payments can enforce the protocol fee split."
+        : "Set CLAWZ_X402_BASE_FACILITATOR_URL, configure CDP x402 credentials, or add a Base facilitator URL for this agent."
+    );
   }
   pushHostedFacilitatorFloor({
     rail: "base-usdc",
@@ -676,7 +703,7 @@ function buildBaseRailPlan(
     notes.push(
       settleOnProof
         ? "Buyers see the gross price. SantaClawz keeps the protocol fee at reservation time, and only the seller net stays in escrow."
-        : "Upfront payments settle directly to the seller wallet. SantaClawz hosted facilitation and gas recovery are handled outside escrow."
+        : "Buyers sign seller-net and protocol-fee authorizations. The hosted facilitator settles both before SantaClawz sends work to the agent."
     );
   }
 
@@ -716,7 +743,9 @@ function buildBaseRailPlan(
         ? "x402-base-usdc-reserve-release-v4"
         : settleOnProof
           ? "x402-base-usdc-reserve-release-v2"
-          : "x402-exact-evm-v1",
+          : protocolFeeApplies
+            ? "x402-exact-evm-fee-split-v1"
+            : "x402-exact-evm-v1",
     executionMode: settleOnProof ? "reserve-release" : executionMode(settlementTrigger),
     ...(payTo ? { payTo } : {}),
     ...(escrowContract ? { settlementContractAddress: escrowContract } : {}),
@@ -815,7 +844,7 @@ function buildEthereumRailPlan(
     notes.push(
       settleOnProof
         ? "Buyers see the gross price. SantaClawz keeps the protocol fee at reservation time, and only the seller net stays in escrow."
-        : "Upfront payments settle directly to the seller wallet. SantaClawz hosted facilitation and gas recovery are handled outside escrow."
+        : "Buyers sign seller-net and protocol-fee authorizations. The hosted facilitator settles both before SantaClawz sends work to the agent."
     );
   }
 
@@ -839,7 +868,9 @@ function buildEthereumRailPlan(
         ? "x402-ethereum-mainnet-usdc-reserve-release-v4"
         : settleOnProof
           ? "x402-ethereum-mainnet-usdc-reserve-release-v2"
-          : "x402-exact-evm-v1",
+          : protocolFeeApplies
+            ? "x402-exact-evm-fee-split-v1"
+            : "x402-exact-evm-v1",
     executionMode: settleOnProof ? "reserve-release" : executionMode(settlementTrigger),
     ...(payTo ? { payTo } : {}),
     ...(escrowContract ? { settlementContractAddress: escrowContract } : {}),
@@ -1056,7 +1087,11 @@ function railAcceptPreview(plan: AgentX402Plan, rail: AgentX402RailPlan) {
                       feeBps: feePreview.feeBps,
                       ...(feePreview.protocolFeeRecipient ? { protocolFeePayTo: feePreview.protocolFeeRecipient } : {}),
                       ...(feePreview.sellerPayTo ? { sellerPayTo: feePreview.sellerPayTo } : {}),
-                      feeSettlementMode: plan.protocolOwnerFeePolicy?.settlementModel ?? "fee-on-reserve-v1"
+                      ...(rail.executionMode !== "reserve-release" ? (exactFeeSplitForRail(feePreview) ?? {}) : {}),
+                      feeSettlementMode:
+                        rail.executionMode === "reserve-release"
+                          ? plan.protocolOwnerFeePolicy?.settlementModel ?? "fee-on-reserve-v1"
+                          : "exact-eip3009-split-v1"
                     }
                   }
                 : {})
@@ -1212,6 +1247,10 @@ function facilitatorClientForRail(rail: AgentX402RailPlan) {
       });
     }
 
+    if (rail.settlementModel === "x402-exact-evm-fee-split-v1") {
+      return null;
+    }
+
     if (baseToken) {
       return new zekoX402Module.CDPFacilitatorClient({
         bearerToken: baseToken
@@ -1242,6 +1281,43 @@ function isLiveRuntimeRail(plan: AgentX402Plan, rail: AgentX402RailPlan): boolea
     rail.amountUsd.trim().length > 0 &&
     (rail.executionMode === "settle-first" || rail.executionMode === "reserve-release")
   );
+}
+
+function exactFeeSplitForRail(
+  feePreview: NonNullable<AgentX402Plan["feePreviewByRail"]>[number] | undefined
+) {
+  if (
+    !feePreview?.protocolFeeRecipient ||
+    !feePreview.protocolFeeAmountUsd ||
+    !feePreview.sellerNetAmountUsd ||
+    !feePreview.grossAmountUsd
+  ) {
+    return null;
+  }
+
+  const grossAmount = parseUsdAtomic(feePreview.grossAmountUsd);
+  const sellerAmount = parseUsdAtomic(feePreview.sellerNetAmountUsd);
+  const protocolFeeAmount = parseUsdAtomic(feePreview.protocolFeeAmountUsd);
+
+  if (
+    grossAmount === null ||
+    sellerAmount === null ||
+    protocolFeeAmount === null ||
+    sellerAmount <= 0n ||
+    protocolFeeAmount <= 0n ||
+    sellerAmount + protocolFeeAmount !== grossAmount
+  ) {
+    return null;
+  }
+
+  return {
+    protocolFeePayTo: feePreview.protocolFeeRecipient,
+    feeBps: feePreview.feeBps,
+    grossAmount: grossAmount.toString(),
+    sellerAmount: sellerAmount.toString(),
+    protocolFeeAmount: protocolFeeAmount.toString(),
+    feeSettlementMode: "exact-eip3009-split-v1"
+  };
 }
 
 function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord | null {
@@ -1281,9 +1357,11 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
       }) as JsonRecord;
     }
 
+    const exactFeeSplit = exactFeeSplitForRail(feePreview);
     return zekoX402Module.buildBaseMainnetUsdcRail({
       payTo: rail.payTo,
       amount: rail.amountUsd,
+      ...(exactFeeSplit ?? {}),
       ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {})
     }) as JsonRecord;
   }
@@ -1309,9 +1387,11 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
       }) as JsonRecord;
     }
 
+    const exactFeeSplit = exactFeeSplitForRail(feePreview);
     return zekoX402Module.buildEthereumMainnetUsdcRail({
       payTo: rail.payTo,
       amount: rail.amountUsd,
+      ...(exactFeeSplit ?? {}),
       ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {})
     }) as JsonRecord;
   }

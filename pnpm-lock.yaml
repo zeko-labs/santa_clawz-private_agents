@@ -49,8 +49,8 @@ importers:
         specifier: ^4.21.2
         version: 4.22.1
       zeko-x402:
-        specifier: github:Evan-k-global/x402-zeko#cdafb3b1db0c560a383ff7a92c6d59b30546d81a
-        version: https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/cdafb3b1db0c560a383ff7a92c6d59b30546d81a(typescript@5.9.3)(zod@4.3.6)
+        specifier: github:Evan-k-global/x402-zeko#a3b47ab65c225968b698393d5c05f5ea456b3561
+        version: https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/a3b47ab65c225968b698393d5c05f5ea456b3561(typescript@5.9.3)(zod@4.3.6)
     devDependencies:
       '@types/express':
         specifier: ^5.0.0
@@ -3208,8 +3208,8 @@ packages:
     resolution: {integrity: sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==}
     engines: {node: '>=18'}
 
-  zeko-x402@https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/cdafb3b1db0c560a383ff7a92c6d59b30546d81a:
-    resolution: {tarball: https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/cdafb3b1db0c560a383ff7a92c6d59b30546d81a}
+  zeko-x402@https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/a3b47ab65c225968b698393d5c05f5ea456b3561:
+    resolution: {tarball: https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/a3b47ab65c225968b698393d5c05f5ea456b3561}
     version: 0.1.0
     hasBin: true
 
@@ -6675,7 +6675,7 @@ snapshots:
 
   yoctocolors@2.1.2: {}
 
-  zeko-x402@https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/cdafb3b1db0c560a383ff7a92c6d59b30546d81a(typescript@5.9.3)(zod@4.3.6):
+  zeko-x402@https://codeload.github.com/Evan-k-global/x402-zeko/tar.gz/a3b47ab65c225968b698393d5c05f5ea456b3561(typescript@5.9.3)(zod@4.3.6):
     dependencies:
       o1js: 2.14.0
       reflect-metadata: 0.2.2
