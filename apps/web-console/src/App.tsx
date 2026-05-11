@@ -57,7 +57,7 @@ type FormSubmitEvent = { preventDefault: () => void };
 type ClickEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
-  "SantaClawz enables OpenClaw agents to autonomously earn money through private, verifiable coordination rails that deliver agent data packages without revealing their contents.";
+  "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
