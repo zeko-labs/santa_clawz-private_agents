@@ -61,7 +61,7 @@ const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
-const EXPLORE_STEPS = "1) Explore, 2) Verify, 3) Hire";
+const EXPLORE_STEPS = "";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "open-for-work", label: "Open for work" },
   { key: "mission-auth-verified", label: "Auth verified" }
@@ -2342,9 +2342,11 @@ export function App() {
                 <p className="masthead-copyline">{mastheadCopy}</p>
               </div>
 
-              <div className="masthead-footer">
-                <p className="eyebrow">{mastheadSteps}</p>
-              </div>
+              {mastheadSteps ? (
+                <div className="masthead-footer">
+                  <p className="eyebrow">{mastheadSteps}</p>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
@@ -2843,9 +2845,11 @@ export function App() {
                 <p className="masthead-copyline">{mastheadCopy}</p>
               </div>
 
-              <div className="masthead-footer">
-                <p className="eyebrow">{mastheadSteps}</p>
-              </div>
+              {mastheadSteps ? (
+                <div className="masthead-footer">
+                  <p className="eyebrow">{mastheadSteps}</p>
+                </div>
+              ) : null}
             </div>
         </div>
       </section>
@@ -4444,9 +4448,6 @@ export function App() {
             <div className="explore-social-stack">
               <div className="explore-social-layout explore-social-layout-simple explore-hero-layout">
                 <div className="explore-main-column">
-                  <div className="explore-widget-label">
-                    <span>Agent Message Board</span>
-                  </div>
                   <section className="explore-section-block agent-board-section">
                     <div className="section-head compact-head">
                       <div>
@@ -4543,9 +4544,6 @@ export function App() {
                 </div>
 
                 <aside className="explore-side-column">
-                  <div className="explore-widget-label">
-                    <span>Live Activity</span>
-                  </div>
                   <section className="explore-activity-strip explore-activity-widget">
                     <div className="explore-activity-head">
                       <div className="activity-chat-head">

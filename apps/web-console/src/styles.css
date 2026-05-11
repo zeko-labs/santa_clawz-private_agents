@@ -389,8 +389,8 @@ pre,
 
 .explore-social-stack {
   display: grid;
-  gap: 22px;
-  margin-top: 18px;
+  gap: 18px;
+  margin-top: 10px;
 }
 
 .explore-social-layout {
@@ -403,7 +403,7 @@ pre,
 .explore-main-column,
 .explore-side-column {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .explore-social-layout-simple {
@@ -3302,8 +3302,7 @@ button:disabled {
 @media (max-width: 1120px) {
   .hero-grid,
   .layout-grid,
-  .ops-grid,
-  .explore-social-layout {
+  .ops-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3313,17 +3312,6 @@ button:disabled {
 
   .masthead-meta {
     justify-content: flex-start;
-  }
-
-  .explore-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .explore-featured-grid,
-  .explore-feed-grid,
-  .agent-board-grid,
-  .dispatch-grid {
-    grid-template-columns: 1fr;
   }
 
   .action-row-form {
@@ -3351,9 +3339,7 @@ button:disabled {
   .payment-subcard-head,
   .action-row,
   .action-side,
-  .exception-inline-card,
-  .explore-card-head,
-  .agent-message-head {
+  .exception-inline-card {
     flex-direction: column;
     align-items: start;
   }
@@ -3465,13 +3451,6 @@ button:disabled {
     font-size: 0.92rem;
   }
 
-  .explore-card-topline,
-  .explore-card-foot,
-  .explore-action-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .action-form-stack,
   .hire-form-stack {
     width: 100%;
@@ -3511,34 +3490,8 @@ button:disabled {
   }
 
   .payment-compact-grid-three,
-  .payment-status-grid,
-  .explore-toolbar-inline,
-  .explore-agent-list-card {
+  .payment-status-grid {
     grid-template-columns: 1fr;
-  }
-
-  .explore-toolbar-inline .explore-chip-row {
-    flex-wrap: wrap;
-  }
-
-  .explore-agent-list-card .explore-card-head,
-  .explore-agent-list-card .explore-card-quote,
-  .explore-agent-list-card .explore-tag-row,
-  .explore-agent-list-card .explore-action-row {
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .agent-board-empty-card {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-board-empty-mark {
-    grid-row: auto;
-  }
-
-  .agent-board-empty-card .agent-board-lane-row {
-    grid-column: 1;
   }
 
   .payment-save-row {
@@ -3592,6 +3545,50 @@ button:disabled {
 }
 
 @media (max-width: 700px) {
+  .explore-social-layout,
+  .explore-grid,
+  .explore-featured-grid,
+  .explore-feed-grid,
+  .agent-board-grid,
+  .dispatch-grid,
+  .explore-toolbar-inline,
+  .explore-agent-list-card {
+    grid-template-columns: 1fr;
+  }
+
+  .explore-toolbar-inline .explore-chip-row {
+    flex-wrap: wrap;
+  }
+
+  .explore-card-head,
+  .agent-message-head,
+  .explore-card-topline,
+  .explore-card-foot,
+  .explore-action-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .explore-agent-list-card .explore-card-head,
+  .explore-agent-list-card .explore-card-quote,
+  .explore-agent-list-card .explore-tag-row,
+  .explore-agent-list-card .explore-action-row {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .agent-board-empty-card {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-board-empty-mark {
+    grid-row: auto;
+  }
+
+  .agent-board-empty-card .agent-board-lane-row {
+    grid-column: 1;
+  }
+
   .site-header {
     flex-direction: row;
     align-items: center;
