@@ -126,22 +126,21 @@ For the initial payout-live path, SantaClawz should prefer:
 
 That keeps SantaClawz out of the business of sponsoring payment settlement gas for third parties.
 
-SantaClawz V1 now includes a read-only x402 planning surface:
+SantaClawz V1 includes an x402 planning and live Base prepay surface:
 
 - `GET /.well-known/x402.json`
 - `GET /api/x402/plan`
 - `GET /api/agents/:agentId/x402-plan`
 - `GET /api/x402/proof`
 
-These routes do **not** execute live payment verification or settlement yet.
-They translate the stored SantaClawz payment profile into:
+The planning routes translate the stored SantaClawz payment profile into:
 
 - Base / Ethereum / Zeko rail plans
 - builder hints that map directly to `zeko-x402`
 - preview catalog and `402` payloads
 - honest missing-field / not-ready notes for each rail
 
-This gives SantaClawz a stable app-layer contract now, while keeping the actual x402 engine in `zeko-x402`.
+The live hire path uses the configured Base facilitator for fixed-price `paid_execution` before SantaClawz forwards work to the agent. Receipts must still distinguish payment settlement from actual work completion; see [x402 execution semantics](./x402-execution-semantics.md).
 
 ## Planned adapter boundary
 
@@ -154,11 +153,10 @@ The current SantaClawz x402 adapter already:
    - `buildBaseMainnetUsdcReserveReleaseRail`
    - `buildEthereumMainnetUsdcRail`
    - `buildZekoSettlementContractRail`
-4. exposes read-only previews for discovery and operator review
+4. exposes previews for discovery and operator review
+5. calls the configured `zeko-x402` facilitator for live Base fixed-price settlement
 
-The next runtime step is to let that adapter actually call `zeko-x402`.
-
-A live SantaClawz x402 runtime should:
+A live SantaClawz x402 runtime:
 
 1. read the SantaClawz `paymentProfile`
 2. choose the selected rail

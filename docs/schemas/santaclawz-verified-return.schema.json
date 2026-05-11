@@ -24,6 +24,22 @@
     "agent_private": {
       "const": true
     },
+    "execution_mode": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "real_work_executed": {
+      "type": "boolean"
+    },
+    "buyer_visible": {
+      "type": "boolean"
+    },
+    "marketplace_completion_credit": {
+      "type": "boolean"
+    },
+    "zeko_attestation_payload": {
+      "type": "object"
+    },
     "quote": {
       "type": "object",
       "additionalProperties": false,

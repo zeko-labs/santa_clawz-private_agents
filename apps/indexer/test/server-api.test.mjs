@@ -1533,6 +1533,28 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(freeTestReady.payload.paymentProfileReady, true);
     assert.equal(freeTestReady.payload.paidJobsEnabled, false);
 
+    ingress.setNextProtocolReturnFactory(({ requestId }) => ({
+      schema_version: "santaclawz-return/1.0",
+      request_id: requestId,
+      status: "completed",
+      agent_private: true,
+      execution_mode: "demo-complete",
+      real_work_executed: false,
+      buyer_visible: false,
+      marketplace_completion_credit: false,
+      verified_output: {
+        package_hash: "b".repeat(64),
+        hash_algorithm: "sha256",
+        verification_manifest: {
+          mode: "demo",
+          input_digest_sha256: "c".repeat(64),
+          checks_performed: ["santaclawz_signature_verified"],
+          files_produced: [],
+          blocked_suspicious_instructions: []
+        },
+        deliverables: []
+      }
+    }));
     const freeTestAccepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
@@ -1544,9 +1566,14 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(freeTestAccepted.payload.requestType, "free_test");
     assert.equal(freeTestAccepted.payload.pricingMode, "free-test");
     assert.equal(freeTestAccepted.payload.paymentStatus, "free_test");
-    assert.equal(freeTestAccepted.payload.status, "submitted");
+    assert.equal(freeTestAccepted.payload.status, "completed");
     assert.equal(freeTestAccepted.payload.payment.status, "free_test");
     assert.equal(freeTestAccepted.payload.payment.rail, undefined);
+    assert.equal(freeTestAccepted.payload.protocolReturn.status, "completed");
+    assert.equal(freeTestAccepted.payload.protocolReturn.verifiedOutput.deliverableCount, 0);
+    assert.equal(freeTestAccepted.payload.protocolReturn.execution.executionMode, "demo-complete");
+    assert.equal(freeTestAccepted.payload.protocolReturn.execution.completionClassification, "demo_completion");
+    assert.equal(freeTestAccepted.payload.protocolReturn.execution.marketplaceCompletionCredit, false);
     assert.equal(ingress.receivedHireRequestIds.has(freeTestAccepted.payload.requestId), true);
 
     const freeTestLimited = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
@@ -1560,6 +1587,94 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.match(freeTestLimited.payload.error, /Free-test limit reached/i);
 
     console.log("ok - hire route gates ownership, publish, archive, payment readiness, and signed ingress delivery");
+  } finally {
+    await ingress.close();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+async function testMainnetFreeTestDisabledByDefault() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mainnet-free-test-gate-"));
+  const port = await reservePort();
+  const ingressPort = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    ZEKO_NETWORK_ID: "zeko-mainnet",
+    CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example"
+  });
+  const ingress = await startHireIngress(ingressPort);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const ingressUrl = `http://127.0.0.1:${ingressPort}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Mainnet Free Test Gate Agent",
+        headline: "Confirms free-test does not silently sponsor mainnet traffic.",
+        openClawUrl: ingressUrl
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+
+    const challenge = await requestJson(`${baseUrl}/api/ownership/challenge`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId })
+    });
+    assert.equal(challenge.status, 200);
+    ingress.setChallengePayload(JSON.parse(challenge.payload.issuedOwnershipChallenge.challengeResponseJson));
+
+    const verified = await requestJson(`${baseUrl}/api/ownership/verify`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId })
+    });
+    assert.equal(verified.status, 200);
+
+    const published = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        agentId,
+        localOnly: true
+      })
+    });
+    assert.equal(published.status, 200);
+
+    const freeTestReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "free-test",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(freeTestReady.status, 200);
+    assert.equal(freeTestReady.payload.profile.paymentProfile.pricingMode, "free-test");
+
+    const mainnetFreeTestHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "This free test should not be operational on mainnet by default.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(mainnetFreeTestHire.status, 400);
+    assert.match(mainnetFreeTestHire.payload.error, /disabled on mainnet/i);
+
+    console.log("ok - mainnet free-test lane is disabled by default");
   } finally {
     await ingress.close();
     await stopProcess(server.child);
@@ -1814,6 +1929,7 @@ async function main() {
   await testOperatorCanDeleteLostKeyRegistration();
   await testZekoSocialAnchorHealthAndMembershipState();
   await testHireRouteRequiresSafeIngressAndPaymentState();
+  await testMainnetFreeTestDisabledByDefault();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();

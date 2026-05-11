@@ -563,8 +563,27 @@ export interface HireRequestReceipt {
     verifiedOutput?: {
       packageHash: string;
       deliverableCount: number;
+      filesProducedCount?: number;
+      checksPerformedCount?: number;
       verificationManifestDigestSha256?: string;
       zekoAttestationIncluded: boolean;
+    };
+    execution?: {
+      runtimeStatus: "completed";
+      executionMode?: string;
+      realWorkExecuted?: boolean;
+      buyerVisible?: boolean;
+      marketplaceCompletionCredit?: boolean;
+      deliverableCount: number;
+      filesProducedCount: number;
+      checksPerformedCount: number;
+      verificationManifestPresent: boolean;
+      zekoAttestationIncluded: boolean;
+      completionClassification:
+        | "agent_completed_verified"
+        | "agent_completed_unverified"
+        | "agent_completed_empty"
+        | "demo_completion";
     };
     incidentId?: string;
   };

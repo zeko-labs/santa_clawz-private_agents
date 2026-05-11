@@ -453,6 +453,10 @@ function completedDemoPackage(requestId, body, mode = "paid_execution") {
     request_id: requestId,
     status: "completed",
     agent_private: true,
+    execution_mode: "demo-complete",
+    real_work_executed: false,
+    buyer_visible: false,
+    marketplace_completion_credit: false,
     verified_output: {
       package_hash: sha256Hex(body),
       hash_algorithm: "sha256",

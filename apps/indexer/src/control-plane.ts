@@ -78,10 +78,22 @@ const FREE_TEST_HIRE_LIMIT_PER_AGENT =
   Number.parseInt(process.env.CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M ?? "", 10) || 10;
 const FREE_TEST_HIRE_LIMIT_GLOBAL =
   Number.parseInt(process.env.CLAWZ_FREE_TEST_GLOBAL_HIRE_LIMIT_PER_10M ?? "", 10) || 50;
+const MAINNET_FREE_TEST_HIRE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAINNET_FREE_TEST_LIMIT_PER_AGENT_WITH_PAYOUT =
+  Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_AGENT_HIRE_LIMIT_PER_DAY ?? "", 10) || 2;
+const MAINNET_FREE_TEST_LIMIT_PER_AGENT_WITHOUT_PAYOUT =
+  Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_AGENT_NO_PAYOUT_LIMIT_PER_DAY ?? "", 10) || 1;
+const MAINNET_FREE_TEST_LIMIT_GLOBAL =
+  Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_GLOBAL_HIRE_LIMIT_PER_DAY ?? "", 10) || 20;
 const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 type HireIngressRequestKind = SantaClawzHireRequestType;
+type HireCompletionClassification =
+  | "agent_completed_verified"
+  | "agent_completed_unverified"
+  | "agent_completed_empty"
+  | "demo_completion";
 type RuntimeDeliveryMode = AgentProfileState["runtimeDelivery"]["mode"];
 interface SignedHireIngressRequest {
   ingressUrl: string;
@@ -1266,9 +1278,18 @@ function isMainnetNetwork(deployment: Pick<ZekoDeploymentState, "networkId" | "m
   return networkId.includes("mainnet") && !networkId.includes("testnet");
 }
 
-function allowTestnetSelfServeSocialAnchor(): boolean {
-  const value = process.env.CLAWZ_ALLOW_TESTNET_SELF_SERVE_SOCIAL_ANCHOR?.trim().toLowerCase();
+function networkIdLooksMainnet(deployment: Pick<ZekoDeploymentState, "networkId">): boolean {
+  const networkId = (process.env.CLAWZ_NETWORK_ID ?? process.env.ZEKO_NETWORK_ID ?? deployment.networkId).toLowerCase();
+  return networkId.includes("mainnet") && !networkId.includes("testnet");
+}
+
+function envFlagEnabled(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
+}
+
+function allowTestnetSelfServeSocialAnchor(): boolean {
+  return envFlagEnabled("CLAWZ_ALLOW_TESTNET_SELF_SERVE_SOCIAL_ANCHOR");
 }
 
 function effectiveSocialAnchorMode(
@@ -1561,8 +1582,49 @@ function computePaidJobsEnabled(
   );
 }
 
-function assertFreeTestHireQuota(hireRequests: HireRequestFile, agentId: string, nowMs: number): void {
-  const windowStartMs = nowMs - FREE_TEST_HIRE_WINDOW_MS;
+interface FreeTestQuotaPolicy {
+  windowMs: number;
+  perAgentLimit: number;
+  globalLimit: number;
+  windowLabel: string;
+}
+
+function freeTestQuotaPolicyFor(input: {
+  deployment: Pick<ZekoDeploymentState, "networkId">;
+  profile: AgentProfileState;
+}): FreeTestQuotaPolicy {
+  if (!networkIdLooksMainnet(input.deployment)) {
+    return {
+      windowMs: FREE_TEST_HIRE_WINDOW_MS,
+      perAgentLimit: FREE_TEST_HIRE_LIMIT_PER_AGENT,
+      globalLimit: FREE_TEST_HIRE_LIMIT_GLOBAL,
+      windowLabel: "10 minutes"
+    };
+  }
+
+  if (!envFlagEnabled("CLAWZ_MAINNET_FREE_TEST_ENABLED")) {
+    throw new Error(
+      "Free-test mode is disabled on mainnet by default. Use paid x402 or explicitly enable CLAWZ_MAINNET_FREE_TEST_ENABLED with tight quotas."
+    );
+  }
+
+  return {
+    windowMs: MAINNET_FREE_TEST_HIRE_WINDOW_MS,
+    perAgentLimit: hasPayoutAddress(input.profile)
+      ? MAINNET_FREE_TEST_LIMIT_PER_AGENT_WITH_PAYOUT
+      : MAINNET_FREE_TEST_LIMIT_PER_AGENT_WITHOUT_PAYOUT,
+    globalLimit: MAINNET_FREE_TEST_LIMIT_GLOBAL,
+    windowLabel: "24 hours"
+  };
+}
+
+function assertFreeTestHireQuota(
+  hireRequests: HireRequestFile,
+  agentId: string,
+  policy: FreeTestQuotaPolicy,
+  nowMs: number
+): void {
+  const windowStartMs = nowMs - policy.windowMs;
   const recentFreeTestRequests = hireRequests.requests.filter((request) => {
     if (request.requestType !== "free_test") {
       return false;
@@ -1571,14 +1633,14 @@ function assertFreeTestHireQuota(hireRequests: HireRequestFile, agentId: string,
     return !Number.isNaN(submittedAtMs) && submittedAtMs >= windowStartMs;
   });
   const recentForAgent = recentFreeTestRequests.filter((request) => request.agentId === agentId);
-  if (recentForAgent.length >= FREE_TEST_HIRE_LIMIT_PER_AGENT) {
+  if (recentForAgent.length >= policy.perAgentLimit) {
     throw new Error(
-      `Free-test limit reached for this agent. Try again shortly or switch to paid work. Limit: ${FREE_TEST_HIRE_LIMIT_PER_AGENT} requests per 10 minutes.`
+      `Free-test limit reached for this agent. Try again shortly or switch to paid work. Limit: ${policy.perAgentLimit} requests per ${policy.windowLabel}.`
     );
   }
-  if (recentFreeTestRequests.length >= FREE_TEST_HIRE_LIMIT_GLOBAL) {
+  if (recentFreeTestRequests.length >= policy.globalLimit) {
     throw new Error(
-      `SantaClawz free-test capacity is temporarily full. Try again shortly. Limit: ${FREE_TEST_HIRE_LIMIT_GLOBAL} free-test requests per 10 minutes.`
+      `SantaClawz free-test capacity is temporarily full. Try again shortly. Limit: ${policy.globalLimit} free-test requests per ${policy.windowLabel}.`
     );
   }
 }
@@ -2838,6 +2900,9 @@ export class ClawzControlPlane {
       if (!Array.isArray(verifiedOutput.deliverables)) {
         throw new Error("SantaClawz verified_output deliverables must be an array.");
       }
+      const checksPerformedCount = verificationManifest.checks_performed.length;
+      const filesProducedCount = verificationManifest.files_produced.length;
+      const deliverableCount = verifiedOutput.deliverables.length;
       for (const [index, deliverable] of verifiedOutput.deliverables.entries()) {
         if (!isRecord(deliverable)) {
           throw new Error(`SantaClawz verified_output deliverable ${index} must be an object.`);
@@ -2848,15 +2913,54 @@ export class ClawzControlPlane {
           `SantaClawz verified_output deliverable ${index} sha256`
         );
       }
+      const executionMode =
+        typeof parsed.execution_mode === "string" && parsed.execution_mode.trim().length > 0
+          ? parsed.execution_mode.trim().slice(0, 120)
+          : undefined;
+      const realWorkExecuted =
+        typeof parsed.real_work_executed === "boolean" ? parsed.real_work_executed : undefined;
+      const buyerVisible = typeof parsed.buyer_visible === "boolean" ? parsed.buyer_visible : undefined;
+      const marketplaceCompletionCredit =
+        typeof parsed.marketplace_completion_credit === "boolean" ? parsed.marketplace_completion_credit : undefined;
+      const manifestMode =
+        typeof verificationManifest.mode === "string" ? verificationManifest.mode.trim().toLowerCase() : "";
+      const zekoAttestationIncluded =
+        isRecord(verifiedOutput.zeko_attestation) || isRecord(parsed.zeko_attestation_payload);
+      const completionClassification: HireCompletionClassification =
+        executionMode === "demo-complete" ||
+        manifestMode === "demo" ||
+        realWorkExecuted === false ||
+        marketplaceCompletionCredit === false
+          ? "demo_completion"
+          : deliverableCount === 0
+            ? "agent_completed_empty"
+            : checksPerformedCount === 0 || filesProducedCount === 0
+              ? "agent_completed_unverified"
+              : "agent_completed_verified";
       return {
         schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
         status,
         digestSha256,
         verifiedOutput: {
           packageHash,
-          deliverableCount: verifiedOutput.deliverables.length,
+          deliverableCount,
+          filesProducedCount,
+          checksPerformedCount,
           verificationManifestDigestSha256: canonicalDigest(verificationManifest).sha256Hex,
-          zekoAttestationIncluded: isRecord(verifiedOutput.zeko_attestation)
+          zekoAttestationIncluded
+        },
+        execution: {
+          runtimeStatus: "completed",
+          ...(executionMode ? { executionMode } : {}),
+          ...(typeof realWorkExecuted === "boolean" ? { realWorkExecuted } : {}),
+          ...(typeof buyerVisible === "boolean" ? { buyerVisible } : {}),
+          ...(typeof marketplaceCompletionCredit === "boolean" ? { marketplaceCompletionCredit } : {}),
+          deliverableCount,
+          filesProducedCount,
+          checksPerformedCount,
+          verificationManifestPresent: true,
+          zekoAttestationIncluded,
+          completionClassification
         }
       };
     }
@@ -6155,7 +6259,12 @@ export class ClawzControlPlane {
       if (paymentAuthorization.status !== "not-required") {
         throw new Error("Free-test agents do not accept payment authorization on the free-test lane.");
       }
-      assertFreeTestHireQuota(hireRequests, options.agentId, Date.now());
+      assertFreeTestHireQuota(
+        hireRequests,
+        options.agentId,
+        freeTestQuotaPolicyFor({ deployment, profile }),
+        Date.now()
+      );
     }
 
     const submittedAtIso = new Date().toISOString();
@@ -6233,6 +6342,10 @@ export class ClawzControlPlane {
       }
     });
     if (ingressProtocolReturn) {
+      const completionClassification =
+        ingressProtocolReturn.status === "completed"
+          ? ingressProtocolReturn.execution?.completionClassification
+          : undefined;
       const returnKind: SocialAnchorCandidateKind =
         ingressProtocolReturn.status === "quoted"
           ? "quote-returned"
@@ -6245,9 +6358,15 @@ export class ClawzControlPlane {
         ingressProtocolReturn.status === "quoted"
           ? `${profile.agentName} returned an exact quote for a SantaClawz hire request.`
           : ingressProtocolReturn.status === "completed"
-            ? requestType === "free_test"
-              ? `${profile.agentName} returned a verified output package for a free test.`
-              : `${profile.agentName} returned a verified output package for paid execution.`
+            ? completionClassification === "agent_completed_verified"
+              ? requestType === "free_test"
+                ? `${profile.agentName} returned a verified output package for a free test.`
+                : `${profile.agentName} returned a verified output package for paid execution.`
+              : completionClassification === "demo_completion"
+                ? `${profile.agentName} returned a demo completion that is not buyer-verified work.`
+                : completionClassification === "agent_completed_empty"
+                  ? `${profile.agentName} returned a completed response with no buyer-visible deliverables.`
+                  : `${profile.agentName} returned completed output that still needs verification.`
             : `${profile.agentName} returned a failed hire result through SantaClawz.`;
       await this.enqueueSocialAnchorCandidate({
         sessionId,
@@ -6277,6 +6396,19 @@ export class ClawzControlPlane {
                     }
                   : {}),
                 zekoAttestationIncluded: ingressProtocolReturn.verifiedOutput.zekoAttestationIncluded
+              }
+            : {}),
+          ...(ingressProtocolReturn.execution
+            ? {
+                executionMode: ingressProtocolReturn.execution.executionMode,
+                realWorkExecuted: ingressProtocolReturn.execution.realWorkExecuted,
+                buyerVisible: ingressProtocolReturn.execution.buyerVisible,
+                marketplaceCompletionCredit: ingressProtocolReturn.execution.marketplaceCompletionCredit,
+                completionClassification: ingressProtocolReturn.execution.completionClassification,
+                executionDeliverableCount: ingressProtocolReturn.execution.deliverableCount,
+                executionFilesProducedCount: ingressProtocolReturn.execution.filesProducedCount,
+                executionChecksPerformedCount: ingressProtocolReturn.execution.checksPerformedCount,
+                executionZekoAttestationIncluded: ingressProtocolReturn.execution.zekoAttestationIncluded
               }
             : {}),
           ...(ingressProtocolReturn.incidentId ? { incidentId: ingressProtocolReturn.incidentId } : {})
