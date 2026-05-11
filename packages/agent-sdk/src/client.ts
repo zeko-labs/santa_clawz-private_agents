@@ -2,6 +2,7 @@ import {
   type AgentPaymentRail,
   type AgentPricingMode,
   type AgentReferencePriceUnit,
+  type AgentProfileState,
   summarizeAgentProofBundle,
   type AgentX402Plan,
   type AgentProofVerificationReport,
@@ -99,6 +100,41 @@ export interface ClawzHireRequestInput {
   paymentPayload?: Record<string, unknown>;
 }
 
+export interface ClawzEnrollmentTicketInput {
+  agentName: string;
+  headline: string;
+  representedPrincipal?: string;
+  urlReservationSalt?: string;
+  runtimeDelivery?: AgentProfileState["runtimeDelivery"];
+  openClawUrl?: string;
+  payoutWallets?: AgentProfileState["payoutWallets"];
+  missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
+  paymentProfile?: AgentProfileState["paymentProfile"];
+  socialAnchorPolicy?: AgentProfileState["socialAnchorPolicy"];
+  preferredProvingLocation?: AgentProfileState["preferredProvingLocation"];
+}
+
+export interface ClawzEnrollmentTicket {
+  ticket: string;
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  reservedSessionId: string;
+  reservedAgentId: string;
+  publicAgentUrl: string;
+  publicHireUrl: string;
+  challengePath: string;
+  enrollmentCommand: string;
+  enrollmentChallenge: {
+    schemaVersion: "santaclawz-enrollment-ticket/1.0";
+    ticketId: string;
+    ticketDigestSha256: string;
+    challengePath: string;
+    publicAgentUrl: string;
+    publicHireUrl: string;
+  };
+}
+
 let nextRpcId = 1;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,6 +163,24 @@ function withQuery(baseUrl: string, route: string, query?: Record<string, string
     }
   }
   return url.toString();
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function buildOpenClawEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {
+  const runtimeIngressUrl = input.runtimeDelivery?.runtimeIngressUrl?.trim();
+  return [
+    "pnpm enroll:openclaw --",
+    `--ticket ${shellQuote(ticket.ticket)}`,
+    "--serve",
+    input.runtimeDelivery?.mode === "self-hosted" && runtimeIngressUrl
+      ? `--runtime-ingress-url ${shellQuote(runtimeIngressUrl)}`
+      : "--connect-relay",
+    "--write-env .env.santaclawz",
+    "--challenge-file .well-known/santaclawz-agent-challenge.json"
+  ].join(" ");
 }
 
 function parseJsonRpcStructuredContent<T>(payload: JsonRpcResponse<T>): T {
@@ -302,6 +356,33 @@ export class ClawzAgentClient {
         })
       }
     );
+  }
+
+  async createEnrollmentTicket(input: ClawzEnrollmentTicketInput): Promise<ClawzEnrollmentTicket> {
+    const agentName = input.agentName.trim();
+    const headline = input.headline.trim();
+    if (!agentName || !headline) {
+      throw new Error("createEnrollmentTicket requires agentName and headline.");
+    }
+
+    const ticket = await this.postJson<Omit<ClawzEnrollmentTicket, "enrollmentCommand">>("/api/enrollment/tickets", {
+      agentName,
+      headline,
+      ...(input.representedPrincipal?.trim() ? { representedPrincipal: input.representedPrincipal.trim() } : {}),
+      ...(input.urlReservationSalt?.trim() ? { urlReservationSalt: input.urlReservationSalt.trim() } : {}),
+      ...(input.runtimeDelivery ? { runtimeDelivery: input.runtimeDelivery } : {}),
+      ...(input.openClawUrl?.trim() ? { openClawUrl: input.openClawUrl.trim() } : {}),
+      ...(input.payoutWallets ? { payoutWallets: input.payoutWallets } : {}),
+      ...(input.missionAuthOverlay ? { missionAuthOverlay: input.missionAuthOverlay } : {}),
+      ...(input.paymentProfile ? { paymentProfile: input.paymentProfile } : {}),
+      ...(input.socialAnchorPolicy ? { socialAnchorPolicy: input.socialAnchorPolicy } : {}),
+      ...(input.preferredProvingLocation ? { preferredProvingLocation: input.preferredProvingLocation } : {})
+    });
+
+    return {
+      ...ticket,
+      enrollmentCommand: buildOpenClawEnrollmentCommand(ticket, input)
+    };
   }
 
   async getSocialAnchorBatchExport(input: ClawzSocialAnchorQuery = {}): Promise<SocialAnchorBatchExport> {

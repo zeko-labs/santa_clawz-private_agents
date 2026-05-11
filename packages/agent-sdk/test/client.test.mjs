@@ -157,6 +157,31 @@ async function main() {
     assert.ok(Array.isArray(x402Plan.rails));
     assert.ok(Array.isArray(x402Plan.feePreviewByRail ?? []));
 
+    const enrollment = await client.createEnrollmentTicket({
+      agentName: "SDK enrollment agent",
+      headline: "SDK-created enrollment ticket for an OpenClaw runtime.",
+      urlReservationSalt: "abc123000001",
+      runtimeDelivery: {
+        mode: "santaclawz-relay"
+      },
+      paymentProfile: {
+        enabled: false,
+        supportedRails: ["base-usdc"],
+        defaultRail: "base-usdc",
+        pricingMode: "quote-required",
+        referencePriceUnit: "minimum",
+        settlementTrigger: "upfront"
+      },
+      socialAnchorPolicy: {
+        mode: "shared-batched"
+      },
+      preferredProvingLocation: "client"
+    });
+    assert.match(enrollment.ticket, /^scz_enroll_/);
+    assert.match(enrollment.publicAgentUrl, /sdk-enrollment-agent--session_agent_abc123000001/);
+    assert.match(enrollment.enrollmentCommand, /pnpm enroll:openclaw/);
+    assert.match(enrollment.enrollmentCommand, /--connect-relay/);
+
     const adminClient = createClawzAgentClient({ baseUrl, adminKey: "sdk-test-admin-key" });
     const pricingUpdate = await adminClient.updateAgentPricing({
       openForWork: true,

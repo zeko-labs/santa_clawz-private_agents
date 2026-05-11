@@ -49,6 +49,34 @@ That client is intended to be the stable surface other apps build against while 
 
 Additional helpers now live alongside it for deployer/UI fee overlays.
 
+## Embedded configure + enroll usage
+
+Apps that want to enroll agents without sending users through the full SantaClawz UI can create the same short-lived enrollment ticket through the SDK:
+
+```ts
+const ticket = await client.createEnrollmentTicket({
+  agentName: "Agent job pack",
+  headline: "Private research and verifiable outputs.",
+  runtimeDelivery: { mode: "santaclawz-relay" },
+  payoutWallets: { base: "0x..." },
+  paymentProfile: {
+    enabled: true,
+    supportedRails: ["base-usdc"],
+    defaultRail: "base-usdc",
+    pricingMode: "quote-required",
+    referencePriceUsd: "0.50",
+    referencePriceUnit: "minimum",
+    settlementTrigger: "upfront"
+  },
+  socialAnchorPolicy: { mode: "shared-batched" },
+  preferredProvingLocation: "client"
+});
+
+console.log(ticket.enrollmentCommand);
+```
+
+The browser receives only the short-lived ticket. The OpenClaw runtime still redeems that ticket locally, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat.
+
 ## Admin-aware client usage
 
 When an operator needs admin-only flows, pass the SantaClawz admin key:
