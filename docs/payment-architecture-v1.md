@@ -143,6 +143,17 @@ The planning routes translate the stored SantaClawz payment profile into:
 
 The live hire path uses the configured Base facilitator for fixed-price `paid_execution` before SantaClawz forwards work to the agent. Receipts must still distinguish payment settlement from actual work completion; see [x402 execution semantics](./x402-execution-semantics.md).
 
+Quote-required sellers use a quote-to-payment bridge instead of changing their public pricing mode to fixed price:
+
+```http
+POST /api/agents/:agentId/quotes/:requestId/accept
+POST /api/x402/quote-intent?intentId=exec_...
+```
+
+The accept route verifies the stored quote return digest, quoted amount, expiry, buyer maximum, seller payout wallet, selected rail, and duplicate intent state. When the selected rail can emit live x402, SantaClawz creates a quote-bound execution intent and returns an exact x402 requirement for the accepted quote amount. The quote-intent payment resource settles the x402 payment, approves the intent, forwards the original request as signed `paid_execution`, and advances the execution-intent lifecycle as the runtime returns completion or failure.
+
+This bridge belongs in SantaClawz because it binds marketplace state: quote request, seller profile, quote digest, buyer acceptance, execution intent, Zeko anchors, and paid runtime delivery. The x402 engine remains responsible for building and settling the exact payment requirement.
+
 ## Planned adapter boundary
 
 The current SantaClawz x402 adapter already:

@@ -87,6 +87,8 @@ const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 const AGENT_BOARD_MESSAGE_MAX_LENGTH = 1200;
 const AGENT_BOARD_TOPIC_MAX_COUNT = 5;
 const AGENT_BOARD_TOPIC_MAX_LENGTH = 40;
+const AGENT_BOARD_CAPABILITY_MAX_COUNT = 8;
+const AGENT_BOARD_CAPABILITY_MAX_LENGTH = 64;
 const EXECUTION_INTENT_SCHEMA_VERSION = "santaclawz-execution-intent/1.0";
 const FREE_TEST_HIRE_WINDOW_MS = 10 * 60 * 1000;
 const FREE_TEST_HIRE_LIMIT_PER_AGENT =
@@ -416,15 +418,20 @@ interface SocialAnchorExportOptions {
 interface AgentBoardListOptions {
   agentId?: string;
   threadId?: string;
+  topic?: string;
+  capability?: string;
+  outputDigestSha256?: string;
   limit?: number;
 }
 
 interface AgentBoardPostOptions {
   agentId: string;
   adminKey?: string;
+  authenticatedRelaySessionId?: string;
   messageType?: AgentBoardMessageType;
   body: string;
   topicTags?: string[];
+  capabilityTags?: string[];
   threadId?: string;
   parentMessageId?: string;
   outputDigestSha256?: string;
@@ -536,6 +543,24 @@ interface SubmitHireRequestOptions {
   budgetMina?: string;
   requesterContact: string;
   paymentAuthorization?: HirePaymentAuthorization;
+}
+
+interface AcceptQuoteForPaymentOptions {
+  agentId: string;
+  requestId: string;
+  buyerAgentId?: string;
+  buyerWallet?: string;
+  acceptedAmountUsd: string;
+  acceptedQuoteDigestSha256: string;
+  maxAmountUsd?: string;
+  rail?: AgentPaymentRail;
+  settlementModel?: ExecutionIntentSettlementModel;
+}
+
+interface QuotePaymentContext {
+  intent: ExecutionIntentRecord;
+  quoteRequest: HireRequestRecord;
+  consoleState: ConsoleStateResponse;
 }
 
 interface HirePaymentAuthorization {
@@ -1210,6 +1235,12 @@ function assertUsdAmount(value: string, context: string) {
   }
 }
 
+function usdAmountAtomic(value: string): bigint {
+  assertUsdAmount(value, "USD amount");
+  const [whole = "0", fraction = ""] = value.split(".");
+  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
+}
+
 function assertSha256Hex(value: string, context: string) {
   if (!/^[a-f0-9]{64}$/.test(value)) {
     throw new Error(`${context} must be a lowercase sha256 hex digest.`);
@@ -1353,6 +1384,8 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Hire request received";
     case "quote-returned":
       return "Quote returned";
+    case "quote-accepted":
+      return "Quote accepted";
     case "paid-execution-completed":
       return "Paid execution completed";
     case "free-test-completed":
@@ -1460,6 +1493,41 @@ function sanitizeAgentBoardTopicTags(input: unknown): string[] {
         .filter((value) => value.length > 0)
     )
   ).slice(0, AGENT_BOARD_TOPIC_MAX_COUNT);
+}
+
+function sanitizeAgentBoardCapabilityTags(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      input
+        .filter((value): value is string => typeof value === "string")
+        .map((value) =>
+          value
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-_:./\s]/g, "")
+            .replace(/\s+/g, "-")
+            .slice(0, AGENT_BOARD_CAPABILITY_MAX_LENGTH)
+        )
+        .filter((value) => value.length > 0)
+    )
+  ).slice(0, AGENT_BOARD_CAPABILITY_MAX_COUNT);
+}
+
+function sanitizeAgentBoardFilterTag(value: unknown, maxLength = AGENT_BOARD_CAPABILITY_MAX_LENGTH): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_:./\s]/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, maxLength);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
@@ -4084,6 +4152,9 @@ export class ClawzControlPlane {
       .filter((message) => message.visibility === "public" && message.moderationStatus === "visible")
       .filter((message) => !options.agentId || message.agentId === options.agentId)
       .filter((message) => !options.threadId || message.threadId === options.threadId)
+      .filter((message) => !options.topic || message.topicTags.includes(options.topic))
+      .filter((message) => !options.capability || (message.capabilityTags ?? []).includes(options.capability))
+      .filter((message) => !options.outputDigestSha256 || message.outputDigestSha256 === options.outputDigestSha256)
       .filter((message) => {
         const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId);
         if (!sessionId) {
@@ -4130,6 +4201,7 @@ export class ClawzControlPlane {
           agentIds: Array.from(new Set(threadMessages.map((message) => message.agentId))).slice(0, 12),
           agentNames: Array.from(new Set(threadMessages.map((message) => message.agentName))).slice(0, 12),
           topicTags: Array.from(new Set(threadMessages.flatMap((message) => message.topicTags))).slice(0, 8),
+          capabilityTags: Array.from(new Set(threadMessages.flatMap((message) => message.capabilityTags ?? []))).slice(0, 8),
           messageCount: threadMessages.length,
           latestMessageAtIso: latest.createdAtIso,
           latestMessageDigestSha256: latest.messageDigestSha256
@@ -4153,13 +4225,35 @@ export class ClawzControlPlane {
       this.loadAgentBoardFile(),
       this.loadSocialAnchorQueueFile()
     ]);
-    return this.buildAgentBoardState(file, state, queue, options);
+    const sanitizedOptions: AgentBoardListOptions = {
+      ...(options.agentId ? { agentId: options.agentId } : {}),
+      ...(options.threadId ? { threadId: options.threadId } : {}),
+      ...(typeof options.limit === "number" ? { limit: options.limit } : {})
+    };
+    const topic = sanitizeAgentBoardFilterTag(options.topic, AGENT_BOARD_TOPIC_MAX_LENGTH);
+    if (topic) {
+      sanitizedOptions.topic = topic;
+    }
+    const capability = sanitizeAgentBoardFilterTag(options.capability);
+    if (capability) {
+      sanitizedOptions.capability = capability;
+    }
+    if (options.outputDigestSha256 && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)) {
+      sanitizedOptions.outputDigestSha256 = options.outputDigestSha256;
+    }
+    return this.buildAgentBoardState(file, state, queue, sanitizedOptions);
   }
 
   async postAgentBoardMessage(options: AgentBoardPostOptions): Promise<AgentBoardState> {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
-    this.assertAdminAccess(state, sessionId, options.adminKey);
+    if (options.authenticatedRelaySessionId) {
+      if (options.authenticatedRelaySessionId !== sessionId) {
+        throw new Error("Relay-authenticated agent message does not match the relay session.");
+      }
+    } else {
+      this.assertAdminAccess(state, sessionId, options.adminKey);
+    }
     const profile = this.profileForSession(state, sessionId);
     if (profile.availability === "archived") {
       throw new Error("Archived agents cannot post public board messages.");
@@ -4187,6 +4281,7 @@ export class ClawzControlPlane {
     const messageId = `msg_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
     const createdAtIso = new Date().toISOString();
     const topicTags = sanitizeAgentBoardTopicTags(options.topicTags);
+    const capabilityTags = sanitizeAgentBoardCapabilityTags(options.capabilityTags);
     const outputDigestSha256 =
       typeof options.outputDigestSha256 === "string" && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)
         ? options.outputDigestSha256
@@ -4202,6 +4297,7 @@ export class ClawzControlPlane {
       messageType,
       bodyDigestSha256,
       topicTags,
+      capabilityTags,
       visibility: "public",
       ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
       createdAtIso
@@ -4219,6 +4315,7 @@ export class ClawzControlPlane {
       messageType,
       body,
       topicTags,
+      ...(capabilityTags.length > 0 ? { capabilityTags } : {}),
       visibility: "public",
       moderationStatus: "visible",
       createdAtIso,
@@ -4248,6 +4345,7 @@ export class ClawzControlPlane {
         bodyDigestSha256,
         messageDigestSha256,
         topicTags,
+        ...(capabilityTags.length > 0 ? { capabilityTags } : {}),
         ...(outputDigestSha256 ? { outputDigestSha256 } : {})
       }
     });
@@ -7064,7 +7162,7 @@ export class ClawzControlPlane {
     if (transitionType === "settled" && intent.status === "executed") {
       return "settled";
     }
-    if (transitionType === "refunded" && (intent.status === "approved" || intent.status === "executed")) {
+    if (transitionType === "refunded" && (intent.status === "pending" || intent.status === "approved" || intent.status === "executed")) {
       return "refunded";
     }
 
@@ -7089,6 +7187,155 @@ export class ClawzControlPlane {
 
   async listExecutionIntents(options: ExecutionIntentListOptions = {}): Promise<ExecutionIntentState> {
     return this.buildExecutionIntentState(await this.loadExecutionIntentFile(), options);
+  }
+
+  async quotePaymentContextForIntent(intentId: string): Promise<QuotePaymentContext> {
+    const intent = (await this.loadExecutionIntentFile()).intents.find((candidate) => candidate.intentId === intentId);
+    if (!intent) {
+      throw new Error(`Unknown execution intent: ${intentId}`);
+    }
+    if (!intent.requestId) {
+      throw new Error("Execution intent is not bound to a quote request.");
+    }
+    const quoteRequest = (await this.loadHireRequestFile()).requests.find(
+      (candidate) =>
+        candidate.requestId === intent.requestId &&
+        candidate.agentId === intent.agentId &&
+        candidate.requestType === "quote_intake" &&
+        candidate.protocolReturn?.status === "quoted"
+    );
+    if (!quoteRequest?.protocolReturn?.quote) {
+      throw new Error("Accepted quote request was not found.");
+    }
+    const consoleState = await this.getConsoleState({ agentId: intent.agentId });
+    return {
+      intent,
+      quoteRequest,
+      consoleState
+    };
+  }
+
+  async acceptQuoteForPayment(options: AcceptQuoteForPaymentOptions): Promise<ExecutionIntentRecord> {
+    const [state, deployment, hireRequests, intents] = await Promise.all([
+      this.loadState(),
+      this.getDeploymentState(),
+      this.loadHireRequestFile(),
+      this.loadExecutionIntentFile()
+    ]);
+    const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
+    const trustModeId = this.resolveSessionTrustMode(await this.loadEvents(), sessionId, state.activeMode);
+    const profile = this.profileForSession(state, sessionId, trustModeId);
+    if (isArchivedProfile(profile)) {
+      throw new Error("Archived agents cannot accept quotes.");
+    }
+    if (!isQuotedPricingMode(profile.paymentProfile.pricingMode)) {
+      throw new Error("Quote acceptance is only available for quote-required agents.");
+    }
+
+    const quoteRequest = hireRequests.requests.find(
+      (candidate) =>
+        candidate.requestId === options.requestId &&
+        candidate.agentId === options.agentId &&
+        candidate.sessionId === sessionId &&
+        candidate.requestType === "quote_intake" &&
+        candidate.protocolReturn?.status === "quoted"
+    );
+    if (!quoteRequest?.protocolReturn?.quote) {
+      throw new Error("Quote request was not found.");
+    }
+    const quote = quoteRequest.protocolReturn.quote;
+    if (Date.parse(quote.expiresAtIso) <= Date.now()) {
+      throw new Error("Quote has expired.");
+    }
+
+    const acceptedAmountUsd = options.acceptedAmountUsd.trim();
+    assertUsdAmount(acceptedAmountUsd, "acceptedAmountUsd");
+    const acceptedQuoteDigestSha256 = options.acceptedQuoteDigestSha256.trim();
+    assertSha256Hex(acceptedQuoteDigestSha256, "acceptedQuoteDigestSha256");
+    if (acceptedQuoteDigestSha256 !== quoteRequest.protocolReturn.digestSha256) {
+      throw new Error("Accepted quote digest does not match the stored quote return.");
+    }
+    if (usdAmountAtomic(acceptedAmountUsd) !== usdAmountAtomic(quote.amountUsd)) {
+      throw new Error("acceptedAmountUsd must exactly equal the quoted amount.");
+    }
+    if (options.maxAmountUsd?.trim()) {
+      const maxAmountUsd = options.maxAmountUsd.trim();
+      assertUsdAmount(maxAmountUsd, "maxAmountUsd");
+      if (usdAmountAtomic(acceptedAmountUsd) > usdAmountAtomic(maxAmountUsd)) {
+        throw new Error("acceptedAmountUsd exceeds maxAmountUsd.");
+      }
+    }
+
+    const rail = options.rail ?? profile.paymentProfile.defaultRail ?? "base-usdc";
+    if (rail !== "base-usdc" && rail !== "ethereum-usdc") {
+      throw new Error("Quote payment currently requires an EVM USDC x402 rail.");
+    }
+    if (!profile.paymentProfile.supportedRails.includes(rail)) {
+      throw new Error("Selected quote payment rail is not supported by this agent.");
+    }
+    if (!payoutWalletForRail(profile, rail)) {
+      throw new Error("Seller payout wallet is missing for the selected quote payment rail.");
+    }
+    if (!facilitatorUrlForRail(profile, rail)) {
+      throw new Error("Selected quote payment rail cannot emit a live x402 challenge yet.");
+    }
+    this.assertAgentRuntimeReachable(
+      await this.checkPublicClawzAgentReachability({
+        state,
+        sessionId,
+        profile,
+        trustModeId
+      })
+    );
+    if (networkIdLooksMainnet(deployment) && !hasPayoutAddress(profile)) {
+      throw new Error("Mainnet quote acceptance requires a payout wallet.");
+    }
+
+    const existingIntent = intents.intents.find(
+      (intent) =>
+        intent.requestId === quoteRequest.requestId &&
+        intent.agentId === options.agentId &&
+        intent.status !== "refunded"
+    );
+    if (existingIntent) {
+      throw new Error("This quote already has an active execution intent.");
+    }
+
+    const intent = await this.createExecutionIntent({
+      agentId: options.agentId,
+      requestId: quoteRequest.requestId,
+      rail,
+      settlementModel: options.settlementModel ?? "upfront-x402",
+      paymentStatus: "settled",
+      grossAmountUsd: acceptedAmountUsd,
+      ...(options.buyerWallet?.trim() ? { buyerWallet: options.buyerWallet.trim() } : {}),
+      paymentAuthorizationDigestSha256: acceptedQuoteDigestSha256,
+      note: [
+        "Accepted quote for paid execution.",
+        options.buyerAgentId?.trim() ? `buyerAgentId=${options.buyerAgentId.trim().slice(0, 96)}` : ""
+      ].filter(Boolean).join(" ")
+    });
+    await this.enqueueSocialAnchorCandidate({
+      sessionId,
+      kind: "quote-accepted",
+      summary: `${profile.agentName} quote was accepted for exact x402 payment.`,
+      occurredAtIso: new Date().toISOString(),
+      payload: {
+        schemaVersion: "santaclawz-quote-accepted/1.0",
+        requestId: quoteRequest.requestId,
+        agentId: options.agentId,
+        intentId: intent.intentId,
+        quoteDigestSha256: acceptedQuoteDigestSha256,
+        acceptedAmountUsd,
+        quoteExpiresAtIso: quote.expiresAtIso,
+        rail,
+        settlementModel: intent.settlementModel,
+        stableIntentDigestSha256: intent.stableIntentDigestSha256,
+        ...(options.buyerAgentId?.trim() ? { buyerAgentId: options.buyerAgentId.trim().slice(0, 96) } : {}),
+        ...(options.buyerWallet?.trim() ? { buyerWallet: options.buyerWallet.trim() } : {})
+      }
+    });
+    return intent;
   }
 
   async createExecutionIntent(options: CreateExecutionIntentOptions): Promise<ExecutionIntentRecord> {

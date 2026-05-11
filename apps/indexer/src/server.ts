@@ -43,6 +43,7 @@ import {
   buildAgentX402Headers,
   parseAgentX402PaymentPayload,
   buildAgentX402RuntimeContext,
+  buildQuoteIntentX402RuntimeContext,
   buildAgentX402PaymentRequiredPreview,
   buildAgentX402PlanWithNetworkQuotes,
   settleAgentX402Payment,
@@ -175,6 +176,15 @@ type HireRequestBody = {
   budgetMina?: unknown;
   requesterContact?: unknown;
   paymentPayload?: unknown;
+};
+type QuoteAcceptRequestBody = {
+  buyerAgentId?: unknown;
+  buyerWallet?: unknown;
+  acceptedAmountUsd?: unknown;
+  acceptedQuoteDigestSha256?: unknown;
+  maxAmountUsd?: unknown;
+  rail?: unknown;
+  settlementModel?: unknown;
 };
 type AgentHeartbeatRequestBody = {
   sessionId?: unknown;
@@ -412,6 +422,22 @@ function parseExecutionIntentTransitionRequest(value: unknown): Omit<ExecutionIn
   };
 }
 
+function parseQuoteAcceptRequest(value: unknown) {
+  const body = isRecord(value) ? value : {};
+  return {
+    ...(typeof body.buyerAgentId === "string" ? { buyerAgentId: body.buyerAgentId } : {}),
+    ...(typeof body.buyerWallet === "string" ? { buyerWallet: body.buyerWallet } : {}),
+    acceptedAmountUsd: typeof body.acceptedAmountUsd === "string" ? body.acceptedAmountUsd : "",
+    acceptedQuoteDigestSha256:
+      typeof body.acceptedQuoteDigestSha256 === "string" ? body.acceptedQuoteDigestSha256 : "",
+    ...(typeof body.maxAmountUsd === "string" ? { maxAmountUsd: body.maxAmountUsd } : {}),
+    ...(parseExecutionIntentRail(body.rail) ? { rail: parseExecutionIntentRail(body.rail)! } : {}),
+    ...(parseExecutionIntentSettlementModel(body.settlementModel)
+      ? { settlementModel: parseExecutionIntentSettlementModel(body.settlementModel)! }
+      : {})
+  };
+}
+
 function parseRuntimeDelivery(value: unknown): Partial<AgentProfileState["runtimeDelivery"]> | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -446,6 +472,7 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
         agentName: body.agentName,
         representedPrincipal: body.representedPrincipal,
         headline: body.headline,
+        urlReservationSalt: body.urlReservationSalt,
         publicClawzUrl: body.publicClawzUrl,
         openClawUrl: body.openClawUrl,
         runtimeDelivery: body.runtimeDelivery,
@@ -706,6 +733,22 @@ function setHeaders(response: IndexerResponse, headers: Record<string, string>) 
   for (const [name, value] of Object.entries(headers)) {
     response.set(name, value);
   }
+}
+
+async function buildQuoteIntentRuntime(baseUrl: string, intentId: string) {
+  const context = await controlPlane.quotePaymentContextForIntent(intentId);
+  const runtime = await buildQuoteIntentX402RuntimeContext({
+    baseUrl,
+    consoleState: context.consoleState,
+    serviceNetworkId: context.consoleState.deployment.networkId,
+    intentId: context.intent.intentId,
+    rail: context.intent.rail,
+    amountUsd: context.intent.grossAmountUsd
+  });
+  return {
+    ...context,
+    runtime
+  };
 }
 
 function jsonDigestSha256(value: unknown): string {
@@ -1064,10 +1107,16 @@ app.get("/api/agent-messages", route(async (request, response) => {
   try {
     const rawLimit = queryString(request.query, "limit");
     const limit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    const outputDigest =
+      queryString(request.query, "outputDigestSha256") ?? queryString(request.query, "outputDigest");
     response.json(
       await controlPlane.listAgentBoardMessages({
         ...(queryString(request.query, "agentId") ? { agentId: queryString(request.query, "agentId")! } : {}),
         ...(queryString(request.query, "threadId") ? { threadId: queryString(request.query, "threadId")! } : {}),
+        ...(queryString(request.query, "topic") ? { topic: queryString(request.query, "topic")! } : {}),
+        ...(queryString(request.query, "topicTag") ? { topic: queryString(request.query, "topicTag")! } : {}),
+        ...(queryString(request.query, "capability") ? { capability: queryString(request.query, "capability")! } : {}),
+        ...(outputDigest ? { outputDigestSha256: outputDigest } : {}),
         ...(typeof limit === "number" && Number.isFinite(limit) ? { limit } : {})
       })
     );
@@ -1189,6 +1238,45 @@ app.post("/api/execution/intents/:intentId/refund", route(async (request, respon
   }
 }));
 
+app.post("/api/agents/:agentId/quotes/:requestId/accept", route(async (request, response) => {
+  try {
+    const agentId = request.params.agentId;
+    const requestId = request.params.requestId;
+    if (!agentId || !requestId) {
+      response.status(400).json({ error: "agentId and requestId are required." });
+      return;
+    }
+    const intent = await controlPlane.acceptQuoteForPayment({
+      agentId,
+      requestId,
+      ...parseQuoteAcceptRequest(request.body ?? null)
+    });
+    const context = await buildQuoteIntentRuntime(getBaseUrl(request), intent.intentId);
+    if (!context.runtime) {
+      const refundedIntent = await controlPlane.refundExecutionIntent({
+        intentId: intent.intentId,
+        evidenceDigestSha256: intent.stableIntentDigestSha256,
+        note: "Quote acceptance rejected because the selected rail could not emit a live x402 challenge."
+      });
+      response.status(400).json({
+        error: "Selected quote payment rail cannot emit a live x402 challenge yet.",
+        intent: refundedIntent
+      });
+      return;
+    }
+    setHeaders(response, buildAgentX402Headers({ paymentRequired: context.runtime.paymentRequired }));
+    response.status(402).json({
+      ok: true,
+      intent,
+      paymentRequirement: context.runtime.paymentRequired
+    });
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to accept quote."
+    });
+  }
+}));
+
 app.post("/api/agents/:agentId/messages", route(async (request, response) => {
   try {
     const agentId = request.params.agentId;
@@ -1205,6 +1293,9 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
         ...(typeof body.messageType === "string" ? { messageType: body.messageType as AgentBoardMessageType } : {}),
         ...(typeof body.body === "string" ? { body: body.body } : { body: "" }),
         ...(Array.isArray(body.topicTags) ? { topicTags: body.topicTags.filter((value): value is string => typeof value === "string") } : {}),
+        ...(Array.isArray(body.capabilityTags)
+          ? { capabilityTags: body.capabilityTags.filter((value): value is string => typeof value === "string") }
+          : {}),
         ...(typeof body.threadId === "string" ? { threadId: body.threadId } : {}),
         ...(typeof body.parentMessageId === "string" ? { parentMessageId: body.parentMessageId } : {}),
         ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {})
@@ -1322,6 +1413,105 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to build agent x402 plan."
+    });
+  }
+}));
+
+app.post("/api/x402/quote-intent", route(async (request, response) => {
+  try {
+    const intentId = queryString(request.query, "intentId");
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+
+    const context = await buildQuoteIntentRuntime(getBaseUrl(request), intentId);
+    if (!context.runtime) {
+      response.status(402).json({
+        error: "No live exact x402 rail is configured for this accepted quote.",
+        intent: context.intent
+      });
+      return;
+    }
+
+    const paymentHeaderValue = request.header("payment-signature");
+    const paymentPayload = parseAgentX402PaymentPayload({
+      ...(paymentHeaderValue ? { headerValue: paymentHeaderValue } : {}),
+      body: request.body ?? null
+    });
+
+    if (!paymentPayload) {
+      setHeaders(response, buildAgentX402Headers({ paymentRequired: context.runtime.paymentRequired }));
+      response.status(402).json(context.runtime.paymentRequired);
+      return;
+    }
+
+    const settlement = await settleAgentX402Payment({
+      runtime: context.runtime,
+      paymentPayload
+    });
+    setHeaders(response, settlement.headers);
+    const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
+    const settlementReference = [
+      settlement.paymentResponse?.settlementReference,
+      remoteSettlement.transaction,
+      remoteSettlement.txHash,
+      remoteSettlement.transactionHash,
+      remoteSettlement.id
+    ].find((value): value is string => typeof value === "string" && value.length > 0);
+    const paymentPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
+    const paymentResponseDigestSha256 = jsonDigestSha256(settlement.paymentResponse);
+    const approvedIntent = await controlPlane.approveExecutionIntent({
+      intentId,
+      reference: settlementReference ?? "x402:quote-intent-settled",
+      evidenceDigestSha256: paymentPayloadDigestSha256,
+      note: "Accepted quote x402 payment settled."
+    });
+    const paidExecution = await controlPlane.submitHireRequest({
+      agentId: context.intent.agentId,
+      taskPrompt: context.quoteRequest.taskPrompt,
+      requesterContact: context.quoteRequest.requesterContact,
+      ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
+      paymentAuthorization: {
+        status: "settled",
+        rail: settlement.rail.rail,
+        amountUsd: context.intent.grossAmountUsd,
+        authorizationId: intentId,
+        ...(settlementReference ? { settlementReference } : {}),
+        paymentPayloadDigestSha256,
+        paymentResponseDigestSha256
+      }
+    });
+    const executedIntent =
+      paidExecution.protocolReturn?.status === "completed" || paidExecution.protocolReturn?.status === "failed"
+        ? await controlPlane.executeExecutionIntent({
+            intentId,
+            reference: paidExecution.requestId,
+            ...(paidExecution.protocolReturn.digestSha256 ? { evidenceDigestSha256: paidExecution.protocolReturn.digestSha256 } : {}),
+            note: paidExecution.protocolReturn.status === "completed"
+              ? "Paid execution returned a completion package."
+              : "Paid execution returned a failure package."
+          })
+        : approvedIntent;
+    const finalIntent =
+      paidExecution.protocolReturn?.status === "completed"
+        ? await controlPlane.settleExecutionIntent({
+            intentId,
+            reference: settlementReference ?? paidExecution.requestId,
+            evidenceDigestSha256: paymentResponseDigestSha256,
+            note: "Upfront x402 quote payment settled and paid execution completed."
+          })
+        : executedIntent;
+
+    response.json({
+      ok: true,
+      intent: finalIntent,
+      payment: settlement.paymentResponse,
+      paidExecution
+    });
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to settle quote intent x402 payment."
     });
   }
 }));
@@ -2268,6 +2458,14 @@ const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
 const RELAY_HEARTBEAT_GRACE_MS =
   Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;
 const RELAY_STALE_SWEEP_MS = Math.max(250, Math.min(10_000, Math.floor(RELAY_HEARTBEAT_GRACE_MS / 3)));
+const RELAY_POST_MESSAGE_WINDOW_MS =
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_POST_MESSAGE_WINDOW_MS ?? "", 10) || 60_000;
+const RELAY_POST_MESSAGE_LIMIT_PER_AGENT =
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_POST_MESSAGE_LIMIT_PER_AGENT ?? "", 10) || 12;
+const RELAY_POST_MESSAGE_LIMIT_PER_OPERATOR =
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_POST_MESSAGE_LIMIT_PER_OPERATOR ?? "", 10) || 40;
+const RELAY_POST_MESSAGE_LIMIT_PER_SWARM =
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_POST_MESSAGE_LIMIT_PER_SWARM ?? "", 10) || 60;
 
 function websocketAcceptKey(key: string) {
   return createHash("sha1").update(`${key}${WEBSOCKET_GUID}`).digest("base64");
@@ -2308,6 +2506,54 @@ type RelayPendingRequest = {
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
 };
+
+type RelayRateLimitBucket = {
+  count: number;
+  resetAtMs: number;
+};
+
+class RelayMessageRateLimiter {
+  private readonly buckets = new Map<string, RelayRateLimitBucket>();
+
+  assertAllowed(input: {
+    agentId: string;
+    operatorKey: string;
+    swarmId?: string;
+  }) {
+    const operatorDigest = createHash("sha256").update(input.operatorKey).digest("hex").slice(0, 24);
+    this.consume(`agent:${input.agentId}`, RELAY_POST_MESSAGE_LIMIT_PER_AGENT);
+    this.consume(`operator:${operatorDigest}`, RELAY_POST_MESSAGE_LIMIT_PER_OPERATOR);
+    if (input.swarmId) {
+      this.consume(`swarm:${input.swarmId}`, RELAY_POST_MESSAGE_LIMIT_PER_SWARM);
+    }
+  }
+
+  private consume(key: string, limit: number) {
+    const nowMs = Date.now();
+    const existing = this.buckets.get(key);
+    const bucket =
+      existing && existing.resetAtMs > nowMs
+        ? existing
+        : {
+            count: 0,
+            resetAtMs: nowMs + RELAY_POST_MESSAGE_WINDOW_MS
+          };
+    bucket.count += 1;
+    this.buckets.set(key, bucket);
+    if (bucket.count > limit) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAtMs - nowMs) / 1000));
+      throw new Error(`Relay post_message rate limit exceeded. Retry after ${retryAfterSeconds}s.`);
+    }
+
+    if (this.buckets.size > 2000) {
+      for (const [bucketKey, value] of this.buckets.entries()) {
+        if (value.resetAtMs <= nowMs) {
+          this.buckets.delete(bucketKey);
+        }
+      }
+    }
+  }
+}
 
 class AgentRelayConnection {
   private buffer = Buffer.alloc(0);
@@ -2529,6 +2775,7 @@ class AgentRelayConnection {
 class AgentRelayHub {
   private readonly connectionsByAgent = new Map<string, AgentRelayConnection>();
   private readonly staleSweepInterval: ReturnType<typeof setInterval>;
+  private readonly messageRateLimiter = new RelayMessageRateLimiter();
 
   constructor(private readonly plane: ClawzControlPlane) {
     this.staleSweepInterval = setInterval(() => {
@@ -2655,6 +2902,49 @@ class AgentRelayHub {
     }
     if (message.type === "hire_response") {
       connection.handleResponse(message);
+      return;
+    }
+    if (message.type === "post_message") {
+      const messageId = typeof message.messageId === "string" ? message.messageId : undefined;
+      try {
+        const swarmId = typeof message.swarmId === "string" && message.swarmId.trim().length > 0
+          ? message.swarmId.trim().slice(0, 96)
+          : undefined;
+        this.messageRateLimiter.assertAllowed({
+          agentId: connection.agentId,
+          operatorKey: connection.adminKey,
+          ...(swarmId ? { swarmId } : {})
+        });
+        const board = await this.plane.postAgentBoardMessage({
+          agentId: connection.agentId,
+          authenticatedRelaySessionId: connection.sessionId,
+          ...(typeof message.messageType === "string" ? { messageType: message.messageType as AgentBoardMessageType } : {}),
+          body: typeof message.body === "string" ? message.body : "",
+          ...(Array.isArray(message.topicTags)
+            ? { topicTags: message.topicTags.filter((value): value is string => typeof value === "string") }
+            : {}),
+          ...(Array.isArray(message.capabilityTags)
+            ? { capabilityTags: message.capabilityTags.filter((value): value is string => typeof value === "string") }
+            : {}),
+          ...(typeof message.threadId === "string" ? { threadId: message.threadId } : {}),
+          ...(typeof message.parentMessageId === "string" ? { parentMessageId: message.parentMessageId } : {}),
+          ...(typeof message.outputDigestSha256 === "string" ? { outputDigestSha256: message.outputDigestSha256 } : {})
+        });
+        connection.sendJson({
+          type: "post_message_result",
+          ok: true,
+          ...(messageId ? { messageId } : {}),
+          agentId: connection.agentId,
+          postedMessage: board.messages[0] ?? null
+        });
+      } catch (error) {
+        connection.sendJson({
+          type: "post_message_result",
+          ok: false,
+          ...(messageId ? { messageId } : {}),
+          error: error instanceof Error ? error.message : "Unable to post public agent message."
+        });
+      }
       return;
     }
     if (message.type === "heartbeat") {

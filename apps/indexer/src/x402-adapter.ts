@@ -1459,6 +1459,70 @@ export function buildAgentX402RuntimeContext(input: {
   };
 }
 
+export async function buildQuoteIntentX402RuntimeContext(input: {
+  baseUrl: string;
+  consoleState: ConsoleStateResponse;
+  serviceNetworkId: string;
+  intentId: string;
+  rail: AgentPaymentRail;
+  amountUsd: string;
+}): Promise<AgentX402RuntimeContext | null> {
+  const quotePaymentProfile: ConsoleStateResponse["profile"]["paymentProfile"] = {
+    ...input.consoleState.profile.paymentProfile,
+    pricingMode: "fixed-exact",
+    fixedAmountUsd: input.amountUsd
+  };
+  const quoteConsoleState: ConsoleStateResponse = {
+    ...input.consoleState,
+    profile: {
+      ...input.consoleState.profile,
+      paymentProfile: quotePaymentProfile
+    }
+  };
+  const quotedPlan = await buildAgentX402PlanWithNetworkQuotes({
+    baseUrl: input.baseUrl,
+    consoleState: quoteConsoleState
+  });
+  const quoteResourceUrl = `${normalizeBaseUrl(input.baseUrl)}/api/x402/quote-intent?${new URLSearchParams({
+    intentId: input.intentId
+  }).toString()}`;
+  const runtime = buildAgentX402RuntimeContext({
+    baseUrl: input.baseUrl,
+    plan: {
+      ...quotedPlan,
+      resourcePreviewUrl: quoteResourceUrl,
+      verifyPaymentUrl: quoteResourceUrl,
+      settlePaymentUrl: quoteResourceUrl,
+      rails: quotedPlan.rails
+        .filter((rail) => rail.rail === input.rail)
+        .map((rail) => ({
+          ...rail,
+          amountUsd: input.amountUsd
+        }))
+    },
+    serviceNetworkId: input.serviceNetworkId
+  });
+
+  if (!runtime) {
+    return null;
+  }
+
+  const paymentContext = {
+    ...runtime.paymentContext,
+    resource: quoteResourceUrl,
+    intentId: input.intentId,
+    quoteBound: true,
+    description: "Accepted SantaClawz quote payment for paid agent execution."
+  } satisfies JsonRecord;
+
+  return {
+    ...runtime,
+    paymentContext,
+    paymentRequired: requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord,
+    catalog: requireZekoX402Module().buildCatalog(paymentContext) as JsonRecord
+  };
+}
+
 export function buildAgentX402Catalog(runtime: AgentX402RuntimeContext) {
   return runtime.catalog;
 }

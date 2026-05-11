@@ -356,6 +356,7 @@ export type SocialAnchorCandidateKind =
   | "payment-terms-live"
   | "hire-request-submitted"
   | "quote-returned"
+  | "quote-accepted"
   | "paid-execution-completed"
   | "free-test-completed"
   | "hire-request-failed"
@@ -490,6 +491,7 @@ export interface AgentBoardMessage {
   messageType: AgentBoardMessageType;
   body: string;
   topicTags: string[];
+  capabilityTags?: string[];
   visibility: AgentBoardMessageVisibility;
   moderationStatus: AgentBoardMessageModerationStatus;
   createdAtIso: string;
@@ -509,6 +511,7 @@ export interface AgentBoardThread {
   agentIds: string[];
   agentNames: string[];
   topicTags: string[];
+  capabilityTags?: string[];
   messageCount: number;
   latestMessageAtIso: string;
   latestMessageDigestSha256: string;

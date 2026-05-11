@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -378,6 +378,91 @@ async function connectRelaySocket(baseUrl, agentId, adminKey) {
     socket.once("error", reject);
   });
   return socket;
+}
+
+function encodeClientWebSocketFrame(payload) {
+  const body = Buffer.from(JSON.stringify(payload), "utf8");
+  const length = body.length;
+  const headerLength = length < 126 ? 2 : length <= 0xffff ? 4 : 10;
+  const header = Buffer.alloc(headerLength);
+  header[0] = 0x81;
+  if (length < 126) {
+    header[1] = 0x80 | length;
+  } else if (length <= 0xffff) {
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(length, 2);
+  } else {
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(length), 2);
+  }
+  const mask = randomBytes(4);
+  const masked = Buffer.from(body);
+  for (let index = 0; index < masked.length; index += 1) {
+    masked[index] = masked[index] ^ mask[index % 4];
+  }
+  return Buffer.concat([header, mask, masked]);
+}
+
+function sendRelayJson(socket, payload) {
+  socket.write(encodeClientWebSocketFrame(payload));
+}
+
+async function waitForRelayJson(socket, predicate, timeoutMs = 5000) {
+  let frameBuffer = Buffer.alloc(0);
+  const startedAt = Date.now();
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for relay websocket message."));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("data", onData);
+      socket.off("error", onError);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk) => {
+      frameBuffer = Buffer.concat([frameBuffer, chunk]);
+      while (frameBuffer.length >= 2) {
+        const opcode = frameBuffer[0] & 0x0f;
+        let offset = 2;
+        let payloadLength = frameBuffer[1] & 0x7f;
+        if (payloadLength === 126) {
+          if (frameBuffer.length < offset + 2) return;
+          payloadLength = frameBuffer.readUInt16BE(offset);
+          offset += 2;
+        } else if (payloadLength === 127) {
+          if (frameBuffer.length < offset + 8) return;
+          payloadLength = Number(frameBuffer.readBigUInt64BE(offset));
+          offset += 8;
+        }
+        if (frameBuffer.length < offset + payloadLength) return;
+        const payload = frameBuffer.subarray(offset, offset + payloadLength);
+        frameBuffer = frameBuffer.subarray(offset + payloadLength);
+        if (opcode !== 0x1) {
+          continue;
+        }
+        const message = JSON.parse(payload.toString("utf8"));
+        if (predicate(message)) {
+          cleanup();
+          resolve(message);
+          return;
+        }
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        cleanup();
+        reject(new Error("Timed out waiting for matching relay websocket message."));
+      }
+    };
+
+    socket.on("data", onData);
+    socket.once("error", onError);
+  });
 }
 
 async function reservePort() {
@@ -1271,6 +1356,7 @@ async function testProofBackedAgentMessageBoard() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-agent-board-test-"));
   const port = await reservePort();
   const server = startServer(workspaceDir, port);
+  let relaySocket;
 
   try {
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -1312,21 +1398,69 @@ async function testProofBackedAgentMessageBoard() {
       body: JSON.stringify({
         messageType: "dispatch",
         body: "Ready for public quote requests and verified output summaries.",
-        topicTags: ["quotes", "outputs"]
+        topicTags: ["quotes", "outputs"],
+        capabilityTags: ["research.summary", "quote-builder"],
+        outputDigestSha256: "a".repeat(64)
       })
     });
     assert.equal(posted.status, 200);
     assert.equal(posted.payload.totalVisibleMessages, 1);
     assert.equal(posted.payload.messages[0].agentId, agentId);
     assert.equal(posted.payload.messages[0].messageType, "dispatch");
+    assert.deepEqual(posted.payload.messages[0].capabilityTags, ["research.summary", "quote-builder"]);
+    assert.equal(posted.payload.messages[0].outputDigestSha256, "a".repeat(64));
     assert.equal(posted.payload.messages[0].anchorStatus, "pending");
     assert.match(posted.payload.messages[0].messageDigestSha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(posted.payload.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.threads[0].messageCount, 1);
 
-    const publicBoard = await requestJson(`${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}`);
+    const publicBoard = await requestJson(
+      `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&topic=quotes&capability=research.summary&outputDigest=${"a".repeat(64)}`
+    );
     assert.equal(publicBoard.status, 200);
     assert.equal(publicBoard.payload.totalVisibleMessages, 1);
     assert.equal(publicBoard.payload.messages[0].body, "Ready for public quote requests and verified output summaries.");
+
+    const relayRegistered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Relay Board Smoke",
+        headline: "Publishes public messages over the authenticated relay.",
+        publicClawzUrl: "https://santaclawz.ai/agent/relay-board-smoke-test",
+        runtimeDelivery: {
+          mode: "santaclawz-relay"
+        }
+      })
+    });
+    assert.equal(relayRegistered.status, 200);
+    const relayAgentId = relayRegistered.payload.agentId;
+    relaySocket = await connectRelaySocket(baseUrl, relayAgentId, relayRegistered.payload.adminAccess.issuedAdminKey);
+    sendRelayJson(relaySocket, {
+      type: "post_message",
+      messageId: "relay-post-001",
+      messageType: "question",
+      body: "Looking for collaborators on proof-backed output packaging.",
+      topicTags: ["collaboration"],
+      capabilityTags: ["output.package"],
+      swarmId: "swarm_research_ops",
+      outputDigestSha256: "b".repeat(64)
+    });
+    const relayPostResult = await waitForRelayJson(
+      relaySocket,
+      (message) => message.type === "post_message_result" && message.messageId === "relay-post-001"
+    );
+    assert.equal(relayPostResult.ok, true);
+    assert.equal(relayPostResult.agentId, relayAgentId);
+    assert.equal(relayPostResult.postedMessage.agentId, relayAgentId);
+    assert.equal(relayPostResult.postedMessage.messageType, "question");
+    assert.deepEqual(relayPostResult.postedMessage.capabilityTags, ["output.package"]);
+
+    const relayFilteredBoard = await requestJson(
+      `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(relayAgentId)}&topic=collaboration&capability=output.package&outputDigestSha256=${"b".repeat(64)}`
+    );
+    assert.equal(relayFilteredBoard.status, 200);
+    assert.equal(relayFilteredBoard.payload.totalVisibleMessages, 1);
+    assert.equal(relayFilteredBoard.payload.messages[0].body, "Looking for collaborators on proof-backed output packaging.");
 
     const anchorQueue = await requestJson(`${baseUrl}/api/social/anchors?sessionId=${encodeURIComponent(sessionId)}`, {
       method: "GET",
@@ -1337,8 +1471,9 @@ async function testProofBackedAgentMessageBoard() {
     assert.equal(anchorQueue.status, 200);
     assert.equal(anchorQueue.payload.items.some((item) => item.kind === "agent-message-posted"), true);
 
-    console.log("ok - proof-backed agent message board requires admin-key posting and queues Zeko anchors");
+    console.log("ok - proof-backed agent message board supports admin and relay-authenticated posting with Zeko anchors");
   } finally {
+    relaySocket?.destroy();
     await stopProcess(server.child);
     await rm(workspaceDir, { recursive: true, force: true });
   }
@@ -1511,6 +1646,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
   const ingressPort = await reservePort();
   const server = startServer(workspaceDir, port, {
     CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
+    CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
+    CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
     CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M: "1"
   });
   const ingress = await startHireIngress(ingressPort);
@@ -1754,7 +1891,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       quote: {
         amount_usd: "0.42",
         currency: "USDC",
-        expires_at_iso: "2026-05-06T23:59:59.000Z",
+        expires_at_iso: "2026-06-06T23:59:59.000Z",
         summary: "The agent can complete this after a paid exact quote."
       }
     }));
@@ -1773,6 +1910,64 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(quoted.payload.protocolReturn.quote.amountUsd, "0.42");
     assert.equal(typeof quoted.payload.protocolReturn.digestSha256, "string");
     assert.equal(quoted.payload.ingress.responseStatusCode, 200);
+
+    const acceptedQuote = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/quotes/${encodeURIComponent(quoted.payload.requestId)}/accept`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          buyerAgentId: "buyer_policy_agent",
+          buyerWallet: "0xb4ad7F6B6e6B964C9D1c4bB8b7F2e38732E0b386",
+          acceptedAmountUsd: "0.42",
+          acceptedQuoteDigestSha256: quoted.payload.protocolReturn.digestSha256,
+          maxAmountUsd: "1.00",
+          rail: "base-usdc",
+          settlementModel: "upfront-x402"
+        })
+      }
+    );
+    assert.equal(acceptedQuote.payload.intent.requestId, quoted.payload.requestId);
+    assert.equal(acceptedQuote.payload.intent.grossAmountUsd, "0.42");
+    assert.equal(acceptedQuote.payload.intent.pricingMode, "quote-required");
+    assert.match(acceptedQuote.payload.intent.stableIntentDigestSha256, /^[a-f0-9]{64}$/);
+    if (acceptedQuote.status === 402) {
+      assert.equal(acceptedQuote.payload.ok, true);
+      assert.equal(acceptedQuote.payload.intent.status, "pending");
+      assert.equal(acceptedQuote.payload.paymentRequirement.protocol, "x402");
+
+      const quoteIntentPaymentRequired = await requestJson(
+        `${baseUrl}/api/x402/quote-intent?intentId=${encodeURIComponent(acceptedQuote.payload.intent.intentId)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({})
+        }
+      );
+      assert.equal(quoteIntentPaymentRequired.status, 402);
+      assert.equal(quoteIntentPaymentRequired.payload.protocol, "x402");
+    } else {
+      assert.equal(acceptedQuote.status, 400);
+      assert.match(acceptedQuote.payload.error, /cannot emit a live x402 challenge/);
+      assert.equal(acceptedQuote.payload.intent.status, "refunded");
+    }
+
+    const duplicateAcceptedQuote = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/quotes/${encodeURIComponent(quoted.payload.requestId)}/accept`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          acceptedAmountUsd: "0.42",
+          acceptedQuoteDigestSha256: quoted.payload.protocolReturn.digestSha256,
+          maxAmountUsd: "1.00",
+          rail: "base-usdc"
+        })
+      }
+    );
+    if (acceptedQuote.status === 402) {
+      assert.equal(duplicateAcceptedQuote.status, 400);
+      assert.match(duplicateAcceptedQuote.payload.error, /already has an active execution intent/);
+    } else {
+      assert.equal([400, 402].includes(duplicateAcceptedQuote.status), true);
+    }
 
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({
       schema_version: "santaclawz-return/1.0",

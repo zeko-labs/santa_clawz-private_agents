@@ -414,7 +414,7 @@ function assertHirePolicy(payload) {
     return requestType;
   }
 
-  if (pricingMode !== "fixed-exact" || !["settled", "paid", "escrowed"].includes(String(paymentStatus))) {
+  if (!["fixed-exact", "quote-required"].includes(String(pricingMode)) || !["settled", "paid", "escrowed"].includes(String(paymentStatus))) {
     throw Object.assign(new Error("paid_execution policy mismatch"), { statusCode: 400 });
   }
   if (!payload.paid_or_escrowed || !/^[0-9]+(\.[0-9]{1,6})?$/.test(String(payload.settled_amount_usd ?? ""))) {

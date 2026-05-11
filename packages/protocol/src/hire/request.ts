@@ -88,8 +88,8 @@ export function assertValidSantaClawzHirePolicy(policy: SantaClawzHirePaymentPol
     return;
   }
 
-  if (policy.pricing_mode !== "fixed-exact") {
-    throw new Error("paid_execution requires pricing_mode=fixed-exact.");
+  if (policy.pricing_mode !== "fixed-exact" && policy.pricing_mode !== "quote-required") {
+    throw new Error("paid_execution requires pricing_mode=fixed-exact or quote-required.");
   }
   if (!["settled", "paid", "escrowed"].includes(policy.payment_status)) {
     throw new Error("paid_execution requires payment_status=settled, paid, or escrowed.");
