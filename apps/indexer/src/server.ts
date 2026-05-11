@@ -2034,6 +2034,9 @@ app.post("/api/events/ingest", route(async (request, response) => {
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const RELAY_RESPONSE_TIMEOUT_MS = 15_000;
 const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
+const RELAY_HEARTBEAT_GRACE_MS =
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;
+const RELAY_STALE_SWEEP_MS = Math.max(250, Math.min(10_000, Math.floor(RELAY_HEARTBEAT_GRACE_MS / 3)));
 
 function websocketAcceptKey(key: string) {
   return createHash("sha1").update(`${key}${WEBSOCKET_GUID}`).digest("base64");
@@ -2078,6 +2081,8 @@ type RelayPendingRequest = {
 class AgentRelayConnection {
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, RelayPendingRequest>();
+  private closed = false;
+  private lastHeartbeatAtMs = Date.now();
 
   constructor(
     readonly agentId: string,
@@ -2091,10 +2096,18 @@ class AgentRelayConnection {
       this.receive(chunk);
     });
     socket.on("close", () => {
+      if (this.closed) {
+        return;
+      }
+      this.closed = true;
       this.rejectPending("Relay connection closed.");
       this.onClose();
     });
     socket.on("error", () => {
+      if (this.closed) {
+        return;
+      }
+      this.closed = true;
       this.rejectPending("Relay connection errored.");
       this.onClose();
     });
@@ -2102,6 +2115,18 @@ class AgentRelayConnection {
 
   get connected() {
     return !this.socket.destroyed;
+  }
+
+  get heartbeatAgeMs() {
+    return Date.now() - this.lastHeartbeatAtMs;
+  }
+
+  markHeartbeat() {
+    this.lastHeartbeatAtMs = Date.now();
+  }
+
+  isFresh(nowMs = Date.now()) {
+    return this.connected && nowMs - this.lastHeartbeatAtMs <= RELAY_HEARTBEAT_GRACE_MS;
   }
 
   sendJson(payload: unknown) {
@@ -2128,6 +2153,14 @@ class AgentRelayConnection {
     reasonBuffer.copy(payload, 2);
     this.socket.write(encodeWebSocketFrame(0x8, payload));
     this.socket.end();
+  }
+
+  terminate(reason = "Relay heartbeat stale.") {
+    if (!this.connected) {
+      return;
+    }
+    this.rejectPending(reason);
+    this.socket.destroy();
   }
 
   async deliverHire(input: {
@@ -2264,11 +2297,25 @@ class AgentRelayConnection {
 
 class AgentRelayHub {
   private readonly connectionsByAgent = new Map<string, AgentRelayConnection>();
+  private readonly staleSweepInterval: ReturnType<typeof setInterval>;
 
-  constructor(private readonly plane: ClawzControlPlane) {}
+  constructor(private readonly plane: ClawzControlPlane) {
+    this.staleSweepInterval = setInterval(() => {
+      this.closeStaleConnections();
+    }, RELAY_STALE_SWEEP_MS);
+    (this.staleSweepInterval as unknown as { unref?: () => void }).unref?.();
+  }
 
   isConnected(agentId: string) {
-    return this.connectionsByAgent.get(agentId)?.connected === true;
+    const connection = this.connectionsByAgent.get(agentId);
+    if (!connection) {
+      return false;
+    }
+    if (connection.isFresh()) {
+      return true;
+    }
+    connection.terminate("Relay heartbeat is stale.");
+    return false;
   }
 
   async deliverHire(input: {
@@ -2286,7 +2333,20 @@ class AgentRelayHub {
     if (!connection?.connected) {
       throw new Error("SantaClawz relay is waiting for this agent to connect.");
     }
+    if (!connection.isFresh()) {
+      connection.terminate("Relay heartbeat is stale.");
+      throw new Error("SantaClawz relay heartbeat is stale; waiting for the agent to reconnect.");
+    }
     return connection.deliverHire({ signedRequest: input.signedRequest });
+  }
+
+  private closeStaleConnections() {
+    const nowMs = Date.now();
+    for (const connection of this.connectionsByAgent.values()) {
+      if (!connection.isFresh(nowMs)) {
+        connection.terminate("Relay heartbeat is stale.");
+      }
+    }
   }
 
   async handleUpgrade(request: IncomingMessage, socket: Socket) {
@@ -2340,6 +2400,7 @@ class AgentRelayHub {
         }
       }
     );
+    connection.markHeartbeat();
     this.connectionsByAgent.set(agentId, connection);
     await this.plane.recordAgentRuntimeHeartbeat({
       agentId,
@@ -2366,6 +2427,7 @@ class AgentRelayHub {
       return;
     }
     if (message.type === "heartbeat") {
+      connection.markHeartbeat();
       await this.plane.recordAgentRuntimeHeartbeat({
         agentId: connection.agentId,
         sessionId: connection.sessionId,

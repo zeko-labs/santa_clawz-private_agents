@@ -5520,7 +5520,18 @@ export class ClawzControlPlane {
           ...(heartbeatRecord ? { record: heartbeatRecord } : {})
         });
         const agentId = this.agentIdForSession(state, sessionId, trustModeId);
-        const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+        const relayProfile = isRelayDeliveryProfile(profile);
+        const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+        const runtimeStatus: AgentRuntimeStatus = relayConnected
+          ? "live"
+          : relayProfile
+            ? "offline"
+            : runtimeHeartbeat.status;
+        const runtimeStatusReason = relayConnected
+          ? "SantaClawz relay has an active outbound agent connection."
+          : relayProfile
+            ? "SantaClawz relay is waiting for this agent to connect."
+            : runtimeHeartbeat.reason;
         return {
           agentId,
           sessionId,
@@ -5567,14 +5578,10 @@ export class ClawzControlPlane {
           ownershipVerified: ownership.status === "verified",
           availability: profile.availability,
           ...(profile.archivedAtIso ? { archivedAtIso: profile.archivedAtIso } : {}),
-          runtimeStatus: relayConnected ? "live" : runtimeHeartbeat.status,
+          runtimeStatus,
           runtimeStatusUpdatedAtIso: runtimeHeartbeat.checkedAtIso,
           ...(runtimeHeartbeat.lastHeartbeatAtIso ? { lastHeartbeatAtIso: runtimeHeartbeat.lastHeartbeatAtIso } : {}),
-          ...(relayConnected
-            ? { runtimeStatusReason: "SantaClawz relay has an active outbound agent connection." }
-            : runtimeHeartbeat.reason
-              ? { runtimeStatusReason: runtimeHeartbeat.reason }
-              : {}),
+          ...(runtimeStatusReason ? { runtimeStatusReason } : {}),
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "confirmed").length,

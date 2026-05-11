@@ -339,6 +339,47 @@ async function stopHttpServer(server) {
   });
 }
 
+async function connectRelaySocket(baseUrl, agentId, adminKey) {
+  const url = new URL(`/api/agent-relay/connect?agentId=${encodeURIComponent(agentId)}`, baseUrl);
+  const key = Buffer.from(`relay-test-${agentId}`).toString("base64").slice(0, 24).padEnd(24, "A");
+  const socket = net.connect(Number(url.port), url.hostname);
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  socket.write([
+    `GET ${url.pathname}${url.search} HTTP/1.1`,
+    `Host: ${url.host}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Key: ${key}`,
+    "Sec-WebSocket-Version: 13",
+    `X-ClawZ-Admin-Key: ${adminKey}`,
+    "\r\n"
+  ].join("\r\n"));
+
+  let buffer = Buffer.alloc(0);
+  await new Promise((resolve, reject) => {
+    const onData = (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        return;
+      }
+      socket.off("data", onData);
+      const header = buffer.subarray(0, headerEnd).toString("utf8");
+      if (!header.startsWith("HTTP/1.1 101")) {
+        reject(new Error(`Relay handshake failed: ${header.split("\r\n")[0] ?? "unknown"}`));
+        return;
+      }
+      resolve();
+    };
+    socket.on("data", onData);
+    socket.once("error", reject);
+  });
+  return socket;
+}
+
 async function reservePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -1682,6 +1723,61 @@ async function testMainnetFreeTestDisabledByDefault() {
   }
 }
 
+async function testStaleRelayDoesNotStayLive() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-stale-relay-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS: "500"
+  });
+  let relaySocket;
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Stale Relay Agent",
+        headline: "Confirms sleeping relay agents do not stay live.",
+        openClawUrl: "http://127.0.0.1:49998/agent",
+        runtimeDelivery: {
+          mode: "santaclawz-relay"
+        }
+      })
+    });
+    assert.equal(registered.status, 200);
+    const agentId = registered.payload.agentId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+
+    relaySocket = await connectRelaySocket(baseUrl, agentId, adminKey);
+
+    const liveRegistry = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(liveRegistry.status, 200);
+    assert.equal(liveRegistry.payload.find((agent) => agent.agentId === agentId)?.runtimeStatus, "live");
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    const staleAvailability = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/availability`);
+    assert.equal(staleAvailability.status, 200);
+    assert.equal(staleAvailability.payload.reachable, false);
+    assert.equal(staleAvailability.payload.runtimeStatus, "offline");
+    assert.match(staleAvailability.payload.reason, /waiting/i);
+
+    const staleRegistry = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(staleRegistry.status, 200);
+    const staleAgent = staleRegistry.payload.find((agent) => agent.agentId === agentId);
+    assert.equal(staleAgent?.runtimeStatus, "offline");
+    assert.match(staleAgent?.runtimeStatusReason ?? "", /waiting/i);
+
+    console.log("ok - stale relay sockets do not keep sleeping agents marked live");
+  } finally {
+    relaySocket?.destroy();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testMissionAuthVerificationPersists() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mission-auth-test-"));
   const port = await reservePort();
@@ -1930,6 +2026,7 @@ async function main() {
   await testZekoSocialAnchorHealthAndMembershipState();
   await testHireRouteRequiresSafeIngressAndPaymentState();
   await testMainnetFreeTestDisabledByDefault();
+  await testStaleRelayDoesNotStayLive();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
