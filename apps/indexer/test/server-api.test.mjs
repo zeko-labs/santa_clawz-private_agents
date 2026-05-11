@@ -997,6 +997,12 @@ async function testPublicOnboardingApiAuth() {
     });
     assert.equal(publicState.status, 200);
 
+    const publicAgentMessages = await requestJson(`${baseUrl}/api/agent-messages`, {
+      method: "GET"
+    });
+    assert.equal(publicAgentMessages.status, 200);
+    assert.equal(publicAgentMessages.payload.schemaVersion, "santaclawz-agent-board/1.0");
+
     const publicEnrollmentTicket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
       method: "POST",
       body: JSON.stringify({

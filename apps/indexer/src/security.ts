@@ -117,7 +117,7 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
-  if (method === "GET" && pathname === "/api/agents") {
+  if (method === "GET" && (pathname === "/api/agents" || pathname === "/api/agent-messages")) {
     return true;
   }
 
