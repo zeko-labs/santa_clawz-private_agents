@@ -1911,6 +1911,29 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(typeof quoted.payload.protocolReturn.digestSha256, "string");
     assert.equal(quoted.payload.ingress.responseStatusCode, 200);
 
+    const invalidBuyerProof = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/quotes/${encodeURIComponent(quoted.payload.requestId)}/accept`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          buyerAgentId: "buyer_policy_agent",
+          buyerWallet: "0xb4ad7F6B6e6B964C9D1c4bB8b7F2e38732E0b386",
+          buyerWalletProof: {
+            scheme: "eip191-personal-sign",
+            message: "wrong quote acceptance message",
+            signature: `0x${"0".repeat(130)}`
+          },
+          acceptedAmountUsd: "0.42",
+          acceptedQuoteDigestSha256: quoted.payload.protocolReturn.digestSha256,
+          maxAmountUsd: "1.00",
+          rail: "base-usdc",
+          settlementModel: "upfront-x402"
+        })
+      }
+    );
+    assert.equal(invalidBuyerProof.status, 400);
+    assert.match(invalidBuyerProof.payload.error, /buyerWalletProof\.message does not match/);
+
     const acceptedQuote = await requestJson(
       `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/quotes/${encodeURIComponent(quoted.payload.requestId)}/accept`,
       {
@@ -1968,6 +1991,23 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     } else {
       assert.equal([400, 402].includes(duplicateAcceptedQuote.status), true);
     }
+
+    let rateLimitedQuoteAccept;
+    for (let index = 0; index < 25; index += 1) {
+      rateLimitedQuoteAccept = await requestJson(`${baseUrl}/api/agents/rate-limit-agent/quotes/rate-limit-request/accept`, {
+        method: "POST",
+        body: JSON.stringify({
+          buyerAgentId: "rate_limit_buyer",
+          buyerWallet: "0xb4ad7F6B6e6B964C9D1c4bB8b7F2e38732E0b386",
+          acceptedAmountUsd: "0.42",
+          acceptedQuoteDigestSha256: quoted.payload.protocolReturn.digestSha256,
+          maxAmountUsd: "1.00",
+          rail: "base-usdc"
+        })
+      });
+    }
+    assert.equal(rateLimitedQuoteAccept.status, 429);
+    assert.match(rateLimitedQuoteAccept.payload.error, /Too many quote acceptance attempts/);
 
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({
       schema_version: "santaclawz-return/1.0",

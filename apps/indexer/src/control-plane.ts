@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { getAddress, verifyMessage } from "viem";
 
 import { createSealedBlobStore, type SealedBlobStore } from "@clawz/blob-store";
 import {
@@ -13,8 +14,10 @@ import {
 import { createTenantKeyBroker, type TenantKeyBrokerRuntimeDescriptor, TenantKeyBroker } from "@clawz/key-broker";
 import {
   SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION,
+  SANTACLAWZ_QUOTE_ACCEPTANCE_WALLET_PROOF_SCHEME,
   assertValidSantaClawzHireServiceIdentity,
   assertValidSantaClawzHirePolicy,
+  buildSantaClawzQuoteAcceptanceMessage,
   canonicalDigest,
   paymentStatusForHireRequest,
   type AgentPaymentRail,
@@ -57,6 +60,7 @@ import {
   type SocialAnchorCandidate,
   type SocialAnchorCandidateKind,
   type SocialAnchorQueueState,
+  type SantaClawzQuoteAcceptanceWalletProof,
   type ShadowWalletState,
   type TrustModeId,
   type ZekoContractDeployment,
@@ -550,6 +554,7 @@ interface AcceptQuoteForPaymentOptions {
   requestId: string;
   buyerAgentId?: string;
   buyerWallet?: string;
+  buyerWalletProof?: Partial<SantaClawzQuoteAcceptanceWalletProof>;
   acceptedAmountUsd: string;
   acceptedQuoteDigestSha256: string;
   maxAmountUsd?: string;
@@ -1429,6 +1434,65 @@ function envFlagEnabled(name: string): boolean {
 
 function allowTestnetSelfServeSocialAnchor(): boolean {
   return envFlagEnabled("CLAWZ_ALLOW_TESTNET_SELF_SERVE_SOCIAL_ANCHOR");
+}
+
+function requireQuoteBuyerWalletProof(): boolean {
+  return envFlagEnabled("CLAWZ_REQUIRE_QUOTE_BUYER_WALLET_PROOF");
+}
+
+async function assertQuoteBuyerWalletProof(input: {
+  agentId: string;
+  requestId: string;
+  buyerAgentId?: string;
+  buyerWallet?: string;
+  acceptedAmountUsd: string;
+  acceptedQuoteDigestSha256: string;
+  maxAmountUsd?: string;
+  rail: AgentPaymentRail;
+  settlementModel: ExecutionIntentSettlementModel;
+  proof?: Partial<SantaClawzQuoteAcceptanceWalletProof>;
+}) {
+  const buyerWallet = input.buyerWallet?.trim();
+  if (!buyerWallet) {
+    if (input.proof || requireQuoteBuyerWalletProof()) {
+      throw new Error("Quote buyer wallet proof requires buyerWallet.");
+    }
+    return;
+  }
+  if (!input.proof) {
+    if (requireQuoteBuyerWalletProof()) {
+      throw new Error("buyerWalletProof is required before creating a quote payment intent.");
+    }
+    return;
+  }
+  if (input.proof.scheme !== SANTACLAWZ_QUOTE_ACCEPTANCE_WALLET_PROOF_SCHEME) {
+    throw new Error("buyerWalletProof.scheme must be eip191-personal-sign.");
+  }
+  if (!input.proof.signature?.trim()) {
+    throw new Error("buyerWalletProof.signature is required.");
+  }
+  const expectedMessage = buildSantaClawzQuoteAcceptanceMessage({
+    agentId: input.agentId,
+    requestId: input.requestId,
+    buyerWallet,
+    acceptedAmountUsd: input.acceptedAmountUsd,
+    acceptedQuoteDigestSha256: input.acceptedQuoteDigestSha256,
+    ...(input.maxAmountUsd?.trim() ? { maxAmountUsd: input.maxAmountUsd.trim() } : {}),
+    rail: input.rail,
+    settlementModel: input.settlementModel,
+    ...(input.buyerAgentId?.trim() ? { buyerAgentId: input.buyerAgentId.trim().slice(0, 96) } : {})
+  });
+  if (input.proof.message !== expectedMessage) {
+    throw new Error("buyerWalletProof.message does not match the accepted quote.");
+  }
+  const ok = await verifyMessage({
+    address: getAddress(buyerWallet),
+    message: expectedMessage,
+    signature: input.proof.signature.trim() as `0x${string}`
+  });
+  if (!ok) {
+    throw new Error("buyerWalletProof.signature was not produced by buyerWallet.");
+  }
 }
 
 function effectiveSocialAnchorMode(
@@ -7279,6 +7343,18 @@ export class ClawzControlPlane {
     if (!facilitatorUrlForRail(profile, rail)) {
       throw new Error("Selected quote payment rail cannot emit a live x402 challenge yet.");
     }
+    await assertQuoteBuyerWalletProof({
+      agentId: options.agentId,
+      requestId: quoteRequest.requestId,
+      ...(options.buyerAgentId?.trim() ? { buyerAgentId: options.buyerAgentId.trim() } : {}),
+      ...(options.buyerWallet?.trim() ? { buyerWallet: options.buyerWallet.trim() } : {}),
+      acceptedAmountUsd,
+      acceptedQuoteDigestSha256,
+      ...(options.maxAmountUsd?.trim() ? { maxAmountUsd: options.maxAmountUsd.trim() } : {}),
+      rail,
+      settlementModel: options.settlementModel ?? "upfront-x402",
+      ...(options.buyerWalletProof ? { proof: options.buyerWalletProof } : {})
+    });
     this.assertAgentRuntimeReachable(
       await this.checkPublicClawzAgentReachability({
         state,

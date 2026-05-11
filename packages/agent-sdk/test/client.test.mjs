@@ -123,7 +123,12 @@ async function main() {
   try {
     const health = await waitForJson(`${baseUrl}/health`, 15000, server);
     assert.equal(health.service, "clawz-indexer");
-    const { createClawzAgentClient, buildClawzFeeStackPreview, validateClawzFeeCompatibility } = await import(
+    const {
+      createClawzAgentClient,
+      buildClawzFeeStackPreview,
+      buildClawzQuoteAcceptanceWalletProof,
+      validateClawzFeeCompatibility
+    } = await import(
       pathToFileURL(sdkEntry).href
     );
     const client = createClawzAgentClient({ baseUrl });
@@ -239,6 +244,22 @@ async function main() {
     });
     assert.equal(incompatibleFeeStack.compatible, false);
     assert.equal(incompatibleFeeStack.deployerFeeCapSatisfied, false);
+
+    const quoteProof = await buildClawzQuoteAcceptanceWalletProof({
+      agentId: "agent_quote_sdk",
+      requestId: "hire_quote_sdk",
+      buyerWallet: "0xb4ad7F6B6e6B964C9D1c4bB8b7F2e38732E0b386",
+      acceptedAmountUsd: "0.42",
+      acceptedQuoteDigestSha256: "a".repeat(64),
+      maxAmountUsd: "1.00",
+      rail: "base-usdc",
+      settlementModel: "upfront-x402",
+      buyerAgentId: "buyer_sdk",
+      signMessage: (message) => `signed:${message}`
+    });
+    assert.equal(quoteProof.scheme, "eip191-personal-sign");
+    assert.match(quoteProof.message, /SantaClawz quote acceptance/);
+    assert.match(quoteProof.signature, /^signed:SantaClawz quote acceptance/);
 
     console.log("ok - agent sdk discovers, verifies, and speaks MCP against a live SantaClawz runtime");
   } finally {

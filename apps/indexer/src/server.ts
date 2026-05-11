@@ -18,6 +18,7 @@ import {
   type ExecutionIntentSettlementModel,
   type ExecutionIntentStatus,
   type PrivacyApprovalRecord,
+  type SantaClawzQuoteAcceptanceWalletProof,
   type TrustModeId,
   type WitnessPlanLike,
   verifyAgentProofBundle
@@ -123,6 +124,12 @@ controlPlane.startSharedSocialAnchorDrainer();
 const REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
 const REGISTRATION_LIMIT = 5;
 const registrationAttempts = new Map<string, { count: number; resetAt: number }>();
+const QUOTE_ACCEPT_WINDOW_MS = 5 * 60 * 1000;
+const QUOTE_ACCEPT_LIMIT_PER_AGENT = 24;
+const QUOTE_ACCEPT_LIMIT_PER_BUYER_AGENT = 24;
+const QUOTE_ACCEPT_LIMIT_PER_BUYER_WALLET = 12;
+const QUOTE_ACCEPT_LIMIT_PER_IP = 60;
+const quoteAcceptAttempts = new Map<string, { count: number; resetAt: number }>();
 const LIVE_FLOW_KINDS = ["first-turn", "next-turn", "abort-turn", "refund-turn", "revoke-disclosure"] as const;
 type LiveFlowKind = (typeof LIVE_FLOW_KINDS)[number];
 type TrustModeRequestBody = { modeId?: unknown; sessionId?: unknown };
@@ -180,6 +187,7 @@ type HireRequestBody = {
 type QuoteAcceptRequestBody = {
   buyerAgentId?: unknown;
   buyerWallet?: unknown;
+  buyerWalletProof?: unknown;
   acceptedAmountUsd?: unknown;
   acceptedQuoteDigestSha256?: unknown;
   maxAmountUsd?: unknown;
@@ -261,6 +269,50 @@ function enforceRegistrationRateLimit(request: IndexerRequest) {
 
   existing.count += 1;
   registrationAttempts.set(identity, existing);
+}
+
+function consumeQuoteAcceptRateLimit(key: string, limit: number) {
+  const now = Date.now();
+  const existing = quoteAcceptAttempts.get(key);
+  if (!existing || existing.resetAt <= now) {
+    quoteAcceptAttempts.set(key, {
+      count: 1,
+      resetAt: now + QUOTE_ACCEPT_WINDOW_MS
+    });
+    return;
+  }
+
+  if (existing.count >= limit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
+    const error = new Error("Too many quote acceptance attempts. Try again in a few minutes.");
+    (error as Error & { retryAfterSeconds?: number }).retryAfterSeconds = retryAfterSeconds;
+    throw error;
+  }
+
+  existing.count += 1;
+  quoteAcceptAttempts.set(key, existing);
+  if (quoteAcceptAttempts.size > 5000) {
+    for (const [bucketKey, bucket] of quoteAcceptAttempts.entries()) {
+      if (bucket.resetAt <= now) {
+        quoteAcceptAttempts.delete(bucketKey);
+      }
+    }
+  }
+}
+
+function enforceQuoteAcceptRateLimit(request: IndexerRequest, input: {
+  agentId: string;
+  buyerAgentId?: string;
+  buyerWallet?: string;
+}) {
+  consumeQuoteAcceptRateLimit(`quote-agent:${input.agentId}`, QUOTE_ACCEPT_LIMIT_PER_AGENT);
+  consumeQuoteAcceptRateLimit(`quote-ip:${requestIdentity(request)}`, QUOTE_ACCEPT_LIMIT_PER_IP);
+  if (input.buyerAgentId?.trim()) {
+    consumeQuoteAcceptRateLimit(`quote-buyer-agent:${input.buyerAgentId.trim().slice(0, 96)}`, QUOTE_ACCEPT_LIMIT_PER_BUYER_AGENT);
+  }
+  if (input.buyerWallet?.trim()) {
+    consumeQuoteAcceptRateLimit(`quote-buyer-wallet:${input.buyerWallet.trim().toLowerCase()}`, QUOTE_ACCEPT_LIMIT_PER_BUYER_WALLET);
+  }
 }
 
 function parsePayoutWallets(value: unknown): AgentProfileState["payoutWallets"] | undefined {
@@ -424,9 +476,18 @@ function parseExecutionIntentTransitionRequest(value: unknown): Omit<ExecutionIn
 
 function parseQuoteAcceptRequest(value: unknown) {
   const body = isRecord(value) ? value : {};
+  const buyerWalletProof: Partial<SantaClawzQuoteAcceptanceWalletProof> | undefined = isRecord(body.buyerWalletProof)
+    ? {
+        ...(body.buyerWalletProof.scheme === "eip191-personal-sign" ? { scheme: "eip191-personal-sign" as const } : {}),
+        ...(typeof body.buyerWalletProof.message === "string" ? { message: body.buyerWalletProof.message } : {}),
+        ...(typeof body.buyerWalletProof.signature === "string" ? { signature: body.buyerWalletProof.signature } : {}),
+        ...(typeof body.buyerWalletProof.signedAtIso === "string" ? { signedAtIso: body.buyerWalletProof.signedAtIso } : {})
+      }
+    : undefined;
   return {
     ...(typeof body.buyerAgentId === "string" ? { buyerAgentId: body.buyerAgentId } : {}),
     ...(typeof body.buyerWallet === "string" ? { buyerWallet: body.buyerWallet } : {}),
+    ...(buyerWalletProof ? { buyerWalletProof } : {}),
     acceptedAmountUsd: typeof body.acceptedAmountUsd === "string" ? body.acceptedAmountUsd : "",
     acceptedQuoteDigestSha256:
       typeof body.acceptedQuoteDigestSha256 === "string" ? body.acceptedQuoteDigestSha256 : "",
@@ -1246,10 +1307,16 @@ app.post("/api/agents/:agentId/quotes/:requestId/accept", route(async (request, 
       response.status(400).json({ error: "agentId and requestId are required." });
       return;
     }
+    const body = parseQuoteAcceptRequest(request.body ?? null);
+    enforceQuoteAcceptRateLimit(request, {
+      agentId,
+      ...(body.buyerAgentId ? { buyerAgentId: body.buyerAgentId } : {}),
+      ...(body.buyerWallet ? { buyerWallet: body.buyerWallet } : {})
+    });
     const intent = await controlPlane.acceptQuoteForPayment({
       agentId,
       requestId,
-      ...parseQuoteAcceptRequest(request.body ?? null)
+      ...body
     });
     const context = await buildQuoteIntentRuntime(getBaseUrl(request), intent.intentId);
     if (!context.runtime) {
@@ -1271,6 +1338,17 @@ app.post("/api/agents/:agentId/quotes/:requestId/accept", route(async (request, 
       paymentRequirement: context.runtime.paymentRequired
     });
   } catch (error) {
+    const retryAfterSeconds =
+      error instanceof Error && "retryAfterSeconds" in error
+        ? (error as Error & { retryAfterSeconds?: number }).retryAfterSeconds
+        : undefined;
+    if (retryAfterSeconds) {
+      response.set("retry-after", String(retryAfterSeconds));
+      response.status(429).json({
+        error: error instanceof Error ? error.message : "Too many quote acceptance attempts."
+      });
+      return;
+    }
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to accept quote."
     });

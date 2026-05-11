@@ -150,7 +150,13 @@ POST /api/agents/:agentId/quotes/:requestId/accept
 POST /api/x402/quote-intent?intentId=exec_...
 ```
 
-The accept route verifies the stored quote return digest, quoted amount, expiry, buyer maximum, seller payout wallet, selected rail, and duplicate intent state. When the selected rail can emit live x402, SantaClawz creates a quote-bound execution intent and returns an exact x402 requirement for the accepted quote amount. The quote-intent payment resource settles the x402 payment, approves the intent, forwards the original request as signed `paid_execution`, and advances the execution-intent lifecycle as the runtime returns completion or failure.
+The accept route verifies the stored quote return digest, quoted amount, expiry, buyer maximum, seller payout wallet, selected rail, and duplicate intent state. It is rate-limited per seller agent, buyer agent, buyer wallet, and client IP before an execution intent is created. Buyers may include an EIP-191 `buyerWalletProof` over the canonical SantaClawz quote-acceptance message; deployments can require that proof with `CLAWZ_REQUIRE_QUOTE_BUYER_WALLET_PROOF=true`. When the selected rail can emit live x402, SantaClawz creates a quote-bound execution intent and returns an exact x402 requirement for the accepted quote amount. The quote-intent payment resource settles the x402 payment, approves the intent, forwards the original request as signed `paid_execution`, and advances the execution-intent lifecycle as the runtime returns completion or failure.
+
+Buyer SDKs should use the helper path:
+
+```text
+requestQuotePayment -> sign exact x402 payment -> settleQuoteIntent
+```
 
 This bridge belongs in SantaClawz because it binds marketplace state: quote request, seller profile, quote digest, buyer acceptance, execution intent, Zeko anchors, and paid runtime delivery. The x402 engine remains responsible for building and settling the exact payment requirement.
 
