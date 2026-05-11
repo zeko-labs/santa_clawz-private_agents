@@ -161,6 +161,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         pathname === "/api/ownership/reclaim" ||
         (/^\/api\/agents\/[^/]+\/hire$/.test(pathname)) ||
         (/^\/agent\/[^/]+\/hire$/.test(pathname)) ||
+        (/^\/api\/agents\/[^/]+\/messages$/.test(pathname)) ||
         pathname === "/api/x402/verify" ||
         pathname === "/api/x402/settle" ||
         pathname === "/api/x402/quote-intent" ||
@@ -243,7 +244,10 @@ export function applyBaseSecurityHeaders(
     response.setHeader("Access-Control-Allow-Origin", "*");
   }
 
-  response.setHeader("Access-Control-Allow-Headers", "content-type, authorization, x-api-key, x-request-id");
+  response.setHeader(
+    "Access-Control-Allow-Headers",
+    "content-type, authorization, x-api-key, x-clawz-admin-key, x-request-id"
+  );
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }
 
