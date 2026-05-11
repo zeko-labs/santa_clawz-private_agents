@@ -161,16 +161,6 @@ pre,
     0 12px 28px rgba(4, 10, 18, 0.16);
 }
 
-.site-nav-link-external {
-  min-width: 128px;
-}
-
-.x-social-mark {
-  width: 0.92em;
-  height: 0.92em;
-  flex: 0 0 auto;
-}
-
 .site-menu-button {
   display: none;
   width: 48px;
