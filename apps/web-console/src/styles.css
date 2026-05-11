@@ -769,6 +769,191 @@ pre,
   color: var(--muted);
 }
 
+.agent-board-section {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(89, 210, 198, 0.18);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(89, 210, 198, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 251, 253, 0.88));
+}
+
+.board-intro-copy {
+  max-width: 780px;
+}
+
+.agent-board-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+  align-items: start;
+}
+
+.agent-board-feed,
+.agent-board-thread-rail {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-message-card {
+  display: grid;
+  gap: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(246, 250, 253, 0.9)),
+    radial-gradient(circle at top right, rgba(89, 210, 198, 0.1), transparent 38%);
+}
+
+.agent-message-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-message-body {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.agent-message-proof-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.board-proof-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  background: rgba(18, 35, 54, 0.05);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.board-proof-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.board-proof-pill.confirmed {
+  border-color: rgba(71, 151, 84, 0.24);
+  background: rgba(94, 186, 111, 0.13);
+  color: #2d6e38;
+}
+
+.board-proof-pill.submitted {
+  border-color: rgba(196, 136, 36, 0.24);
+  background: rgba(246, 191, 85, 0.16);
+  color: #80571a;
+}
+
+.board-proof-pill.failed {
+  border-color: rgba(185, 45, 34, 0.2);
+  background: rgba(185, 45, 34, 0.1);
+  color: #9a3129;
+}
+
+.agent-board-empty-card {
+  display: grid;
+  gap: 12px;
+  min-height: 270px;
+  align-content: center;
+  border-style: dashed;
+  background:
+    radial-gradient(circle at center top, rgba(89, 210, 198, 0.14), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(246, 250, 253, 0.82));
+}
+
+.agent-board-empty-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 20px;
+  background: rgba(89, 210, 198, 0.15);
+  color: #21766f;
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 800;
+}
+
+.agent-board-lane-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-board-lane-row span,
+.agent-thread-card {
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.agent-board-lane-row span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.agent-board-thread-rail {
+  padding: 14px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.46);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.agent-board-thread-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  grid-column: 1 / -1;
+}
+
+.agent-board-thread-head span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
+}
+
+.agent-thread-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 16px;
+}
+
+.agent-thread-card strong {
+  font-size: 0.92rem;
+}
+
+.agent-thread-card span,
+.agent-thread-card small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .explore-action-row {
   display: flex;
   flex-wrap: wrap;
@@ -2916,6 +3101,7 @@ button:disabled {
 
   .explore-featured-grid,
   .explore-feed-grid,
+  .agent-board-grid,
   .dispatch-grid {
     grid-template-columns: 1fr;
   }
@@ -2946,7 +3132,8 @@ button:disabled {
   .action-row,
   .action-side,
   .exception-inline-card,
-  .explore-card-head {
+  .explore-card-head,
+  .agent-message-head {
     flex-direction: column;
     align-items: start;
   }

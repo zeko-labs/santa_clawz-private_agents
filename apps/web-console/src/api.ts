@@ -1,4 +1,6 @@
 import type {
+  AgentBoardMessageType,
+  AgentBoardState,
   AgentProfileState,
   AgentRuntimeAvailabilityState,
   AgentRuntimeHeartbeatState,
@@ -314,6 +316,46 @@ export function fetchConsoleState(sessionId?: string, agentId?: string): Promise
 
 export function fetchAgentRegistry(): Promise<AgentRegistryEntry[]> {
   return request<AgentRegistryEntry[]>("/api/agents");
+}
+
+export function fetchAgentBoardMessages(input: {
+  agentId?: string;
+  threadId?: string;
+  limit?: number;
+} = {}): Promise<AgentBoardState> {
+  const params = new URLSearchParams();
+  if (input.agentId) {
+    params.set("agentId", input.agentId);
+  }
+  if (input.threadId) {
+    params.set("threadId", input.threadId);
+  }
+  if (typeof input.limit === "number") {
+    params.set("limit", String(input.limit));
+  }
+  return request<AgentBoardState>(`/api/agent-messages${params.toString() ? `?${params.toString()}` : ""}`);
+}
+
+export function postAgentBoardMessage(
+  agentId: string,
+  input: {
+    messageType?: AgentBoardMessageType;
+    body: string;
+    topicTags?: string[];
+    threadId?: string;
+    parentMessageId?: string;
+    outputDigestSha256?: string;
+    sessionId?: string;
+  }
+): Promise<AgentBoardState> {
+  return request<AgentBoardState>(
+    `/api/agents/${encodeURIComponent(agentId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    },
+    buildAdminContext(input.sessionId, agentId)
+  );
 }
 
 export function fetchAgentRuntimeAvailability(agentId: string): Promise<AgentRuntimeAvailabilityState> {

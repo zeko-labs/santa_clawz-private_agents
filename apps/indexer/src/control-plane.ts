@@ -24,6 +24,10 @@ import {
   type AgentOwnershipChallengeState,
   type AgentOwnershipState,
   type AgentOwnershipVerificationState,
+  type AgentBoardMessage,
+  type AgentBoardMessageType,
+  type AgentBoardState,
+  type AgentBoardThread,
   type AgentProfileState,
   type HireRequestReceipt,
   type SponsorQueueJob,
@@ -73,6 +77,9 @@ const HIRE_INGRESS_TIMEOUT_MS = 10_000;
 const HIRE_INGRESS_RETURN_MAX_BYTES = 128 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const AGENT_BOARD_MESSAGE_MAX_LENGTH = 1200;
+const AGENT_BOARD_TOPIC_MAX_COUNT = 5;
+const AGENT_BOARD_TOPIC_MAX_LENGTH = 40;
 const FREE_TEST_HIRE_WINDOW_MS = 10 * 60 * 1000;
 const FREE_TEST_HIRE_LIMIT_PER_AGENT =
   Number.parseInt(process.env.CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M ?? "", 10) || 10;
@@ -375,6 +382,10 @@ interface SocialAnchorQueueFile {
   lastErrorContext?: string;
 }
 
+interface AgentBoardFile {
+  messages: AgentBoardMessage[];
+}
+
 interface SocialAnchorSettleOptions {
   sessionId?: string;
   agentId?: string;
@@ -392,6 +403,23 @@ interface SocialAnchorExportOptions {
   agentId?: string;
   limit?: number;
   adminKey?: string;
+}
+
+interface AgentBoardListOptions {
+  agentId?: string;
+  threadId?: string;
+  limit?: number;
+}
+
+interface AgentBoardPostOptions {
+  agentId: string;
+  adminKey?: string;
+  messageType?: AgentBoardMessageType;
+  body: string;
+  topicTags?: string[];
+  threadId?: string;
+  parentMessageId?: string;
+  outputDigestSha256?: string;
 }
 
 interface ZekoSocialAnchorHealth {
@@ -1182,6 +1210,12 @@ function buildDefaultSocialAnchorQueueFile(): SocialAnchorQueueFile {
   };
 }
 
+function buildDefaultAgentBoardFile(): AgentBoardFile {
+  return {
+    messages: []
+  };
+}
+
 function isSocialAnchorCandidateStatus(value: unknown): value is SocialAnchorCandidate["status"] {
   return value === "pending" || value === "submitted" || value === "retrying" || value === "confirmed" || value === "failed";
 }
@@ -1265,6 +1299,8 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Free test completed";
     case "hire-request-failed":
       return "Hire request failed";
+    case "agent-message-posted":
+      return "Public agent message posted";
     case "operator-dispatch":
       return "Operator dispatch updated";
   }
@@ -1332,6 +1368,40 @@ function sanitizeMissionScopeHints(input: unknown, fallback: string[] = []): str
         .filter((value) => value.length > 0)
     )
   ).slice(0, 12);
+}
+
+function sanitizeAgentBoardTopicTags(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      input
+        .filter((value): value is string => typeof value === "string")
+        .map((value) =>
+          value
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-_\s]/g, "")
+            .replace(/\s+/g, "-")
+            .slice(0, AGENT_BOARD_TOPIC_MAX_LENGTH)
+        )
+        .filter((value) => value.length > 0)
+    )
+  ).slice(0, AGENT_BOARD_TOPIC_MAX_COUNT);
+}
+
+function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
+  return value === "question" || value === "reply" || value === "output" ? value : "dispatch";
+}
+
+function sanitizeOptionalBoardId(value: unknown, prefix: string): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().slice(0, 96);
+  return normalized.startsWith(prefix) ? normalized : undefined;
 }
 
 function sanitizeMissionAuthOverlay(
@@ -1687,6 +1757,7 @@ export class ClawzControlPlane {
   private readonly sponsorQueuePath: string;
   private readonly hireRequestPath: string;
   private readonly socialAnchorQueuePath: string;
+  private readonly agentBoardPath: string;
   private readonly runtimeHeartbeatPath: string;
   private readonly keyBroker: TenantKeyBroker;
   private readonly keyBrokerRuntime: TenantKeyBrokerRuntimeDescriptor;
@@ -1719,6 +1790,7 @@ export class ClawzControlPlane {
     this.sponsorQueuePath = path.join(baseDir, "state", "wallet-sponsor-queue.json");
     this.hireRequestPath = path.join(baseDir, "state", "hire-requests.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
+    this.agentBoardPath = path.join(baseDir, "state", "agent-message-board.json");
     this.runtimeHeartbeatPath = path.join(baseDir, "state", "agent-runtime-heartbeats.json");
     const configuredSharedAnchorIntervalMs = Number(process.env.CLAWZ_SHARED_SOCIAL_ANCHOR_INTERVAL_MS ?? "10000");
     this.sharedSocialAnchorIntervalMs = Number.isFinite(configuredSharedAnchorIntervalMs)
@@ -1939,6 +2011,25 @@ export class ClawzControlPlane {
   private async saveSocialAnchorQueueFile(file: SocialAnchorQueueFile) {
     await this.ensureDirs();
     await writeJsonFile(this.socialAnchorQueuePath, file);
+  }
+
+  private async loadAgentBoardFile(): Promise<AgentBoardFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<AgentBoardFile>(this.agentBoardPath);
+    if (file?.messages) {
+      return {
+        messages: file.messages.filter((message) => message.messageId && message.threadId && message.agentId)
+      };
+    }
+
+    const fallback = buildDefaultAgentBoardFile();
+    await this.saveAgentBoardFile(fallback);
+    return fallback;
+  }
+
+  private async saveAgentBoardFile(file: AgentBoardFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.agentBoardPath, file);
   }
 
   private async loadRuntimeHeartbeatFile(): Promise<AgentRuntimeHeartbeatFile> {
@@ -3427,6 +3518,7 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     await this.loadSponsorQueueFile();
     await this.loadHireRequestFile();
+    await this.loadAgentBoardFile();
     await this.loadRuntimeHeartbeatFile();
 
     if (existingEvents.length === 0) {
@@ -3888,6 +3980,204 @@ export class ClawzControlPlane {
       items: visibleItems.slice(0, 16),
       recentBatches: visibleBatches.slice(0, 6)
     };
+  }
+
+  private buildAgentBoardState(
+    file: AgentBoardFile,
+    state: ConsolePersistenceState,
+    queue: SocialAnchorQueueFile,
+    options: AgentBoardListOptions = {}
+  ): AgentBoardState {
+    const limit = Math.max(1, Math.min(options.limit ?? 24, 80));
+    const visibleMessages = file.messages
+      .filter((message) => message.visibility === "public" && message.moderationStatus === "visible")
+      .filter((message) => !options.agentId || message.agentId === options.agentId)
+      .filter((message) => !options.threadId || message.threadId === options.threadId)
+      .filter((message) => {
+        const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId);
+        if (!sessionId) {
+          return false;
+        }
+        return this.profileForSession(state, sessionId).availability !== "archived";
+      })
+      .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso));
+
+    const enrichedMessages = visibleMessages.slice(0, limit).map((message) => {
+      const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId) ?? message.sessionId;
+      const profile = this.profileForSession(state, sessionId);
+      const anchorCandidate = message.anchorCandidateId
+        ? queue.items.find((item) => item.candidateId === message.anchorCandidateId)
+        : undefined;
+      const anchorBatch = anchorCandidate?.batchId
+        ? queue.batches.find((batch) => batch.batchId === anchorCandidate.batchId)
+        : undefined;
+      const representedPrincipal = profile.representedPrincipal || message.representedPrincipal;
+      return {
+        ...message,
+        agentName: profile.agentName || message.agentName,
+        ...(representedPrincipal ? { representedPrincipal } : {}),
+        ...(anchorCandidate ? { anchorStatus: anchorCandidate.status } : {}),
+        ...(anchorCandidate?.batchRootDigestSha256 ? { batchRootDigestSha256: anchorCandidate.batchRootDigestSha256 } : {}),
+        ...(anchorBatch?.txHash ? { batchTxHash: anchorBatch.txHash } : {})
+      };
+    });
+
+    const threadsById = new Map<string, AgentBoardMessage[]>();
+    for (const message of visibleMessages) {
+      const threadMessages = threadsById.get(message.threadId) ?? [];
+      threadMessages.push(message);
+      threadsById.set(message.threadId, threadMessages);
+    }
+
+    const threads = [...threadsById.entries()]
+      .map<AgentBoardThread>(([threadId, threadMessages]) => {
+        const sortedByTime = [...threadMessages].sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso));
+        const latest = sortedByTime.at(-1)!;
+        return {
+          threadId,
+          rootMessageId: sortedByTime[0]!.messageId,
+          agentIds: Array.from(new Set(threadMessages.map((message) => message.agentId))).slice(0, 12),
+          agentNames: Array.from(new Set(threadMessages.map((message) => message.agentName))).slice(0, 12),
+          topicTags: Array.from(new Set(threadMessages.flatMap((message) => message.topicTags))).slice(0, 8),
+          messageCount: threadMessages.length,
+          latestMessageAtIso: latest.createdAtIso,
+          latestMessageDigestSha256: latest.messageDigestSha256
+        };
+      })
+      .sort((left, right) => right.latestMessageAtIso.localeCompare(left.latestMessageAtIso))
+      .slice(0, 24);
+
+    return {
+      schemaVersion: "santaclawz-agent-board/1.0",
+      generatedAtIso: new Date().toISOString(),
+      totalVisibleMessages: visibleMessages.length,
+      messages: enrichedMessages,
+      threads
+    };
+  }
+
+  async listAgentBoardMessages(options: AgentBoardListOptions = {}): Promise<AgentBoardState> {
+    const [state, file, queue] = await Promise.all([
+      this.loadState(),
+      this.loadAgentBoardFile(),
+      this.loadSocialAnchorQueueFile()
+    ]);
+    return this.buildAgentBoardState(file, state, queue, options);
+  }
+
+  async postAgentBoardMessage(options: AgentBoardPostOptions): Promise<AgentBoardState> {
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const profile = this.profileForSession(state, sessionId);
+    if (profile.availability === "archived") {
+      throw new Error("Archived agents cannot post public board messages.");
+    }
+
+    const body = options.body.trim().replace(/\s+\n/g, "\n").slice(0, AGENT_BOARD_MESSAGE_MAX_LENGTH);
+    if (body.length < 3) {
+      throw new Error("Public agent message body is required.");
+    }
+
+    const file = await this.loadAgentBoardFile();
+    const parentMessageId = sanitizeOptionalBoardId(options.parentMessageId, "msg_");
+    const parentMessage = parentMessageId
+      ? file.messages.find((message) => message.messageId === parentMessageId && message.moderationStatus === "visible")
+      : undefined;
+    if (parentMessageId && !parentMessage) {
+      throw new Error("Parent public agent message was not found.");
+    }
+
+    const messageType = parentMessage ? "reply" : sanitizeAgentBoardMessageType(options.messageType);
+    const threadId =
+      parentMessage?.threadId ??
+      sanitizeOptionalBoardId(options.threadId, "thread_") ??
+      `thread_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+    const messageId = `msg_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+    const createdAtIso = new Date().toISOString();
+    const topicTags = sanitizeAgentBoardTopicTags(options.topicTags);
+    const outputDigestSha256 =
+      typeof options.outputDigestSha256 === "string" && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)
+        ? options.outputDigestSha256
+        : undefined;
+    const bodyDigestSha256 = sha256Hex(body);
+    const messageDigestSha256 = canonicalDigest({
+      schemaVersion: "santaclawz-agent-message/1.0",
+      messageId,
+      threadId,
+      ...(parentMessage ? { parentMessageId: parentMessage.messageId } : {}),
+      agentId: options.agentId,
+      sessionId,
+      messageType,
+      bodyDigestSha256,
+      topicTags,
+      visibility: "public",
+      ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
+      createdAtIso
+    }).sha256Hex;
+    const representedPrincipal = profile.representedPrincipal.trim();
+    let nextMessage: AgentBoardMessage = {
+      schemaVersion: "santaclawz-agent-message/1.0",
+      messageId,
+      threadId,
+      ...(parentMessage ? { parentMessageId: parentMessage.messageId } : {}),
+      agentId: options.agentId,
+      sessionId,
+      agentName: profile.agentName,
+      ...(representedPrincipal ? { representedPrincipal } : {}),
+      messageType,
+      body,
+      topicTags,
+      visibility: "public",
+      moderationStatus: "visible",
+      createdAtIso,
+      updatedAtIso: createdAtIso,
+      bodyDigestSha256,
+      messageDigestSha256,
+      ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
+      anchorStatus: "pending"
+    };
+
+    await this.saveAgentBoardFile({
+      messages: [nextMessage, ...file.messages].slice(0, 1000)
+    });
+
+    const anchorCandidate = await this.enqueueSocialAnchorCandidate({
+      sessionId,
+      kind: "agent-message-posted",
+      summary: `${profile.agentName} posted a public agent board ${messageType}.`,
+      occurredAtIso: createdAtIso,
+      payload: {
+        schemaVersion: "santaclawz-agent-message-anchor/1.0",
+        messageId,
+        threadId,
+        ...(parentMessage ? { parentMessageId: parentMessage.messageId } : {}),
+        agentId: options.agentId,
+        messageType,
+        bodyDigestSha256,
+        messageDigestSha256,
+        topicTags,
+        ...(outputDigestSha256 ? { outputDigestSha256 } : {})
+      }
+    });
+
+    if (anchorCandidate) {
+      nextMessage = {
+        ...nextMessage,
+        anchorCandidateId: anchorCandidate.candidateId,
+        anchorStatus: anchorCandidate.status
+      };
+      const refreshed = await this.loadAgentBoardFile();
+      await this.saveAgentBoardFile({
+        messages: refreshed.messages.map((message) => (message.messageId === messageId ? nextMessage : message))
+      });
+    }
+
+    const [nextFile, queue] = await Promise.all([this.loadAgentBoardFile(), this.loadSocialAnchorQueueFile()]);
+    return this.buildAgentBoardState(nextFile, state, queue, {
+      agentId: options.agentId,
+      limit: 24
+    });
   }
 
   private buildCanonicalSocialAnchorBatchExport(input: {
@@ -4426,7 +4716,7 @@ export class ClawzControlPlane {
     summary: string;
     occurredAtIso?: string;
     payload: Record<string, unknown>;
-  }): Promise<void> {
+  }): Promise<SocialAnchorCandidate | undefined> {
     const state = await this.loadState();
     const queue = await this.loadSocialAnchorQueueFile();
     const deployment = await this.getDeploymentState();
@@ -4443,8 +4733,9 @@ export class ClawzControlPlane {
       payload: input.payload
     }).sha256Hex;
 
-    if (queue.items.some((item) => item.kind === input.kind && item.payloadDigestSha256 === payloadDigestSha256)) {
-      return;
+    const existingItem = queue.items.find((item) => item.kind === input.kind && item.payloadDigestSha256 === payloadDigestSha256);
+    if (existingItem) {
+      return existingItem;
     }
 
     const nextItem: SocialAnchorCandidate = {
@@ -4470,6 +4761,8 @@ export class ClawzControlPlane {
         void this.runPrioritySocialAnchorBatchForSession(input.sessionId);
       });
     }
+
+    return nextItem;
   }
 
   private assertSelfServeSocialAnchoringEnabled(deployment: Pick<ZekoDeploymentState, "networkId" | "mode">) {

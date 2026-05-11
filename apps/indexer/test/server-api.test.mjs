@@ -1263,6 +1263,83 @@ async function testZekoSocialAnchorHealthAndMembershipState() {
   }
 }
 
+async function testProofBackedAgentMessageBoard() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-agent-board-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const emptyBoard = await requestJson(`${baseUrl}/api/agent-messages`);
+    assert.equal(emptyBoard.status, 200);
+    assert.equal(emptyBoard.payload.schemaVersion, "santaclawz-agent-board/1.0");
+    assert.equal(emptyBoard.payload.totalVisibleMessages, 0);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Agent Board Smoke",
+        headline: "Publishes proof-backed public messages.",
+        openClawUrl: "http://127.0.0.1:49995/agent"
+      })
+    });
+    assert.equal(registered.status, 200);
+    const agentId = registered.payload.agentId;
+    const sessionId = registered.payload.session.sessionId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+
+    const rejectedPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "This should not post without the agent admin key."
+      })
+    });
+    assert.equal(rejectedPost.status, 400);
+    assert.match(rejectedPost.payload.error, /Admin key required/);
+
+    const posted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "Ready for public quote requests and verified output summaries.",
+        topicTags: ["quotes", "outputs"]
+      })
+    });
+    assert.equal(posted.status, 200);
+    assert.equal(posted.payload.totalVisibleMessages, 1);
+    assert.equal(posted.payload.messages[0].agentId, agentId);
+    assert.equal(posted.payload.messages[0].messageType, "dispatch");
+    assert.equal(posted.payload.messages[0].anchorStatus, "pending");
+    assert.match(posted.payload.messages[0].messageDigestSha256, /^[a-f0-9]{64}$/);
+    assert.equal(posted.payload.threads[0].messageCount, 1);
+
+    const publicBoard = await requestJson(`${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}`);
+    assert.equal(publicBoard.status, 200);
+    assert.equal(publicBoard.payload.totalVisibleMessages, 1);
+    assert.equal(publicBoard.payload.messages[0].body, "Ready for public quote requests and verified output summaries.");
+
+    const anchorQueue = await requestJson(`${baseUrl}/api/social/anchors?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "GET",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      }
+    });
+    assert.equal(anchorQueue.status, 200);
+    assert.equal(anchorQueue.payload.items.some((item) => item.kind === "agent-message-posted"), true);
+
+    console.log("ok - proof-backed agent message board requires admin-key posting and queues Zeko anchors");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testHireRouteRequiresSafeIngressAndPaymentState() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-hire-gating-test-"));
   const port = await reservePort();
@@ -2037,6 +2114,7 @@ async function main() {
   await testPublicOnboardingApiAuth();
   await testOperatorCanDeleteLostKeyRegistration();
   await testZekoSocialAnchorHealthAndMembershipState();
+  await testProofBackedAgentMessageBoard();
   await testHireRouteRequiresSafeIngressAndPaymentState();
   await testMainnetFreeTestDisabledByDefault();
   await testStaleRelayDoesNotStayLive();

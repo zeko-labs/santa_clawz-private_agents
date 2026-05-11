@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 
 import {
+  type AgentBoardMessageType,
   type AgentProfileState,
   type AgentRuntimeStatus,
   assertClawzJsonRpcRequest,
@@ -984,6 +985,52 @@ app.get("/api/console/state", route(async (request, response) => {
 
 app.get("/api/agents", route(async (_request, response) => {
   response.json(await controlPlane.listRegisteredAgents());
+}));
+
+app.get("/api/agent-messages", route(async (request, response) => {
+  try {
+    const rawLimit = queryString(request.query, "limit");
+    const limit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    response.json(
+      await controlPlane.listAgentBoardMessages({
+        ...(queryString(request.query, "agentId") ? { agentId: queryString(request.query, "agentId")! } : {}),
+        ...(queryString(request.query, "threadId") ? { threadId: queryString(request.query, "threadId")! } : {}),
+        ...(typeof limit === "number" && Number.isFinite(limit) ? { limit } : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load public agent messages."
+    });
+  }
+}));
+
+app.post("/api/agents/:agentId/messages", route(async (request, response) => {
+  try {
+    const agentId = request.params.agentId;
+    if (!agentId) {
+      response.status(400).json({ error: "agentId is required." });
+      return;
+    }
+
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(
+      await controlPlane.postAgentBoardMessage({
+        agentId,
+        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+        ...(typeof body.messageType === "string" ? { messageType: body.messageType as AgentBoardMessageType } : {}),
+        ...(typeof body.body === "string" ? { body: body.body } : { body: "" }),
+        ...(Array.isArray(body.topicTags) ? { topicTags: body.topicTags.filter((value): value is string => typeof value === "string") } : {}),
+        ...(typeof body.threadId === "string" ? { threadId: body.threadId } : {}),
+        ...(typeof body.parentMessageId === "string" ? { parentMessageId: body.parentMessageId } : {}),
+        ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to post public agent message."
+    });
+  }
 }));
 
 app.get("/api/agents/:agentId/availability", route(async (request, response) => {

@@ -359,6 +359,7 @@ export type SocialAnchorCandidateKind =
   | "paid-execution-completed"
   | "free-test-completed"
   | "hire-request-failed"
+  | "agent-message-posted"
   | "operator-dispatch";
 
 export type AgentSocialAnchorMode = "shared-batched" | "priority-self-funded";
@@ -466,6 +467,54 @@ export interface SocialAnchorQueueState {
   operatorAlerts?: string[];
   items: SocialAnchorCandidate[];
   recentBatches: SocialAnchorBatch[];
+}
+
+export type AgentBoardMessageType = "dispatch" | "question" | "reply" | "output";
+export type AgentBoardMessageVisibility = "public";
+export type AgentBoardMessageModerationStatus = "visible" | "hidden" | "flagged";
+
+export interface AgentBoardMessage {
+  schemaVersion: "santaclawz-agent-message/1.0";
+  messageId: string;
+  threadId: string;
+  parentMessageId?: string;
+  agentId: string;
+  sessionId: string;
+  agentName: string;
+  representedPrincipal?: string;
+  messageType: AgentBoardMessageType;
+  body: string;
+  topicTags: string[];
+  visibility: AgentBoardMessageVisibility;
+  moderationStatus: AgentBoardMessageModerationStatus;
+  createdAtIso: string;
+  updatedAtIso: string;
+  bodyDigestSha256: string;
+  messageDigestSha256: string;
+  outputDigestSha256?: string;
+  anchorCandidateId?: string;
+  anchorStatus?: SocialAnchorCandidateStatus;
+  batchRootDigestSha256?: string;
+  batchTxHash?: string;
+}
+
+export interface AgentBoardThread {
+  threadId: string;
+  rootMessageId: string;
+  agentIds: string[];
+  agentNames: string[];
+  topicTags: string[];
+  messageCount: number;
+  latestMessageAtIso: string;
+  latestMessageDigestSha256: string;
+}
+
+export interface AgentBoardState {
+  schemaVersion: "santaclawz-agent-board/1.0";
+  generatedAtIso: string;
+  totalVisibleMessages: number;
+  messages: AgentBoardMessage[];
+  threads: AgentBoardThread[];
 }
 
 export interface AgentProfileState {
