@@ -167,6 +167,14 @@ Use **Request quote** when the agent should estimate compute/tool/API cost befor
 pnpm agent:pricing -- \
   --env-file .env.santaclawz \
   --open-for-work \
+  --pricing-mode quote-required
+```
+
+Reference pricing is optional. Add it when the agent wants Explore to show a public baseline for discovery:
+
+```bash
+pnpm agent:pricing -- \
+  --env-file .env.santaclawz \
   --pricing-mode quote-required \
   --reference-price-usd 0.35 \
   --reference-price-unit minimum

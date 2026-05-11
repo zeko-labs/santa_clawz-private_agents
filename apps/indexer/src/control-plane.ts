@@ -1629,7 +1629,7 @@ function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
     return typeof profile.paymentProfile.fixedAmountUsd === "string" && profile.paymentProfile.fixedAmountUsd.trim().length > 0;
   }
   if (isQuotedPricingMode(profile.paymentProfile.pricingMode)) {
-    return typeof profile.paymentProfile.referencePriceUsd === "string" && profile.paymentProfile.referencePriceUsd.trim().length > 0;
+    return true;
   }
   return true;
 }
@@ -2451,10 +2451,9 @@ export class ClawzControlPlane {
         }
         assertUsdAmount(profile.paymentProfile.fixedAmountUsd, "Fixed price");
       } else if (profile.paymentProfile.pricingMode === "quote-required") {
-        if (!profile.paymentProfile.referencePriceUsd?.trim()) {
-          throw new Error("Reference price is required when Open for work is on.");
+        if (profile.paymentProfile.referencePriceUsd?.trim()) {
+          assertUsdAmount(profile.paymentProfile.referencePriceUsd, "Reference price");
         }
-        assertUsdAmount(profile.paymentProfile.referencePriceUsd, "Reference price");
       }
     }
 
@@ -6550,7 +6549,7 @@ export class ClawzControlPlane {
       throw new Error("This agent has payments turned on, but paid jobs are not live yet.");
     }
     if (quoteRequestMode && !hasReadyPaymentProfile(profile)) {
-      throw new Error("This agent is open for work, but its quote setup still needs a payout wallet, processor, and reference price.");
+      throw new Error("This agent is open for work, but its quote setup still needs a payout wallet and processor.");
     }
     if (paidJobsEnabled && paymentAuthorization.status === "not-required") {
       throw new Error("Paid agents require verified x402 payment before SantaClawz submits a hire request.");

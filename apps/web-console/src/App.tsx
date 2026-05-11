@@ -1012,7 +1012,7 @@ function paymentProfileSummary(
   if (paymentProfile.pricingMode === "quote-required") {
     return paymentProfileReady
       ? `${summary}. Buyers request a quote first; exact payment comes before execution.`
-      : `${summary}. Add the payout and reference price details before going live.`;
+      : `${summary}. Add the payout wallet before going live.`;
   }
   if (!facilitatorUrl?.trim()) {
     return paymentProfileReady
@@ -1050,7 +1050,7 @@ function paymentProfileDraftReady(
   }
 
   if (paymentProfile.pricingMode === "quote-required") {
-    return Boolean(paymentProfile.referencePriceUsd?.trim());
+    return true;
   }
 
   return false;
@@ -1075,7 +1075,7 @@ function paymentProfileEnrollmentReady(profile: AgentProfileState) {
   }
 
   if (paymentProfile.pricingMode === "quote-required") {
-    return Boolean(paymentProfile.referencePriceUsd?.trim());
+    return true;
   }
 
   return false;
@@ -2365,11 +2365,11 @@ export function App() {
     ? "This agent is archived on SantaClawz."
     : freeTestMode
       ? "Free-test requests are signed by SantaClawz and quota-limited."
-    : !paymentsEnabled
-      ? "Open this agent for paid work when it is ready."
-      : paymentProfileReady
-        ? `${referencePriceLine(paymentProfile)}.`
-        : "Add a payout wallet, processor, and reference price so agents can discover the terms.";
+      : !paymentsEnabled
+        ? "Open this agent for paid work when it is ready."
+        : paymentProfileReady
+          ? `${referencePriceLine(paymentProfile)}.`
+          : "Add a Base payout wallet so the agent can receive paid work.";
   const paymentSummaryMessage = agentArchived
     ? "Archived agents stay on their public URL for proof history, but SantaClawz hides them from Explore and disables new hire requests until restored."
     : !published
@@ -2390,6 +2390,8 @@ export function App() {
       : null;
   const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
   const pricingMethodHelpText = pricingModeHelp(paymentProfile.pricingMode);
+  const missionAuthToggleCopy =
+    "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions, verify key checkpoints, and export portable proof bundles.";
   const showMainPricingField =
     paymentProfile.enabled &&
     paymentProfile.pricingMode === "fixed-exact";
@@ -2539,7 +2541,7 @@ export function App() {
       : freeTestMode
         ? "Free-test requests are signed by SantaClawz, sent without payment, and quota-limited."
       : savedPaymentsEnabled && !savedPaymentProfileReady
-        ? "This agent is open for work, but it still needs its payout wallet, processor, or reference price completed."
+        ? "This agent is open for work, but it still needs its payout wallet or processor completed."
         : savedPaymentsEnabled && paidJobsEnabled
           ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}. Paid execution requires an x402 buyer client; browser checkout is not live yet.`
           : quoteRequestMode
@@ -2547,7 +2549,7 @@ export function App() {
           : "Hire requests route through SantaClawz to the private OpenClaw ingress after checks."
   ;
   const missionAuthStatusCopy = !missionAuthEnabled
-    ? "Add this if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions, verify key checkpoints, and export portable proof bundles."
+    ? missionAuthToggleCopy
     : missionAuthVerified
       ? `${missionAuthOverlay.authorityName ?? "Mission auth overlay"} verified${missionAuthOverlay.lastVerifiedAtIso ? ` on ${new Date(missionAuthOverlay.lastVerifiedAtIso).toLocaleString()}` : ""}.`
       : "Paste the public sidecar URL, then check its discovery and mission authority JWKS.";
@@ -2628,6 +2630,31 @@ export function App() {
       return;
     }
     enablePayments();
+  }
+
+  function toggleMissionAuthOverlay() {
+    if (missionAuthEnabled) {
+      setProfile({
+        ...profile,
+        missionAuthOverlay: {
+          enabled: false,
+          status: "disabled",
+          scopeHints: []
+        }
+      });
+      setError(null);
+      return;
+    }
+
+    setProfile({
+      ...profile,
+      missionAuthOverlay: {
+        ...profile.missionAuthOverlay,
+        enabled: true,
+        status: "configured"
+      }
+    });
+    setError(null);
   }
 
   function unlockAdminAccess() {
@@ -2876,7 +2903,7 @@ export function App() {
 
                 {showReferencePricingFields ? (
                   <label className="field">
-                    <span>Reference price (USD)</span>
+                    <span>Reference price (optional)</span>
                     <input
                       className="text-input"
                       value={paymentProfile.referencePriceUsd ?? ""}
@@ -2896,7 +2923,7 @@ export function App() {
 
                 {showReferencePricingFields ? (
                   <label className="field">
-                    <span>Reference unit</span>
+                    <span>Reference unit (optional)</span>
                     <select
                       className="text-input"
                       value={paymentProfile.referencePriceUnit ?? "minimum"}
@@ -2942,35 +2969,28 @@ export function App() {
           </div>
 
           <div className="mission-auth-card">
-            <div className="mission-auth-head">
-              <div className="mission-auth-copy">
-                <strong>Enterprise auth overlay (optional)</strong>
-                <p className="panel-copy">{missionAuthStatusCopy}</p>
-              </div>
-              <div className="mission-auth-head-actions">
-                {!missionAuthEnabled ? (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => {
-                      setProfile({
-                        ...profile,
-                        missionAuthOverlay: {
-                          ...profile.missionAuthOverlay,
-                          enabled: true,
-                          status: "configured"
-                        }
-                      });
-                    }}
-                  >
-                    Add auth
-                  </button>
-                ) : null}
-              </div>
+            <div className="field-label-row">
+              <span>Enterprise Auth (Optional)</span>
             </div>
+            <button
+              type="button"
+              className={missionAuthEnabled ? "slider-toggle active" : "slider-toggle"}
+              role="switch"
+              aria-checked={missionAuthEnabled}
+              onClick={toggleMissionAuthOverlay}
+            >
+              <span className="slider-toggle-track" aria-hidden="true">
+                <span className="slider-toggle-thumb" />
+              </span>
+              <span className="slider-toggle-copy">
+                <strong>{missionAuthEnabled ? "Enterprise auth is on" : "Turn on enterprise auth"}</strong>
+                <small>{missionAuthToggleCopy}</small>
+              </span>
+            </button>
 
             {missionAuthEnabled ? (
               <div className="mission-auth-body">
+                <p className="panel-copy mission-auth-status-copy">{missionAuthStatusCopy}</p>
                 <div className="field-grid compact-field-grid mission-auth-grid">
                   <label className="field field-wide">
                     <span>Agent Mission Auth URL</span>
@@ -3831,7 +3851,7 @@ export function App() {
                         {showReferencePricingFields ? (
                           <>
                             <label className="field">
-                              <span>Reference price (USD)</span>
+                              <span>Reference price (optional)</span>
                               <input
                                 className="text-input payment-compact-input"
                                 value={paymentProfile.referencePriceUsd ?? ""}
@@ -3848,7 +3868,7 @@ export function App() {
                               />
                             </label>
                             <label className="field">
-                              <span>Reference unit</span>
+                              <span>Reference unit (optional)</span>
                               <select
                                 className="text-input payment-compact-input"
                                 value={paymentProfile.referencePriceUnit ?? "minimum"}

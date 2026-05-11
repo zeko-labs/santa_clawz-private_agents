@@ -1011,8 +1011,6 @@ async function testPublicOnboardingApiAuth() {
           supportedRails: ["base-usdc"],
           defaultRail: "base-usdc",
           pricingMode: "quote-required",
-          referencePriceUsd: "0.20",
-          referencePriceUnit: "minimum",
           settlementTrigger: "upfront"
         }
       })
@@ -1541,8 +1539,6 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
           supportedRails: ["base-usdc"],
           defaultRail: "base-usdc",
           pricingMode: "quote-required",
-          referencePriceUsd: "0.20",
-          referencePriceUnit: "minimum",
           settlementTrigger: "upfront"
         }
       })
