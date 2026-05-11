@@ -3253,7 +3253,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Create an enrollment ticket using the fields above, then copy and run the pnpm command from your OpenClaw agent to go live and get paid. SantaClawz reserves the public URL; the agent connects by relay unless you choose a self-hosted runtime URL.
+                Create an enrollment ticket using the agent info above, then run the pnpm command from your OpenClaw agent to go live and get paid.
               </p>
             </div>
 
