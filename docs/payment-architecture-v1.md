@@ -158,7 +158,13 @@ Buyer SDKs should use the helper path:
 requestQuotePayment -> sign exact x402 payment -> settleQuoteIntent
 ```
 
+When a SantaClawz protocol fee split is present, buyer tooling must sign both EIP-3009 legs. `buildClawzFeeSplitExactPaymentPayload` and the `requestQuotePayment().buildFeeSplitPaymentPayload(...)` convenience method build the seller-net authorization and protocol-fee authorization from the returned x402 requirement, attach a payment id/idempotency key, and preserve the quote intent session id. The hosted facilitator treats retryable nonce, gas-price, and transient errors as retryable settlement attempts; tune this with `CLAWZ_X402_FACILITATOR_SETTLE_ATTEMPTS` and `CLAWZ_X402_FACILITATOR_SETTLE_RETRY_DELAY_MS`.
+
+Production paid completions must return a verified worker output package. SantaClawz refuses `paid_execution` completions unless the runtime returns `agent_completed_verified` classification with buyer-visible deliverables and verification manifest data; demo completions remain suitable only for free-test or non-paid flows.
+
 This bridge belongs in SantaClawz because it binds marketplace state: quote request, seller profile, quote digest, buyer acceptance, execution intent, Zeko anchors, and paid runtime delivery. The x402 engine remains responsible for building and settling the exact payment requirement.
+
+Public state exposes a compact readiness object on console state, registry entries, and agent availability: `relayConnected`, `heartbeatLive`, `runtimeReachable`, `workerReachable`, `paymentReady`, `published`, `hireable`, `lastJobStatus`, and `blockers`. Use this instead of overloading a single "live" label.
 
 ## Planned adapter boundary
 

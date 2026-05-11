@@ -39,6 +39,7 @@ import {
   type AgentBoardState,
   type AgentBoardThread,
   type AgentProfileState,
+  type AgentReadinessState,
   type HireRequestReceipt,
   type SponsorQueueJob,
   type SponsorQueueState,
@@ -1438,6 +1439,67 @@ function allowTestnetSelfServeSocialAnchor(): boolean {
 
 function requireQuoteBuyerWalletProof(): boolean {
   return envFlagEnabled("CLAWZ_REQUIRE_QUOTE_BUYER_WALLET_PROOF");
+}
+
+function lastHireStatusForSession(
+  hireRequests: HireRequestFile,
+  sessionId: string
+): AgentReadinessState["lastJobStatus"] {
+  const latest = hireRequests.requests
+    .filter((request) => request.sessionId === sessionId)
+    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))[0];
+  return latest?.status ?? "none";
+}
+
+function buildAgentReadinessState(input: {
+  profile: AgentProfileState;
+  ownership: AgentOwnershipState;
+  published: boolean;
+  relayConnected: boolean;
+  runtimeReachable: boolean;
+  heartbeat: AgentRuntimeHeartbeatState;
+  paymentReady: boolean;
+  lastJobStatus?: AgentReadinessState["lastJobStatus"];
+}): AgentReadinessState {
+  const heartbeatLive = input.heartbeat.status === "live";
+  const workerReachable = input.runtimeReachable;
+  const blockers: string[] = [];
+  if (input.profile.availability === "archived") {
+    blockers.push("archived");
+  }
+  if (input.ownership.status !== "verified") {
+    blockers.push("ownership-unverified");
+  }
+  if (!input.published) {
+    blockers.push("not-published");
+  }
+  if (isRelayDeliveryProfile(input.profile) && !input.relayConnected) {
+    blockers.push("relay-disconnected");
+  }
+  if (!heartbeatLive) {
+    blockers.push("heartbeat-not-live");
+  }
+  if (!input.runtimeReachable) {
+    blockers.push("runtime-unreachable");
+  }
+  if (!workerReachable) {
+    blockers.push("worker-unreachable");
+  }
+  if (!input.paymentReady) {
+    blockers.push("payment-not-ready");
+  }
+
+  return {
+    relayConnected: input.relayConnected,
+    heartbeatLive,
+    runtimeReachable: input.runtimeReachable,
+    workerReachable,
+    paymentReady: input.paymentReady,
+    published: input.published,
+    hireable: blockers.length === 0,
+    lastJobStatus: input.lastJobStatus ?? "none",
+    blockers
+  };
 }
 
 async function assertQuoteBuyerWalletProof(input: {
@@ -5815,12 +5877,14 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     const events = await this.loadEvents();
     const normalizedExceptions = this.normalizePrivacyExceptions(state);
-    const [manifests, deployment, liveFlow, sponsorQueueFile, socialAnchorQueueFile] = await Promise.all([
+    const [manifests, deployment, liveFlow, sponsorQueueFile, socialAnchorQueueFile, hireRequestFile, runtimeHeartbeatFile] = await Promise.all([
       this.blobStore.listManifests(state.currentSessionId),
       this.getDeploymentState(),
       this.getLiveFlowState(),
       this.loadSponsorQueueFile(),
-      this.loadSocialAnchorQueueFile()
+      this.loadSocialAnchorQueueFile(),
+      this.loadHireRequestFile(),
+      this.loadRuntimeHeartbeatFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const requestedSessionId =
@@ -5852,6 +5916,30 @@ export class ClawzControlPlane {
     const payoutAddressConfigured = hasPayoutAddress(profile);
     const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
     const ownership = this.ownershipForSession(state, focus.sessionId);
+    const heartbeatRecord = runtimeHeartbeatFile.heartbeats.find((record) => record.sessionId === focus.sessionId);
+    const heartbeat = this.buildAgentRuntimeHeartbeatState({
+      state,
+      sessionId: focus.sessionId,
+      trustModeId: focus.trustModeId,
+      ...(heartbeatRecord ? { record: heartbeatRecord } : {})
+    });
+    const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+    const availability = await this.checkPublicClawzAgentReachability({
+      state,
+      sessionId: focus.sessionId,
+      profile,
+      trustModeId: focus.trustModeId
+    });
+    const readiness = buildAgentReadinessState({
+      profile,
+      ownership,
+      published,
+      relayConnected,
+      runtimeReachable: availability.reachable,
+      heartbeat,
+      paymentReady: hasReadyPaymentProfile(profile),
+      lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId)
+    });
     const protocolOwnerFeePolicy = buildProtocolOwnerFeePolicyFromEnv();
     const adminAccess = this.buildAdminAccessState(
       state,
@@ -5889,6 +5977,7 @@ export class ClawzControlPlane {
       paymentProfileReady,
       payoutAddressConfigured,
       paidJobsEnabled,
+      readiness,
       protocolOwnerFeePolicy,
       adminAccess,
       ingressAccess,
@@ -5933,8 +6022,12 @@ export class ClawzControlPlane {
     const events = await this.loadEvents();
     const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
     const profile = this.profileForSession(state, sessionId, trustModeId);
-    const [heartbeatFile, reachability] = await Promise.all([
+    const [heartbeatFile, hireRequestFile, deployment, liveFlow, socialAnchorQueueFile, reachability] = await Promise.all([
       this.loadRuntimeHeartbeatFile(),
+      this.loadHireRequestFile(),
+      this.getDeploymentState(),
+      this.getLiveFlowState(),
+      this.loadSocialAnchorQueueFile(),
       this.checkPublicClawzAgentReachability({
         state,
         sessionId,
@@ -5952,10 +6045,28 @@ export class ClawzControlPlane {
     const relayAgentId = this.agentIdForSession(state, sessionId, trustModeId);
     const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(relayAgentId) ?? false);
     const runtimeStatus: AgentRuntimeStatus = relayConnected ? "live" : reachability.reachable ? heartbeat.status : "offline";
+    const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
+    const published = isSessionPublishedOnZeko({
+      liveFlowTargets,
+      socialAnchorQueueFile,
+      sessionId
+    });
+    const ownership = this.ownershipForSession(state, sessionId);
+    const readiness = buildAgentReadinessState({
+      profile,
+      ownership,
+      published,
+      relayConnected,
+      runtimeReachable: reachability.reachable,
+      heartbeat,
+      paymentReady: hasReadyPaymentProfile(profile),
+      lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId)
+    });
     return {
       ...reachability,
       runtimeStatus,
-      heartbeat
+      heartbeat,
+      readiness
     };
   }
 
@@ -6029,11 +6140,12 @@ export class ClawzControlPlane {
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
-    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile] = await Promise.all([
+    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile] = await Promise.all([
       this.getLiveFlowState(),
       this.getDeploymentState(),
       this.loadSocialAnchorQueueFile(),
-      this.loadRuntimeHeartbeatFile()
+      this.loadRuntimeHeartbeatFile(),
+      this.loadHireRequestFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const materializer = new ReplayMaterializer(events);
@@ -6078,6 +6190,17 @@ export class ClawzControlPlane {
           : relayProfile
             ? "SantaClawz relay is waiting for this agent to connect."
             : runtimeHeartbeat.reason;
+        const paymentReady = hasReadyPaymentProfile(profile);
+        const readiness = buildAgentReadinessState({
+          profile,
+          ownership,
+          published,
+          relayConnected,
+          runtimeReachable: relayProfile ? relayConnected : runtimeHeartbeat.status === "live",
+          heartbeat: runtimeHeartbeat,
+          paymentReady,
+          lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId)
+        });
         return {
           agentId,
           sessionId,
@@ -6128,6 +6251,7 @@ export class ClawzControlPlane {
           runtimeStatusUpdatedAtIso: runtimeHeartbeat.checkedAtIso,
           ...(runtimeHeartbeat.lastHeartbeatAtIso ? { lastHeartbeatAtIso: runtimeHeartbeat.lastHeartbeatAtIso } : {}),
           ...(runtimeStatusReason ? { runtimeStatusReason } : {}),
+          readiness,
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "confirmed").length,
@@ -6849,6 +6973,15 @@ export class ClawzControlPlane {
       requestType,
       paymentStatus: paymentAuthorization.status
     });
+    if (
+      requestType === "paid_execution" &&
+      ingressProtocolReturn?.status === "completed" &&
+      ingressProtocolReturn.execution?.completionClassification !== "agent_completed_verified"
+    ) {
+      throw new Error(
+        "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
+      );
+    }
     const settledAmountUsd = requestType === "paid_execution" ? paymentAuthorization.amountUsd : undefined;
     const hireStatus: HireRequestReceipt["status"] = ingressProtocolReturn?.status ?? "submitted";
     const nextRecord: HireRequestRecord = {

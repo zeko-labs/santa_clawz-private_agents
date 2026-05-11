@@ -579,6 +579,7 @@ export interface AgentRegistryEntry {
   runtimeStatusUpdatedAtIso?: string;
   lastHeartbeatAtIso?: string;
   runtimeStatusReason?: string;
+  readiness?: AgentReadinessState;
   published: boolean;
   pendingSocialAnchorCount: number;
   anchoredSocialFactCount: number;
@@ -743,8 +744,21 @@ export interface AgentRuntimeAvailabilityState {
   status: "online" | "offline" | "not-configured" | "check-disabled";
   runtimeStatus: AgentRuntimeStatus;
   heartbeat: AgentRuntimeHeartbeatState;
+  readiness?: AgentReadinessState;
   httpStatus?: number;
   reason?: string;
+}
+
+export interface AgentReadinessState {
+  relayConnected: boolean;
+  heartbeatLive: boolean;
+  runtimeReachable: boolean;
+  workerReachable: boolean;
+  paymentReady: boolean;
+  published: boolean;
+  hireable: boolean;
+  lastJobStatus?: "none" | "submitted" | "quoted" | "completed" | "failed";
+  blockers: string[];
 }
 
 export interface AdminAccessState {
@@ -770,6 +784,7 @@ export interface ConsoleStateResponse {
   paymentProfileReady: boolean;
   payoutAddressConfigured: boolean;
   paidJobsEnabled: boolean;
+  readiness?: AgentReadinessState;
   protocolOwnerFeePolicy: ProtocolOwnerFeePolicy;
   adminAccess: AdminAccessState;
   ingressAccess?: IngressAccessState;

@@ -1820,6 +1820,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(paidReady.status, 200);
     assert.equal(paidReady.payload.paidJobsEnabled, true);
+    assert.equal(paidReady.payload.readiness.paymentReady, true);
+    assert.equal(typeof paidReady.payload.readiness.hireable, "boolean");
 
     const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -1850,6 +1852,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(quoteReady.status, 200);
     assert.equal(quoteReady.payload.paymentProfileReady, true);
     assert.equal(quoteReady.payload.paidJobsEnabled, false);
+    assert.equal(quoteReady.payload.readiness.paymentReady, true);
+    assert.equal(Array.isArray(quoteReady.payload.readiness.blockers), true);
 
     const accepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -2237,12 +2241,15 @@ async function testStaleRelayDoesNotStayLive() {
     assert.equal(staleAvailability.status, 200);
     assert.equal(staleAvailability.payload.reachable, false);
     assert.equal(staleAvailability.payload.runtimeStatus, "offline");
+    assert.equal(staleAvailability.payload.readiness.relayConnected, false);
+    assert.equal(staleAvailability.payload.readiness.hireable, false);
     assert.match(staleAvailability.payload.reason, /waiting/i);
 
     const staleRegistry = await requestJson(`${baseUrl}/api/agents`);
     assert.equal(staleRegistry.status, 200);
     const staleAgent = staleRegistry.payload.find((agent) => agent.agentId === agentId);
     assert.equal(staleAgent?.runtimeStatus, "offline");
+    assert.equal(staleAgent?.readiness?.relayConnected, false);
     assert.match(staleAgent?.runtimeStatusReason ?? "", /waiting/i);
 
     console.log("ok - stale relay sockets do not keep sleeping agents marked live");
@@ -2299,10 +2306,12 @@ async function testMissionAuthVerificationPersists() {
     assert.equal(availability.status, 200);
     assert.equal(availability.payload.runtimeStatus, "live");
     assert.equal(availability.payload.heartbeat.status, "live");
+    assert.equal(availability.payload.readiness.heartbeatLive, true);
 
     const registry = await requestJson(`${baseUrl}/api/agents`);
     assert.equal(registry.status, 200);
     assert.equal(registry.payload.find((agent) => agent.agentId === agentId)?.runtimeStatus, "live");
+    assert.equal(registry.payload.find((agent) => agent.agentId === agentId)?.readiness?.heartbeatLive, true);
 
     const authorityBaseUrl = `http://127.0.0.1:${authorityPort}`;
     const checked = await requestJson(`${baseUrl}/api/mission-auth/check`, {

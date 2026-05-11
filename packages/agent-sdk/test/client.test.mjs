@@ -126,6 +126,7 @@ async function main() {
     const {
       createClawzAgentClient,
       buildClawzFeeStackPreview,
+      buildClawzFeeSplitExactPaymentPayload,
       buildClawzQuoteAcceptanceWalletProof,
       validateClawzFeeCompatibility
     } = await import(
@@ -260,6 +261,56 @@ async function main() {
     assert.equal(quoteProof.scheme, "eip191-personal-sign");
     assert.match(quoteProof.message, /SantaClawz quote acceptance/);
     assert.match(quoteProof.signature, /^signed:SantaClawz quote acceptance/);
+
+    const feeSplitPayload = await buildClawzFeeSplitExactPaymentPayload({
+      paymentRequirement: {
+        requestId: "hire_fee_split_sdk",
+        seller: {
+          serviceId: "svc_fee_split_sdk"
+        },
+        accepts: [
+          {
+            scheme: "exact",
+            settlementRail: "evm",
+            network: "eip155:8453",
+            asset: {
+              symbol: "USDC",
+              decimals: 6,
+              standard: "erc20",
+              address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            },
+            amount: "420000",
+            payTo: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9",
+            settlementModel: "x402-exact-evm-fee-split-v1",
+            extensions: {
+              evm: {
+                chainId: 8453,
+                assetAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                eip712Name: "USD Coin",
+                assetVersion: "2",
+                feeSplit: {
+                  sellerPayTo: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9",
+                  protocolFeePayTo: "0x1111111111111111111111111111111111111111",
+                  sellerAmount: "419580",
+                  protocolFeeAmount: "420"
+                }
+              }
+            }
+          }
+        ]
+      },
+      sessionId: "session_fee_split_sdk",
+      payer: "0xb4ad7F6B6e6B964C9D1c4bB8b7F2e38732E0b386",
+      issuedAtIso: "2026-05-11T12:00:00.000Z",
+      expiresAtIso: "2026-05-11T12:15:00.000Z",
+      signTypedData: ({ message }) => `0xsigned_${message.to}_${message.value}`
+    });
+    assert.equal(feeSplitPayload.sessionId, "session_fee_split_sdk");
+    assert.equal(feeSplitPayload.extensions.santaclawz.idempotencyKey, feeSplitPayload.paymentId);
+    assert.equal(feeSplitPayload.authorization.typedData.message.value, "419580");
+    assert.equal(feeSplitPayload.feeAuthorization.typedData.message.value, "420");
+    assert.match(feeSplitPayload.paymentContextDigest, /^[a-f0-9]{64}$/);
+    assert.match(feeSplitPayload.authorizationDigest, /^[a-f0-9]{64}$/);
 
     console.log("ok - agent sdk discovers, verifies, and speaks MCP against a live SantaClawz runtime");
   } finally {

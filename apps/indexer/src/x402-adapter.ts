@@ -1590,6 +1590,69 @@ function resultError(result: JsonRecord | undefined): string | undefined {
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function facilitatorSettleMaxAttempts() {
+  const raw = Number(process.env.CLAWZ_X402_FACILITATOR_SETTLE_ATTEMPTS ?? "2");
+  return Number.isFinite(raw) ? Math.max(1, Math.min(Math.round(raw), 5)) : 2;
+}
+
+function facilitatorSettleRetryDelayMs() {
+  const raw = Number(process.env.CLAWZ_X402_FACILITATOR_SETTLE_RETRY_DELAY_MS ?? "1500");
+  return Number.isFinite(raw) ? Math.max(0, Math.min(Math.round(raw), 10_000)) : 1500;
+}
+
+function isRetryableFacilitatorSettlementError(error: unknown) {
+  const text = error instanceof Error ? error.message : JSON.stringify(error);
+  return /replacement transaction underpriced|nonce too low|nonce expired|already known|transaction underpriced|temporarily unavailable|timeout|rate limit|429|502|503|504/i.test(
+    text
+  );
+}
+
+function facilitatorSettlementErrorMessage(error: unknown, attempt: number, maxAttempts: number) {
+  const message = error instanceof Error ? error.message : String(error);
+  const retryable = isRetryableFacilitatorSettlementError(error);
+  if (!retryable) {
+    return message;
+  }
+  return [
+    message,
+    `Facilitator settlement attempt ${attempt}/${maxAttempts} hit a retryable nonce/gas or transient error.`,
+    "If this persists, retry the same x402 payment payload; the paymentId/idempotency extension should let the facilitator deduplicate settlement."
+  ].join(" ");
+}
+
+async function settleWithFacilitatorRetry(input: {
+  facilitator: FacilitatorClient;
+  paymentPayload: JsonRecord;
+  paymentRequirements: JsonRecord;
+}) {
+  const maxAttempts = facilitatorSettleMaxAttempts();
+  const delayMs = facilitatorSettleRetryDelayMs();
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return (await input.facilitator.settle({
+        paymentPayload: input.paymentPayload,
+        paymentRequirements: input.paymentRequirements
+      })) as JsonRecord;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableFacilitatorSettlementError(error)) {
+        break;
+      }
+      if (delayMs > 0) {
+        await sleep(delayMs * attempt);
+      }
+    }
+  }
+
+  throw new Error(facilitatorSettlementErrorMessage(lastError, maxAttempts, maxAttempts));
+}
+
 function ledgerKeyFor(rail: AgentX402RailPlan): string {
   return `${rail.networkId}:${rail.assetSymbol}:${rail.assetAddress ?? rail.assetStandard}`;
 }
@@ -1740,13 +1803,19 @@ export async function settleAgentX402Payment(input: {
     throw new Error(`No live facilitator is configured for ${verification.rail.rail}.`);
   }
 
-  const remoteSettlement = (await facilitator.settle({
+  const remoteSettlement = await settleWithFacilitatorRetry({
+    facilitator,
     paymentPayload: input.paymentPayload,
     paymentRequirements: input.runtime.paymentRequired
-  })) as JsonRecord;
+  });
 
   if (remoteSettlement.success === false || remoteSettlement.ok === false) {
-    throw new Error(resultError(remoteSettlement) ?? "Facilitator failed to settle the x402 payment.");
+    const message = resultError(remoteSettlement) ?? "Facilitator failed to settle the x402 payment.";
+    throw new Error(
+      isRetryableFacilitatorSettlementError(message)
+        ? `${message} Retry the same payment payload so the facilitator can deduplicate by paymentId/idempotency metadata.`
+        : message
+    );
   }
 
   const remoteVerification = isRecord(remoteSettlement.verification)
