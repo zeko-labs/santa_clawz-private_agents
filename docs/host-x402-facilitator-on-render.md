@@ -16,12 +16,12 @@ If you self-host, SantaClawz does **not** sponsor payment gas for you. Your faci
 
 Repo:
 
-- `https://github.com/zeko-labs/x402-zeko`
+- `https://github.com/Evan-k-global/x402-zeko`
 
 Docs worth keeping open:
 
-- `https://github.com/zeko-labs/x402-zeko/blob/main/docs/evm-hosted-facilitators.md`
-- `https://github.com/zeko-labs/x402-zeko/blob/main/docs/publishing.md`
+- `https://github.com/Evan-k-global/x402-zeko/blob/main/docs/evm-hosted-facilitators.md`
+- `https://github.com/Evan-k-global/x402-zeko/blob/main/docs/publishing.md`
 
 The default Render service runs:
 
@@ -47,7 +47,7 @@ Do **not** use the same wallet for both in production.
 
 ## Render setup
 
-Create a new Render **Web Service** from `zeko-labs/x402-zeko`.
+Create a new Render **Web Service** from `Evan-k-global/x402-zeko`.
 
 Use:
 

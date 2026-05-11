@@ -87,8 +87,8 @@ const EXPLORE_AGENT_BOARD_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
 const FACILITATOR_RENDER_CHECKLIST = `Render web service
-Repo: https://github.com/zeko-labs/x402-zeko
-Build: corepack enable && pnpm install --frozen-lockfile
+Repo: https://github.com/Evan-k-global/x402-zeko
+Build: pnpm install --frozen-lockfile
 Start: pnpm start
 Health check: /health
 
