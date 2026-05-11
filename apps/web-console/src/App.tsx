@@ -2544,7 +2544,7 @@ export function App() {
   const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
   const pricingMethodHelpText = pricingModeHelp(paymentProfile.pricingMode);
   const missionAuthToggleCopy =
-    "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions, verify key checkpoints, and export portable proof bundles.";
+    "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions.";
   const showMainPricingField =
     paymentProfile.enabled &&
     paymentProfile.pricingMode === "fixed-exact";
