@@ -359,6 +359,11 @@ export type SocialAnchorCandidateKind =
   | "paid-execution-completed"
   | "free-test-completed"
   | "hire-request-failed"
+  | "execution-intent-created"
+  | "execution-intent-approved"
+  | "execution-intent-executed"
+  | "execution-intent-settled"
+  | "execution-intent-refunded"
   | "agent-message-posted"
   | "operator-dispatch";
 
@@ -644,6 +649,71 @@ export interface HireRequestReceipt {
     settlementReference?: string;
   };
   paidJobsEnabled: boolean;
+}
+
+export type ExecutionIntentStatus = "pending" | "approved" | "executed" | "settled" | "refunded";
+export type ExecutionIntentSettlementModel = "upfront-x402" | "reserve-release-escrow";
+export type ExecutionIntentTransitionType = "created" | "approved" | "executed" | "settled" | "refunded";
+
+export interface ExecutionIntentLifecycleEntry {
+  transitionId: string;
+  transitionType: ExecutionIntentTransitionType;
+  fromStatus?: ExecutionIntentStatus;
+  toStatus: ExecutionIntentStatus;
+  occurredAtIso: string;
+  transitionDigestSha256: string;
+  previousTransitionDigestSha256?: string;
+  reference?: string;
+  evidenceDigestSha256?: string;
+  note?: string;
+  anchorCandidateId?: string;
+}
+
+export interface ExecutionIntentRecord {
+  schemaVersion: "santaclawz-execution-intent/1.0";
+  intentId: string;
+  requestId?: string;
+  agentId: string;
+  sessionId: string;
+  networkId: string;
+  rail: AgentPaymentRail;
+  settlementModel: ExecutionIntentSettlementModel;
+  status: ExecutionIntentStatus;
+  pricingMode: AgentPricingMode;
+  paymentStatus: "settled" | "paid" | "escrowed";
+  grossAmountUsd: string;
+  sellerNetAmountUsd?: string;
+  protocolFeeAmountUsd?: string;
+  protocolFeeRecipient?: string;
+  buyerWallet?: string;
+  sellerWallet?: string;
+  escrowContract?: string;
+  paymentAuthorizationDigestSha256?: string;
+  executionDigestSha256?: string;
+  settlementDigestSha256?: string;
+  refundDigestSha256?: string;
+  stableIntentDigestSha256: string;
+  latestTransitionDigestSha256: string;
+  lifecycle: ExecutionIntentLifecycleEntry[];
+  createdAtIso: string;
+  updatedAtIso: string;
+  approvedAtIso?: string;
+  executedAtIso?: string;
+  settledAtIso?: string;
+  refundedAtIso?: string;
+  anchorCandidateIds: string[];
+}
+
+export interface ExecutionIntentState {
+  schemaVersion: "santaclawz-execution-intents/1.0";
+  generatedAtIso: string;
+  totalIntentCount: number;
+  pendingCount: number;
+  approvedCount: number;
+  executedCount: number;
+  settledCount: number;
+  refundedCount: number;
+  intents: ExecutionIntentRecord[];
 }
 
 export type AgentRuntimeStatus = "live" | "waiting" | "offline";

@@ -230,6 +230,21 @@ function isFreeTestPricing(mode: AgentPricingMode): boolean {
   return mode === "free-test";
 }
 
+function envFlagEnabled(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function reserveReleaseEscrowEnabled(rail: Extract<AgentPaymentRail, "base-usdc" | "ethereum-usdc">): boolean {
+  if (rail === "base-usdc" && envFlagEnabled("CLAWZ_X402_BASE_RESERVE_RELEASE_ESCROW_ENABLED")) {
+    return true;
+  }
+  if (rail === "ethereum-usdc" && envFlagEnabled("CLAWZ_X402_ETHEREUM_RESERVE_RELEASE_ESCROW_ENABLED")) {
+    return true;
+  }
+  return envFlagEnabled("CLAWZ_X402_RESERVE_RELEASE_ESCROW_ENABLED");
+}
+
 function parseUsdAtomic(value: string | undefined): bigint | null {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -694,6 +709,9 @@ function buildBaseRailPlan(
   if (settleOnProof && !escrowContract) {
     missing.push("Provision a Base seller escrow or set CLAWZ_X402_BASE_ESCROW_CONTRACT for the shared reserve-release path.");
   }
+  if (settleOnProof && !reserveReleaseEscrowEnabled("base-usdc")) {
+    missing.push("Base reserve-release escrow is backend-only until CLAWZ_X402_BASE_RESERVE_RELEASE_ESCROW_ENABLED=true.");
+  }
 
   if (operatorFacilitatorUrl && !settleOnProof) {
     notes.push("Base exact-price flows use the operator-hosted x402 facilitator for this agent.");
@@ -822,6 +840,9 @@ function buildEthereumRailPlan(
     missing.push(
       "Provision an Ethereum seller escrow or set CLAWZ_X402_ETHEREUM_ESCROW_CONTRACT for the shared reserve-release path."
     );
+  }
+  if (settleOnProof && !reserveReleaseEscrowEnabled("ethereum-usdc")) {
+    missing.push("Ethereum reserve-release escrow is backend-only until CLAWZ_X402_ETHEREUM_RESERVE_RELEASE_ESCROW_ENABLED=true.");
   }
 
   if (operatorFacilitatorUrl) {

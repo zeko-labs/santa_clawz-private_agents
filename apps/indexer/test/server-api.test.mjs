@@ -1344,6 +1344,167 @@ async function testProofBackedAgentMessageBoard() {
   }
 }
 
+async function testExecutionIntentLifecycleAnchors() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-execution-intent-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Execution Intent Agent",
+        headline: "Records proof-gated execution lifecycle facts.",
+        openClawUrl: "https://execution-intent-agent.test/hire",
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "fixed-exact",
+          fixedAmountUsd: "2.00",
+          settlementTrigger: "on-proof"
+        }
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+    const buyerWallet = "0xb4ad7F6B6e6B964C9D1c4bB8b7F2e38732E0b386";
+    const escrowContract = "0x1111111111111111111111111111111111111111";
+
+    const created = await requestJson(`${baseUrl}/api/execution/intents`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentId,
+        rail: "base-usdc",
+        settlementModel: "reserve-release-escrow",
+        grossAmountUsd: "2.00",
+        sellerNetAmountUsd: "1.98",
+        protocolFeeAmountUsd: "0.02",
+        buyerWallet,
+        escrowContract,
+        paymentAuthorizationDigestSha256: "a".repeat(64),
+        note: "Backend-only escrow lifecycle smoke."
+      })
+    });
+    assert.equal(created.status, 200);
+    assert.equal(created.payload.status, "pending");
+    assert.equal(created.payload.settlementModel, "reserve-release-escrow");
+    assert.match(created.payload.stableIntentDigestSha256, /^[a-f0-9]{64}$/);
+    assert.match(created.payload.latestTransitionDigestSha256, /^[a-f0-9]{64}$/);
+    assert.equal(created.payload.lifecycle[0].transitionType, "created");
+    assert.equal(created.payload.lifecycle[0].toStatus, "pending");
+    assert.match(created.payload.lifecycle[0].anchorCandidateId, /^anchor_/);
+
+    const approved = await requestJson(`${baseUrl}/api/execution/intents/${created.payload.intentId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({
+        reference: "x402-reserve:authorization",
+        paymentAuthorizationDigestSha256: "b".repeat(64)
+      })
+    });
+    assert.equal(approved.status, 200);
+    assert.equal(approved.payload.status, "approved");
+    assert.equal(approved.payload.lifecycle.at(-1).transitionType, "approved");
+    assert.equal(approved.payload.lifecycle.at(-1).fromStatus, "pending");
+
+    const executed = await requestJson(`${baseUrl}/api/execution/intents/${created.payload.intentId}/execute`, {
+      method: "POST",
+      body: JSON.stringify({
+        reference: "verified-output:package",
+        executionDigestSha256: "c".repeat(64)
+      })
+    });
+    assert.equal(executed.status, 200);
+    assert.equal(executed.payload.status, "executed");
+    assert.equal(executed.payload.executionDigestSha256, "c".repeat(64));
+
+    const settled = await requestJson(`${baseUrl}/api/execution/intents/${created.payload.intentId}/settle`, {
+      method: "POST",
+      body: JSON.stringify({
+        reference: "base:0xsettled",
+        settlementDigestSha256: "d".repeat(64)
+      })
+    });
+    assert.equal(settled.status, 200);
+    assert.equal(settled.payload.status, "settled");
+    assert.equal(settled.payload.lifecycle.at(-1).transitionType, "settled");
+    assert.equal(settled.payload.anchorCandidateIds.length, 4);
+
+    const terminalRefund = await requestJson(`${baseUrl}/api/execution/intents/${created.payload.intentId}/refund`, {
+      method: "POST",
+      body: JSON.stringify({
+        refundDigestSha256: "e".repeat(64)
+      })
+    });
+    assert.equal(terminalRefund.status, 400);
+    assert.match(terminalRefund.payload.error, /terminal/);
+
+    const refundCreated = await requestJson(`${baseUrl}/api/execution/intents`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentId,
+        rail: "base-usdc",
+        settlementModel: "reserve-release-escrow",
+        grossAmountUsd: "1.00",
+        buyerWallet,
+        escrowContract,
+        paymentAuthorizationDigestSha256: "1".repeat(64)
+      })
+    });
+    assert.equal(refundCreated.status, 200);
+    const refundApproved = await requestJson(`${baseUrl}/api/execution/intents/${refundCreated.payload.intentId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({
+        paymentAuthorizationDigestSha256: "2".repeat(64)
+      })
+    });
+    assert.equal(refundApproved.status, 200);
+    const refunded = await requestJson(`${baseUrl}/api/execution/intents/${refundCreated.payload.intentId}/refund`, {
+      method: "POST",
+      body: JSON.stringify({
+        reference: "base:0xrefunded",
+        refundDigestSha256: "3".repeat(64)
+      })
+    });
+    assert.equal(refunded.status, 200);
+    assert.equal(refunded.payload.status, "refunded");
+
+    const listed = await requestJson(`${baseUrl}/api/execution/intents?agentId=${encodeURIComponent(agentId)}`);
+    assert.equal(listed.status, 200);
+    assert.equal(listed.payload.schemaVersion, "santaclawz-execution-intents/1.0");
+    assert.equal(listed.payload.totalIntentCount, 2);
+    assert.equal(listed.payload.settledCount, 1);
+    assert.equal(listed.payload.refundedCount, 1);
+
+    const anchorQueue = await requestJson(`${baseUrl}/api/social/anchors?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "GET",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      }
+    });
+    assert.equal(anchorQueue.status, 200);
+    const kinds = new Set(anchorQueue.payload.items.map((item) => item.kind));
+    assert.equal(kinds.has("execution-intent-created"), true);
+    assert.equal(kinds.has("execution-intent-approved"), true);
+    assert.equal(kinds.has("execution-intent-executed"), true);
+    assert.equal(kinds.has("execution-intent-settled"), true);
+    assert.equal(kinds.has("execution-intent-refunded"), true);
+
+    console.log("ok - execution intent lifecycle records stable hashes and queues Zeko anchors");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testHireRouteRequiresSafeIngressAndPaymentState() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-hire-gating-test-"));
   const port = await reservePort();
@@ -2017,7 +2178,9 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD: "0.002",
     CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
     CLAWZ_PROTOCOL_OWNER_FEE_BPS: "100",
-    CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2"
+    CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
+    CLAWZ_X402_RESERVE_RELEASE_ESCROW_ENABLED: "false",
+    CLAWZ_X402_BASE_RESERVE_RELEASE_ESCROW_ENABLED: "false"
   });
 
   try {
@@ -2101,6 +2264,30 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     assert.equal(atFloorPlan.payload.feePreviewByRail[0].protocolFeeAmountUsd, "0.002");
     assert.equal(atFloorPlan.payload.feePreviewByRail[0].sellerNetAmountUsd, "0.198");
 
+    const escrowDarkLaunch = await requestJson(`${baseUrl}/api/console/profile?sessionId=session_demo_enterprise`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...profileBody,
+        paymentProfile: {
+          ...profileBody.paymentProfile,
+          fixedAmountUsd: "2.00",
+          settlementTrigger: "on-proof",
+          baseEscrowContract: "0x1111111111111111111111111111111111111111"
+        }
+      })
+    });
+    assert.equal(escrowDarkLaunch.status, 200);
+
+    const escrowDarkLaunchPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
+    assert.equal(escrowDarkLaunchPlan.status, 200);
+    assert.equal(escrowDarkLaunchPlan.payload.rails[0].executionMode, "reserve-release");
+    assert.equal(escrowDarkLaunchPlan.payload.rails[0].settlementModel, "x402-base-usdc-reserve-release-v4");
+    assert.equal(escrowDarkLaunchPlan.payload.rails[0].ready, false);
+    assert.match(
+      escrowDarkLaunchPlan.payload.rails[0].missing.join("\n"),
+      /CLAWZ_X402_BASE_RESERVE_RELEASE_ESCROW_ENABLED/
+    );
+
     console.log("ok - hosted Base payments deduct the higher of percentage fee or minimum network facilitation fee");
   } finally {
     await stopProcess(server.child);
@@ -2117,6 +2304,7 @@ async function main() {
   await testOperatorCanDeleteLostKeyRegistration();
   await testZekoSocialAnchorHealthAndMembershipState();
   await testProofBackedAgentMessageBoard();
+  await testExecutionIntentLifecycleAnchors();
   await testHireRouteRequiresSafeIngressAndPaymentState();
   await testMainnetFreeTestDisabledByDefault();
   await testStaleRelayDoesNotStayLive();

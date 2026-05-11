@@ -17,10 +17,17 @@ import {
   assertValidSantaClawzHirePolicy,
   canonicalDigest,
   paymentStatusForHireRequest,
+  type AgentPaymentRail,
   type AgentRuntimeHeartbeatState,
   type AgentRuntimeStatus,
   type AgentRuntimeAvailabilityState,
   type AgentRegistryEntry,
+  type ExecutionIntentLifecycleEntry,
+  type ExecutionIntentRecord,
+  type ExecutionIntentSettlementModel,
+  type ExecutionIntentState,
+  type ExecutionIntentStatus,
+  type ExecutionIntentTransitionType,
   type AgentOwnershipChallengeState,
   type AgentOwnershipState,
   type AgentOwnershipVerificationState,
@@ -80,6 +87,7 @@ const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 const AGENT_BOARD_MESSAGE_MAX_LENGTH = 1200;
 const AGENT_BOARD_TOPIC_MAX_COUNT = 5;
 const AGENT_BOARD_TOPIC_MAX_LENGTH = 40;
+const EXECUTION_INTENT_SCHEMA_VERSION = "santaclawz-execution-intent/1.0";
 const FREE_TEST_HIRE_WINDOW_MS = 10 * 60 * 1000;
 const FREE_TEST_HIRE_LIMIT_PER_AGENT =
   Number.parseInt(process.env.CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M ?? "", 10) || 10;
@@ -639,6 +647,42 @@ interface HireRequestRecord {
 
 interface HireRequestFile {
   requests: HireRequestRecord[];
+}
+
+interface ExecutionIntentFile {
+  intents: ExecutionIntentRecord[];
+}
+
+export interface CreateExecutionIntentOptions {
+  sessionId?: string;
+  agentId?: string;
+  requestId?: string;
+  rail?: AgentPaymentRail;
+  settlementModel?: ExecutionIntentSettlementModel;
+  paymentStatus?: ExecutionIntentRecord["paymentStatus"];
+  grossAmountUsd: string;
+  sellerNetAmountUsd?: string;
+  protocolFeeAmountUsd?: string;
+  protocolFeeRecipient?: string;
+  buyerWallet?: string;
+  sellerWallet?: string;
+  escrowContract?: string;
+  paymentAuthorizationDigestSha256?: string;
+  note?: string;
+}
+
+export interface ExecutionIntentTransitionOptions {
+  intentId: string;
+  reference?: string;
+  evidenceDigestSha256?: string;
+  note?: string;
+}
+
+interface ExecutionIntentListOptions {
+  sessionId?: string;
+  agentId?: string;
+  status?: ExecutionIntentStatus;
+  limit?: number;
 }
 
 function isLiveFlowKind(value: string): value is LiveFlowKind {
@@ -1203,6 +1247,12 @@ function buildDefaultHireRequestFile(): HireRequestFile {
   };
 }
 
+function buildDefaultExecutionIntentFile(): ExecutionIntentFile {
+  return {
+    intents: []
+  };
+}
+
 function buildDefaultSocialAnchorQueueFile(): SocialAnchorQueueFile {
   return {
     items: [],
@@ -1257,6 +1307,16 @@ function socialAnchorStatusCounts(items: SocialAnchorCandidate[]) {
   };
 }
 
+function executionIntentStatusCounts(intents: ExecutionIntentRecord[]) {
+  return {
+    pendingCount: intents.filter((intent) => intent.status === "pending").length,
+    approvedCount: intents.filter((intent) => intent.status === "approved").length,
+    executedCount: intents.filter((intent) => intent.status === "executed").length,
+    settledCount: intents.filter((intent) => intent.status === "settled").length,
+    refundedCount: intents.filter((intent) => intent.status === "refunded").length
+  };
+}
+
 function hasActiveSocialAnchorBatch(queue: SocialAnchorQueueFile): boolean {
   return queue.batches.some((batch) => batch.status === "submitted" || batch.status === "retrying");
 }
@@ -1299,6 +1359,16 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Free test completed";
     case "hire-request-failed":
       return "Hire request failed";
+    case "execution-intent-created":
+      return "Execution intent created";
+    case "execution-intent-approved":
+      return "Execution intent approved";
+    case "execution-intent-executed":
+      return "Execution intent executed";
+    case "execution-intent-settled":
+      return "Execution intent settled";
+    case "execution-intent-refunded":
+      return "Execution intent refunded";
     case "agent-message-posted":
       return "Public agent message posted";
     case "operator-dispatch":
@@ -1756,6 +1826,7 @@ export class ClawzControlPlane {
   private readonly liveFlowStatusPath: string;
   private readonly sponsorQueuePath: string;
   private readonly hireRequestPath: string;
+  private readonly executionIntentPath: string;
   private readonly socialAnchorQueuePath: string;
   private readonly agentBoardPath: string;
   private readonly runtimeHeartbeatPath: string;
@@ -1789,6 +1860,7 @@ export class ClawzControlPlane {
     this.liveFlowStatusPath = path.join(baseDir, "state", "live-session-turn-flow.json");
     this.sponsorQueuePath = path.join(baseDir, "state", "wallet-sponsor-queue.json");
     this.hireRequestPath = path.join(baseDir, "state", "hire-requests.json");
+    this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
     this.agentBoardPath = path.join(baseDir, "state", "agent-message-board.json");
     this.runtimeHeartbeatPath = path.join(baseDir, "state", "agent-runtime-heartbeats.json");
@@ -1976,6 +2048,25 @@ export class ClawzControlPlane {
   private async saveHireRequestFile(file: HireRequestFile) {
     await this.ensureDirs();
     await writeJsonFile(this.hireRequestPath, file);
+  }
+
+  private async loadExecutionIntentFile(): Promise<ExecutionIntentFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<ExecutionIntentFile>(this.executionIntentPath);
+    if (file?.intents) {
+      return {
+        intents: file.intents.filter((intent) => intent.intentId && intent.agentId && intent.sessionId)
+      };
+    }
+
+    const fallback = buildDefaultExecutionIntentFile();
+    await this.saveExecutionIntentFile(fallback);
+    return fallback;
+  }
+
+  private async saveExecutionIntentFile(file: ExecutionIntentFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.executionIntentPath, file);
   }
 
   private async loadSocialAnchorQueueFile(): Promise<SocialAnchorQueueFile> {
@@ -3517,6 +3608,7 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     await this.loadSponsorQueueFile();
     await this.loadHireRequestFile();
+    await this.loadExecutionIntentFile();
     await this.loadAgentBoardFile();
     await this.loadRuntimeHeartbeatFile();
 
@@ -6746,6 +6838,437 @@ export class ClawzControlPlane {
       },
       paidJobsEnabled
     };
+  }
+
+  private settlementModelForProfile(profile: AgentProfileState): ExecutionIntentSettlementModel {
+    return profile.paymentProfile.settlementTrigger === "on-proof" ? "reserve-release-escrow" : "upfront-x402";
+  }
+
+  private escrowContractForRail(profile: AgentProfileState, rail: AgentPaymentRail): string | undefined {
+    if (rail === "base-usdc") {
+      return profile.paymentProfile.baseEscrowContract?.trim() || process.env.CLAWZ_X402_BASE_ESCROW_CONTRACT?.trim();
+    }
+    if (rail === "ethereum-usdc") {
+      return profile.paymentProfile.ethereumEscrowContract?.trim() || process.env.CLAWZ_X402_ETHEREUM_ESCROW_CONTRACT?.trim();
+    }
+    return undefined;
+  }
+
+  private protocolFeeRecipientForRail(rail: AgentPaymentRail): string | undefined {
+    return buildProtocolOwnerFeePolicyFromEnv().recipientByRail[rail]?.trim();
+  }
+
+  private buildExecutionIntentStableDigest(input: {
+    intentId: string;
+    requestId?: string;
+    agentId: string;
+    sessionId: string;
+    networkId: string;
+    rail: AgentPaymentRail;
+    settlementModel: ExecutionIntentSettlementModel;
+    pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
+    paymentStatus: ExecutionIntentRecord["paymentStatus"];
+    grossAmountUsd: string;
+    sellerNetAmountUsd?: string;
+    protocolFeeAmountUsd?: string;
+    protocolFeeRecipient?: string;
+    buyerWallet?: string;
+    sellerWallet?: string;
+    escrowContract?: string;
+    paymentAuthorizationDigestSha256?: string;
+    createdAtIso: string;
+  }) {
+    return canonicalDigest({
+      schemaVersion: EXECUTION_INTENT_SCHEMA_VERSION,
+      intentId: input.intentId,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      networkId: input.networkId,
+      rail: input.rail,
+      settlementModel: input.settlementModel,
+      pricingMode: input.pricingMode,
+      paymentStatus: input.paymentStatus,
+      grossAmountUsd: input.grossAmountUsd,
+      ...(input.sellerNetAmountUsd ? { sellerNetAmountUsd: input.sellerNetAmountUsd } : {}),
+      ...(input.protocolFeeAmountUsd ? { protocolFeeAmountUsd: input.protocolFeeAmountUsd } : {}),
+      ...(input.protocolFeeRecipient ? { protocolFeeRecipient: input.protocolFeeRecipient } : {}),
+      ...(input.buyerWallet ? { buyerWallet: input.buyerWallet } : {}),
+      ...(input.sellerWallet ? { sellerWallet: input.sellerWallet } : {}),
+      ...(input.escrowContract ? { escrowContract: input.escrowContract } : {}),
+      ...(input.paymentAuthorizationDigestSha256
+        ? { paymentAuthorizationDigestSha256: input.paymentAuthorizationDigestSha256 }
+        : {}),
+      createdAtIso: input.createdAtIso
+    }).sha256Hex;
+  }
+
+  private buildExecutionIntentTransition(input: {
+    intentId: string;
+    stableIntentDigestSha256: string;
+    transitionType: ExecutionIntentTransitionType;
+    fromStatus?: ExecutionIntentStatus;
+    toStatus: ExecutionIntentStatus;
+    occurredAtIso: string;
+    previousTransitionDigestSha256?: string;
+    reference?: string;
+    evidenceDigestSha256?: string;
+    note?: string;
+  }): ExecutionIntentLifecycleEntry {
+    const transitionDigestSha256 = canonicalDigest({
+      schemaVersion: "santaclawz-execution-intent-transition/1.0",
+      intentId: input.intentId,
+      stableIntentDigestSha256: input.stableIntentDigestSha256,
+      transitionType: input.transitionType,
+      ...(input.fromStatus ? { fromStatus: input.fromStatus } : {}),
+      toStatus: input.toStatus,
+      occurredAtIso: input.occurredAtIso,
+      ...(input.previousTransitionDigestSha256
+        ? { previousTransitionDigestSha256: input.previousTransitionDigestSha256 }
+        : {}),
+      ...(input.reference ? { reference: input.reference } : {}),
+      ...(input.evidenceDigestSha256 ? { evidenceDigestSha256: input.evidenceDigestSha256 } : {}),
+      ...(input.note ? { note: input.note } : {})
+    }).sha256Hex;
+
+    return {
+      transitionId: `exec_step_${transitionDigestSha256.slice(0, 16)}`,
+      transitionType: input.transitionType,
+      ...(input.fromStatus ? { fromStatus: input.fromStatus } : {}),
+      toStatus: input.toStatus,
+      occurredAtIso: input.occurredAtIso,
+      transitionDigestSha256,
+      ...(input.previousTransitionDigestSha256 ? { previousTransitionDigestSha256: input.previousTransitionDigestSha256 } : {}),
+      ...(input.reference ? { reference: input.reference } : {}),
+      ...(input.evidenceDigestSha256 ? { evidenceDigestSha256: input.evidenceDigestSha256 } : {}),
+      ...(input.note ? { note: input.note } : {})
+    };
+  }
+
+  private executionAnchorKindForTransition(transitionType: ExecutionIntentTransitionType): SocialAnchorCandidateKind {
+    switch (transitionType) {
+      case "created":
+        return "execution-intent-created";
+      case "approved":
+        return "execution-intent-approved";
+      case "executed":
+        return "execution-intent-executed";
+      case "settled":
+        return "execution-intent-settled";
+      case "refunded":
+        return "execution-intent-refunded";
+    }
+  }
+
+  private executionTransitionSummary(intent: ExecutionIntentRecord, transition: ExecutionIntentLifecycleEntry) {
+    const railLabel = intent.rail === "base-usdc" ? "Base USDC" : intent.rail === "ethereum-usdc" ? "Ethereum USDC" : "Zeko";
+    switch (transition.transitionType) {
+      case "created":
+        return `Created a ${intent.settlementModel} execution intent for ${railLabel}.`;
+      case "approved":
+        return `Approved execution intent ${intent.intentId} for proof-gated work.`;
+      case "executed":
+        return `Recorded execution evidence for intent ${intent.intentId}.`;
+      case "settled":
+        return `Settled execution intent ${intent.intentId}.`;
+      case "refunded":
+        return `Refunded execution intent ${intent.intentId}.`;
+    }
+  }
+
+  private async enqueueExecutionIntentTransitionAnchor(
+    intent: ExecutionIntentRecord,
+    transition: ExecutionIntentLifecycleEntry
+  ): Promise<string | undefined> {
+    const anchorCandidate = await this.enqueueSocialAnchorCandidate({
+      sessionId: intent.sessionId,
+      kind: this.executionAnchorKindForTransition(transition.transitionType),
+      summary: this.executionTransitionSummary(intent, transition),
+      occurredAtIso: transition.occurredAtIso,
+      payload: {
+        schemaVersion: "santaclawz-execution-intent-anchor/1.0",
+        intentId: intent.intentId,
+        ...(intent.requestId ? { requestId: intent.requestId } : {}),
+        agentId: intent.agentId,
+        rail: intent.rail,
+        settlementModel: intent.settlementModel,
+        status: transition.toStatus,
+        transitionType: transition.transitionType,
+        stableIntentDigestSha256: intent.stableIntentDigestSha256,
+        transitionDigestSha256: transition.transitionDigestSha256,
+        ...(transition.previousTransitionDigestSha256
+          ? { previousTransitionDigestSha256: transition.previousTransitionDigestSha256 }
+          : {}),
+        grossAmountUsd: intent.grossAmountUsd,
+        ...(intent.sellerNetAmountUsd ? { sellerNetAmountUsd: intent.sellerNetAmountUsd } : {}),
+        ...(intent.protocolFeeAmountUsd ? { protocolFeeAmountUsd: intent.protocolFeeAmountUsd } : {}),
+        ...(intent.protocolFeeRecipient ? { protocolFeeRecipient: intent.protocolFeeRecipient } : {}),
+        ...(intent.escrowContract ? { escrowContract: intent.escrowContract } : {}),
+        ...(transition.reference ? { reference: transition.reference } : {}),
+        ...(transition.evidenceDigestSha256 ? { evidenceDigestSha256: transition.evidenceDigestSha256 } : {})
+      }
+    });
+    return anchorCandidate?.candidateId;
+  }
+
+  private async attachExecutionTransitionAnchor(
+    file: ExecutionIntentFile,
+    intentId: string,
+    transitionId: string,
+    anchorCandidateId: string | undefined
+  ): Promise<ExecutionIntentRecord> {
+    const nextFile: ExecutionIntentFile = {
+      intents: file.intents.map((intent) => {
+        if (intent.intentId !== intentId) {
+          return intent;
+        }
+        const nextLifecycle = intent.lifecycle.map((entry) =>
+          entry.transitionId === transitionId && anchorCandidateId
+            ? {
+                ...entry,
+                anchorCandidateId
+              }
+            : entry
+        );
+        return {
+          ...intent,
+          lifecycle: nextLifecycle,
+          anchorCandidateIds: anchorCandidateId
+            ? Array.from(new Set([...intent.anchorCandidateIds, anchorCandidateId]))
+            : intent.anchorCandidateIds
+        };
+      })
+    };
+    await this.saveExecutionIntentFile(nextFile);
+    const refreshed = nextFile.intents.find((intent) => intent.intentId === intentId);
+    if (!refreshed) {
+      throw new Error(`Unknown execution intent: ${intentId}`);
+    }
+    return refreshed;
+  }
+
+  private assertExecutionIntentTransitionAllowed(
+    intent: ExecutionIntentRecord,
+    transitionType: Exclude<ExecutionIntentTransitionType, "created">
+  ): ExecutionIntentStatus {
+    if (intent.status === "settled" || intent.status === "refunded") {
+      throw new Error(`Execution intent ${intent.intentId} is already terminal: ${intent.status}.`);
+    }
+
+    if (transitionType === "approved" && intent.status === "pending") {
+      return "approved";
+    }
+    if (transitionType === "executed" && intent.status === "approved") {
+      return "executed";
+    }
+    if (transitionType === "settled" && intent.status === "executed") {
+      return "settled";
+    }
+    if (transitionType === "refunded" && (intent.status === "approved" || intent.status === "executed")) {
+      return "refunded";
+    }
+
+    throw new Error(`Cannot mark execution intent ${intent.intentId} as ${transitionType} from ${intent.status}.`);
+  }
+
+  private buildExecutionIntentState(file: ExecutionIntentFile, options: ExecutionIntentListOptions = {}): ExecutionIntentState {
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
+    const visibleIntents = file.intents
+      .filter((intent) => !options.sessionId || intent.sessionId === options.sessionId)
+      .filter((intent) => !options.agentId || intent.agentId === options.agentId)
+      .filter((intent) => !options.status || intent.status === options.status)
+      .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso));
+    return {
+      schemaVersion: "santaclawz-execution-intents/1.0",
+      generatedAtIso: new Date().toISOString(),
+      totalIntentCount: visibleIntents.length,
+      ...executionIntentStatusCounts(visibleIntents),
+      intents: visibleIntents.slice(0, limit)
+    };
+  }
+
+  async listExecutionIntents(options: ExecutionIntentListOptions = {}): Promise<ExecutionIntentState> {
+    return this.buildExecutionIntentState(await this.loadExecutionIntentFile(), options);
+  }
+
+  async createExecutionIntent(options: CreateExecutionIntentOptions): Promise<ExecutionIntentRecord> {
+    const [state, deployment] = await Promise.all([this.loadState(), this.getDeploymentState()]);
+    const sessionId = this.resolveOwnedSessionId(state, options);
+    const agentId = this.agentIdForSession(state, sessionId);
+    const trustModeId = this.resolveSessionTrustMode(await this.loadEvents(), sessionId, state.activeMode);
+    const profile = this.profileForSession(state, sessionId, trustModeId);
+    if (isArchivedProfile(profile)) {
+      throw new Error("Archived agents cannot create execution intents.");
+    }
+
+    const rail = options.rail ?? profile.paymentProfile.defaultRail ?? "base-usdc";
+    if (rail !== "base-usdc" && rail !== "ethereum-usdc" && rail !== "zeko-native") {
+      throw new Error("Execution intent rail is not supported.");
+    }
+    const grossAmountUsd = options.grossAmountUsd.trim();
+    assertUsdAmount(grossAmountUsd, "Execution intent grossAmountUsd");
+    const sellerNetAmountUsd = options.sellerNetAmountUsd?.trim();
+    if (sellerNetAmountUsd) {
+      assertUsdAmount(sellerNetAmountUsd, "Execution intent sellerNetAmountUsd");
+    }
+    const protocolFeeAmountUsd = options.protocolFeeAmountUsd?.trim();
+    if (protocolFeeAmountUsd) {
+      assertUsdAmount(protocolFeeAmountUsd, "Execution intent protocolFeeAmountUsd");
+    }
+    const paymentAuthorizationDigestSha256 = options.paymentAuthorizationDigestSha256?.trim();
+    if (paymentAuthorizationDigestSha256) {
+      assertSha256Hex(paymentAuthorizationDigestSha256, "Execution intent paymentAuthorizationDigestSha256");
+    }
+
+    const settlementModel = options.settlementModel ?? this.settlementModelForProfile(profile);
+    const paymentStatus =
+      options.paymentStatus ??
+      (settlementModel === "reserve-release-escrow" ? "escrowed" : "settled");
+    const sellerWallet = options.sellerWallet?.trim() || payoutWalletForRail(profile, rail);
+    const protocolFeeRecipient = options.protocolFeeRecipient?.trim() || this.protocolFeeRecipientForRail(rail);
+    const escrowContract = options.escrowContract?.trim() || this.escrowContractForRail(profile, rail);
+    if (options.buyerWallet?.trim() && rail !== "zeko-native" && !looksLikeEvmAddress(options.buyerWallet.trim())) {
+      throw new Error("Execution intent buyerWallet must be a valid EVM address for EVM rails.");
+    }
+    if (sellerWallet && rail !== "zeko-native" && !looksLikeEvmAddress(sellerWallet)) {
+      throw new Error("Execution intent sellerWallet must be a valid EVM address for EVM rails.");
+    }
+    if (escrowContract && rail !== "zeko-native" && !looksLikeEvmAddress(escrowContract)) {
+      throw new Error("Execution intent escrowContract must be a valid EVM address for EVM rails.");
+    }
+
+    const file = await this.loadExecutionIntentFile();
+    const createdAtIso = new Date().toISOString();
+    const intentId = `exec_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+    const stableIntentDigestSha256 = this.buildExecutionIntentStableDigest({
+      intentId,
+      ...(options.requestId?.trim() ? { requestId: options.requestId.trim().slice(0, 96) } : {}),
+      agentId,
+      sessionId,
+      networkId: deployment.networkId,
+      rail,
+      settlementModel,
+      pricingMode: profile.paymentProfile.pricingMode,
+      paymentStatus,
+      grossAmountUsd,
+      ...(sellerNetAmountUsd ? { sellerNetAmountUsd } : {}),
+      ...(protocolFeeAmountUsd ? { protocolFeeAmountUsd } : {}),
+      ...(protocolFeeRecipient ? { protocolFeeRecipient } : {}),
+      ...(options.buyerWallet?.trim() ? { buyerWallet: options.buyerWallet.trim() } : {}),
+      ...(sellerWallet ? { sellerWallet } : {}),
+      ...(escrowContract ? { escrowContract } : {}),
+      ...(paymentAuthorizationDigestSha256 ? { paymentAuthorizationDigestSha256 } : {}),
+      createdAtIso
+    });
+    const createdTransition = this.buildExecutionIntentTransition({
+      intentId,
+      stableIntentDigestSha256,
+      transitionType: "created",
+      toStatus: "pending",
+      occurredAtIso: createdAtIso,
+      ...(paymentAuthorizationDigestSha256 ? { evidenceDigestSha256: paymentAuthorizationDigestSha256 } : {}),
+      ...(options.note?.trim() ? { note: options.note.trim().slice(0, 280) } : {})
+    });
+    const intent: ExecutionIntentRecord = {
+      schemaVersion: EXECUTION_INTENT_SCHEMA_VERSION,
+      intentId,
+      ...(options.requestId?.trim() ? { requestId: options.requestId.trim().slice(0, 96) } : {}),
+      agentId,
+      sessionId,
+      networkId: deployment.networkId,
+      rail,
+      settlementModel,
+      status: "pending",
+      pricingMode: profile.paymentProfile.pricingMode,
+      paymentStatus,
+      grossAmountUsd,
+      ...(sellerNetAmountUsd ? { sellerNetAmountUsd } : {}),
+      ...(protocolFeeAmountUsd ? { protocolFeeAmountUsd } : {}),
+      ...(protocolFeeRecipient ? { protocolFeeRecipient } : {}),
+      ...(options.buyerWallet?.trim() ? { buyerWallet: options.buyerWallet.trim() } : {}),
+      ...(sellerWallet ? { sellerWallet } : {}),
+      ...(escrowContract ? { escrowContract } : {}),
+      ...(paymentAuthorizationDigestSha256 ? { paymentAuthorizationDigestSha256 } : {}),
+      stableIntentDigestSha256,
+      latestTransitionDigestSha256: createdTransition.transitionDigestSha256,
+      lifecycle: [createdTransition],
+      createdAtIso,
+      updatedAtIso: createdAtIso,
+      anchorCandidateIds: []
+    };
+
+    const savedFile = {
+      intents: [intent, ...file.intents].slice(0, 500)
+    };
+    await this.saveExecutionIntentFile(savedFile);
+    const anchorCandidateId = await this.enqueueExecutionIntentTransitionAnchor(intent, createdTransition);
+    return this.attachExecutionTransitionAnchor(savedFile, intent.intentId, createdTransition.transitionId, anchorCandidateId);
+  }
+
+  private async transitionExecutionIntent(
+    transitionType: Exclude<ExecutionIntentTransitionType, "created">,
+    options: ExecutionIntentTransitionOptions
+  ): Promise<ExecutionIntentRecord> {
+    const file = await this.loadExecutionIntentFile();
+    const intent = file.intents.find((candidate) => candidate.intentId === options.intentId);
+    if (!intent) {
+      throw new Error(`Unknown execution intent: ${options.intentId}`);
+    }
+    const evidenceDigestSha256 = options.evidenceDigestSha256?.trim();
+    if (evidenceDigestSha256) {
+      assertSha256Hex(evidenceDigestSha256, `Execution intent ${transitionType} evidenceDigestSha256`);
+    }
+    const toStatus = this.assertExecutionIntentTransitionAllowed(intent, transitionType);
+    const occurredAtIso = new Date().toISOString();
+    const transition = this.buildExecutionIntentTransition({
+      intentId: intent.intentId,
+      stableIntentDigestSha256: intent.stableIntentDigestSha256,
+      transitionType,
+      fromStatus: intent.status,
+      toStatus,
+      occurredAtIso,
+      previousTransitionDigestSha256: intent.latestTransitionDigestSha256,
+      ...(options.reference?.trim() ? { reference: options.reference.trim().slice(0, 160) } : {}),
+      ...(evidenceDigestSha256 ? { evidenceDigestSha256 } : {}),
+      ...(options.note?.trim() ? { note: options.note.trim().slice(0, 280) } : {})
+    });
+    const nextIntent: ExecutionIntentRecord = {
+      ...intent,
+      status: toStatus,
+      latestTransitionDigestSha256: transition.transitionDigestSha256,
+      lifecycle: [...intent.lifecycle, transition],
+      updatedAtIso: occurredAtIso,
+      ...(transitionType === "approved" ? { approvedAtIso: occurredAtIso } : {}),
+      ...(transitionType === "executed" ? { executedAtIso: occurredAtIso } : {}),
+      ...(transitionType === "settled" ? { settledAtIso: occurredAtIso } : {}),
+      ...(transitionType === "refunded" ? { refundedAtIso: occurredAtIso } : {}),
+      ...(transitionType === "approved" && evidenceDigestSha256 ? { paymentAuthorizationDigestSha256: evidenceDigestSha256 } : {}),
+      ...(transitionType === "executed" && evidenceDigestSha256 ? { executionDigestSha256: evidenceDigestSha256 } : {}),
+      ...(transitionType === "settled" && evidenceDigestSha256 ? { settlementDigestSha256: evidenceDigestSha256 } : {}),
+      ...(transitionType === "refunded" && evidenceDigestSha256 ? { refundDigestSha256: evidenceDigestSha256 } : {})
+    };
+    const savedFile: ExecutionIntentFile = {
+      intents: file.intents.map((candidate) => (candidate.intentId === intent.intentId ? nextIntent : candidate))
+    };
+    await this.saveExecutionIntentFile(savedFile);
+    const anchorCandidateId = await this.enqueueExecutionIntentTransitionAnchor(nextIntent, transition);
+    return this.attachExecutionTransitionAnchor(savedFile, intent.intentId, transition.transitionId, anchorCandidateId);
+  }
+
+  async approveExecutionIntent(options: ExecutionIntentTransitionOptions): Promise<ExecutionIntentRecord> {
+    return this.transitionExecutionIntent("approved", options);
+  }
+
+  async executeExecutionIntent(options: ExecutionIntentTransitionOptions): Promise<ExecutionIntentRecord> {
+    return this.transitionExecutionIntent("executed", options);
+  }
+
+  async settleExecutionIntent(options: ExecutionIntentTransitionOptions): Promise<ExecutionIntentRecord> {
+    return this.transitionExecutionIntent("settled", options);
+  }
+
+  async refundExecutionIntent(options: ExecutionIntentTransitionOptions): Promise<ExecutionIntentRecord> {
+    return this.transitionExecutionIntent("refunded", options);
   }
 
   async exportSocialAnchorBatch(options: SocialAnchorExportOptions = {}): Promise<SocialAnchorBatchExport> {

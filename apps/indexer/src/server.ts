@@ -5,6 +5,7 @@ import type { Socket } from "node:net";
 
 import {
   type AgentBoardMessageType,
+  type AgentPaymentRail,
   type AgentProfileState,
   type AgentRuntimeStatus,
   assertClawzJsonRpcRequest,
@@ -14,6 +15,8 @@ import {
   type ClawzAgentProofVerificationRequest,
   type ClawzAgentProofVerificationResponse,
   type ConsoleStateResponse,
+  type ExecutionIntentSettlementModel,
+  type ExecutionIntentStatus,
   type PrivacyApprovalRecord,
   type TrustModeId,
   type WitnessPlanLike,
@@ -23,7 +26,9 @@ import {
 import {
   ClawzControlPlane,
   DuplicatePublicClawzUrlError,
-  SelfServeSocialAnchoringDisabledError
+  SelfServeSocialAnchoringDisabledError,
+  type CreateExecutionIntentOptions,
+  type ExecutionIntentTransitionOptions
 } from "./control-plane.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
 import {
@@ -337,6 +342,74 @@ function parseSocialAnchorPolicy(value: unknown): Partial<AgentProfileState["soc
   return value.mode === "shared-batched" || value.mode === "priority-self-funded"
     ? { mode: value.mode }
     : undefined;
+}
+
+function parseExecutionIntentRail(value: unknown): AgentPaymentRail | undefined {
+  return value === "base-usdc" || value === "ethereum-usdc" || value === "zeko-native" ? value : undefined;
+}
+
+function parseExecutionIntentSettlementModel(value: unknown): ExecutionIntentSettlementModel | undefined {
+  return value === "upfront-x402" || value === "reserve-release-escrow" ? value : undefined;
+}
+
+function parseExecutionIntentStatus(value: unknown): ExecutionIntentStatus | undefined {
+  return value === "pending" ||
+    value === "approved" ||
+    value === "executed" ||
+    value === "settled" ||
+    value === "refunded"
+    ? value
+    : undefined;
+}
+
+function parseExecutionIntentCreateRequest(value: unknown): CreateExecutionIntentOptions {
+  const body = isRecord(value) ? value : {};
+  const paymentStatus =
+    body.paymentStatus === "settled" || body.paymentStatus === "paid" || body.paymentStatus === "escrowed"
+      ? body.paymentStatus
+      : undefined;
+  return {
+    ...(typeof body.sessionId === "string" ? { sessionId: body.sessionId } : {}),
+    ...(typeof body.agentId === "string" ? { agentId: body.agentId } : {}),
+    ...(typeof body.requestId === "string" ? { requestId: body.requestId } : {}),
+    ...(parseExecutionIntentRail(body.rail) ? { rail: parseExecutionIntentRail(body.rail)! } : {}),
+    ...(parseExecutionIntentSettlementModel(body.settlementModel)
+      ? { settlementModel: parseExecutionIntentSettlementModel(body.settlementModel)! }
+      : {}),
+    ...(paymentStatus ? { paymentStatus } : {}),
+    grossAmountUsd: typeof body.grossAmountUsd === "string" ? body.grossAmountUsd : "",
+    ...(typeof body.sellerNetAmountUsd === "string" ? { sellerNetAmountUsd: body.sellerNetAmountUsd } : {}),
+    ...(typeof body.protocolFeeAmountUsd === "string" ? { protocolFeeAmountUsd: body.protocolFeeAmountUsd } : {}),
+    ...(typeof body.protocolFeeRecipient === "string" ? { protocolFeeRecipient: body.protocolFeeRecipient } : {}),
+    ...(typeof body.buyerWallet === "string" ? { buyerWallet: body.buyerWallet } : {}),
+    ...(typeof body.sellerWallet === "string" ? { sellerWallet: body.sellerWallet } : {}),
+    ...(typeof body.escrowContract === "string" ? { escrowContract: body.escrowContract } : {}),
+    ...(typeof body.paymentAuthorizationDigestSha256 === "string"
+      ? { paymentAuthorizationDigestSha256: body.paymentAuthorizationDigestSha256 }
+      : {}),
+    ...(typeof body.note === "string" ? { note: body.note } : {})
+  };
+}
+
+function parseExecutionIntentTransitionRequest(value: unknown): Omit<ExecutionIntentTransitionOptions, "intentId"> {
+  const body = isRecord(value) ? value : {};
+  const evidenceDigestSha256 =
+    typeof body.evidenceDigestSha256 === "string"
+      ? body.evidenceDigestSha256
+      : typeof body.paymentAuthorizationDigestSha256 === "string"
+        ? body.paymentAuthorizationDigestSha256
+        : typeof body.executionDigestSha256 === "string"
+          ? body.executionDigestSha256
+          : typeof body.settlementDigestSha256 === "string"
+            ? body.settlementDigestSha256
+            : typeof body.refundDigestSha256 === "string"
+              ? body.refundDigestSha256
+              : undefined;
+  return {
+    ...(typeof body.reference === "string" ? { reference: body.reference } : {}),
+    ...(evidenceDigestSha256 ? { evidenceDigestSha256 } : {}),
+    ...(typeof body.note === "string" ? { note: body.note } : {})
+  };
 }
 
 function parseRuntimeDelivery(value: unknown): Partial<AgentProfileState["runtimeDelivery"]> | undefined {
@@ -1001,6 +1074,117 @@ app.get("/api/agent-messages", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load public agent messages."
+    });
+  }
+}));
+
+app.get("/api/execution/intents", route(async (request, response) => {
+  try {
+    const rawLimit = queryString(request.query, "limit");
+    const limit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    response.json(
+      await controlPlane.listExecutionIntents({
+        ...(queryString(request.query, "sessionId") ? { sessionId: queryString(request.query, "sessionId")! } : {}),
+        ...(queryString(request.query, "agentId") ? { agentId: queryString(request.query, "agentId")! } : {}),
+        ...(parseExecutionIntentStatus(queryString(request.query, "status"))
+          ? { status: parseExecutionIntentStatus(queryString(request.query, "status"))! }
+          : {}),
+        ...(typeof limit === "number" && Number.isFinite(limit) ? { limit } : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list execution intents."
+    });
+  }
+}));
+
+app.post("/api/execution/intents", route(async (request, response) => {
+  try {
+    response.json(await controlPlane.createExecutionIntent(parseExecutionIntentCreateRequest(request.body ?? null)));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create execution intent."
+    });
+  }
+}));
+
+app.post("/api/execution/intents/:intentId/approve", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(
+      await controlPlane.approveExecutionIntent({
+        intentId,
+        ...parseExecutionIntentTransitionRequest(request.body ?? null)
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to approve execution intent."
+    });
+  }
+}));
+
+app.post("/api/execution/intents/:intentId/execute", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(
+      await controlPlane.executeExecutionIntent({
+        intentId,
+        ...parseExecutionIntentTransitionRequest(request.body ?? null)
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to mark execution intent executed."
+    });
+  }
+}));
+
+app.post("/api/execution/intents/:intentId/settle", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(
+      await controlPlane.settleExecutionIntent({
+        intentId,
+        ...parseExecutionIntentTransitionRequest(request.body ?? null)
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to settle execution intent."
+    });
+  }
+}));
+
+app.post("/api/execution/intents/:intentId/refund", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(
+      await controlPlane.refundExecutionIntent({
+        intentId,
+        ...parseExecutionIntentTransitionRequest(request.body ?? null)
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to refund execution intent."
     });
   }
 }));

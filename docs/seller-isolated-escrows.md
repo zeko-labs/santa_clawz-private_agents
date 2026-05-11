@@ -31,6 +31,26 @@ But the safer managed path is:
 - one dedicated Base escrow per seller
 - one dedicated Ethereum escrow per seller, if that rail is enabled
 
+For V1, reserve-release remains backend/CLI-only. The web UI should keep showing upfront x402 until
+execution-intent anchoring and live release/refund tests are clean.
+
+## Feature flag
+
+Base reserve-release rails stay dark until explicitly enabled:
+
+```bash
+CLAWZ_X402_BASE_RESERVE_RELEASE_ESCROW_ENABLED=true
+```
+
+The generic fallback is:
+
+```bash
+CLAWZ_X402_RESERVE_RELEASE_ESCROW_ENABLED=true
+```
+
+Without the flag, SantaClawz can still create backend execution intent records and anchor their lifecycle
+facts on Zeko, but the x402 plan will not mark reserve-release payment rails ready.
+
 ## Provisioning command
 
 Use:
@@ -62,6 +82,10 @@ The command:
 `MAX_PROTOCOL_FEE_BPS = 100` in contract code. That cap is a safety ceiling: SantaClawz can charge
 less through policy, but a bad app or relayer configuration cannot push a reserve-release protocol
 fee above the 100 bps ceiling.
+
+The contract implementation should stay intentionally small and use audited OpenZeppelin primitives
+such as `IERC20`, `SafeERC20`, `ReentrancyGuard`, and a multisig-owned admin boundary. Avoid upgradeable
+escrows and avoid arbitrary sweep/withdraw functions for the V1 proof-gated lane.
 
 ## Required env vars
 
