@@ -3121,6 +3121,9 @@ export function App() {
           <div className="field field-wide enterprise-auth-toggle-field">
             <div className="field-label-row">
               <span>Enterprise Auth (Optional)</span>
+              <a className="field-help-link register-flow-guide-link" href={MISSION_AUTH_GUIDE_URL} target="_blank" rel="noreferrer">
+                Setup guide
+              </a>
             </div>
             <button
               type="button"
@@ -3143,7 +3146,20 @@ export function App() {
                 <p className="panel-copy mission-auth-status-copy">{missionAuthStatusCopy}</p>
                 <div className="field-grid compact-field-grid mission-auth-grid">
                   <label className="field field-wide">
-                    <span>Agent Mission Auth URL</span>
+                    <span className="mission-auth-field-label-row">
+                      <span>Agent Mission Auth URL</span>
+                      <button
+                        type="button"
+                        className="inline-link-button"
+                        disabled={pendingAction === "check-mission-auth"}
+                        onClick={(event: ClickEvent) => {
+                          event.preventDefault();
+                          void checkMissionAuthOverlayAction();
+                        }}
+                      >
+                        {pendingAction === "check-mission-auth" ? "Checking..." : "Check overlay"}
+                      </button>
+                    </span>
                     <input
                       className="text-input"
                       value={missionAuthOverlay.authorityBaseUrl ?? ""}
@@ -3204,42 +3220,9 @@ export function App() {
                   </label>
                 </div>
 
-                <div className="mission-auth-actions">
-                  <p className="panel-copy">
-                    SantaClawz verifies the published discovery document and mission authority JWKS here. OAuth login, mission approval, and bundle export stay on your sidecar.
-                  </p>
-                  <div className="action-side">
-                    <a className="secondary-button" href={MISSION_AUTH_GUIDE_URL} target="_blank" rel="noreferrer">
-                      Open setup guide
-                    </a>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={pendingAction === "check-mission-auth"}
-                      onClick={() => {
-                        void checkMissionAuthOverlayAction();
-                      }}
-                    >
-                      {pendingAction === "check-mission-auth" ? "Checking..." : "Check overlay"}
-                    </button>
-                    <button
-                      type="button"
-                      className="mini-button"
-                      onClick={() => {
-                        setProfile({
-                          ...profile,
-                          missionAuthOverlay: {
-                            enabled: false,
-                            status: "disabled",
-                            scopeHints: []
-                          }
-                        });
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
+                <p className="panel-copy mission-auth-footnote">
+                  SantaClawz verifies the published discovery document and mission authority JWKS here. OAuth login, mission approval, and bundle export stay on your sidecar.
+                </p>
 
                 {missionAuthVerified ? (
                   <div className="share-url-placeholder live mission-auth-summary">
