@@ -2968,7 +2968,7 @@ export function App() {
 
           </div>
 
-          <div className="mission-auth-card">
+          <div className="field field-wide enterprise-auth-toggle-field">
             <div className="field-label-row">
               <span>Enterprise Auth (Optional)</span>
             </div>
