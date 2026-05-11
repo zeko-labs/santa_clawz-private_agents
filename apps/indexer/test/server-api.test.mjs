@@ -1868,6 +1868,12 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(accepted.payload.paymentStatus, "quote_requested");
     assert.equal(accepted.payload.status, "submitted");
     assert.equal(accepted.payload.deliveryStatus, "forwarded");
+    assert.deepEqual(accepted.payload.operationalStatus, {
+      paymentStatus: "quote_requested",
+      settlementStatus: "not_attempted",
+      relayDeliveryStatus: "forwarded",
+      agentExecutionStatus: "submitted"
+    });
     assert.equal(accepted.payload.ingress.signatureHeader, "X-SantaClawz-Signature");
     assert.equal(accepted.payload.deliveryTarget, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
     assert.equal(accepted.payload.ingress.url, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
@@ -2087,6 +2093,12 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(freeTestAccepted.payload.pricingMode, "free-test");
     assert.equal(freeTestAccepted.payload.paymentStatus, "free_test");
     assert.equal(freeTestAccepted.payload.status, "completed");
+    assert.deepEqual(freeTestAccepted.payload.operationalStatus, {
+      paymentStatus: "free_test",
+      settlementStatus: "not_required",
+      relayDeliveryStatus: "forwarded",
+      agentExecutionStatus: "completed"
+    });
     assert.equal(freeTestAccepted.payload.payment.status, "free_test");
     assert.equal(freeTestAccepted.payload.payment.rail, undefined);
     assert.equal(freeTestAccepted.payload.protocolReturn.status, "completed");

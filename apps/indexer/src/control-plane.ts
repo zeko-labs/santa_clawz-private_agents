@@ -670,10 +670,36 @@ interface HireRequestRecord {
   requesterContact: string;
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
+  operationalStatus?: HireRequestReceipt["operationalStatus"];
   ingressBodyDigestSha256?: string;
   ingressResponseStatusCode?: number;
   protocolReturn?: HireRequestReceipt["protocolReturn"];
   payment?: HirePaymentAuthorization;
+}
+
+function buildHireOperationalStatus(input: {
+  requestType: HireRequestReceipt["requestType"];
+  paymentStatus: HireRequestReceipt["paymentStatus"];
+  deliveryStatus?: "forwarded" | "recorded";
+  hireStatus: HireRequestReceipt["status"];
+}): NonNullable<HireRequestReceipt["operationalStatus"]> {
+  const paymentStatus =
+    input.paymentStatus === "settled" || input.paymentStatus === "paid" || input.paymentStatus === "escrowed"
+      ? "settled"
+      : input.paymentStatus === "quote_requested"
+        ? "quote_requested"
+        : "free_test";
+  return {
+    paymentStatus,
+    settlementStatus:
+      input.requestType === "paid_execution"
+        ? "settled"
+        : input.requestType === "quote_intake"
+          ? "not_attempted"
+          : "not_required",
+    relayDeliveryStatus: input.deliveryStatus ?? "not_attempted",
+    agentExecutionStatus: input.hireStatus
+  };
 }
 
 interface HireRequestFile {
@@ -6984,6 +7010,12 @@ export class ClawzControlPlane {
     }
     const settledAmountUsd = requestType === "paid_execution" ? paymentAuthorization.amountUsd : undefined;
     const hireStatus: HireRequestReceipt["status"] = ingressProtocolReturn?.status ?? "submitted";
+    const operationalStatus = buildHireOperationalStatus({
+      requestType,
+      paymentStatus,
+      deliveryStatus: ingressDelivery.deliveryStatus,
+      hireStatus
+    });
     const nextRecord: HireRequestRecord = {
       requestId,
       agentId: options.agentId,
@@ -7002,6 +7034,7 @@ export class ClawzControlPlane {
       requesterContact,
       deliveryTarget: publicDeliveryTarget,
       deliveryStatus: ingressDelivery.deliveryStatus,
+      operationalStatus,
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
       ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
       ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
@@ -7115,6 +7148,7 @@ export class ClawzControlPlane {
       status: hireStatus,
       deliveryTarget: publicDeliveryTarget,
       deliveryStatus: ingressDelivery.deliveryStatus,
+      operationalStatus,
       ingress: {
         url: publicDeliveryTarget,
         requestId,

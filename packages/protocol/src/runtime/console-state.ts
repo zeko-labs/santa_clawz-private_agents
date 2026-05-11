@@ -600,6 +600,7 @@ export interface HireRequestReceipt {
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
+  operationalStatus?: HireOperationalStatus;
   ingress?: {
     url: string;
     requestId: string;
@@ -653,6 +654,13 @@ export interface HireRequestReceipt {
     settlementReference?: string;
   };
   paidJobsEnabled: boolean;
+}
+
+export interface HireOperationalStatus {
+  paymentStatus: "not_required" | "quote_requested" | "free_test" | "settled" | "failed";
+  settlementStatus: "not_required" | "not_attempted" | "settled" | "failed" | "pending";
+  relayDeliveryStatus: "not_attempted" | "forwarded" | "recorded" | "failed";
+  agentExecutionStatus: "not_started" | "submitted" | "quoted" | "completed" | "failed";
 }
 
 export type ExecutionIntentStatus = "pending" | "approved" | "executed" | "settled" | "refunded";

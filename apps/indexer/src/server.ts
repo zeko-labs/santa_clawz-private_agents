@@ -453,6 +453,55 @@ function parseExecutionIntentCreateRequest(value: unknown): CreateExecutionInten
   };
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function isRetryableSettlementError(error: unknown): boolean {
+  const text = errorMessage(error, String(error ?? "")).toLowerCase();
+  return (
+    text.includes("replacement transaction underpriced") ||
+    text.includes("nonce too low") ||
+    text.includes("transaction underpriced") ||
+    text.includes("already known") ||
+    text.includes("settlement_pending") ||
+    text.includes("temporarily unavailable") ||
+    text.includes("timeout") ||
+    text.includes("rate limit") ||
+    text.includes("429") ||
+    text.includes("502") ||
+    text.includes("503") ||
+    text.includes("504")
+  );
+}
+
+function paymentSettlementFailureBody(error: unknown, extra: Record<string, unknown> = {}) {
+  return {
+    error: errorMessage(error, "Unable to settle x402 payment."),
+    operationalStatus: {
+      paymentStatus: "failed",
+      settlementStatus: "failed",
+      relayDeliveryStatus: "not_attempted",
+      agentExecutionStatus: "not_started"
+    },
+    retryable: isRetryableSettlementError(error),
+    ...extra
+  };
+}
+
+function relayDeliveryFailureBody(error: unknown, extra: Record<string, unknown> = {}) {
+  return {
+    error: errorMessage(error, "Unable to deliver paid execution to the agent runtime."),
+    operationalStatus: {
+      paymentStatus: "settled",
+      settlementStatus: "settled",
+      relayDeliveryStatus: "failed",
+      agentExecutionStatus: "not_started"
+    },
+    ...extra
+  };
+}
+
 function parseExecutionIntentTransitionRequest(value: unknown): Omit<ExecutionIntentTransitionOptions, "intentId"> {
   const body = isRecord(value) ? value : {};
   const evidenceDigestSha256 =
@@ -1524,10 +1573,16 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       return;
     }
 
-    const settlement = await settleAgentX402Payment({
-      runtime: context.runtime,
-      paymentPayload
-    });
+    let settlement: Awaited<ReturnType<typeof settleAgentX402Payment>>;
+    try {
+      settlement = await settleAgentX402Payment({
+        runtime: context.runtime,
+        paymentPayload
+      });
+    } catch (error) {
+      response.status(400).json(paymentSettlementFailureBody(error, { intent: context.intent }));
+      return;
+    }
     setHeaders(response, settlement.headers);
     const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
     const settlementReference = [
@@ -1545,21 +1600,31 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       evidenceDigestSha256: paymentPayloadDigestSha256,
       note: "Accepted quote x402 payment settled."
     });
-    const paidExecution = await controlPlane.submitHireRequest({
-      agentId: context.intent.agentId,
-      taskPrompt: context.quoteRequest.taskPrompt,
-      requesterContact: context.quoteRequest.requesterContact,
-      ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
-      paymentAuthorization: {
-        status: "settled",
-        rail: settlement.rail.rail,
-        amountUsd: context.intent.grossAmountUsd,
-        authorizationId: intentId,
-        ...(settlementReference ? { settlementReference } : {}),
-        paymentPayloadDigestSha256,
-        paymentResponseDigestSha256
-      }
-    });
+    let paidExecution: Awaited<ReturnType<typeof controlPlane.submitHireRequest>>;
+    try {
+      paidExecution = await controlPlane.submitHireRequest({
+        agentId: context.intent.agentId,
+        taskPrompt: context.quoteRequest.taskPrompt,
+        requesterContact: context.quoteRequest.requesterContact,
+        ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
+        paymentAuthorization: {
+          status: "settled",
+          rail: settlement.rail.rail,
+          amountUsd: context.intent.grossAmountUsd,
+          authorizationId: intentId,
+          ...(settlementReference ? { settlementReference } : {}),
+          paymentPayloadDigestSha256,
+          paymentResponseDigestSha256
+        }
+      });
+    } catch (error) {
+      response.status(400).json(relayDeliveryFailureBody(error, {
+        intent: approvedIntent,
+        payment: settlement.paymentResponse,
+        ...(settlementReference ? { settlementReference } : {})
+      }));
+      return;
+    }
     const executedIntent =
       paidExecution.protocolReturn?.status === "completed" || paidExecution.protocolReturn?.status === "failed"
         ? await controlPlane.executeExecutionIntent({
@@ -2259,10 +2324,16 @@ const handleAgentHireRequest = route(async (request, response) => {
         return;
       }
 
-      const settlement = await settleAgentX402Payment({
-        runtime,
-        paymentPayload
-      });
+      let settlement: Awaited<ReturnType<typeof settleAgentX402Payment>>;
+      try {
+        settlement = await settleAgentX402Payment({
+          runtime,
+          paymentPayload
+        });
+      } catch (error) {
+        response.status(400).json(paymentSettlementFailureBody(error, { agentId }));
+        return;
+      }
       setHeaders(response, settlement.headers);
       const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
       const settlementReference = [
@@ -2282,15 +2353,32 @@ const handleAgentHireRequest = route(async (request, response) => {
       };
     }
 
-    response.json(
-      await controlPlane.submitHireRequest({
+    try {
+      response.json(await controlPlane.submitHireRequest({
         agentId,
         taskPrompt,
         requesterContact,
         ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {}),
         ...(paymentAuthorization ? { paymentAuthorization } : {})
-      })
-    );
+      }));
+    } catch (error) {
+      if (paymentAuthorization) {
+        response.status(400).json(relayDeliveryFailureBody(error, {
+          agentId,
+          payment: {
+            status: paymentAuthorization.status,
+            ...(paymentAuthorization.rail ? { rail: paymentAuthorization.rail } : {}),
+            ...(paymentAuthorization.amountUsd ? { amountUsd: paymentAuthorization.amountUsd } : {}),
+            ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),
+            ...(paymentAuthorization.settlementReference
+              ? { settlementReference: paymentAuthorization.settlementReference }
+              : {})
+          }
+        }));
+        return;
+      }
+      throw error;
+    }
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to submit hire request."
