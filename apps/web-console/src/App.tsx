@@ -114,6 +114,7 @@ const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
+const SHOW_MISSION_AUTH_CONFIGURE_STEP = false;
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
@@ -3118,6 +3119,7 @@ export function App() {
 
           </div>
 
+          {SHOW_MISSION_AUTH_CONFIGURE_STEP ? (
           <div className="field field-wide enterprise-auth-toggle-field">
             <div className="field-label-row">
               <span>Enterprise Auth (Optional)</span>
@@ -3238,6 +3240,7 @@ export function App() {
               </div>
             ) : null}
           </div>
+          ) : null}
 
           <div className="register-divider" />
 
