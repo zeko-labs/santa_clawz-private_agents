@@ -22,6 +22,27 @@ const ADMIN_KEY_SESSION_PREFIX = "clawz-admin-key:session:";
 const ADMIN_KEY_AGENT_PREFIX = "clawz-admin-key:agent:";
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 
+function isRetryablePlatformStatus(status: number) {
+  return status === 502 || status === 503 || status === 504;
+}
+
+function createRetryablePlatformFailure(status: number, responseText: string): Record<string, unknown> {
+  const responsePreview = responseText.trim().slice(0, 1000);
+  return {
+    ok: false,
+    code: "relay_unavailable_retryable",
+    retryable: true,
+    status,
+    paymentStatus: "unknown",
+    settlementStatus: "unknown",
+    relayDeliveryStatus: "not_confirmed",
+    agentExecutionStatus: "not_confirmed",
+    error:
+      "SantaClawz relay is temporarily unavailable and the payment or delivery state could not be confirmed. Retry with the same idempotent payment payload.",
+    ...(responsePreview ? { responsePreview } : {})
+  };
+}
+
 function normalizeBaseUrl(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
@@ -341,7 +362,15 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
   }
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    const responseText = await response.text().catch(() => "");
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = responseText ? (JSON.parse(responseText) as Record<string, unknown>) : null;
+    } catch (_error) {
+      payload = isRetryablePlatformStatus(response.status)
+        ? createRetryablePlatformFailure(response.status, responseText)
+        : null;
+    }
     throw new ApiError(
       typeof payload?.error === "string" ? payload.error : `Request failed: ${response.status}`,
       payload ?? undefined

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { createRetryablePlatformFailure, isRetryablePlatformStatus } from "./platform-failures.mjs";
+
 export function normalizeBaseUrl(value) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
@@ -52,10 +54,12 @@ export async function requestJson(url, init = {}) {
   try {
     payload = text ? JSON.parse(text) : null;
   } catch {
-    payload = {
-      error: `SantaClawz API returned non-JSON response (${response.status}).`,
-      responsePreview: text.slice(0, 240)
-    };
+    payload = isRetryablePlatformStatus(response.status)
+      ? createRetryablePlatformFailure(response.status, text)
+      : {
+          error: `SantaClawz API returned non-JSON response (${response.status}).`,
+          responsePreview: text.slice(0, 240)
+        };
   }
   return {
     ok: response.ok,

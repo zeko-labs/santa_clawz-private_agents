@@ -513,11 +513,20 @@ function paymentSettlementFailureBody(error: unknown, extra: Record<string, unkn
 }
 
 function relayDeliveryFailureBody(error: unknown, extra: Record<string, unknown> = {}) {
+  const payment = isRecord(extra.payment) ? extra.payment : undefined;
+  const paymentStatus = payment?.status === "authorized" ? "authorized" : payment?.status === "settled" ? "settled" : "unknown";
+  const retryable = isRetryableSettlementError(error);
   return {
     error: errorMessage(error, "Unable to deliver paid execution to the agent runtime."),
+    ...(retryable
+      ? {
+          code: "relay_unavailable_retryable",
+          retryable: true
+        }
+      : {}),
     operationalStatus: {
-      paymentStatus: "settled",
-      settlementStatus: "settled",
+      paymentStatus,
+      settlementStatus: paymentStatus === "authorized" ? "authorized" : paymentStatus === "settled" ? "settled" : "unknown",
       relayDeliveryStatus: "failed",
       agentExecutionStatus: "not_started"
     },

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 
 import { normalizeBaseUrl } from "./lib/santaclawz-readiness.mjs";
+import { createRetryablePlatformFailure, isRetryablePlatformStatus } from "./lib/platform-failures.mjs";
 
 const BOOLEAN_FLAGS = new Set(["help", "allow-real-money", "json"]);
 
@@ -83,27 +84,6 @@ function findFirstStringByKey(value, keys) {
     }
   }
   return undefined;
-}
-
-function isRetryablePlatformStatus(status) {
-  return status === 502 || status === 503 || status === 504;
-}
-
-function createRetryablePlatformFailure(status, responseText) {
-  const responsePreview = responseText?.trim().slice(0, 1000);
-  return {
-    ok: false,
-    code: "relay_unavailable_retryable",
-    retryable: true,
-    status,
-    paymentStatus: "unknown",
-    settlementStatus: "unknown",
-    relayDeliveryStatus: "not_confirmed",
-    agentExecutionStatus: "not_confirmed",
-    error:
-      "SantaClawz relay is temporarily unavailable and the payment or delivery state could not be confirmed. Retry with the same idempotent payment payload.",
-    ...(responsePreview ? { responsePreview } : {})
-  };
 }
 
 const args = parseArgs(process.argv.slice(2));
