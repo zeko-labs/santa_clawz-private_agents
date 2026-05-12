@@ -15,6 +15,8 @@ const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
 const DEFAULT_INGRESS_PORT = "8797";
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
+const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const ingressEntry = path.join(repoRoot, "starters", "openclaw-public-hire-ingress", "server.mjs");
 
@@ -121,6 +123,54 @@ function localHireUrlFor(baseUrl) {
   return url.toString();
 }
 
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function requestIdFromSignedBody(body) {
+  const parsed = safeJsonParse(typeof body === "string" ? body : "{}");
+  return parsed && typeof parsed.request_id === "string" ? parsed.request_id : "unknown";
+}
+
+function failedReturnPackage(input) {
+  return JSON.stringify({
+    schema_version: "santaclawz-return/1.0",
+    request_id: input.requestId,
+    status: "failed",
+    agent_private: true,
+    incident_id: input.incidentId,
+    error: input.error
+  });
+}
+
+function normalizeWorkerResponseBody(input) {
+  const rawBody = typeof input.body === "string" ? input.body : "";
+  const trimmed = rawBody.trim();
+  const parsed = trimmed.startsWith("{") ? safeJsonParse(trimmed) : undefined;
+  if (parsed && typeof parsed === "object" && parsed.schema_version === "santaclawz-return/1.0") {
+    return {
+      body: JSON.stringify(parsed),
+      normalized: false,
+      parseError: false
+    };
+  }
+  return {
+    body: failedReturnPackage({
+      requestId: requestIdFromSignedBody(input.requestBody),
+      incidentId: `relay_normalize_${Date.now()}`,
+      error: trimmed.startsWith("{")
+        ? "Local worker returned invalid JSON for santaclawz-return/1.0."
+        : "Local worker response did not include santaclawz-return/1.0 JSON."
+    }),
+    normalized: true,
+    parseError: trimmed.startsWith("{")
+  };
+}
+
 async function handleRelayMessage(message, localHireUrl, sendJson) {
   if (!message || typeof message !== "object" || message.type !== "hire_request") {
     return;
@@ -132,30 +182,41 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       headers: request.headers && typeof request.headers === "object" ? request.headers : {},
       body: typeof request.body === "string" ? request.body : "{}"
     });
+    const body = await response.text();
+    const normalized = normalizeWorkerResponseBody({
+      body,
+      requestBody: typeof request.body === "string" ? request.body : "{}"
+    });
+    if (normalized.normalized) {
+      console.error(JSON.stringify({
+        event: "relay_worker_response_normalized",
+        messageId: message.messageId,
+        statusCode: response.status,
+        responseBytes: Buffer.byteLength(body, "utf8"),
+        parseError: normalized.parseError
+      }));
+    } else {
+      console.error(JSON.stringify({
+        event: "relay_worker_response_forwarded",
+        messageId: message.messageId,
+        statusCode: response.status,
+        responseBytes: Buffer.byteLength(body, "utf8")
+      }));
+    }
     sendJson({
       type: "hire_response",
       messageId: message.messageId,
       statusCode: response.status,
-      body: await response.text()
+      body: normalized.body
     });
   } catch (error) {
     sendJson({
       type: "hire_response",
       messageId: message.messageId,
       statusCode: 502,
-      body: JSON.stringify({
-        schema_version: "santaclawz-return/1.0",
-        request_id: (() => {
-          try {
-            const parsed = JSON.parse(typeof request.body === "string" ? request.body : "{}");
-            return typeof parsed.request_id === "string" ? parsed.request_id : "unknown";
-          } catch {
-            return "unknown";
-          }
-        })(),
-        status: "failed",
-        agent_private: true,
-        incident_id: `relay_forward_${Date.now()}`,
+      body: failedReturnPackage({
+        requestId: requestIdFromSignedBody(request.body),
+        incidentId: `relay_forward_${Date.now()}`,
         error: error instanceof Error ? error.message : "relay forward failed"
       })
     });
@@ -391,6 +452,11 @@ let ingress = null;
 let relay = null;
 let heartbeatInterval = null;
 let releaseLock = null;
+let stopping = false;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 try {
   releaseLock = acquireAgentLock(agentId, Boolean(args.takeover));
@@ -417,13 +483,6 @@ try {
   if (!localHireUrl) {
     throw new Error("Relay resume needs --serve or --local-hire-url http://127.0.0.1:8797/hire.");
   }
-
-  relay = await connectRelay({
-    apiBase,
-    agentId,
-    adminKey,
-    localHireUrl
-  });
 
   if (shouldHeartbeat) {
     const firstHeartbeat = await postHeartbeat({
@@ -455,25 +514,71 @@ try {
     agentId,
     sessionId,
     apiBase,
-    relayUrl: relay.relayUrl,
     localHireUrl,
     servingIngress: ingress?.baseUrl,
     heartbeat: shouldHeartbeat ? "live" : "skipped"
   };
   console.log(JSON.stringify(summary, null, 2));
-  console.error(`SantaClawz relay connected for ${agentId}. Forwarding signed jobs to ${localHireUrl}. Press Ctrl-C to stop.`);
+  console.error(`SantaClawz relay starting for ${agentId}. Forwarding signed jobs to ${localHireUrl}. Press Ctrl-C to stop.`);
 
-  await new Promise((resolve) => {
-    const stop = () => resolve();
+  const stopPromise = new Promise((resolve) => {
+    const stop = () => {
+      stopping = true;
+      resolve();
+    };
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
     if (ingress?.child) {
       ingress.child.once("exit", stop);
     }
-    if (relay) {
-      relay.closed.then(stop).catch(stop);
-    }
   });
+
+  let attempt = 0;
+  while (!stopping) {
+    try {
+      relay = await connectRelay({
+        apiBase,
+        agentId,
+        adminKey,
+        localHireUrl
+      });
+      attempt = 0;
+      console.error(JSON.stringify({
+        event: "relay_connected",
+        agentId,
+        relayUrl: relay.relayUrl,
+        localHireUrl,
+        connectedAtIso: new Date().toISOString()
+      }));
+      await Promise.race([relay.closed, stopPromise]);
+      if (!stopping) {
+        console.error(JSON.stringify({
+          event: "relay_closed_reconnecting",
+          agentId,
+          closedAtIso: new Date().toISOString()
+        }));
+      }
+    } catch (error) {
+      if (stopping) {
+        break;
+      }
+      attempt += 1;
+      const delayMs = Math.min(RELAY_RECONNECT_MAX_DELAY_MS, RELAY_RECONNECT_MIN_DELAY_MS * Math.max(1, attempt));
+      console.error(JSON.stringify({
+        event: "relay_connect_failed_retrying",
+        agentId,
+        attempt,
+        delayMs,
+        error: error instanceof Error ? error.message : String(error)
+      }));
+      await Promise.race([sleep(delayMs), stopPromise]);
+    } finally {
+      if (relay?.socket) {
+        relay.socket.end();
+      }
+      relay = null;
+    }
+  }
 } finally {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
