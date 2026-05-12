@@ -125,6 +125,8 @@ async function main() {
     assert.equal(health.service, "clawz-indexer");
     const {
       createClawzAgentClient,
+      createClawzQuotePaymentClient,
+      ClawzRetryablePlatformError,
       buildClawzFeeStackPreview,
       buildClawzFeeSplitExactPaymentPayload,
       buildClawzQuoteAcceptanceWalletProof,
@@ -133,6 +135,47 @@ async function main() {
       pathToFileURL(sdkEntry).href
     );
     const client = createClawzAgentClient({ baseUrl });
+    const retryableHtmlFetch = async () =>
+      new Response("<html><body>Bad Gateway</body></html>", {
+        status: 502,
+        headers: {
+          "content-type": "text/html"
+        }
+      });
+    const unavailableClient = createClawzAgentClient({
+      baseUrl: "https://api.santaclawz.ai",
+      fetchImpl: retryableHtmlFetch
+    });
+    await assert.rejects(unavailableClient.getX402Plan(), (error) => {
+      assert.ok(error instanceof ClawzRetryablePlatformError);
+      assert.equal(error.failure.code, "relay_unavailable_retryable");
+      assert.equal(error.failure.retryable, true);
+      assert.equal(error.failure.paymentStatus, "unknown");
+      assert.equal(error.failure.settlementStatus, "unknown");
+      assert.equal(error.failure.relayDeliveryStatus, "not_confirmed");
+      assert.equal(error.failure.agentExecutionStatus, "not_confirmed");
+      return true;
+    });
+
+    const unavailableQuotePayments = createClawzQuotePaymentClient({
+      baseUrl: "https://api.santaclawz.ai",
+      fetchImpl: retryableHtmlFetch
+    });
+    await assert.rejects(
+      unavailableQuotePayments.settleQuoteIntent({
+        intentId: "exec_retryable",
+        paymentPayload: {
+          paymentId: "pay_retryable"
+        }
+      }),
+      (error) => {
+        assert.ok(error instanceof ClawzRetryablePlatformError);
+        assert.equal(error.failure.code, "relay_unavailable_retryable");
+        assert.equal(error.failure.paymentStatus, "unknown");
+        assert.equal(error.failure.relayDeliveryStatus, "not_confirmed");
+        return true;
+      }
+    );
 
     const discovery = await client.getDiscovery();
     assert.equal(discovery.protocol, "clawz-agent-proof");

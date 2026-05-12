@@ -20,6 +20,8 @@ import {
   verifyAgentProofBundle
 } from "@clawz/protocol";
 
+import { isRetryablePlatformStatus, throwRetryablePlatformFailure } from "./platform-errors.js";
+
 interface JsonRpcSuccess<T> {
   jsonrpc: "2.0";
   id: string | number | null;
@@ -220,23 +222,29 @@ export class ClawzAgentClient {
       ...init,
       headers
     });
+    const responseText = await response.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(responseText) as unknown;
+    } catch (_error) {
+      payload = undefined;
+    }
+
     if (!response.ok) {
-      let detail: string | null = null;
-      try {
-        const payload = (await response.json()) as unknown;
-        detail = extractErrorMessage(payload);
-      } catch (_error) {
-        try {
-          const bodyText = await response.text();
-          detail = bodyText.trim().length > 0 ? bodyText.trim() : null;
-        } catch (_nestedError) {
-          detail = null;
-        }
+      if (payload === undefined && isRetryablePlatformStatus(response.status)) {
+        throwRetryablePlatformFailure({
+          status: response.status,
+          responseText
+        });
       }
+      const detail = extractErrorMessage(payload) ?? (responseText.trim() || null);
       throw new Error(detail ?? `Request failed for ${url}: ${response.status}`);
     }
 
-    return (await response.json()) as T;
+    if (payload === undefined) {
+      throw new Error(`Request failed for ${url}: response was not valid JSON`);
+    }
+    return payload as T;
   }
 
   private async readDiscoveryFallback(sessionId?: string): Promise<ClawzAgentDiscoveryDocument> {

@@ -8,6 +8,8 @@ import {
   type SantaClawzQuoteAcceptanceWalletProof
 } from "@clawz/protocol";
 
+import { isRetryablePlatformStatus, throwRetryablePlatformFailure } from "./platform-errors.js";
+
 export interface ClawzQuotePaymentClientOptions {
   baseUrl: string;
   fetchImpl?: typeof fetch;
@@ -112,16 +114,29 @@ async function readJson<T>(
   acceptedStatuses: number[] = []
 ): Promise<T> {
   const response = await fetchImpl(url, init);
-  if (!response.ok && !acceptedStatuses.includes(response.status)) {
-    let detail: string | null = null;
-    try {
-      detail = extractErrorMessage(await response.json());
-    } catch (_error) {
-      detail = await response.text().catch(() => null);
-    }
-    throw new Error(detail?.trim() || `Request failed for ${url}: ${response.status}`);
+  const responseText = await response.text();
+  let payload: unknown;
+  try {
+    payload = JSON.parse(responseText) as unknown;
+  } catch (_error) {
+    payload = undefined;
   }
-  return (await response.json()) as T;
+
+  if (!response.ok && !acceptedStatuses.includes(response.status)) {
+    if (payload === undefined && isRetryablePlatformStatus(response.status)) {
+      throwRetryablePlatformFailure({
+        status: response.status,
+        responseText
+      });
+    }
+    const detail = extractErrorMessage(payload) ?? responseText;
+    throw new Error(detail.trim() || `Request failed for ${url}: ${response.status}`);
+  }
+
+  if (payload === undefined) {
+    throw new Error(`Request failed for ${url}: response was not valid JSON`);
+  }
+  return payload as T;
 }
 
 export async function buildClawzQuoteAcceptanceWalletProof(

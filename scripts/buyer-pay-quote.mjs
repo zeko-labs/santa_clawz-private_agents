@@ -85,6 +85,27 @@ function findFirstStringByKey(value, keys) {
   return undefined;
 }
 
+function isRetryablePlatformStatus(status) {
+  return status === 502 || status === 503 || status === 504;
+}
+
+function createRetryablePlatformFailure(status, responseText) {
+  const responsePreview = responseText?.trim().slice(0, 1000);
+  return {
+    ok: false,
+    code: "relay_unavailable_retryable",
+    retryable: true,
+    status,
+    paymentStatus: "unknown",
+    settlementStatus: "unknown",
+    relayDeliveryStatus: "not_confirmed",
+    agentExecutionStatus: "not_confirmed",
+    error:
+      "SantaClawz relay is temporarily unavailable and the payment or delivery state could not be confirmed. Retry with the same idempotent payment payload.",
+    ...(responsePreview ? { responsePreview } : {})
+  };
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
@@ -133,16 +154,25 @@ let payload;
 try {
   payload = JSON.parse(responseText);
 } catch {
-  payload = { error: responseText.slice(0, 1000) };
+  payload = isRetryablePlatformStatus(response.status)
+    ? createRetryablePlatformFailure(response.status, responseText)
+    : { error: responseText.slice(0, 1000) };
 }
 
 if (args.json) {
-  console.log(JSON.stringify({
-    ok: response.ok,
-    status: response.status,
-    intentId,
-    response: payload
-  }, null, 2));
+  const output =
+    payload?.ok === false && payload?.retryable === true
+      ? {
+          ...payload,
+          intentId
+        }
+      : {
+          ok: response.ok,
+          status: response.status,
+          intentId,
+          response: payload
+        };
+  console.log(JSON.stringify(output, null, 2));
 } else {
   console.log(JSON.stringify(payload, null, 2));
 }
