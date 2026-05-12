@@ -772,6 +772,7 @@ interface PaymentLedgerSettlementInput {
   paymentStatus?: PaymentLedgerStatus;
   errorCode?: string;
   errorMessage?: string;
+  settlementRetryable?: boolean;
 }
 
 interface PaymentLedgerListOptions {
@@ -4323,7 +4324,10 @@ export class ClawzControlPlane {
       .slice(0, limit)
       .map((entry) => ({
         ...entry,
-        lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry)
+        lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry),
+        ...(this.buildPaymentSettlementRecovery(entry)
+          ? { settlementRecovery: this.buildPaymentSettlementRecovery(entry)! }
+          : {})
       }));
     return {
       schemaVersion: "santaclawz-payment-ledger/1.0",
@@ -4413,6 +4417,28 @@ export class ClawzControlPlane {
     };
   }
 
+  private buildPaymentSettlementRecovery(entry: PaymentLedgerEntry): NonNullable<PaymentLedgerEntry["settlementRecovery"]> | undefined {
+    if (entry.settlementRecovery) {
+      return entry.settlementRecovery;
+    }
+    const settlementFailed = entry.paymentStatus === "settlement_failed";
+    const authorizedWithCompletedWork =
+      (entry.paymentStatus === "authorization_verified" || entry.paymentStatus === "payment_verified") &&
+      entry.executionStatus === "completed" &&
+      entry.returnStatus === "accepted";
+    if (!settlementFailed && !authorizedWithCompletedWork) {
+      return undefined;
+    }
+    const retryable = settlementFailed || authorizedWithCompletedWork;
+    return {
+      settlementRetryable: retryable,
+      canRetrySettlement: retryable,
+      ...(entry.errorMessage ? { settlementFailureReason: entry.errorMessage } : {}),
+      nextSettlementAction: retryable ? "retry_settlement" : "manual_review",
+      retryEndpoint: entry.quoteIntentId ? "/api/x402/quote-intent" : "/api/agents/:agentId/hire"
+    };
+  }
+
   async listPaymentLedger(options: PaymentLedgerListOptions = {}): Promise<PaymentLedgerState> {
     return this.buildPaymentLedgerState(await this.loadPaymentLedgerFile(), options);
   }
@@ -4426,7 +4452,10 @@ export class ClawzControlPlane {
     return entry
       ? {
           ...entry,
-          lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry)
+          lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry),
+          ...(this.buildPaymentSettlementRecovery(entry)
+            ? { settlementRecovery: this.buildPaymentSettlementRecovery(entry)! }
+            : {})
         }
       : undefined;
   }
@@ -4545,7 +4574,20 @@ export class ClawzControlPlane {
       executionStatus: existing?.executionStatus ?? "not_started",
       returnStatus: existing?.returnStatus ?? "none",
       ...(input.errorCode ? { errorCode: input.errorCode } : existing?.errorCode ? { errorCode: existing.errorCode } : {}),
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : existing?.errorMessage ? { errorMessage: existing.errorMessage } : {})
+      ...(input.errorMessage ? { errorMessage: input.errorMessage } : existing?.errorMessage ? { errorMessage: existing.errorMessage } : {}),
+      ...(typeof input.settlementRetryable === "boolean"
+        ? {
+            settlementRecovery: {
+              settlementRetryable: input.settlementRetryable,
+              canRetrySettlement: input.settlementRetryable,
+              ...(input.errorMessage ? { settlementFailureReason: input.errorMessage } : {}),
+              nextSettlementAction: input.settlementRetryable ? "retry_settlement" : "manual_review",
+              retryEndpoint: "/api/x402/quote-intent"
+            }
+          }
+        : existing?.settlementRecovery
+          ? { settlementRecovery: existing.settlementRecovery }
+          : {})
     };
     const entries = existingIndex >= 0
       ? file.entries.map((entry, index) => index === existingIndex ? nextEntry : entry)
@@ -4592,6 +4634,41 @@ export class ClawzControlPlane {
       paymentStatus,
       ...(input.errorCode ? { errorCode: input.errorCode } : {}),
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {})
+    };
+    await this.savePaymentLedgerFile({
+      entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
+    });
+    return nextEntry;
+  }
+
+  async recordPaymentLedgerSettlementFailure(input: {
+    ledgerId?: string;
+    errorMessage: string;
+    errorCode?: string;
+    settlementRetryable: boolean;
+  }): Promise<PaymentLedgerEntry | undefined> {
+    if (!input.ledgerId) {
+      return undefined;
+    }
+    const file = await this.loadPaymentLedgerFile();
+    const index = file.entries.findIndex((entry) => entry.ledgerId === input.ledgerId);
+    if (index < 0) {
+      return undefined;
+    }
+    const existing = file.entries[index]!;
+    const nextEntry: PaymentLedgerEntry = {
+      ...existing,
+      updatedAtIso: new Date().toISOString(),
+      paymentStatus: "settlement_failed",
+      errorCode: input.errorCode ?? existing.errorCode ?? "settlement_failed",
+      errorMessage: input.errorMessage,
+      settlementRecovery: {
+        settlementRetryable: input.settlementRetryable,
+        canRetrySettlement: input.settlementRetryable,
+        settlementFailureReason: input.errorMessage,
+        nextSettlementAction: input.settlementRetryable ? "retry_settlement" : "manual_review",
+        retryEndpoint: existing.quoteIntentId ? "/api/x402/quote-intent" : "/api/agents/:agentId/hire"
+      }
     };
     await this.savePaymentLedgerFile({
       entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
@@ -8469,6 +8546,7 @@ export class ClawzControlPlane {
     const completedVerified =
       latestExecution?.protocolReturn?.status === "completed" &&
       latestExecution.protocolReturn.execution?.completionClassification === "agent_completed_verified";
+    const settlementRecovery = latestLedger ? this.buildPaymentSettlementRecovery(latestLedger) : undefined;
     const paidButNotCompleted =
       (paymentStatus === "authorized" || paymentStatus === "settled") &&
       !completedVerified &&
@@ -8505,6 +8583,7 @@ export class ClawzControlPlane {
       proofStatus,
       ...(latestExecution ? { latestHireRequestId: latestExecution.requestId } : {}),
       ...(latestLedger ? { ledgerId: latestLedger.ledgerId } : {}),
+      ...(settlementRecovery ? { settlementRecovery } : {}),
       ...(latestLedger?.errorCode ? { errorCode: latestLedger.errorCode } : latestExecution?.returnValidationCode ? { errorCode: latestExecution.returnValidationCode } : {}),
       ...(latestLedger?.errorMessage
         ? { errorMessage: latestLedger.errorMessage }

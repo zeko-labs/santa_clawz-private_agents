@@ -2142,6 +2142,11 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
           paymentResponseDigestSha256
         });
       } catch (error) {
+        await controlPlane.recordPaymentLedgerSettlementFailure({
+          ledgerId: authorizationLedgerEntry.ledgerId,
+          errorMessage: errorMessage(error, "Unable to settle x402 payment."),
+          settlementRetryable: isRetryableSettlementError(error)
+        });
         response.status(202).json(paymentSettlementFailureBody(error, {
           intent: approvedIntent,
           paidExecution,
@@ -3036,6 +3041,11 @@ const handleAgentHireRequest = route(async (request, response) => {
             paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
           });
         } catch (error) {
+          await controlPlane.recordPaymentLedgerSettlementFailure({
+            ...(authorizationLedgerId ? { ledgerId: authorizationLedgerId } : {}),
+            errorMessage: errorMessage(error, "Unable to settle x402 payment."),
+            settlementRetryable: isRetryableSettlementError(error)
+          });
           response.status(202).json(paymentSettlementFailureBody(error, {
             agentId,
             paidExecution: hireReceipt,

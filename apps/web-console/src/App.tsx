@@ -878,6 +878,9 @@ function paymentActivityLine(entry: PaymentLedgerEntry) {
   if (isCompletedPaymentEntry(entry)) {
     return `$${amount} settled on ${rail}`;
   }
+  if (entry.settlementRecovery?.canRetrySettlement) {
+    return `$${amount} settlement retry available on ${rail}`;
+  }
   if (entry.lifecycleStatus?.label) {
     return `$${amount} ${entry.lifecycleStatus.label.toLowerCase()} on ${rail}`;
   }
@@ -896,6 +899,9 @@ function paymentActivityLine(entry: PaymentLedgerEntry) {
 function paymentActivityBadge(entry: PaymentLedgerEntry) {
   if (entry.lifecycleStatus?.label) {
     return entry.lifecycleStatus.label;
+  }
+  if (entry.settlementRecovery?.canRetrySettlement) {
+    return "Retry settlement";
   }
   if (isCompletedPaymentEntry(entry)) {
     return "Completed";
@@ -5117,6 +5123,7 @@ export function App() {
                                     <div className="agent-message-proof-row">
                                       <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>
                                       {payment.deliveryReceipt ? <span>{payment.deliveryReceipt.stage.replace(/_/g, " ")}</span> : null}
+                                      {payment.settlementRecovery?.nextSettlementAction === "retry_settlement" ? <span>retry settlement</span> : null}
                                       {payment.sellerNetAmountUsd ? <span>seller net ${payment.sellerNetAmountUsd}</span> : null}
                                       {payment.protocolFeeAmountUsd ? <span>protocol fee ${payment.protocolFeeAmountUsd}</span> : null}
                                       <span>tx {shortPaymentReference(payment)}</span>

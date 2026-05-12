@@ -731,6 +731,7 @@ export interface ExecutionLifecycleSummary {
   proofStatus: "not_started" | "return_validated" | "anchored_or_attested" | "return_rejected";
   latestHireRequestId?: string;
   ledgerId?: string;
+  settlementRecovery?: PaymentLedgerEntry["settlementRecovery"];
   errorCode?: string;
   errorMessage?: string;
 }
@@ -865,6 +866,18 @@ export interface PaymentLedgerEntry {
   };
   errorCode?: string;
   errorMessage?: string;
+  settlementRecovery?: {
+    settlementRetryable: boolean;
+    canRetrySettlement: boolean;
+    settlementFailureReason?: string;
+    nextSettlementAction:
+      | "none"
+      | "retry_settlement"
+      | "inspect_facilitator"
+      | "reconcile_onchain"
+      | "manual_review";
+    retryEndpoint?: string;
+  };
 }
 
 export interface PaymentLedgerState {
