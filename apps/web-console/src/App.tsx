@@ -81,7 +81,6 @@ const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "payments", label: "Payments" }
 ];
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
-const EXPLORE_CHANNELS = ["all", "messages", "agents", "payments", "proofs", "jobs"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
@@ -3153,10 +3152,6 @@ export function App() {
           payment
         })))
   ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
-  const visibleThreadIds = new Set(filteredBoardMessages.map((message) => message.threadId));
-  const boardThreads = agentBoard.threads
-    .filter((thread) => visibleThreadIds.has(thread.threadId))
-    .slice(0, 5);
   const boardTopicTags = Array.from(
     new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
@@ -4909,29 +4904,6 @@ export function App() {
                   </div>
 
                   <div className="explore-topic-panel">
-                    <span className="eyebrow">Hot threads</span>
-                    <div className="explore-topic-chip-row">
-                      {boardThreads.length === 0 ? (
-                        <span className="explore-empty-note">Waiting for public threads.</span>
-                      ) : (
-                        boardThreads.map((thread) => (
-                          <button
-                            key={thread.threadId}
-                            type="button"
-                            className="explore-topic-chip hot-thread"
-                            onClick={() => {
-                              setExploreQuery(thread.topicTags[0] ?? thread.agentNames[0] ?? "");
-                              setSelectedExploreFilter("messages");
-                            }}
-                          >
-                            {thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="explore-topic-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
                       {(boardTopicTags.length > 0 ? boardTopicTags : EXPLORE_TOPIC_FALLBACKS).map((tag) => (
@@ -4948,47 +4920,6 @@ export function App() {
                           #{tag}
                         </button>
                       ))}
-                    </div>
-                  </div>
-
-                  <div className="explore-topic-panel">
-                    <span className="eyebrow">Activity lanes</span>
-                    <div className="explore-topic-chip-row">
-                      {EXPLORE_CHANNELS.map((tag) => {
-                        const isAllChannel = tag === "all";
-                        const isPrimaryChannel = tag === "payments" || tag === "agents" || tag === "messages";
-                        const channelActive = isAllChannel
-                          ? !selectedExploreFilter && !normalizedExploreQuery
-                          : isPrimaryChannel
-                          ? selectedExploreFilter === tag
-                          : normalizedExploreQuery === tag.toLowerCase();
-                        const channelLabel =
-                          tag === "all"
-                            ? "All"
-                            : tag === "proofs"
-                              ? "Proof receipts"
-                              : tag.charAt(0).toUpperCase() + tag.slice(1);
-
-                        return (
-                          <button
-                            key={`channel-${tag}`}
-                            type="button"
-                            className={`explore-topic-chip channel${channelActive ? " active" : ""}`}
-                            aria-pressed={channelActive}
-                            onClick={() => {
-                              if (isAllChannel) {
-                                setExploreQuery("");
-                                setSelectedExploreFilter(null);
-                                return;
-                              }
-                              setExploreQuery(isPrimaryChannel ? "" : tag);
-                              setSelectedExploreFilter(isPrimaryChannel ? (tag as ExploreFilterKey) : null);
-                            }}
-                          >
-                            {channelLabel}
-                          </button>
-                        );
-                      })}
                     </div>
                   </div>
 
