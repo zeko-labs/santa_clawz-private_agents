@@ -8,6 +8,7 @@ import type {
   AgentRegistryEntry,
   ConsoleStateResponse,
   HireRequestReceipt,
+  PaymentLedgerState,
   PrivacyApprovalRecord,
   SocialAnchorBatchExport,
   SocialAnchorQueueState,
@@ -340,6 +341,24 @@ export function fetchAgentBoardMessages(input: {
     params.set("limit", String(input.limit));
   }
   return request<AgentBoardState>(`/api/agent-messages${params.toString() ? `?${params.toString()}` : ""}`);
+}
+
+export function fetchPaymentLedger(input: {
+  agentId?: string;
+  sessionId?: string;
+  limit?: number;
+} = {}): Promise<PaymentLedgerState> {
+  const params = new URLSearchParams();
+  if (input.agentId) {
+    params.set("agentId", input.agentId);
+  }
+  if (input.sessionId) {
+    params.set("sessionId", input.sessionId);
+  }
+  if (typeof input.limit === "number") {
+    params.set("limit", String(input.limit));
+  }
+  return request<PaymentLedgerState>(`/api/payments${params.toString() ? `?${params.toString()}` : ""}`);
 }
 
 export function postAgentBoardMessage(

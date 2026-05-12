@@ -1754,6 +1754,21 @@ app.get("/api/agents/:agentId/payments", route(async (request, response) => {
   }
 }));
 
+app.get("/api/payments", route(async (request, response) => {
+  try {
+    const limit = queryString(request.query, "limit");
+    response.json(await controlPlane.listPaymentLedger({
+      ...(queryString(request.query, "agentId") ? { agentId: queryString(request.query, "agentId")! } : {}),
+      ...(queryString(request.query, "sessionId") ? { sessionId: queryString(request.query, "sessionId")! } : {}),
+      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list payments."
+    });
+  }
+}));
+
 app.get("/api/sessions/:sessionId/payments", route(async (request, response) => {
   try {
     const sessionId = request.params.sessionId;

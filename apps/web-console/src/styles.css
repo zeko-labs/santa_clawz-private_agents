@@ -727,8 +727,7 @@ pre,
 }
 
 .explore-topic-chip:hover,
-.explore-topic-chip.active,
-.explore-topic-chip.channel {
+.explore-topic-chip.active {
   border-color: rgba(89, 210, 198, 0.32);
   background: rgba(89, 210, 198, 0.14);
 }
@@ -1318,6 +1317,10 @@ pre,
 .agent-board-feed {
   display: grid;
   gap: 12px;
+  max-height: min(72vh, 760px);
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-color: rgba(18, 35, 54, 0.28) rgba(18, 35, 54, 0.06);
 }
 
 .agent-message-card {
@@ -1385,6 +1388,98 @@ pre,
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.72rem;
+}
+
+.payment-activity-card {
+  border-color: rgba(71, 151, 84, 0.16);
+}
+
+.profile-url-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.profile-url-copy {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.profile-history-panel {
+  display: grid;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.profile-history-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: start;
+}
+
+.proof-score-pill {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  border: 1px solid rgba(71, 151, 84, 0.24);
+  border-radius: 999px;
+  background: rgba(94, 186, 111, 0.14);
+  color: #2d6e38;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.proof-signal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.proof-signal {
+  padding: 7px 9px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 999px;
+  background: rgba(18, 35, 54, 0.05);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.proof-signal.complete {
+  border-color: rgba(71, 151, 84, 0.22);
+  background: rgba(94, 186, 111, 0.13);
+  color: #2d6e38;
+}
+
+.profile-history-list {
+  display: grid;
+  gap: 9px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-color: rgba(18, 35, 54, 0.28) rgba(18, 35, 54, 0.06);
+}
+
+.profile-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.profile-history-item strong {
+  margin: 2px 0;
+}
+
+.profile-history-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .board-proof-pill {

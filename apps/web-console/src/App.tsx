@@ -7,7 +7,8 @@ import type {
   AgentRuntimeStatus,
   AgentRegistryEntry,
   ConsoleStateResponse,
-  HireRequestReceipt,
+  PaymentLedgerEntry,
+  PaymentLedgerState,
   PrivacyProvingLocation
 } from "@clawz/protocol";
 
@@ -21,6 +22,7 @@ import {
   fetchAgentRuntimeAvailability,
   fetchAgentRegistry,
   fetchConsoleState,
+  fetchPaymentLedger,
   getStoredAdminKey,
   getApiBase,
   issueOwnershipChallenge,
@@ -31,17 +33,11 @@ import {
   settleSocialAnchorBatch,
   storeAdminKey,
   sponsorWallet,
-  submitHireRequest,
   updateAgentProfile,
   verifyOwnershipChallenge
 } from "./api.js";
 
 type AgentProfileDraft = AgentProfileState;
-type HireDraft = {
-  taskPrompt: string;
-  budgetMina: string;
-  requesterContact: string;
-};
 type PayoutWalletKey = "base" | "ethereum";
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
 type EnrollmentTicket = EnrollmentTicketResponse;
@@ -49,7 +45,10 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "threads" | "agents" | "payments";
+type ExploreFilterKey = "messages" | "agents" | "payments";
+type ExploreActivityItem =
+  | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
+  | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -77,11 +76,11 @@ const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
-  { key: "threads", label: "Threads" },
+  { key: "messages", label: "Messages" },
   { key: "agents", label: "Agents" },
   { key: "payments", label: "Payments" }
 ];
-const EXPLORE_CHANNELS = ["pricing", "proofs", "jobs", "swarm"];
+const EXPLORE_CHANNELS = ["messages", "agents", "payments", "proofs", "jobs"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
@@ -813,18 +812,60 @@ function matchesBoardMessageQuery(
 
 function matchesBoardMessageFilter(
   message: AgentBoardState["messages"][number],
-  filter: ExploreFilterKey,
+  filter: ExploreFilterKey | null,
   agent?: AgentRegistryEntry
 ) {
-  if (filter === "threads") {
+  if (!filter || filter === "messages") {
     return true;
   }
   if (filter === "agents") {
     return Boolean(agent);
   }
-  return message.messageType === "output" ||
-    message.messageType === "dispatch" ||
-    Boolean(agent?.paymentsEnabled || agent?.paidJobsEnabled);
+  return false;
+}
+
+function isCompletedPaymentEntry(entry: PaymentLedgerEntry) {
+  return entry.executionStatus === "completed" ||
+    entry.paymentStatus === "execution_completed" ||
+    (entry.paymentStatus === "settled" && entry.returnStatus === "accepted");
+}
+
+function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: AgentRegistryEntry) {
+  if (!query) {
+    return true;
+  }
+  return [
+    entry.agentId,
+    entry.sessionId,
+    entry.hireRequestId ?? "",
+    entry.quoteIntentId ?? "",
+    entry.ledgerId,
+    entry.rail,
+    entry.networkId,
+    entry.assetSymbol,
+    entry.amountUsd,
+    entry.sellerNetAmountUsd ?? "",
+    entry.protocolFeeAmountUsd ?? "",
+    entry.paymentStatus,
+    entry.executionStatus ?? "",
+    entry.sellerSettlementTxHash ?? "",
+    entry.protocolFeeTxHash ?? "",
+    ...entry.transactionHashes,
+    agent?.agentName ?? "",
+    agent?.representedPrincipal ?? "",
+    agent?.headline ?? ""
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
+function paymentActivityLine(entry: PaymentLedgerEntry) {
+  const amount = entry.sellerNetAmountUsd?.trim() || entry.amountUsd;
+  const rail = entry.rail === "base-usdc" ? "Base USDC" : railLabel(entry.rail);
+  return `$${amount} settled on ${rail}`;
+}
+
+function shortPaymentReference(entry: PaymentLedgerEntry) {
+  const reference = entry.sellerSettlementTxHash ?? entry.transactionHashes[0] ?? entry.ledgerId;
+  return shorten(reference, 10, 8);
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
@@ -1378,16 +1419,12 @@ export function App() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [registry, setRegistry] = useState<AgentRegistryEntry[]>([]);
   const [agentBoard, setAgentBoard] = useState<AgentBoardState>(emptyAgentBoardState());
+  const [paymentLedger, setPaymentLedger] = useState<PaymentLedgerState | null>(null);
+  const [profilePaymentLedger, setProfilePaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
   const [agentAvailabilityLoading, setAgentAvailabilityLoading] = useState(false);
-  const [hireDraft, setHireDraft] = useState<HireDraft>({
-    taskPrompt: "",
-    budgetMina: "",
-    requesterContact: ""
-  });
-  const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
-  const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey>("threads");
+  const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
@@ -1436,7 +1473,7 @@ export function App() {
         setState(nextState);
         setError(null);
 
-        if (!selectedSessionId) {
+        if (!selectedSessionId && !sharedAgentId) {
           setSelectedSessionId(nextState.session.sessionId);
         }
       })
@@ -1512,7 +1549,7 @@ export function App() {
 
   useEffect(() => {
     const isRegisteredSession = state?.session.sessionId.startsWith("session_agent_") ?? false;
-    if (!state || !isRegisteredSession || !profileSessionId || profileSessionId !== state.session.sessionId) {
+    if (activeSection === "explore" || !state || !isRegisteredSession || !profileSessionId || profileSessionId !== state.session.sessionId) {
       return;
     }
 
@@ -1538,7 +1575,7 @@ export function App() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [profile, profileSessionId, state]);
+  }, [activeSection, profile, profileSessionId, state]);
 
   useEffect(() => {
     if (sharedAgentId) {
@@ -1598,10 +1635,14 @@ export function App() {
         return;
       }
 
-      void fetchAgentBoardMessages({ limit: 32 })
-        .then((nextBoard) => {
+      void Promise.all([
+        fetchAgentBoardMessages({ limit: 100 }),
+        fetchPaymentLedger({ limit: 100 })
+      ])
+        .then(([nextBoard, nextPayments]) => {
           if (!cancelled) {
             setAgentBoard(nextBoard);
+            setPaymentLedger(nextPayments);
           }
         })
         .catch((nextError: Error) => {
@@ -1627,6 +1668,34 @@ export function App() {
         window.clearInterval(intervalId);
       }
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [activeSection, sharedAgentId]);
+
+  useEffect(() => {
+    if (activeSection !== "explore" || !sharedAgentId) {
+      setProfilePaymentLedger(null);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshProfilePayments = () => {
+      void fetchPaymentLedger({ agentId: sharedAgentId, limit: 40 })
+        .then((nextLedger) => {
+          if (!cancelled) {
+            setProfilePaymentLedger(nextLedger);
+          }
+        })
+        .catch((nextError: Error) => {
+          if (!cancelled) {
+            setError(nextError.message);
+          }
+        });
+    };
+
+    refreshProfilePayments();
+
+    return () => {
+      cancelled = true;
     };
   }, [activeSection, sharedAgentId]);
 
@@ -1782,15 +1851,6 @@ export function App() {
   useEffect(() => {
     setDuplicateClaimTarget(null);
   }, [profile.openClawUrl, profile.runtimeDelivery.runtimeIngressUrl]);
-
-  useEffect(() => {
-    setHireReceipt(null);
-    setHireDraft({
-      taskPrompt: "",
-      budgetMina: "",
-      requesterContact: ""
-    });
-  }, [sharedAgentId, state?.agentId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2059,6 +2119,12 @@ export function App() {
     setActiveHiddenPage(null);
     setNavOpen(false);
     setSharedAgentFocus("profile");
+    setProfileSessionId(null);
+    if (nextSection === "configure") {
+      setState(null);
+      setProfile(normalizeProfileDraft());
+      setEnrollmentTicket(null);
+    }
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
       setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
@@ -2130,6 +2196,7 @@ export function App() {
     setSharedAgentId(agentId);
     setSharedAgentFocus(focus);
     setSelectedSessionId(null);
+    setProfileSessionId(null);
     setActiveSection("explore");
     setActiveStaticPage(null);
     setActiveHiddenPage(null);
@@ -2879,9 +2946,6 @@ export function App() {
   const quoteRequestMode =
     savedPaymentsEnabled &&
     state.profile.paymentProfile.pricingMode === "quote-required";
-  const fixedPriceExecutionMode =
-    savedPaymentsEnabled &&
-    state.profile.paymentProfile.pricingMode === "fixed-exact";
   const freeTestMode = state.profile.paymentProfile.pricingMode === "free-test";
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
@@ -2999,7 +3063,26 @@ export function App() {
     return matchesBoardMessageQuery(message, normalizedExploreQuery, agent) &&
       matchesBoardMessageFilter(message, selectedExploreFilter, agent);
   });
-  const boardMessages = filteredBoardMessages.slice(0, 12);
+  const completedPaymentEntries = (paymentLedger?.entries ?? [])
+    .filter(isCompletedPaymentEntry)
+    .filter((entry) => matchesPaymentQuery(entry, normalizedExploreQuery, registryByAgentId.get(entry.agentId)))
+    .slice(0, 100);
+  const exploreActivityItems: ExploreActivityItem[] = [
+    ...filteredBoardMessages.map((message) => ({
+      kind: "message" as const,
+      id: message.messageId,
+      occurredAtIso: message.createdAtIso,
+      message
+    })),
+    ...(selectedExploreFilter === "messages"
+      ? []
+      : completedPaymentEntries.map((payment) => ({
+          kind: "payment" as const,
+          id: payment.ledgerId,
+          occurredAtIso: payment.updatedAtIso,
+          payment
+        })))
+  ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
   const visibleThreadIds = new Set(filteredBoardMessages.map((message) => message.threadId));
   const boardThreads = agentBoard.threads
     .filter((thread) => visibleThreadIds.has(thread.threadId))
@@ -3007,9 +3090,7 @@ export function App() {
   const boardTopicTags = Array.from(
     new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
-  const visibleExploreAgents = filteredRegistry
-    .filter((agent) => selectedExploreFilter !== "payments" || agent.paymentsEnabled || agent.paidJobsEnabled)
-    .slice(0, 12);
+  const visibleExploreAgents = filteredRegistry.slice(0, 12);
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
     ? buildPublicAgentUrl(starterAgent.agentId)
@@ -3061,42 +3142,46 @@ export function App() {
   const focusedRuntimeStatusClass = agentRuntimeCheckPending
     ? "runtime-status-waiting"
     : runtimeStatusClass(focusedRuntimeStatus);
-  const agentRuntimeOffline = Boolean(
-    sharedAgentId && focusedAgentAvailability && !focusedAgentAvailability.reachable
+  const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
+  const agentTrustSignals = [
+    { label: "Published on Zeko", complete: published },
+    { label: "Owner verified", complete: state.ownership.status === "verified" },
+    { label: "Anchored history", complete: currentSocialAnchorQueue.anchoredCount > 0 },
+    { label: "Recent proof root", complete: Boolean(latestSocialAnchorBatch?.confirmedAtIso || latestSocialAnchorBatch?.settledAtIso) },
+    { label: "Payment ready", complete: savedPaymentProfileReady },
+    { label: "Runtime live", complete: focusedRuntimeStatus === "live" }
+  ];
+  const agentTrustScore = Math.round(
+    (agentTrustSignals.filter((signal) => signal.complete).length / agentTrustSignals.length) * 100
   );
-  const fixedPriceSetupIncomplete = fixedPriceExecutionMode && !paidJobsEnabled;
-  const manualBrowserPaidExecutionUnavailable = fixedPriceExecutionMode && paidJobsEnabled;
-  const fixedExecutionPriceLabel = state.profile.paymentProfile.fixedAmountUsd?.trim()
-    ? `$${state.profile.paymentProfile.fixedAmountUsd.trim()} USDC`
-    : "Fixed price not configured";
-  const canSubmitHire =
-    Boolean(sharedAgentId) &&
-    !agentArchived &&
-    published &&
-    (freeTestMode || (savedPaymentsEnabled && (quoteRequestMode ? savedPaymentProfileReady : paidJobsEnabled))) &&
-    !manualBrowserPaidExecutionUnavailable &&
-    !agentRuntimeCheckPending &&
-    !agentRuntimeOffline &&
-    hireDraft.taskPrompt.trim().length > 0 &&
-    hireDraft.requesterContact.trim().length > 0;
-  const hireStatusCopy = agentArchived
-    ? `This agent is archived on SantaClawz${archivedAtLabel}. Its public proof history stays online, but new hire requests are disabled.`
-    : !published
-      ? "This agent still needs to publish on Zeko before it can accept work."
-      : agentRuntimeCheckPending
-        ? "Checking that this OpenClaw agent is online before SantaClawz requests payment or submits work."
-      : agentRuntimeOffline
-          ? `This OpenClaw agent appears offline. SantaClawz will not request payment or send hires until it is reachable${focusedAgentAvailability?.reason ? `: ${focusedAgentAvailability.reason}` : "."}`
-      : freeTestMode
-        ? "Free-test requests are signed by SantaClawz, sent without payment, and quota-limited."
-      : savedPaymentsEnabled && !savedPaymentProfileReady
-        ? "This agent is open for work, but it still needs its payout wallet or processor completed."
-        : savedPaymentsEnabled && paidJobsEnabled
-          ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}. Paid execution requires an x402 buyer client; browser checkout is not live yet.`
-          : quoteRequestMode
-            ? `This agent is open for quote requests. It advertises ${referencePriceLine(state.profile.paymentProfile).toLowerCase()}, then quotes an exact price before paid execution.`
-          : "Hire requests route through SantaClawz to the private OpenClaw ingress after checks."
-  ;
+  const profileHistoryItems = [
+    ...profileCompletedPayments.map((payment) => ({
+      id: `payment-${payment.ledgerId}`,
+      kind: "Payment",
+      title: paymentActivityLine(payment),
+      detail: `ledger ${shorten(payment.ledgerId, 8, 6)} • tx ${shortPaymentReference(payment)}`,
+      occurredAtIso: payment.updatedAtIso,
+      status: payment.paymentStatus
+    })),
+    ...currentSocialAnchorQueue.items.map((item) => ({
+      id: `anchor-${item.candidateId}`,
+      kind: "Proof",
+      title: item.title,
+      detail: `${item.kind} • ${item.status}${item.batchRootDigestSha256 ? ` • root ${shorten(item.batchRootDigestSha256, 10, 8)}` : ""}`,
+      occurredAtIso: item.occurredAtIso,
+      status: item.status
+    })),
+    ...state.timeMachine.map((entry) => ({
+      id: `event-${entry.id}`,
+      kind: "Event",
+      title: entry.outcome,
+      detail: entry.note,
+      occurredAtIso: entry.occurredAtIso,
+      status: entry.label
+    }))
+  ]
+    .sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso))
+    .slice(0, 80);
   const missionAuthStatusCopy = !missionAuthEnabled
     ? missionAuthToggleCopy
     : missionAuthVerified
@@ -4654,32 +4739,10 @@ export function App() {
                     : ""}
                 </p>
                 <div className="action-list">
-                  <div className="action-row">
-                    <div>
-                      <strong>Public agent URL</strong>
-                      <p className="panel-copy">
-                        {routedPublicAgentUrl ?? "This agent does not have a public SantaClawz URL yet."}
-                      </p>
-                    </div>
-                    <div className="action-side">
-                      <button
-                        className="secondary-button"
-                        disabled={!routedPublicAgentUrl}
-                        onClick={() => {
-                          if (routedPublicAgentUrl) {
-                            void copyValue("shared-public-agent-url", routedPublicAgentUrl);
-                          }
-                        }}
-                      >
-                        {copiedKey === "shared-public-agent-url" ? "Copied" : "Copy"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="action-row">
+                  <div className="action-row profile-url-action">
                     <div>
                       <strong>SantaClawz hire URL</strong>
-                      <p className="panel-copy">
+                      <p className="panel-copy profile-url-copy">
                         {routedPublicAgentHireUrl ??
                           "This hosted hire URL appears after the agent has a SantaClawz profile."}
                       </p>
@@ -4702,156 +4765,41 @@ export function App() {
                     </div>
                   </div>
 
-                  {agentArchived ? (
-                    <div id="hire-this-agent" className="action-row">
+                  <div className="action-row profile-history-panel">
+                    <div className="profile-history-head">
                       <div>
-                        <strong>This agent is archived</strong>
+                        <strong>Agent history and proof score</strong>
                         <p className="panel-copy">
-                          SantaClawz is preserving the public proof history here, but it is not routing new hire requests or payment flows to this agent right now.
+                          Public work, payments, and proof milestones for agents and humans checking reliability.
                         </p>
                       </div>
+                      <span className="proof-score-pill">{agentTrustScore}% proof score</span>
                     </div>
-                  ) : (
-                    <div id="hire-this-agent" className="action-row action-row-form">
-                      <div>
-                        <div className="hire-title-row">
-                          <strong>{quoteRequestMode ? "Request a quote" : "Hire this agent"}</strong>
-                          <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
-                        </div>
-                        <p className="panel-copy">{hireStatusCopy}</p>
-                      </div>
-                      <div className="action-form-stack hire-form-stack">
-                        <label className="field">
-                          <span>Task prompt</span>
-                          <textarea
-                            className="text-area compact-text-area"
-                            value={hireDraft.taskPrompt}
-                            onChange={(event: ValueInputEvent) => {
-                              setHireDraft({
-                                ...hireDraft,
-                                taskPrompt: event.target.value
-                              });
-                            }}
-                            placeholder="Ask the agent what you want done."
-                          />
-                        </label>
-                        <div className="field-grid compact-field-grid">
-                          {quoteRequestMode ? (
-                            <label className="field">
-                              <span>Max budget (optional)</span>
-                              <input
-                                className="text-input"
-                                value={hireDraft.budgetMina}
-                                onChange={(event: ValueInputEvent) => {
-                                  setHireDraft({
-                                    ...hireDraft,
-                                    budgetMina: event.target.value
-                                  });
-                                }}
-                                placeholder="0.50"
-                              />
-                            </label>
-                          ) : freeTestMode ? (
-                            <label className="field">
-                              <span>Mode</span>
-                              <input
-                                className="text-input"
-                                value="Free test"
-                                readOnly
-                              />
-                            </label>
-                          ) : (
-                            <label className="field">
-                              <span>Fixed price</span>
-                              <input
-                                className="text-input"
-                                value={fixedExecutionPriceLabel}
-                                readOnly
-                              />
-                            </label>
-                          )}
-                          <label className="field">
-                            <span>Reply contact</span>
-                            <input
-                              className="text-input"
-                              value={hireDraft.requesterContact}
-                              onChange={(event: ValueInputEvent) => {
-                                setHireDraft({
-                                  ...hireDraft,
-                                  requesterContact: event.target.value
-                                });
-                              }}
-                              placeholder="name@example.com or callback URL"
-                            />
-                          </label>
-                        </div>
-                        {fixedPriceExecutionMode ? (
-                          <p className="status-note status-note-compact">
-                            SantaClawz will only send this paid job after x402 payment settles. Use a buyer agent or x402-capable client for now; manual browser checkout is coming next.
-                          </p>
-                        ) : null}
-                        <div className="action-side">
-                          <button
-                            className="primary-button"
-                            disabled={pendingAction === "hire-request" || !canSubmitHire}
-                            onClick={() => {
-                              if (!sharedAgentId) {
-                                return;
-                              }
-                              setPendingAction("hire-request");
-                              setError(null);
-                              void submitHireRequest(sharedAgentId, {
-                                taskPrompt: hireDraft.taskPrompt,
-                                requesterContact: hireDraft.requesterContact,
-                                ...(!freeTestMode && hireDraft.budgetMina.trim().length > 0
-                                  ? { budgetMina: hireDraft.budgetMina }
-                                  : {})
-                              })
-                                .then((receipt) => {
-                                  setHireReceipt(receipt);
-                                })
-                                .catch((nextError: Error) => {
-                                  setError(nextError.message);
-                                })
-                                .finally(() => {
-                                  setPendingAction(null);
-                                });
-                            }}
-                          >
-                            {pendingAction === "hire-request"
-                              ? "Sending..."
-                              : agentRuntimeCheckPending
-                                ? "Checking agent..."
-                                : agentRuntimeOffline
-                                  ? "Agent offline"
-                                  : fixedPriceSetupIncomplete
-                                    ? "Payment setup incomplete"
-                                  : manualBrowserPaidExecutionUnavailable
-                                    ? "x402 payment required"
-                                  : quoteRequestMode
-                                    ? "Send quote request"
-                                    : freeTestMode
-                                      ? "Send free test"
-                                    : "Send hire request"}
-                          </button>
-                        </div>
-                      </div>
+                    <div className="proof-signal-row">
+                      {agentTrustSignals.map((signal) => (
+                        <span key={signal.label} className={signal.complete ? "proof-signal complete" : "proof-signal"}>
+                          {signal.label}
+                        </span>
+                      ))}
                     </div>
-                  )}
+                    <div className="profile-history-list" aria-label="Agent public history">
+                      {profileHistoryItems.length === 0 ? (
+                        <p className="panel-copy">No public proof history is available yet.</p>
+                      ) : (
+                        profileHistoryItems.map((item) => (
+                          <article key={item.id} className="profile-history-item">
+                            <div>
+                              <span className="eyebrow">{item.kind} • {formatRelativeTime(item.occurredAtIso)}</span>
+                              <strong>{item.title}</strong>
+                              <p>{item.detail}</p>
+                            </div>
+                            <span className="subtle-pill">{item.status}</span>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
-                {hireReceipt ? (
-                  <p className="status-banner status-banner-success">
-                    {hireReceipt.requestType === "free_test"
-                      ? `Free-test request ${hireReceipt.requestId} submitted to ${hireReceipt.deliveryTarget}.`
-                      : hireReceipt.protocolReturn?.status === "quoted" && hireReceipt.protocolReturn.quote
-                      ? `Quote returned: ${hireReceipt.protocolReturn.quote.amountUsd} USDC for request ${hireReceipt.requestId}.`
-                      : hireReceipt.protocolReturn?.status === "completed"
-                        ? `Agent completed request ${hireReceipt.requestId}; verified output digest recorded.`
-                        : hireReceipt.protocolReturn?.status === "failed"
-                          ? `Agent returned a failure for request ${hireReceipt.requestId}.`
-                          : `Hire request ${hireReceipt.requestId} submitted to ${hireReceipt.deliveryTarget}.`}
-                  </p>
-                ) : null}
               </article>
             </div>
           ) : (
@@ -4884,7 +4832,7 @@ export function App() {
                           className={`explore-filter-chip${selectedExploreFilter === filter.key ? " active" : ""}`}
                           aria-pressed={selectedExploreFilter === filter.key}
                           onClick={() => {
-                            setSelectedExploreFilter(filter.key);
+                            setSelectedExploreFilter(selectedExploreFilter === filter.key ? null : filter.key);
                           }}
                         >
                           {filter.label}
@@ -4906,7 +4854,7 @@ export function App() {
                             className="explore-topic-chip hot-thread"
                             onClick={() => {
                               setExploreQuery(thread.topicTags[0] ?? thread.agentNames[0] ?? "");
-                              setSelectedExploreFilter("threads");
+                              setSelectedExploreFilter("messages");
                             }}
                           >
                             {thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}
@@ -4927,7 +4875,7 @@ export function App() {
                           aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
                           onClick={() => {
                             setExploreQuery(tag);
-                            setSelectedExploreFilter("threads");
+                            setSelectedExploreFilter("messages");
                           }}
                         >
                           #{tag}
@@ -4939,20 +4887,27 @@ export function App() {
                   <div className="explore-topic-panel">
                     <span className="eyebrow">Channels</span>
                     <div className="explore-topic-chip-row">
-                      {EXPLORE_CHANNELS.map((tag) => (
-                        <button
-                          key={`channel-${tag}`}
-                          type="button"
-                          className={`explore-topic-chip channel${normalizedExploreQuery === tag.toLowerCase() ? " active" : ""}`}
-                          aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
-                          onClick={() => {
-                            setExploreQuery(tag);
-                            setSelectedExploreFilter("threads");
-                          }}
-                        >
-                          #{tag}
-                        </button>
-                      ))}
+                      {EXPLORE_CHANNELS.map((tag) => {
+                        const isPrimaryChannel = tag === "payments" || tag === "agents" || tag === "messages";
+                        const channelActive = isPrimaryChannel
+                          ? selectedExploreFilter === tag
+                          : normalizedExploreQuery === tag.toLowerCase();
+
+                        return (
+                          <button
+                            key={`channel-${tag}`}
+                            type="button"
+                            className={`explore-topic-chip channel${channelActive ? " active" : ""}`}
+                            aria-pressed={channelActive}
+                            onClick={() => {
+                              setExploreQuery(isPrimaryChannel ? "" : tag);
+                              setSelectedExploreFilter(isPrimaryChannel ? (tag as ExploreFilterKey) : null);
+                            }}
+                          >
+                            #{tag}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -4987,18 +4942,20 @@ export function App() {
                               ? "Public agents"
                               : selectedExploreFilter === "payments"
                                 ? "Payment signals"
-                                : "Public agent threads"}
+                                : selectedExploreFilter === "messages"
+                                  ? "Public agent messages"
+                                  : "Public agent activity"}
                           </h3>
                         </div>
                         <span className="subtle-pill">
-                          {selectedExploreFilter === "agents" || selectedExploreFilter === "payments"
+                          {selectedExploreFilter === "agents"
                             ? `${visibleExploreAgents.length} shown`
-                            : `${filteredBoardMessages.length} shown`}
+                            : `${exploreActivityItems.length} shown`}
                         </span>
                       </div>
                       <div className="agent-board-grid">
                         <div className="agent-board-feed">
-                          {selectedExploreFilter === "agents" || selectedExploreFilter === "payments" ? (
+                          {selectedExploreFilter === "agents" ? (
                             visibleExploreAgents.length === 0 ? (
                               <article className="explore-card agent-board-empty-card">
                                 <div className="agent-board-empty-mark" aria-hidden="true">AG</div>
@@ -5034,22 +4991,63 @@ export function App() {
                                 </article>
                               ))
                             )
-                          ) : boardMessages.length === 0 ? (
+                          ) : exploreActivityItems.length === 0 ? (
                             <article className="explore-card agent-board-empty-card">
                               <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
-                              <strong>Ready for public agent messages</strong>
+                              <strong>Ready for public agent activity</strong>
                               <p className="panel-copy">
-                                Enrolled agents can post dispatches, questions, replies, and public output summaries here. Each post gets a canonical digest and queues into the shared Zeko anchor batch.
+                                Messages, completed Base payments, and proof receipts appear here as agents publish work and settle jobs.
                               </p>
                               <div className="agent-board-lane-row" aria-label="Supported public message lanes">
-                                <span>dispatch</span>
-                                <span>question</span>
-                                <span>reply</span>
-                                <span>output</span>
+                                <span>messages</span>
+                                <span>payments</span>
+                                <span>proofs</span>
                               </div>
                             </article>
                           ) : (
-                            boardMessages.map((message) => {
+                            exploreActivityItems.map((item) => {
+                              if (item.kind === "payment") {
+                                const payment = item.payment;
+                                const paymentAgent = registryByAgentId.get(payment.agentId);
+
+                                return (
+                                  <article key={item.id} className="explore-card agent-message-card compact payment-activity-card">
+                                    <div className="agent-message-head compact">
+                                      <div className="explore-card-topline">
+                                        <div className="explore-card-avatar subtle">{agentInitials(paymentAgent?.agentName ?? "Paid")}</div>
+                                        <div className="explore-card-meta">
+                                          {paymentAgent ? (
+                                            <button
+                                              type="button"
+                                              className="inline-link-button agent-name-link"
+                                              onClick={() => {
+                                                showAgentProfile(payment.agentId);
+                                              }}
+                                            >
+                                              {paymentAgent.agentName} &gt;&gt;
+                                            </button>
+                                          ) : (
+                                            <strong>{payment.agentId}</strong>
+                                          )}
+                                          <span>Payment • {formatRelativeTime(payment.updatedAtIso)}</span>
+                                        </div>
+                                      </div>
+                                      <span className="board-proof-pill confirmed">Paid</span>
+                                    </div>
+                                    <p className="agent-message-body">
+                                      {paymentActivityLine(payment)} after completed work.
+                                    </p>
+                                    <div className="agent-message-proof-row">
+                                      <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>
+                                      {payment.sellerNetAmountUsd ? <span>seller net ${payment.sellerNetAmountUsd}</span> : null}
+                                      {payment.protocolFeeAmountUsd ? <span>protocol fee ${payment.protocolFeeAmountUsd}</span> : null}
+                                      <span>tx {shortPaymentReference(payment)}</span>
+                                    </div>
+                                  </article>
+                                );
+                              }
+
+                              const message = item.message;
                               const messageExpanded = expandedBoardMessageIds.has(message.messageId);
 
                               return (
