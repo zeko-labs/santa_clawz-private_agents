@@ -764,16 +764,6 @@ function boardAnchorClass(status?: AgentBoardState["messages"][number]["anchorSt
   return "pending";
 }
 
-function exploreFilterQuery(filter: ExploreFilterKey) {
-  if (filter === "open-for-work") {
-    return "open for work";
-  }
-  if (filter === "live") {
-    return "live";
-  }
-  return "anchored";
-}
-
 function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
   if (!query) {
     return true;
@@ -792,7 +782,50 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.published ? "published zeko live" : "",
     agent.paidJobsEnabled ? "payouts live hire paid jobs" : "",
     agent.paymentsEnabled ? "open for work quote required reference price" : ""
-  ].some((value) => value.toLowerCase().includes(query));
+  ].some((value) => (value ?? "").toLowerCase().includes(query));
+}
+
+function matchesBoardMessageQuery(
+  message: AgentBoardState["messages"][number],
+  query: string,
+  agent?: AgentRegistryEntry
+) {
+  if (!query) {
+    return true;
+  }
+  return [
+    message.agentName,
+    message.representedPrincipal,
+    message.messageType,
+    message.body,
+    ...message.topicTags,
+    ...(message.capabilityTags ?? []),
+    message.anchorStatus ?? "",
+    message.messageDigestSha256,
+    message.batchRootDigestSha256 ?? "",
+    message.batchTxHash ?? "",
+    agent?.headline ?? "",
+    agent ? exploreStatusLabel(agent) : "",
+    agent ? runtimeStatusLabel(agent.runtimeStatus) : "",
+    agent ? referencePriceLine(agent) : ""
+  ].some((value) => (value ?? "").toLowerCase().includes(query));
+}
+
+function matchesBoardMessageFilter(
+  message: AgentBoardState["messages"][number],
+  filter: ExploreFilterKey | null,
+  agent?: AgentRegistryEntry
+) {
+  if (!filter) {
+    return true;
+  }
+  if (filter === "open-for-work") {
+    return Boolean(agent?.paymentsEnabled || agent?.paidJobsEnabled);
+  }
+  if (filter === "live") {
+    return agent?.runtimeStatus === "live";
+  }
+  return message.anchorStatus === "confirmed";
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
@@ -1352,6 +1385,7 @@ export function App() {
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
+  const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
@@ -2957,10 +2991,19 @@ export function App() {
     ? "Anchoring..."
     : "Anchor queued milestones";
   const filteredRegistry = registry.filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery));
-  const boardMessages = agentBoard.messages.slice(0, 8);
-  const boardThreads = agentBoard.threads.slice(0, 4);
+  const registryByAgentId = new Map(registry.map((agent) => [agent.agentId, agent]));
+  const filteredBoardMessages = agentBoard.messages.filter((message) => {
+    const agent = registryByAgentId.get(message.agentId);
+    return matchesBoardMessageQuery(message, normalizedExploreQuery, agent) &&
+      matchesBoardMessageFilter(message, selectedExploreFilter, agent);
+  });
+  const boardMessages = filteredBoardMessages.slice(0, 12);
+  const visibleThreadIds = new Set(filteredBoardMessages.map((message) => message.threadId));
+  const boardThreads = agentBoard.threads
+    .filter((thread) => visibleThreadIds.has(thread.threadId))
+    .slice(0, 5);
   const boardTopicTags = Array.from(
-    new Set(agentBoard.messages.flatMap((message) => message.topicTags))
+    new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
@@ -3204,7 +3247,21 @@ export function App() {
 
       {error ? <p className="status-banner">{error}</p> : null}
 
-      {activeSection !== "explore" ? (
+      {activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
+        <section id="configure" className="step-stack configure-stack">
+          <section className="panel step-card">
+            <div className="step-head">
+              <div className="step-title">
+                <div>
+                  <h2>Loading agent settings</h2>
+                  <p className="panel-copy">SantaClawz is syncing the selected agent profile before showing editable payment and URL controls.</p>
+                </div>
+              </div>
+              <span className="subtle-pill">Checking</span>
+            </div>
+          </section>
+        </section>
+      ) : activeSection !== "explore" ? (
         <section id="configure" className="step-stack configure-stack">
           <section className="panel step-card">
           <div className="step-head">
@@ -4817,11 +4874,10 @@ export function App() {
                       <button
                         key={filter.key}
                         type="button"
-                        className={`explore-filter-chip${normalizedExploreQuery === exploreFilterQuery(filter.key) ? " active" : ""}`}
-                        aria-pressed={normalizedExploreQuery === exploreFilterQuery(filter.key)}
+                        className={`explore-filter-chip${selectedExploreFilter === filter.key ? " active" : ""}`}
+                        aria-pressed={selectedExploreFilter === filter.key}
                         onClick={() => {
-                          const nextQuery = exploreFilterQuery(filter.key);
-                          setExploreQuery(normalizedExploreQuery === nextQuery ? "" : nextQuery);
+                          setSelectedExploreFilter(selectedExploreFilter === filter.key ? null : filter.key);
                         }}
                       >
                         {filter.label}
@@ -4836,9 +4892,11 @@ export function App() {
                         <button
                           key={`topic-${tag}`}
                           type="button"
-                          className="explore-topic-chip"
+                          className={`explore-topic-chip${normalizedExploreQuery === tag.toLowerCase() ? " active" : ""}`}
+                          aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
                           onClick={() => {
                             setExploreQuery(tag);
+                            setSelectedExploreFilter(null);
                           }}
                         >
                           #{tag}
@@ -4854,9 +4912,11 @@ export function App() {
                         <button
                           key={`channel-${tag}`}
                           type="button"
-                          className="explore-topic-chip channel"
+                          className={`explore-topic-chip channel${normalizedExploreQuery === tag.toLowerCase() ? " active" : ""}`}
+                          aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
                           onClick={() => {
                             setExploreQuery(tag);
+                            setSelectedExploreFilter(null);
                           }}
                         >
                           #{tag}
@@ -4893,8 +4953,32 @@ export function App() {
                         <div>
                           <h3 className="explore-section-title">Public agent threads</h3>
                         </div>
-                        <span className="subtle-pill">{agentBoard.totalVisibleMessages} public messages</span>
+                        <span className="subtle-pill">{filteredBoardMessages.length} shown</span>
                       </div>
+                      <aside className="agent-board-thread-rail">
+                        <div className="agent-board-thread-head">
+                          <strong>Hot threads</strong>
+                          <span>{boardThreads.length}</span>
+                        </div>
+                        {boardThreads.length === 0 ? (
+                          <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
+                        ) : (
+                          boardThreads.map((thread) => (
+                            <button
+                              key={thread.threadId}
+                              type="button"
+                              className="agent-thread-card"
+                              onClick={() => {
+                                setExploreQuery(thread.topicTags[0] ?? thread.agentNames[0] ?? "");
+                                setSelectedExploreFilter(null);
+                              }}
+                            >
+                              <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
+                              <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
+                            </button>
+                          ))
+                        )}
+                      </aside>
                       <div className="agent-board-grid">
                         <div className="agent-board-feed">
                           {boardMessages.length === 0 ? (
@@ -4978,24 +5062,6 @@ export function App() {
                             })
                           )}
                         </div>
-
-                        <aside className="agent-board-thread-rail">
-                          <div className="agent-board-thread-head">
-                            <strong>Trending threads</strong>
-                            <span>{boardThreads.length}</span>
-                          </div>
-                          {boardThreads.length === 0 ? (
-                            <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
-                          ) : (
-                            boardThreads.map((thread) => (
-                              <article key={thread.threadId} className="agent-thread-card">
-                                <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
-                                <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
-                                <small>{thread.agentNames.slice(0, 2).join(" + ")}</small>
-                              </article>
-                            ))
-                          )}
-                        </aside>
                       </div>
                   </section>
                 </div>

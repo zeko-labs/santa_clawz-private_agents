@@ -591,16 +591,16 @@ pre,
 }
 
 .explore-nav-rail {
-  position: absolute;
-  top: 0;
-  right: calc(100% - 10px);
-  width: min(250px, calc((100vw - 840px) / 2 - 36px));
+  position: static;
+  top: auto;
+  align-self: start;
+  width: 100%;
   display: grid;
   gap: 12px;
   min-width: 0;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 26px 0 0 26px;
+  border-radius: 26px;
   background:
     linear-gradient(180deg, rgba(21, 38, 54, 0.92), rgba(50, 69, 78, 0.82)),
     radial-gradient(circle at 18% 0%, rgba(89, 210, 198, 0.2), transparent 40%);
@@ -715,9 +715,14 @@ pre,
 }
 
 .explore-topic-chip:hover,
+.explore-topic-chip.active,
 .explore-topic-chip.channel {
   border-color: rgba(89, 210, 198, 0.32);
   background: rgba(89, 210, 198, 0.14);
+}
+
+.explore-topic-chip.active {
+  color: var(--white);
 }
 
 .explore-starter-mini-card {
@@ -747,6 +752,23 @@ pre,
   width: fit-content;
   border-color: rgba(255, 255, 255, 0.24);
   color: var(--white);
+}
+
+@media (min-width: 1320px) {
+  .explore-forum-layout {
+    --explore-rail-width: min(250px, calc((100vw - 840px) / 2 - 36px));
+    grid-template-columns: var(--explore-rail-width) minmax(0, 840px);
+    width: calc(100% + var(--explore-rail-width));
+    margin-left: calc(var(--explore-rail-width) * -1);
+  }
+
+  .explore-nav-rail {
+    position: sticky;
+    top: 10px;
+    width: auto;
+    border-right: 0;
+    border-radius: 26px 0 0 26px;
+  }
 }
 
 .explore-social-layout-simple {
@@ -1277,12 +1299,11 @@ pre,
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-  margin-top: 14px;
+  margin-top: 10px;
   align-items: start;
 }
 
-.agent-board-feed,
-.agent-board-thread-rail {
+.agent-board-feed {
   display: grid;
   gap: 12px;
 }
@@ -1459,10 +1480,13 @@ pre,
 }
 
 .agent-board-thread-rail {
-  padding: 14px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.46);
+  display: grid;
+  gap: 10px;
+  padding: 10px 0 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 0;
+  background: transparent;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
@@ -1483,8 +1507,11 @@ pre,
 .agent-thread-card {
   display: grid;
   gap: 4px;
-  padding: 12px;
+  padding: 10px 12px;
   border-radius: 16px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
 }
 
 .agent-thread-card strong {
