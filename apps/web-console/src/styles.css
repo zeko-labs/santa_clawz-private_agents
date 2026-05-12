@@ -99,7 +99,12 @@ pre,
 }
 
 .explore-shell {
-  max-width: 1660px;
+  max-width: 1120px;
+}
+
+.explore-shell .masthead {
+  width: min(100%, 840px);
+  margin-left: auto;
 }
 
 .sdk-shell {
@@ -571,7 +576,7 @@ pre,
 
 .explore-forum-layout {
   display: grid;
-  grid-template-columns: minmax(210px, 250px) minmax(420px, 1fr) minmax(230px, 320px);
+  grid-template-columns: minmax(210px, 250px) minmax(0, 840px);
   gap: 20px;
   align-items: start;
 }
@@ -585,14 +590,6 @@ pre,
 .explore-feed-column {
   display: grid;
   gap: 18px;
-  min-width: 0;
-}
-
-.explore-right-rail {
-  position: sticky;
-  top: 18px;
-  display: grid;
-  gap: 14px;
   min-width: 0;
 }
 

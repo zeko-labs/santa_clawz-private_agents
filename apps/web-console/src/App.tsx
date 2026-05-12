@@ -49,7 +49,6 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreViewKey = "threads" | "agents" | "proof-trail";
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -1337,7 +1336,6 @@ export function App() {
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
-  const [exploreView, setExploreView] = useState<ExploreViewKey>("threads");
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
@@ -2943,33 +2941,17 @@ export function App() {
     ? "Anchoring..."
     : "Anchor queued milestones";
   const filteredRegistry = registry.filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery));
-  const featuredAgents = [...filteredRegistry]
-    .sort((left, right) => featuredAgentScore(right) - featuredAgentScore(left))
-    .slice(0, 3);
-  const featuredAgentIds = new Set(featuredAgents.map((agent) => agent.agentId));
-  const recentAgents = [...filteredRegistry]
-    .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
-    .filter((agent) => !featuredAgentIds.has(agent.agentId))
-    .slice(0, 6);
-  const highlightAgent = featuredAgents[0] ?? recentAgents[0] ?? filteredRegistry[0] ?? null;
-  const liveActivityAgents = [...filteredRegistry]
-    .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
-    .slice(0, 6);
   const boardMessages = agentBoard.messages.slice(0, 8);
   const boardThreads = agentBoard.threads.slice(0, 4);
   const boardTopicTags = Array.from(
     new Set(agentBoard.messages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
-  const proofTrailMessages = agentBoard.messages
-    .filter((message) => message.messageDigestSha256 || message.batchRootDigestSha256 || message.batchTxHash)
-    .slice(0, 8);
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
     ? buildPublicAgentUrl(starterAgent.agentId)
     : STARTER_AGENT_ID
       ? buildPublicAgentUrl(STARTER_AGENT_ID)
       : null;
-  const featuredStarterAgent = starterAgent ?? highlightAgent;
   const ownershipChallengePreview =
     issuedOwnershipChallenge?.challengeResponseJson ??
     (state.ownership.status === "challenge-issued"
@@ -3182,7 +3164,7 @@ export function App() {
   }
 
   return (
-    <main id="top" className={`app-shell ${activeSection === "explore" ? "explore-shell" : "onboarding-shell"}`}>
+    <main id="top" className={`app-shell ${activeSection === "explore" && !sharedAgentId ? "explore-shell" : "onboarding-shell"}`}>
       {renderHeader()}
 
       <section className="masthead">
@@ -4812,42 +4794,6 @@ export function App() {
                     />
                   </label>
 
-                  <div className="explore-nav-menu" role="group" aria-label="Explore feed views">
-                    <button
-                      type="button"
-                      className={`explore-nav-item${exploreView === "threads" ? " active" : ""}`}
-                      aria-pressed={exploreView === "threads"}
-                      onClick={() => {
-                        setExploreView("threads");
-                      }}
-                    >
-                      <span>Threads</span>
-                      <small>{agentBoard.totalVisibleMessages} messages</small>
-                    </button>
-                    <button
-                      type="button"
-                      className={`explore-nav-item${exploreView === "agents" ? " active" : ""}`}
-                      aria-pressed={exploreView === "agents"}
-                      onClick={() => {
-                        setExploreView("agents");
-                      }}
-                    >
-                      <span>Agents</span>
-                      <small>{filteredRegistry.length} visible</small>
-                    </button>
-                    <button
-                      type="button"
-                      className={`explore-nav-item${exploreView === "proof-trail" ? " active" : ""}`}
-                      aria-pressed={exploreView === "proof-trail"}
-                      onClick={() => {
-                        setExploreView("proof-trail");
-                      }}
-                    >
-                      <span>Proof trail</span>
-                      <small>Zeko batches</small>
-                    </button>
-                  </div>
-
                   <div className="explore-topic-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
@@ -4887,8 +4833,7 @@ export function App() {
                 </aside>
 
                 <div className="explore-feed-column">
-                  {exploreView === "threads" ? (
-                    <section className="explore-section-block agent-board-section">
+                  <section className="explore-section-block agent-board-section">
                       <div className="section-head compact-head">
                         <div>
                           <h3 className="explore-section-title">Public agent threads</h3>
@@ -4997,172 +4942,8 @@ export function App() {
                           )}
                         </aside>
                       </div>
-                    </section>
-                  ) : null}
-
-                  {exploreView === "agents" ? (
-                    <section className="explore-section-block agent-board-section">
-                      <div className="section-head compact-head">
-                        <div>
-                          <h3 className="explore-section-title">Agents</h3>
-                        </div>
-                        <span className="subtle-pill">{filteredRegistry.length} visible</span>
-                      </div>
-                      <div className="explore-feed-grid">
-                        {filteredRegistry.length === 0 ? (
-                          <article className="explore-card agent-board-empty-card">
-                            <div className="agent-board-empty-mark" aria-hidden="true">A</div>
-                            <strong>No agents match this search</strong>
-                            <p className="panel-copy">Clear the search box or choose another topic to bring agents back into view.</p>
-                          </article>
-                        ) : (
-                          filteredRegistry.slice(0, 12).map((agent) => (
-                            <article key={`agent-view-${agent.agentId}`} className="explore-card explore-card-social explore-agent-list-card">
-                              <div className="explore-card-head">
-                                <div className="explore-card-topline">
-                                  <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
-                                  <div className="explore-card-meta">
-                                    <button
-                                      type="button"
-                                      className="inline-link-button agent-name-link"
-                                      onClick={() => {
-                                        showAgentProfile(agent.agentId);
-                                      }}
-                                    >
-                                      {agent.agentName} &gt;&gt;
-                                    </button>
-                                    <span>{agent.representedPrincipal || "Independent operator"}</span>
-                                  </div>
-                                </div>
-                                <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
-                                  {runtimeStatusLabel(agent.runtimeStatus)}
-                                </span>
-                              </div>
-                              <p className="explore-card-quote">{agent.headline}</p>
-                              <div className="explore-tag-row">
-                                <span className="explore-tag">{exploreStatusLabel(agent)}</span>
-                                {agent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(agent)}</span> : null}
-                              </div>
-                            </article>
-                          ))
-                        )}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {exploreView === "proof-trail" ? (
-                    <section className="explore-section-block agent-board-section">
-                      <div className="section-head compact-head">
-                        <div>
-                          <h3 className="explore-section-title">Proof trail</h3>
-                        </div>
-                        <span className="subtle-pill">{proofTrailMessages.length} recent proofs</span>
-                      </div>
-                      <div className="agent-board-feed">
-                        {proofTrailMessages.length === 0 ? (
-                          <article className="explore-card agent-board-empty-card">
-                            <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
-                            <strong>No proof trail yet</strong>
-                            <p className="panel-copy">Anchored public agent messages will appear here with their digest, batch root, and transaction reference.</p>
-                          </article>
-                        ) : (
-                          proofTrailMessages.map((message) => (
-                            <article key={`proof-${message.messageId}`} className="explore-card agent-message-card proof-trail-card">
-                              <div className="agent-message-head">
-                                <div className="explore-card-meta">
-                                  <strong>{message.agentName}</strong>
-                                  <span>{boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)}</span>
-                                </div>
-                                <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
-                                  {boardAnchorLabel(message.anchorStatus)}
-                                </span>
-                              </div>
-                              <div className="agent-message-proof-row">
-                                <span>digest {shorten(message.messageDigestSha256, 14, 10)}</span>
-                                {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 14, 10)}</span> : null}
-                                {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 10, 8)}</span> : null}
-                              </div>
-                            </article>
-                          ))
-                        )}
-                      </div>
-                    </section>
-                  ) : null}
-                </div>
-
-                <aside className="explore-right-rail" aria-label="Explore live context">
-                  <section className="explore-section-block explore-live-widget">
-                    <div className="section-head compact-head">
-                      <div>
-                        <h3 className="explore-section-title">Live activity</h3>
-                      </div>
-                      <span className="subtle-pill">Streaming</span>
-                    </div>
-                    <div className="explore-activity-rail compact">
-                      {liveActivityAgents.length === 0 ? (
-                        <p className="panel-copy">No public activity yet.</p>
-                      ) : (
-                        liveActivityAgents.map((agent) => (
-                          <button
-                            key={`live-rail-${agent.agentId}`}
-                            type="button"
-                            className="activity-pill compact"
-                            onClick={() => {
-                              showAgentProfile(agent.agentId);
-                            }}
-                          >
-                            <span className={`activity-avatar ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true">
-                              {agentInitials(agent.agentName)}
-                            </span>
-                            <span className="activity-copy">
-                              <strong>{agent.agentName}</strong>
-                              <span>{activityLineForAgent(agent)}</span>
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
                   </section>
-
-                  {featuredStarterAgent ? (
-                    <section className="explore-starter-section">
-                      <div className="section-head compact-head">
-                        <div>
-                          <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
-                          <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
-                        </div>
-                        <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
-                          {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
-                        </span>
-                      </div>
-                      <article className="explore-card explore-card-social explore-featured-sidebar-card">
-                        <div className="explore-card-topline">
-                          <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
-                          <div className="explore-card-meta">
-                            <button
-                              type="button"
-                              className="inline-link-button agent-name-link"
-                              onClick={() => {
-                                showAgentProfile(featuredStarterAgent.agentId);
-                              }}
-                            >
-                              {featuredStarterAgent.agentName} &gt;&gt;
-                            </button>
-                            <span>{isStarterAgent(featuredStarterAgent) ? "Starter service" : featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
-                          </div>
-                        </div>
-                        <p className="explore-card-quote">
-                          “{isStarterAgent(featuredStarterAgent)
-                            ? "Latest guidance on winning paid work and improving your SantaClawz trust surface."
-                            : featuredStarterAgent.headline}”
-                        </p>
-                        <div className="explore-tag-row">
-                          <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? starterAgentPriceLabel(featuredStarterAgent) : referencePriceLine(featuredStarterAgent)}</span>
-                        </div>
-                      </article>
-                    </section>
-                  ) : null}
-                </aside>
+                </div>
               </div>
             </div>
           )}
