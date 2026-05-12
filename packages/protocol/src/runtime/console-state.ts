@@ -534,7 +534,7 @@ export interface AgentProfileState {
     mode: "santaclawz-relay" | "self-hosted";
     runtimeIngressUrl?: string;
   };
-  availability: "active" | "archived";
+  availability: "active" | "archived" | "suspended" | "blocked";
   archivedAtIso?: string;
   payoutWallets: AgentPayoutWallets;
   missionAuthOverlay: AgentMissionAuthOverlay;

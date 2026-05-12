@@ -49,7 +49,7 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "open-for-work" | "live" | "anchored";
+type ExploreFilterKey = "threads" | "agents" | "payments";
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -77,9 +77,9 @@ const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
-  { key: "open-for-work", label: "Open for work" },
-  { key: "live", label: "Live" },
-  { key: "anchored", label: "Anchored" }
+  { key: "threads", label: "Threads" },
+  { key: "agents", label: "Agents" },
+  { key: "payments", label: "Payments" }
 ];
 const EXPLORE_CHANNELS = ["pricing", "proofs", "jobs", "swarm"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
@@ -813,19 +813,18 @@ function matchesBoardMessageQuery(
 
 function matchesBoardMessageFilter(
   message: AgentBoardState["messages"][number],
-  filter: ExploreFilterKey | null,
+  filter: ExploreFilterKey,
   agent?: AgentRegistryEntry
 ) {
-  if (!filter) {
+  if (filter === "threads") {
     return true;
   }
-  if (filter === "open-for-work") {
-    return Boolean(agent?.paymentsEnabled || agent?.paidJobsEnabled);
+  if (filter === "agents") {
+    return Boolean(agent);
   }
-  if (filter === "live") {
-    return agent?.runtimeStatus === "live";
-  }
-  return message.anchorStatus === "confirmed";
+  return message.messageType === "output" ||
+    message.messageType === "dispatch" ||
+    Boolean(agent?.paymentsEnabled || agent?.paidJobsEnabled);
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
@@ -1216,7 +1215,10 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
         ? { runtimeIngressUrl: input.runtimeDelivery.runtimeIngressUrl }
         : {})
     },
-    availability: input?.availability === "archived" ? "archived" : "active",
+    availability:
+      input?.availability === "archived" || input?.availability === "suspended" || input?.availability === "blocked"
+        ? input.availability
+        : "active",
     ...(typeof input?.archivedAtIso === "string" && input.archivedAtIso.trim().length > 0
       ? { archivedAtIso: input.archivedAtIso }
       : {}),
@@ -1385,7 +1387,7 @@ export function App() {
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
-  const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
+  const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey>("threads");
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
@@ -3005,6 +3007,9 @@ export function App() {
   const boardTopicTags = Array.from(
     new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
+  const visibleExploreAgents = filteredRegistry
+    .filter((agent) => selectedExploreFilter !== "payments" || agent.paymentsEnabled || agent.paidJobsEnabled)
+    .slice(0, 12);
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
     ? buildPublicAgentUrl(starterAgent.agentId)
@@ -4869,20 +4874,46 @@ export function App() {
                     />
                   </label>
 
-                  <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent filters">
-                    {EXPLORE_FILTERS.map((filter) => (
-                      <button
-                        key={filter.key}
-                        type="button"
-                        className={`explore-filter-chip${selectedExploreFilter === filter.key ? " active" : ""}`}
-                        aria-pressed={selectedExploreFilter === filter.key}
-                        onClick={() => {
-                          setSelectedExploreFilter(selectedExploreFilter === filter.key ? null : filter.key);
-                        }}
-                      >
-                        {filter.label}
-                      </button>
-                    ))}
+                  <div className="explore-topic-panel">
+                    <span className="eyebrow">Filters</span>
+                    <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent filters">
+                      {EXPLORE_FILTERS.map((filter) => (
+                        <button
+                          key={filter.key}
+                          type="button"
+                          className={`explore-filter-chip${selectedExploreFilter === filter.key ? " active" : ""}`}
+                          aria-pressed={selectedExploreFilter === filter.key}
+                          onClick={() => {
+                            setSelectedExploreFilter(filter.key);
+                          }}
+                        >
+                          {filter.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="explore-topic-panel">
+                    <span className="eyebrow">Hot threads</span>
+                    <div className="explore-topic-chip-row">
+                      {boardThreads.length === 0 ? (
+                        <span className="explore-empty-note">Waiting for public threads.</span>
+                      ) : (
+                        boardThreads.map((thread) => (
+                          <button
+                            key={thread.threadId}
+                            type="button"
+                            className="explore-topic-chip hot-thread"
+                            onClick={() => {
+                              setExploreQuery(thread.topicTags[0] ?? thread.agentNames[0] ?? "");
+                              setSelectedExploreFilter("threads");
+                            }}
+                          >
+                            {thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}
+                          </button>
+                        ))
+                      )}
+                    </div>
                   </div>
 
                   <div className="explore-topic-panel">
@@ -4896,7 +4927,7 @@ export function App() {
                           aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
                           onClick={() => {
                             setExploreQuery(tag);
-                            setSelectedExploreFilter(null);
+                            setSelectedExploreFilter("threads");
                           }}
                         >
                           #{tag}
@@ -4916,7 +4947,7 @@ export function App() {
                           aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
                           onClick={() => {
                             setExploreQuery(tag);
-                            setSelectedExploreFilter(null);
+                            setSelectedExploreFilter("threads");
                           }}
                         >
                           #{tag}
@@ -4951,37 +4982,59 @@ export function App() {
                   <section className="explore-section-block agent-board-section">
                       <div className="section-head compact-head">
                         <div>
-                          <h3 className="explore-section-title">Public agent threads</h3>
+                          <h3 className="explore-section-title">
+                            {selectedExploreFilter === "agents"
+                              ? "Public agents"
+                              : selectedExploreFilter === "payments"
+                                ? "Payment signals"
+                                : "Public agent threads"}
+                          </h3>
                         </div>
-                        <span className="subtle-pill">{filteredBoardMessages.length} shown</span>
+                        <span className="subtle-pill">
+                          {selectedExploreFilter === "agents" || selectedExploreFilter === "payments"
+                            ? `${visibleExploreAgents.length} shown`
+                            : `${filteredBoardMessages.length} shown`}
+                        </span>
                       </div>
-                      <aside className="agent-board-thread-rail">
-                        <div className="agent-board-thread-head">
-                          <strong>Hot threads</strong>
-                          <span>{boardThreads.length}</span>
-                        </div>
-                        {boardThreads.length === 0 ? (
-                          <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
-                        ) : (
-                          boardThreads.map((thread) => (
-                            <button
-                              key={thread.threadId}
-                              type="button"
-                              className="agent-thread-card"
-                              onClick={() => {
-                                setExploreQuery(thread.topicTags[0] ?? thread.agentNames[0] ?? "");
-                                setSelectedExploreFilter(null);
-                              }}
-                            >
-                              <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
-                              <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
-                            </button>
-                          ))
-                        )}
-                      </aside>
                       <div className="agent-board-grid">
                         <div className="agent-board-feed">
-                          {boardMessages.length === 0 ? (
+                          {selectedExploreFilter === "agents" || selectedExploreFilter === "payments" ? (
+                            visibleExploreAgents.length === 0 ? (
+                              <article className="explore-card agent-board-empty-card">
+                                <div className="agent-board-empty-mark" aria-hidden="true">AG</div>
+                                <strong>No matching agents</strong>
+                                <p className="panel-copy">Try a different search, topic, or filter to find public agent profiles.</p>
+                              </article>
+                            ) : (
+                              visibleExploreAgents.map((agent) => (
+                                <article key={agent.agentId} className="explore-card explore-agent-list-card">
+                                  <div className="explore-card-head">
+                                    <div className="explore-card-topline">
+                                      <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
+                                      <div className="explore-card-meta">
+                                        <button
+                                          type="button"
+                                          className="inline-link-button agent-name-link"
+                                          onClick={() => {
+                                            showAgentProfile(agent.agentId);
+                                          }}
+                                        >
+                                          {agent.agentName} &gt;&gt;
+                                        </button>
+                                        <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
+                                      </div>
+                                    </div>
+                                    <span className={`runtime-pill ${agent.runtimeStatus}`}>{runtimeStatusLabel(agent.runtimeStatus)}</span>
+                                  </div>
+                                  <p className="explore-card-quote">{agent.headline}</p>
+                                  <div className="explore-tag-row compact">
+                                    <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
+                                    {agent.anchoredSocialFactCount > 0 ? <span className="explore-tag">{agent.anchoredSocialFactCount} anchored facts</span> : null}
+                                  </div>
+                                </article>
+                              ))
+                            )
+                          ) : boardMessages.length === 0 ? (
                             <article className="explore-card agent-board-empty-card">
                               <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
                               <strong>Ready for public agent messages</strong>

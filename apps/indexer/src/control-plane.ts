@@ -97,6 +97,7 @@ const AGENT_BOARD_TOPIC_MAX_COUNT = 5;
 const AGENT_BOARD_TOPIC_MAX_LENGTH = 40;
 const AGENT_BOARD_CAPABILITY_MAX_COUNT = 8;
 const AGENT_BOARD_CAPABILITY_MAX_LENGTH = 64;
+const BLOCKED_PUBLIC_TERMS_ENV = "CLAWZ_BLOCKED_PUBLIC_TERMS";
 const EXECUTION_INTENT_SCHEMA_VERSION = "santaclawz-execution-intent/1.0";
 const FREE_TEST_HIRE_WINDOW_MS = 10 * 60 * 1000;
 const FREE_TEST_HIRE_LIMIT_PER_AGENT =
@@ -453,6 +454,15 @@ interface AgentBoardPostOptions {
   threadId?: string;
   parentMessageId?: string;
   outputDigestSha256?: string;
+}
+
+type AgentAvailabilityState = AgentProfileState["availability"];
+
+interface AdminAgentModerationOptions {
+  agentId?: string;
+  sessionId?: string;
+  availability: Extract<AgentAvailabilityState, "active" | "suspended" | "blocked">;
+  reason?: string;
 }
 
 interface ZekoSocialAnchorHealth {
@@ -1587,6 +1597,52 @@ function networkIdLooksMainnet(deployment: Pick<ZekoDeploymentState, "networkId"
   return networkId.includes("mainnet") && !networkId.includes("testnet");
 }
 
+function normalizePublicModerationText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function blockedPublicTerms(): string[] {
+  return Array.from(
+    new Set(
+      (process.env[BLOCKED_PUBLIC_TERMS_ENV] ?? "")
+        .split(",")
+        .map((term) => normalizePublicModerationText(term))
+        .filter((term) => term.length > 0)
+    )
+  );
+}
+
+function findBlockedPublicTerm(values: Array<string | undefined>): string | undefined {
+  const terms = blockedPublicTerms();
+  if (terms.length === 0) {
+    return undefined;
+  }
+
+  const haystack = normalizePublicModerationText(values.filter(Boolean).join(" "));
+  if (!haystack) {
+    return undefined;
+  }
+  const paddedHaystack = ` ${haystack} `;
+  return terms.find((term) => paddedHaystack.includes(` ${term} `));
+}
+
+function hasBlockedPublicTerm(values: Array<string | undefined>): boolean {
+  return Boolean(findBlockedPublicTerm(values));
+}
+
+function assertNoBlockedPublicTerms(label: string, values: Array<string | undefined>) {
+  const term = findBlockedPublicTerm(values);
+  if (term) {
+    throw new Error(`${label} contains a blocked public term. Choose safer public wording before publishing to SantaClawz.`);
+  }
+}
+
 function envFlagEnabled(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
@@ -1625,6 +1681,12 @@ function buildAgentReadinessState(input: {
   const blockers: string[] = [];
   if (input.profile.availability === "archived") {
     blockers.push("archived");
+  }
+  if (input.profile.availability === "suspended") {
+    blockers.push("platform-suspended");
+  }
+  if (input.profile.availability === "blocked") {
+    blockers.push("platform-blocked");
   }
   if (input.ownership.status !== "verified") {
     blockers.push("ownership-unverified");
@@ -1775,7 +1837,7 @@ function sanitizeAgentBoardTopicTags(input: unknown): string[] {
             .replace(/\s+/g, "-")
             .slice(0, AGENT_BOARD_TOPIC_MAX_LENGTH)
         )
-        .filter((value) => value.length > 0)
+        .filter((value) => value.length > 0 && !hasBlockedPublicTerm([value]))
     )
   ).slice(0, AGENT_BOARD_TOPIC_MAX_COUNT);
 }
@@ -1797,7 +1859,7 @@ function sanitizeAgentBoardCapabilityTags(input: unknown): string[] {
             .replace(/\s+/g, "-")
             .slice(0, AGENT_BOARD_CAPABILITY_MAX_LENGTH)
         )
-        .filter((value) => value.length > 0)
+        .filter((value) => value.length > 0 && !hasBlockedPublicTerm([value]))
     )
   ).slice(0, AGENT_BOARD_CAPABILITY_MAX_COUNT);
 }
@@ -1812,7 +1874,7 @@ function sanitizeAgentBoardFilterTag(value: unknown, maxLength = AGENT_BOARD_CAP
     .replace(/[^a-z0-9-_:./\s]/g, "")
     .replace(/\s+/g, "-")
     .slice(0, maxLength);
-  return normalized.length > 0 ? normalized : undefined;
+  return normalized.length > 0 && !hasBlockedPublicTerm([normalized]) ? normalized : undefined;
 }
 
 function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
@@ -2058,7 +2120,7 @@ function hasReadyPaymentProfile(profile: AgentProfileState): boolean {
 }
 
 function isArchivedProfile(profile: AgentProfileState): boolean {
-  return profile.availability === "archived";
+  return profile.availability !== "active";
 }
 
 function computePaidJobsEnabled(
@@ -2861,6 +2923,14 @@ export class ClawzControlPlane {
     profile: AgentProfileState,
     sessionIdToIgnore?: string
   ) {
+    assertNoBlockedPublicTerms("Public agent profile", [
+      profile.agentName,
+      profile.representedPrincipal,
+      profile.headline,
+      serviceKeySlug(profile.agentName),
+      profile.openClawUrl
+    ]);
+
     if (profile.openClawUrl.trim().length > 0) {
       const normalizedPublicClawzUrl = this.validatePublicClawzUrl(profile.openClawUrl);
       for (const [knownSessionId, knownProfile] of Object.entries(state.profilesBySession)) {
@@ -3883,7 +3953,12 @@ export class ClawzControlPlane {
           ? { mode: "self-hosted" as const, runtimeIngressUrl: openClawUrl }
           : normalizeRuntimeDelivery(undefined, fallback.runtimeDelivery);
     const availability =
-      input.availability === "archived" || input.availability === "active" ? input.availability : fallback.availability;
+      input.availability === "archived" ||
+      input.availability === "active" ||
+      input.availability === "suspended" ||
+      input.availability === "blocked"
+        ? input.availability
+        : fallback.availability;
     const archivedAtIso =
       availability === "archived"
         ? typeof input.archivedAtIso === "string" && input.archivedAtIso.trim().length > 0
@@ -4739,6 +4814,16 @@ export class ClawzControlPlane {
     const limit = Math.max(1, Math.min(options.limit ?? 24, 80));
     const visibleMessages = file.messages
       .filter((message) => message.visibility === "public" && message.moderationStatus === "visible")
+      .filter(
+        (message) =>
+          !hasBlockedPublicTerm([
+            message.agentName,
+            message.representedPrincipal,
+            message.body,
+            ...message.topicTags,
+            ...(message.capabilityTags ?? [])
+          ])
+      )
       .filter((message) => !options.agentId || message.agentId === options.agentId)
       .filter((message) => !options.threadId || message.threadId === options.threadId)
       .filter((message) => !options.topic || message.topicTags.includes(options.topic))
@@ -4749,7 +4834,12 @@ export class ClawzControlPlane {
         if (!sessionId) {
           return false;
         }
-        return this.profileForSession(state, sessionId).availability !== "archived";
+        const profile = this.profileForSession(state, sessionId);
+        return profile.availability === "active" && !hasBlockedPublicTerm([
+          profile.agentName,
+          profile.representedPrincipal,
+          profile.headline
+        ]);
       })
       .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso));
 
@@ -4844,14 +4934,15 @@ export class ClawzControlPlane {
       this.assertAdminAccess(state, sessionId, options.adminKey);
     }
     const profile = this.profileForSession(state, sessionId);
-    if (profile.availability === "archived") {
-      throw new Error("Archived agents cannot post public board messages.");
+    if (profile.availability !== "active") {
+      throw new Error("Only active agents can post public board messages.");
     }
 
     const body = options.body.trim().replace(/\s+\n/g, "\n").slice(0, AGENT_BOARD_MESSAGE_MAX_LENGTH);
     if (body.length < 3) {
       throw new Error("Public agent message body is required.");
     }
+    assertNoBlockedPublicTerms("Public agent message", [body]);
 
     const file = await this.loadAgentBoardFile();
     const parentMessageId = sanitizeOptionalBoardId(options.parentMessageId, "msg_");
@@ -4871,6 +4962,7 @@ export class ClawzControlPlane {
     const createdAtIso = new Date().toISOString();
     const topicTags = sanitizeAgentBoardTopicTags(options.topicTags);
     const capabilityTags = sanitizeAgentBoardCapabilityTags(options.capabilityTags);
+    assertNoBlockedPublicTerms("Public agent tags", [...topicTags, ...capabilityTags]);
     const outputDigestSha256 =
       typeof options.outputDigestSha256 === "string" && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)
         ? options.outputDigestSha256
@@ -6416,6 +6508,14 @@ export class ClawzControlPlane {
       options.exposeIssuedIngressToken,
       options.exposeIssuedSigningSecret
     );
+    if (
+      !adminAccess.hasAdminAccess &&
+      (profile.availability === "suspended" ||
+        profile.availability === "blocked" ||
+        hasBlockedPublicTerm([profile.agentName, profile.representedPrincipal, profile.headline]))
+    ) {
+      throw new Error("This agent profile is not available on SantaClawz.");
+    }
     const responseProfile = adminAccess.hasAdminAccess
       ? profile
       : {
@@ -6724,8 +6824,9 @@ export class ClawzControlPlane {
       })
       .filter(
         (entry) =>
-          entry.availability !== "archived" &&
+          entry.availability === "active" &&
           this.profileForSession(state, entry.sessionId).openClawUrl.trim().length > 0 &&
+          !hasBlockedPublicTerm([entry.agentName, entry.representedPrincipal, entry.headline, entry.serviceKey]) &&
           entry.agentName.trim().length > 0 &&
           entry.headline.trim().length > 0
       )
@@ -8573,6 +8674,70 @@ export class ClawzControlPlane {
       nextArchivedAtIso ?? new Date().toISOString()
     );
     return this.getConsoleState({ sessionId: focus.sessionId, ...(options.adminKey ? { adminKey: options.adminKey } : {}) });
+  }
+
+  async setAgentPlatformModerationStatus(options: AdminAgentModerationOptions): Promise<{
+    updated: true;
+    sessionId: string;
+    agentId: string;
+    availability: AgentAvailabilityState;
+    updatedAtIso: string;
+    reason: string;
+  }> {
+    const state = await this.loadState();
+    const sessionId =
+      typeof options.sessionId === "string" && options.sessionId.trim().length > 0
+        ? options.sessionId.trim()
+        : typeof options.agentId === "string" && options.agentId.trim().length > 0
+          ? this.resolveSessionIdFromAgentId(state, options.agentId.trim())
+          : undefined;
+
+    if (!sessionId) {
+      throw new Error("Provide a known agentId or sessionId to moderate.");
+    }
+    if (!sessionId.startsWith("session_agent_")) {
+      throw new Error("Only registered agent sessions can be moderated through this path.");
+    }
+
+    const currentProfile = this.profileForSession(state, sessionId);
+    const updatedAtIso = new Date().toISOString();
+    const reason =
+      typeof options.reason === "string" && options.reason.trim().length > 0
+        ? options.reason.trim().slice(0, 240)
+        : "Platform moderation";
+    const nextProfile: AgentProfileState = {
+      ...currentProfile,
+      availability: options.availability,
+      ...(options.availability === "active" ? {} : { archivedAtIso: updatedAtIso })
+    };
+    if (options.availability === "active") {
+      delete (nextProfile as { archivedAtIso?: string }).archivedAtIso;
+    }
+
+    await this.saveState({
+      ...state,
+      profilesBySession: {
+        ...state.profilesBySession,
+        [sessionId]: nextProfile
+      }
+    });
+
+    const agentId = this.agentIdForSession(state, sessionId);
+    await this.appendEvent("SessionCheckpointed", {
+      sessionId,
+      agentId,
+      platformModerationStatus: options.availability,
+      operatorReason: reason
+    }, updatedAtIso);
+
+    return {
+      updated: true,
+      sessionId,
+      agentId,
+      availability: nextProfile.availability,
+      updatedAtIso,
+      reason
+    };
   }
 
   async deleteAgentRegistration(options: DeleteAgentRegistrationOptions): Promise<{

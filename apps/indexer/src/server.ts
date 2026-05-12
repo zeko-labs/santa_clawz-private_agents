@@ -2681,8 +2681,8 @@ const handleAgentHireRequest = route(async (request, response) => {
 
     const { consoleState, plan } = await buildX402PlanFromOptions(getBaseUrl(request), { agentId });
     const published = plan.published;
-    if (consoleState.profile.availability === "archived") {
-      response.status(400).json({ error: "This agent is archived on SantaClawz and is not accepting new hire requests." });
+    if (consoleState.profile.availability !== "active") {
+      response.status(400).json({ error: "This agent is not active on SantaClawz and is not accepting new hire requests." });
       return;
     }
     if (consoleState.ownership.status !== "verified") {
@@ -2847,6 +2847,43 @@ app.post("/api/agents/:agentId/archive", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to update agent archive status."
+    });
+  }
+}));
+
+app.post("/api/admin/agents/:agentId/moderation", route(async (request, response) => {
+  const agentId = request.params.agentId;
+  if (!agentId) {
+    response.status(400).json({ error: "agentId is required." });
+    return;
+  }
+
+  const body = isRecord(request.body) ? request.body : {};
+  const availability =
+    body.availability === "active" || body.availability === "suspended" || body.availability === "blocked"
+      ? body.availability
+      : undefined;
+  if (!availability) {
+    response.status(400).json({ error: "availability must be active, suspended, or blocked." });
+    return;
+  }
+
+  try {
+    response.json(
+      await controlPlane.setAgentPlatformModerationStatus({
+        agentId,
+        availability,
+        ...(typeof body.sessionId === "string" && body.sessionId.trim().length > 0
+          ? { sessionId: body.sessionId.trim() }
+          : {}),
+        ...(typeof body.reason === "string" && body.reason.trim().length > 0
+          ? { reason: body.reason.trim() }
+          : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to update agent moderation status."
     });
   }
 }));

@@ -726,8 +726,8 @@ function buildBaseRailPlan(
   const sharedEscrowContract = process.env.CLAWZ_X402_BASE_ESCROW_CONTRACT?.trim();
   const escrowContract = sellerEscrowContract || sharedEscrowContract;
 
-  if (profile.availability === "archived") {
-    missing.push("Restore this archived agent before accepting new SantaClawz work.");
+  if (profile.availability !== "active") {
+    missing.push("Restore this inactive agent before accepting new SantaClawz work.");
   }
   if (isFreeTestPricing(profile.paymentProfile.pricingMode)) {
     notes.push("Free-test mode does not emit an x402 payment challenge.");
@@ -860,8 +860,8 @@ function buildEthereumRailPlan(
   const sharedEscrowContract = process.env.CLAWZ_X402_ETHEREUM_ESCROW_CONTRACT?.trim();
   const escrowContract = sellerEscrowContract || sharedEscrowContract;
 
-  if (profile.availability === "archived") {
-    missing.push("Restore this archived agent before accepting new SantaClawz work.");
+  if (profile.availability !== "active") {
+    missing.push("Restore this inactive agent before accepting new SantaClawz work.");
   }
   if (isFreeTestPricing(profile.paymentProfile.pricingMode)) {
     notes.push("Free-test mode does not emit an x402 payment challenge.");
@@ -977,8 +977,8 @@ function buildZekoRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
   const beneficiaryAddress = profile.payoutWallets.zeko?.trim();
   const settlementContractAddress = process.env.CLAWZ_X402_ZEKO_SETTLEMENT_CONTRACT?.trim();
 
-  if (profile.availability === "archived") {
-    missing.push("Restore this archived agent before accepting new SantaClawz work.");
+  if (profile.availability !== "active") {
+    missing.push("Restore this inactive agent before accepting new SantaClawz work.");
   }
   if (isFreeTestPricing(profile.paymentProfile.pricingMode)) {
     notes.push("Free-test mode does not emit an x402 payment challenge.");

@@ -666,13 +666,18 @@ pre,
 
 .explore-nav-filter-row {
   gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .explore-nav-filter-row .explore-filter-chip {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.82);
-  padding: 7px 9px;
+  justify-content: center;
+  padding: 6px 7px;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
 }
 
 .explore-nav-filter-row .explore-filter-chip.active {
@@ -688,6 +693,7 @@ pre,
 .explore-topic-panel .eyebrow,
 .explore-nav-rail .field > span {
   color: rgba(255, 255, 255, 0.66);
+  letter-spacing: 0.12em;
 }
 
 .explore-nav-rail .text-input {
@@ -712,6 +718,12 @@ pre,
   font-size: 0.7rem;
   cursor: pointer;
   overflow-wrap: anywhere;
+}
+
+.explore-empty-note {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .explore-topic-chip:hover,
@@ -766,8 +778,8 @@ pre,
     position: sticky;
     top: 10px;
     width: auto;
-    border-right: 0;
-    border-radius: 26px 0 0 26px;
+    margin-right: -1px;
+    border-radius: 26px;
   }
 }
 
@@ -793,7 +805,7 @@ pre,
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.76rem;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
@@ -2724,7 +2736,7 @@ h3 {
 .eyebrow {
   margin: 0 0 10px;
   font-size: 0.72rem;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -2885,7 +2897,7 @@ h3 {
   box-shadow: 0 14px 30px rgba(18, 35, 54, 0.16);
   color: #fffaf1;
   content: attr(data-tooltip);
-  font-family: "Sora", sans-serif;
+  font-family: "Space Grotesk", "Avenir Next", sans-serif;
   font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0;

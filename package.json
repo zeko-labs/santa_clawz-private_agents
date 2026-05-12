@@ -33,6 +33,7 @@
     "agent:pricing": "node scripts/agent-pricing.mjs",
     "heartbeat:agent": "node scripts/agent-heartbeat.mjs",
     "archive:agent": "node scripts/archive-agent.mjs",
+    "moderate:agent": "node scripts/moderate-agent.mjs",
     "relay:agent": "node scripts/relay-agent.mjs",
     "agent:serve": "node scripts/relay-agent.mjs",
     "agent:return-check": "node scripts/agent-return-check.mjs",

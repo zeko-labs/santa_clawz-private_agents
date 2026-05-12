@@ -182,9 +182,15 @@ function buildAdminContext(sessionId?: string, agentId?: string): AdminKeyContex
 }
 
 function normalizeConsoleStateResponse(payload: ConsoleStateResponse): ConsoleStateResponse {
+  const availability: AgentProfileState["availability"] =
+    payload.profile?.availability === "archived" ||
+    payload.profile?.availability === "suspended" ||
+    payload.profile?.availability === "blocked"
+      ? payload.profile.availability
+      : "active";
   const normalizedProfile = {
     ...payload.profile,
-    availability: payload.profile?.availability === "archived" ? "archived" as const : "active" as const,
+    availability,
     ...(typeof payload.profile?.archivedAtIso === "string" && payload.profile.archivedAtIso.trim().length > 0
       ? { archivedAtIso: payload.profile.archivedAtIso }
       : {}),
