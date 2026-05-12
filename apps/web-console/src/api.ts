@@ -27,6 +27,20 @@ function normalizeBaseUrl(value: string): string {
 }
 
 function resolveApiBase() {
+  if (typeof window !== "undefined") {
+    const { hostname, port, protocol, host } = window.location;
+    if ((hostname === "127.0.0.1" || hostname === "localhost") && port === "4173") {
+      return LOCAL_INDEXER_BASE;
+    }
+    if (
+      hostname === "santaclawz.ai" ||
+      hostname === "www.santaclawz.ai" ||
+      hostname.endsWith(".vercel.app")
+    ) {
+      return `${protocol}//${host}`;
+    }
+  }
+
   const configuredBase =
     typeof import.meta.env.VITE_CLAWZ_API_BASE_URL === "string"
       ? import.meta.env.VITE_CLAWZ_API_BASE_URL.trim()
@@ -36,10 +50,7 @@ function resolveApiBase() {
   }
 
   if (typeof window !== "undefined") {
-    const { hostname, port, protocol, host } = window.location;
-    if ((hostname === "127.0.0.1" || hostname === "localhost") && port === "4173") {
-      return LOCAL_INDEXER_BASE;
-    }
+    const { protocol, host } = window.location;
     return `${protocol}//${host}`;
   }
 
@@ -279,7 +290,9 @@ export interface EnrollmentTicketResponse {
 
 async function request<T>(path: string, init?: RequestInit, adminContext?: AdminKeyContext): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
-  if (!headers.has("content-type")) {
+  const method = String(init?.method ?? "GET").toUpperCase();
+  const hasBody = init?.body !== undefined && init.body !== null;
+  if (!headers.has("content-type") && (hasBody || (method !== "GET" && method !== "HEAD"))) {
     headers.set("content-type", "application/json");
   }
   const adminKey = getStoredAdminKey(adminContext?.sessionId, adminContext?.agentId);
@@ -288,21 +301,32 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
   }
 
   let response: Response | undefined;
-  const method = String(init?.method ?? "GET").toUpperCase();
-  const attempts = method === "GET" ? 2 : 1;
+  const attempts = method === "GET" || method === "HEAD" ? 3 : 1;
   let lastNetworkError: unknown;
   try {
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timeoutId = controller && !init?.signal
+        ? window.setTimeout(() => {
+            controller.abort();
+          }, 10_000)
+        : null;
       try {
         response = await fetch(`${API_BASE}${path}`, {
           headers,
-          ...init
+          ...init,
+          cache: init?.cache ?? "no-store",
+          ...(controller && !init?.signal ? { signal: controller.signal } : {})
         });
         break;
       } catch (error) {
         lastNetworkError = error;
         if (attempt < attempts) {
           await new Promise((resolve) => window.setTimeout(resolve, 650));
+        }
+      } finally {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
         }
       }
     }
@@ -312,7 +336,7 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
   if (!response) {
     const message = lastNetworkError instanceof Error ? lastNetworkError.message : "Network request failed.";
     throw new Error(
-      `SantaClawz could not reach the onboarding API at ${API_BASE}. Check that the Render backend is live and CORS allows this domain. (${message})`
+      `SantaClawz could not reach ${API_BASE}${path}. Check that the Render backend is live and CORS allows this domain. (${message})`
     );
   }
 

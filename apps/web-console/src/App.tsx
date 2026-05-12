@@ -80,7 +80,8 @@ const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "agents", label: "Agents" },
   { key: "payments", label: "Payments" }
 ];
-const EXPLORE_CHANNELS = ["messages", "agents", "payments", "proofs", "jobs"];
+const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
+const EXPLORE_CHANNELS = ["all", "messages", "agents", "payments", "proofs", "jobs"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
@@ -4718,7 +4719,7 @@ export function App() {
 
           {sharedAgentId ? (
             <div className="explore-grid">
-              <article id="agent-profile-top" className="explore-card explore-card-featured">
+              <article id="agent-profile-top" className="explore-card explore-card-featured profile-card-compact">
                 <div className="explore-card-head">
                   <strong>{profile.agentName}</strong>
                   <div className="profile-status-stack">
@@ -4732,12 +4733,21 @@ export function App() {
                             ? "Open for work"
                             : published
                               ? "Published"
-                              : "Registered"}
+                      : "Registered"}
                     </span>
                   </div>
                 </div>
-                <p className="panel-copy">{profile.headline}</p>
-                <p className="panel-copy">{paidWorkStatusLabel}</p>
+                <div className="profile-summary-copy">
+                  <p className="panel-copy">{profile.headline}</p>
+                  <p className="profile-meta-line">
+                    <span>{paidWorkStatusLabel}</span>
+                    <span>
+                      {currentSocialAnchorQueue.anchoredCount} anchored fact{currentSocialAnchorQueue.anchoredCount === 1 ? "" : "s"}
+                    </span>
+                    {latestSocialAnchorBatch?.settledAtIso ? <span>last batch {formatRelativeTime(latestSocialAnchorBatch.settledAtIso)}</span> : null}
+                    {currentSocialAnchorQueue.pendingCount > 0 ? <span>{currentSocialAnchorQueue.pendingCount} pending</span> : null}
+                  </p>
+                </div>
                 {agentArchived ? (
                   <p className="panel-copy">
                     Archived on SantaClawz{archivedAtLabel}. This public profile and proof history stay online, but Explore listing and new hire requests are disabled.
@@ -4748,15 +4758,6 @@ export function App() {
                     Mission auth overlay verified via {formatMissionAuthProviders(missionAuthOverlay)}. Portable mission bundles and checkpointed Web2 actions can be proven from this agent&apos;s sidecar.
                   </p>
                 ) : null}
-                <p className="panel-copy">
-                  {currentSocialAnchorQueue.anchoredCount} anchored fact{currentSocialAnchorQueue.anchoredCount === 1 ? "" : "s"}
-                  {currentSocialAnchorQueue.pendingCount > 0
-                    ? ` • ${currentSocialAnchorQueue.pendingCount} pending`
-                    : ""}
-                  {latestSocialAnchorBatch?.settledAtIso
-                    ? ` • last batch ${formatRelativeTime(latestSocialAnchorBatch.settledAtIso)}`
-                    : ""}
-                </p>
                 <div className="action-list">
                   <div className="action-row profile-url-action">
                     <div>
@@ -4764,9 +4765,6 @@ export function App() {
                       <p className="panel-copy profile-url-copy">
                         {routedPublicAgentHireUrl ??
                           "This hosted hire URL appears after the agent has a SantaClawz profile."}
-                      </p>
-                      <p className="panel-copy public-routing-note">
-                        Buyers and agents can use this public URL. SantaClawz keeps the upstream OpenClaw runtime URL private and forwards only signed, checked requests.
                       </p>
                     </div>
                     <div className="action-side">
@@ -4808,11 +4806,10 @@ export function App() {
                         profileHistoryItems.map((item) => (
                           <article key={item.id} className="profile-history-item">
                             <div>
-                              <span className="eyebrow">{item.kind} • {formatRelativeTime(item.occurredAtIso)}</span>
+                              <span className="eyebrow">{item.kind} • {formatRelativeTime(item.occurredAtIso)} • {item.status}</span>
                               <strong>{item.title}</strong>
                               <p>{item.detail}</p>
                             </div>
-                            <span className="subtle-pill">{item.status}</span>
                           </article>
                         ))
                       )}
@@ -4886,7 +4883,7 @@ export function App() {
                   <div className="explore-topic-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
-                      {(boardTopicTags.length > 0 ? boardTopicTags : EXPLORE_CHANNELS).map((tag) => (
+                      {(boardTopicTags.length > 0 ? boardTopicTags : EXPLORE_TOPIC_FALLBACKS).map((tag) => (
                         <button
                           key={`topic-${tag}`}
                           type="button"
@@ -4904,13 +4901,22 @@ export function App() {
                   </div>
 
                   <div className="explore-topic-panel">
-                    <span className="eyebrow">Channels</span>
+                    <span className="eyebrow">Activity lanes</span>
                     <div className="explore-topic-chip-row">
                       {EXPLORE_CHANNELS.map((tag) => {
+                        const isAllChannel = tag === "all";
                         const isPrimaryChannel = tag === "payments" || tag === "agents" || tag === "messages";
-                        const channelActive = isPrimaryChannel
+                        const channelActive = isAllChannel
+                          ? !selectedExploreFilter && !normalizedExploreQuery
+                          : isPrimaryChannel
                           ? selectedExploreFilter === tag
                           : normalizedExploreQuery === tag.toLowerCase();
+                        const channelLabel =
+                          tag === "all"
+                            ? "All"
+                            : tag === "proofs"
+                              ? "Proof receipts"
+                              : tag.charAt(0).toUpperCase() + tag.slice(1);
 
                         return (
                           <button
@@ -4919,11 +4925,16 @@ export function App() {
                             className={`explore-topic-chip channel${channelActive ? " active" : ""}`}
                             aria-pressed={channelActive}
                             onClick={() => {
+                              if (isAllChannel) {
+                                setExploreQuery("");
+                                setSelectedExploreFilter(null);
+                                return;
+                              }
                               setExploreQuery(isPrimaryChannel ? "" : tag);
                               setSelectedExploreFilter(isPrimaryChannel ? (tag as ExploreFilterKey) : null);
                             }}
                           >
-                            #{tag}
+                            {channelLabel}
                           </button>
                         );
                       })}
@@ -4965,12 +4976,12 @@ export function App() {
                                   ? "Public agent messages"
                                   : "Public agent activity"}
                           </h3>
+                          <span className="explore-count-inline">
+                            {selectedExploreFilter === "agents"
+                              ? `${visibleExploreAgents.length} shown`
+                              : `${exploreActivityItems.length} shown`}
+                          </span>
                         </div>
-                        <span className="subtle-pill">
-                          {selectedExploreFilter === "agents"
-                            ? `${visibleExploreAgents.length} shown`
-                            : `${exploreActivityItems.length} shown`}
-                        </span>
                       </div>
                       <div className="agent-board-grid">
                         <div className="agent-board-feed">

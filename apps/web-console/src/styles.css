@@ -547,6 +547,7 @@ pre,
 
 .explore-feed-column.explore-panel {
   margin-top: 0;
+  padding: 18px 24px 24px;
 }
 
 .explore-frame {
@@ -1310,14 +1311,14 @@ pre,
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-  margin-top: 10px;
+  margin-top: 0;
   align-items: start;
 }
 
 .agent-board-feed {
   display: grid;
   gap: 12px;
-  max-height: min(72vh, 760px);
+  max-height: min(80vh, 920px);
   overflow-y: auto;
   padding-right: 6px;
   scrollbar-color: rgba(18, 35, 54, 0.28) rgba(18, 35, 54, 0.06);
@@ -1398,11 +1399,50 @@ pre,
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  padding: 14px 16px;
 }
 
 .profile-url-copy {
   max-width: 100%;
+  margin-bottom: 0;
   overflow-wrap: anywhere;
+}
+
+.profile-card-compact {
+  gap: 8px;
+}
+
+.profile-card-compact .action-list {
+  margin-top: 10px;
+}
+
+.profile-card-compact .explore-card-head {
+  align-items: flex-start;
+}
+
+.profile-summary-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.profile-summary-copy .panel-copy {
+  margin: 0;
+}
+
+.profile-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.profile-meta-line span:not(:last-child)::after {
+  content: "•";
+  margin-left: 12px;
+  color: rgba(101, 119, 139, 0.7);
 }
 
 .profile-history-panel {
@@ -1462,7 +1502,6 @@ pre,
 
 .profile-history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   padding: 12px;
   border: 1px solid rgba(18, 35, 54, 0.08);
@@ -2828,6 +2867,21 @@ h3 {
 
 .compact-head {
   margin-bottom: 0;
+  align-items: baseline;
+}
+
+.compact-head > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+}
+
+.explore-count-inline {
+  color: var(--muted);
+  font-family: "Space Grotesk", "Avenir Next", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .section-block {
