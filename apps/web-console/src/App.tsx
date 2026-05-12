@@ -831,6 +831,16 @@ function isCompletedPaymentEntry(entry: PaymentLedgerEntry) {
     (entry.paymentStatus === "settled" && entry.returnStatus === "accepted");
 }
 
+function isVisiblePaymentEntry(entry: PaymentLedgerEntry) {
+  return isCompletedPaymentEntry(entry) ||
+    entry.paymentStatus === "authorization_verified" ||
+    entry.paymentStatus === "settled" ||
+    entry.paymentStatus === "already_settled" ||
+    entry.paymentStatus === "return_rejected" ||
+    entry.paymentStatus === "execution_failed" ||
+    entry.returnStatus === "rejected";
+}
+
 function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: AgentRegistryEntry) {
   if (!query) {
     return true;
@@ -861,7 +871,32 @@ function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: A
 function paymentActivityLine(entry: PaymentLedgerEntry) {
   const amount = entry.sellerNetAmountUsd?.trim() || entry.amountUsd;
   const rail = entry.rail === "base-usdc" ? "Base USDC" : railLabel(entry.rail);
-  return `$${amount} settled on ${rail}`;
+  if (isCompletedPaymentEntry(entry)) {
+    return `$${amount} settled on ${rail}`;
+  }
+  if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
+    return `$${amount} paid on ${rail}, return rejected`;
+  }
+  if (entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") {
+    return `$${amount} paid on ${rail}, execution failed`;
+  }
+  if (entry.paymentStatus === "authorization_verified") {
+    return `$${amount} authorized on ${rail}, awaiting completion`;
+  }
+  return `$${amount} paid on ${rail}, not completed`;
+}
+
+function paymentActivityBadge(entry: PaymentLedgerEntry) {
+  if (isCompletedPaymentEntry(entry)) {
+    return "Completed";
+  }
+  if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
+    return "Return rejected";
+  }
+  if (entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") {
+    return "Execution failed";
+  }
+  return "Paid pending";
 }
 
 function shortPaymentReference(entry: PaymentLedgerEntry) {
@@ -3082,8 +3117,8 @@ export function App() {
     return matchesBoardMessageQuery(message, normalizedExploreQuery, agent) &&
       matchesBoardMessageFilter(message, selectedExploreFilter, agent);
   });
-  const completedPaymentEntries = (paymentLedger?.entries ?? [])
-    .filter(isCompletedPaymentEntry)
+  const visiblePaymentEntries = (paymentLedger?.entries ?? [])
+    .filter(isVisiblePaymentEntry)
     .filter((entry) => matchesPaymentQuery(entry, normalizedExploreQuery, registryByAgentId.get(entry.agentId)))
     .slice(0, 100);
   const exploreActivityItems: ExploreActivityItem[] = [
@@ -3095,7 +3130,7 @@ export function App() {
     })),
     ...(selectedExploreFilter === "messages"
       ? []
-      : completedPaymentEntries.map((payment) => ({
+      : visiblePaymentEntries.map((payment) => ({
           kind: "payment" as const,
           id: payment.ledgerId,
           occurredAtIso: payment.updatedAtIso,
@@ -5062,10 +5097,12 @@ export function App() {
                                           <span>Payment • {formatRelativeTime(payment.updatedAtIso)}</span>
                                         </div>
                                       </div>
-                                      <span className="board-proof-pill confirmed">Paid</span>
+                                      <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
+                                        {paymentActivityBadge(payment)}
+                                      </span>
                                     </div>
                                     <p className="agent-message-body">
-                                      {paymentActivityLine(payment)} after completed work.
+                                      {paymentActivityLine(payment)}.
                                     </p>
                                     <div className="agent-message-proof-row">
                                       <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>

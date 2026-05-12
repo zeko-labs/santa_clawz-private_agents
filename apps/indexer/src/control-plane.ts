@@ -26,6 +26,7 @@ import {
   type AgentRuntimeAvailabilityState,
   type AgentRegistryEntry,
   type ExecutionIntentLifecycleEntry,
+  type ExecutionLifecycleSummary,
   type ExecutionIntentRecord,
   type ExecutionIntentSettlementModel,
   type ExecutionIntentState,
@@ -8280,10 +8281,96 @@ export class ClawzControlPlane {
     return request;
   }
 
+  private buildExecutionLifecycleSummary(input: {
+    intent: ExecutionIntentRecord;
+    executionRequests: HireRequestRecord[];
+    ledgerEntries: PaymentLedgerEntry[];
+  }): ExecutionLifecycleSummary {
+    const latestExecution = input.executionRequests[0];
+    const latestLedger = input.ledgerEntries[0];
+    const paymentStatus: ExecutionLifecycleSummary["paymentStatus"] =
+      input.intent.status === "refunded"
+        ? "refunded"
+        : input.intent.status === "settled" || latestLedger?.paymentStatus === "settled" || latestLedger?.paymentStatus === "already_settled"
+          ? "settled"
+          : input.intent.status === "approved" || input.intent.status === "executed" || latestLedger?.paymentStatus === "authorization_verified"
+            ? "authorized"
+            : "not_started";
+    const settlementStatus: ExecutionLifecycleSummary["settlementStatus"] =
+      paymentStatus === "refunded"
+        ? "refunded"
+        : paymentStatus === "settled"
+          ? "settled"
+          : paymentStatus === "authorized"
+            ? "authorized"
+            : latestLedger?.paymentStatus === "settlement_failed"
+              ? "failed"
+              : "not_attempted";
+    const relayDeliveryStatus = latestExecution?.operationalStatus?.relayDeliveryStatus ?? "not_attempted";
+    const agentExecutionStatus = latestExecution?.operationalStatus?.agentExecutionStatus ?? "not_started";
+    const proofStatus: ExecutionLifecycleSummary["proofStatus"] =
+      latestExecution?.returnValidationError || latestLedger?.returnStatus === "rejected"
+        ? "return_rejected"
+        : latestExecution?.protocolReturn?.verifiedOutput
+          ? latestExecution.protocolReturn.verifiedOutput.zekoAttestationIncluded
+            ? "anchored_or_attested"
+            : "return_validated"
+          : "not_started";
+    const completedVerified =
+      latestExecution?.protocolReturn?.status === "completed" &&
+      latestExecution.protocolReturn.execution?.completionClassification === "agent_completed_verified";
+    const paidButNotCompleted =
+      (paymentStatus === "authorized" || paymentStatus === "settled") &&
+      !completedVerified &&
+      input.intent.status !== "refunded";
+    const currentPhase: ExecutionLifecycleSummary["currentPhase"] =
+      input.intent.status === "refunded"
+        ? "refunded"
+        : proofStatus === "return_rejected" || relayDeliveryStatus === "return_rejected"
+          ? "return_rejected"
+          : completedVerified && paymentStatus === "settled"
+            ? "payment_settled"
+            : completedVerified
+              ? "return_verified"
+              : agentExecutionStatus === "completed" || agentExecutionStatus === "worker_completed_return_rejected"
+                ? "worker_completed"
+                : relayDeliveryStatus === "failed"
+                  ? "failed_retriable"
+                  : relayDeliveryStatus === "forwarded" || relayDeliveryStatus === "recorded"
+                    ? "relay_forwarded"
+                    : paymentStatus === "settled"
+                      ? "payment_settled"
+                      : paymentStatus === "authorized"
+                        ? "payment_authorized"
+                        : "created";
+    return {
+      currentPhase,
+      paidButNotCompleted,
+      completedVerified,
+      needsAttention: currentPhase === "return_rejected" || currentPhase === "failed_retriable" || paidButNotCompleted,
+      paymentStatus,
+      settlementStatus,
+      relayDeliveryStatus,
+      agentExecutionStatus,
+      proofStatus,
+      ...(latestExecution ? { latestHireRequestId: latestExecution.requestId } : {}),
+      ...(latestLedger ? { ledgerId: latestLedger.ledgerId } : {}),
+      ...(latestLedger?.errorCode ? { errorCode: latestLedger.errorCode } : latestExecution?.returnValidationCode ? { errorCode: latestExecution.returnValidationCode } : {}),
+      ...(latestLedger?.errorMessage
+        ? { errorMessage: latestLedger.errorMessage }
+        : latestExecution?.returnValidationError
+          ? { errorMessage: latestExecution.returnValidationError }
+          : latestExecution?.deliveryError
+            ? { errorMessage: latestExecution.deliveryError }
+            : {})
+    };
+  }
+
   async getExecutionIntentResult(intentId: string) {
-    const [intent, hireRequests] = await Promise.all([
+    const [intent, hireRequests, paymentLedger] = await Promise.all([
       this.getExecutionIntent(intentId),
-      this.loadHireRequestFile()
+      this.loadHireRequestFile(),
+      this.loadPaymentLedgerFile()
     ]);
     const quoteRequest = intent.requestId
       ? hireRequests.requests.find((request) => request.requestId === intent.requestId)
@@ -8296,12 +8383,26 @@ export class ClawzControlPlane {
       executionRequestIds.includes(request.requestId)
     );
     const latestExecution = executionRequests[0];
+    const ledgerEntries = paymentLedger.entries
+      .filter((entry) =>
+        entry.quoteIntentId === intent.intentId ||
+        entry.authorizationId === intent.intentId ||
+        (latestExecution && entry.hireRequestId === latestExecution.requestId)
+      )
+      .sort((left, right) => Date.parse(right.updatedAtIso) - Date.parse(left.updatedAtIso));
+    const executionLifecycle = this.buildExecutionLifecycleSummary({
+      intent,
+      executionRequests,
+      ledgerEntries
+    });
     return {
       ok: true,
       intent,
       ...(quoteRequest ? { quoteRequest } : {}),
       executionRequests,
       ...(latestExecution ? { latestExecution } : {}),
+      ledgerEntries,
+      executionLifecycle,
       resultStatus:
         latestExecution?.protocolReturn?.status === "completed"
           ? "completed"
@@ -8315,22 +8416,12 @@ export class ClawzControlPlane {
         ? { verifiedOutput: latestExecution.protocolReturn.verifiedOutput }
         : {}),
       operationalStatus: {
-        paymentStatus:
-          intent.status === "approved" || intent.status === "executed" || intent.status === "settled"
-            ? "settled"
-            : "pending",
-        settlementStatus:
-          intent.status === "approved" || intent.status === "executed" || intent.status === "settled"
-            ? "settled"
-            : "not_attempted",
-        relayDeliveryStatus: latestExecution?.operationalStatus?.relayDeliveryStatus ?? "not_attempted",
-        agentExecutionStatus: latestExecution?.operationalStatus?.agentExecutionStatus ?? "not_started"
+        paymentStatus: executionLifecycle.paymentStatus === "not_started" ? "pending" : executionLifecycle.paymentStatus,
+        settlementStatus: executionLifecycle.settlementStatus,
+        relayDeliveryStatus: executionLifecycle.relayDeliveryStatus,
+        agentExecutionStatus: executionLifecycle.agentExecutionStatus
       },
-      proofStatus: latestExecution?.protocolReturn?.verifiedOutput
-        ? latestExecution.protocolReturn.verifiedOutput.zekoAttestationIncluded
-          ? "anchored_or_attested"
-          : "return_validated"
-        : "not_started"
+      proofStatus: executionLifecycle.proofStatus
     };
   }
 

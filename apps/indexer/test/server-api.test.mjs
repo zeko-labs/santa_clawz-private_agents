@@ -1606,6 +1606,9 @@ async function testExecutionIntentLifecycleAnchors() {
     assert.equal(intentLookup.status, 200);
     assert.equal(intentLookup.payload.intent.intentId, created.payload.intentId);
     assert.equal(intentLookup.payload.resultStatus, "not_started");
+    assert.equal(intentLookup.payload.executionLifecycle.currentPhase, "payment_settled");
+    assert.equal(intentLookup.payload.executionLifecycle.paidButNotCompleted, true);
+    assert.equal(intentLookup.payload.executionLifecycle.completedVerified, false);
     assert.equal(intentLookup.payload.operationalStatus.settlementStatus, "settled");
 
     const terminalRefund = await requestJson(`${baseUrl}/api/execution/intents/${created.payload.intentId}/refund`, {

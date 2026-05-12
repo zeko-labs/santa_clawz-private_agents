@@ -684,6 +684,34 @@ export interface HireOperationalStatus {
 export type ExecutionIntentStatus = "pending" | "approved" | "executed" | "settled" | "refunded";
 export type ExecutionIntentSettlementModel = "upfront-x402" | "reserve-release-escrow";
 export type ExecutionIntentTransitionType = "created" | "approved" | "executed" | "settled" | "refunded";
+export type ExecutionLifecyclePhase =
+  | "created"
+  | "payment_authorized"
+  | "payment_settled"
+  | "relay_forwarded"
+  | "runtime_accepted"
+  | "worker_completed"
+  | "return_verified"
+  | "return_rejected"
+  | "failed_retriable"
+  | "failed_terminal"
+  | "refunded";
+
+export interface ExecutionLifecycleSummary {
+  currentPhase: ExecutionLifecyclePhase;
+  paidButNotCompleted: boolean;
+  completedVerified: boolean;
+  needsAttention: boolean;
+  paymentStatus: "not_started" | "authorized" | "settled" | "refunded";
+  settlementStatus: "not_attempted" | "authorized" | "settled" | "failed" | "refunded";
+  relayDeliveryStatus: HireOperationalStatus["relayDeliveryStatus"];
+  agentExecutionStatus: HireOperationalStatus["agentExecutionStatus"];
+  proofStatus: "not_started" | "return_validated" | "anchored_or_attested" | "return_rejected";
+  latestHireRequestId?: string;
+  ledgerId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
 
 export interface ExecutionIntentLifecycleEntry {
   transitionId: string;
