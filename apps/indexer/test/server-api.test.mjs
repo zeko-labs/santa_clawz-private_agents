@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const serverEntry = fileURLToPath(new URL("../dist/apps/indexer/src/server.js", import.meta.url));
 const verifierEntry = fileURLToPath(new URL("../dist/apps/indexer/src/verify-agent-proof.js", import.meta.url));
+const relayEntry = fileURLToPath(new URL("../../../scripts/relay-agent.mjs", import.meta.url));
 const SERVER_READY_TIMEOUT_MS = 30000;
 
 function startServer(workspaceDir, port, extraEnv = {}) {
@@ -2426,6 +2427,151 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
   }
 }
 
+async function testOfficialRelayNormalizesLargeWorkerResponses() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-official-relay-normalize-test-"));
+  const port = await reservePort();
+  const ingressPort = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "5000",
+    CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M: "2"
+  });
+  const ingress = await startHireIngress(ingressPort);
+  let relayProcess;
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const ticket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Official Relay Normalize Agent",
+        headline: "Confirms official relay sends canonical worker responses.",
+        representedPrincipal: "Relay normalization smoke operator",
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "free-test",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(ticket.status, 200);
+
+    const redeemed = await requestJson(`${baseUrl}/api/enrollment/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ ticket: ticket.payload.ticket })
+    });
+    assert.equal(redeemed.status, 200);
+    const sessionId = redeemed.payload.session.sessionId;
+    const agentId = redeemed.payload.agentId;
+    const adminKey = redeemed.payload.adminAccess.issuedAdminKey;
+    ingress.setExpectedIngressToken(redeemed.payload.ingressAccess.issuedIngressToken);
+    ingress.setExpectedSigningSecret(redeemed.payload.ingressAccess.issuedSigningSecret);
+    ingress.setExpectedServiceKey(redeemed.payload.ingressAccess.serviceKey);
+
+    const published = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId, localOnly: true })
+    });
+    assert.equal(published.status, 200);
+
+    const envPath = path.join(workspaceDir, ".env.santaclawz");
+    await writeFile(
+      envPath,
+      [
+        `CLAWZ_API_BASE=${baseUrl}`,
+        `CLAWZ_AGENT_ID=${agentId}`,
+        `CLAWZ_AGENT_SESSION_ID=${sessionId}`,
+        `CLAWZ_AGENT_ADMIN_KEY=${adminKey}`,
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    relayProcess = spawn(
+      "node",
+      [
+        relayEntry,
+        "--env-file",
+        envPath,
+        "--api-base",
+        baseUrl,
+        "--local-hire-url",
+        `http://127.0.0.1:${ingressPort}/hire`,
+        "--takeover",
+        "--no-heartbeat"
+      ],
+      {
+        cwd: workspaceDir,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"]
+      }
+    );
+    const relayLogs = { stdout: [], stderr: [] };
+    relayProcess.stdout.on("data", (chunk) => relayLogs.stdout.push(String(chunk)));
+    relayProcess.stderr.on("data", (chunk) => relayLogs.stderr.push(String(chunk)));
+
+    await waitForJsonMatch(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/relay-status`,
+      (payload) => payload.connected === true,
+      SERVER_READY_TIMEOUT_MS,
+      relayLogs
+    );
+
+    ingress.setNextProtocolReturnFactory(({ requestId }) => ({
+      schema_version: "santaclawz-return/1.0",
+      request_id: requestId,
+      status: "completed",
+      agent_private: true,
+      noisy_worker_trace: "x".repeat(6000),
+      verified_output: {
+        package_hash: "d".repeat(64),
+        hash_algorithm: "sha256",
+        verification_manifest: {
+          input_digest_sha256: "e".repeat(64),
+          checks_performed: ["worker_completed"],
+          files_produced: ["answer.json"],
+          blocked_suspicious_instructions: []
+        },
+        deliverables: [
+          {
+            name: "answer.json",
+            sha256: "f".repeat(64)
+          }
+        ]
+      }
+    }));
+
+    const hire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Return a large worker envelope through official relay.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(hire.status, 200);
+    assert.equal(hire.payload.status, "completed");
+    assert.equal(hire.payload.deliveryStatus, "forwarded");
+    assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "forwarded");
+    assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "completed");
+    assert.equal(hire.payload.protocolReturn.status, "completed");
+    assert.equal(hire.payload.protocolReturn.verifiedOutput.deliverableCount, 1);
+    assert.match(relayLogs.stderr.join(""), /relay_worker_response_normalized/);
+
+    console.log("ok - official relay normalizes large worker responses into accepted hire_response JSON");
+  } finally {
+    if (relayProcess) {
+      await stopProcess(relayProcess);
+    }
+    await ingress.close();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testMissionAuthVerificationPersists() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mission-auth-test-"));
   const port = await reservePort();
@@ -2719,6 +2865,7 @@ async function main() {
   await testMainnetFreeTestDisabledByDefault();
   await testStaleRelayDoesNotStayLive();
   await testRelayHireFailureCreatesDurableExecutionRecord();
+  await testOfficialRelayNormalizesLargeWorkerResponses();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
