@@ -8,6 +8,7 @@ import {
   type AgentPaymentRail,
   type AgentProfileState,
   type AgentRuntimeStatus,
+  type AgentX402RailPlan,
   assertClawzJsonRpcRequest,
   buildProofVerificationResponse,
   type ClawzAgentDiscoveryDocument,
@@ -865,6 +866,91 @@ function jsonDigestSha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
+function isEvmTransactionHash(value: unknown): value is string {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+async function recordX402PaymentLedgerSettlement(input: {
+  agentId: string;
+  sessionId: string;
+  pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
+  railPlan: AgentX402RailPlan;
+  settlement: Awaited<ReturnType<typeof settleAgentX402Payment>>;
+  paymentPayload: Record<string, unknown>;
+  authorizationId?: string;
+  quoteIntentId?: string;
+  amountUsd?: string;
+  sellerNetAmountUsd?: string;
+  protocolFeeAmountUsd?: string;
+  protocolFeeRecipient?: string;
+  protocolFeeBps?: number;
+}) {
+  const paymentRequired = isRecord(input.settlement.paymentRequired) ? input.settlement.paymentRequired : {};
+  const settlementEvents = input.settlement.settlementEvents;
+  const x402RequestId = optionalString(paymentRequired.id);
+  const resource = optionalString(paymentRequired.resource);
+  return controlPlane.recordPaymentLedgerSettlement({
+    agentId: input.agentId,
+    sessionId: input.sessionId,
+    ...(input.quoteIntentId ? { quoteIntentId: input.quoteIntentId } : {}),
+    ...(x402RequestId ? { x402RequestId } : {}),
+    ...(resource ? { resource } : {}),
+    pricingMode: input.pricingMode,
+    rail: input.railPlan.rail,
+    networkId: input.railPlan.networkId,
+    assetSymbol: input.railPlan.assetSymbol,
+    ...(input.railPlan.assetAddress ? { assetAddress: input.railPlan.assetAddress } : {}),
+    amountUsd: input.amountUsd ?? input.railPlan.amountUsd ?? "0",
+    ...(input.railPlan.payTo ? { sellerPayTo: input.railPlan.payTo } : {}),
+    ...(input.protocolFeeRecipient ? { protocolFeeRecipient: input.protocolFeeRecipient } : {}),
+    ...(typeof input.protocolFeeBps === "number" ? { protocolFeeBps: input.protocolFeeBps } : {}),
+    ...(input.sellerNetAmountUsd ? { sellerNetAmountUsd: input.sellerNetAmountUsd } : {}),
+    ...(input.protocolFeeAmountUsd ? { protocolFeeAmountUsd: input.protocolFeeAmountUsd } : {}),
+    paymentPayloadDigestSha256: jsonDigestSha256(input.paymentPayload),
+    paymentRequirementDigestSha256: jsonDigestSha256(paymentRequired),
+    ...(input.authorizationId ? { authorizationId: input.authorizationId } : {}),
+    ...(settlementEvents.settlementReference ? { settlementReference: settlementEvents.settlementReference } : {}),
+    ...(settlementEvents.sellerSettlementTxHash ? { sellerSettlementTxHash: settlementEvents.sellerSettlementTxHash } : {}),
+    ...(settlementEvents.protocolFeeTxHash ? { protocolFeeTxHash: settlementEvents.protocolFeeTxHash } : {}),
+    transactionHashes: settlementEvents.transactionHashes,
+    ...(input.railPlan.facilitatorUrl ? { facilitatorUrl: input.railPlan.facilitatorUrl } : {}),
+    facilitatorResponseDigestSha256: jsonDigestSha256(input.settlement.remoteSettlement),
+    facilitatorResponseSummary: input.settlement.remoteSettlement
+  });
+}
+
+async function fetchBaseRelayerTransactions(input: {
+  address: string;
+  apiKey: string;
+  apiUrl?: string;
+  startBlock?: string;
+  endBlock?: string;
+  sort?: "asc" | "desc";
+}) {
+  const url = new URL(input.apiUrl ?? "https://api.basescan.org/api");
+  url.searchParams.set("module", "account");
+  url.searchParams.set("action", "txlist");
+  url.searchParams.set("address", input.address);
+  url.searchParams.set("startblock", input.startBlock ?? "0");
+  url.searchParams.set("endblock", input.endBlock ?? "99999999");
+  url.searchParams.set("sort", input.sort ?? "desc");
+  url.searchParams.set("apikey", input.apiKey);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`BaseScan reconciliation request failed with HTTP ${response.status}.`);
+  }
+  const payload = await response.json() as unknown;
+  if (!isRecord(payload)) {
+    throw new Error("BaseScan reconciliation returned an invalid response.");
+  }
+  const result = payload.result;
+  if (!Array.isArray(result)) {
+    const message = typeof payload.message === "string" ? payload.message : "unknown BaseScan response";
+    throw new Error(`BaseScan reconciliation did not return a transaction list: ${message}`);
+  }
+  return result.filter(isRecord);
+}
+
 async function buildX402PlanFromQuery(request: IndexerRequest) {
   const sessionId = queryString(request.query, "sessionId");
   const agentId = queryString(request.query, "agentId");
@@ -1592,6 +1678,152 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
   }
 }));
 
+app.get("/api/agents/:agentId/payments", route(async (request, response) => {
+  try {
+    const agentId = request.params.agentId;
+    if (!agentId) {
+      response.status(400).json({ error: "agentId is required." });
+      return;
+    }
+    const limit = queryString(request.query, "limit");
+    response.json(await controlPlane.listPaymentLedger({
+      agentId,
+      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list agent payments."
+    });
+  }
+}));
+
+app.get("/api/sessions/:sessionId/payments", route(async (request, response) => {
+  try {
+    const sessionId = request.params.sessionId;
+    if (!sessionId) {
+      response.status(400).json({ error: "sessionId is required." });
+      return;
+    }
+    const limit = queryString(request.query, "limit");
+    response.json(await controlPlane.listPaymentLedger({
+      sessionId,
+      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list session payments."
+    });
+  }
+}));
+
+app.get("/api/admin/x402/ledger", route(async (request, response) => {
+  try {
+    const agentId = queryString(request.query, "agentId");
+    const sessionId = queryString(request.query, "sessionId");
+    const quoteIntentId = queryString(request.query, "quoteIntentId");
+    const hireRequestId = queryString(request.query, "hireRequestId");
+    const limit = queryString(request.query, "limit");
+    response.json(await controlPlane.listPaymentLedger({
+      ...(agentId ? { agentId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(quoteIntentId ? { quoteIntentId } : {}),
+      ...(hireRequestId ? { hireRequestId } : {}),
+      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list x402 payment ledger."
+    });
+  }
+}));
+
+app.post("/api/admin/x402/reconcile", route(async (_request, response) => {
+  const initialLedger = await controlPlane.listPaymentLedger({ limit: 500 });
+  const settledTxHashes = new Set<string>();
+  for (const entry of initialLedger.entries) {
+    for (const hash of entry.transactionHashes) {
+      settledTxHashes.add(hash.toLowerCase());
+    }
+  }
+  const relayerAddress =
+    process.env.CLAWZ_X402_BASE_RELAYER_ADDRESS?.trim() ??
+    process.env.CLAWZ_BASE_RELAYER_ADDRESS?.trim() ??
+    "";
+  const basescanApiKey = process.env.CLAWZ_BASESCAN_API_KEY?.trim() ?? process.env.BASESCAN_API_KEY?.trim() ?? "";
+  const backfilledHashes: string[] = [];
+  if (relayerAddress && basescanApiKey) {
+    const transactions = await fetchBaseRelayerTransactions({
+      address: relayerAddress,
+      apiKey: basescanApiKey,
+      ...(process.env.CLAWZ_BASESCAN_API_URL ? { apiUrl: process.env.CLAWZ_BASESCAN_API_URL } : {})
+    });
+    for (const tx of transactions) {
+      const hash = tx.hash;
+      if (!isEvmTransactionHash(hash) || settledTxHashes.has(hash.toLowerCase())) {
+        continue;
+      }
+      backfilledHashes.push(hash);
+      settledTxHashes.add(hash.toLowerCase());
+      await controlPlane.recordPaymentLedgerSettlement({
+        agentId: "unmatched-base-relayer",
+        sessionId: "unmatched-base-relayer",
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0",
+        authorizationId: hash,
+        settlementReference: hash,
+        transactionHashes: [hash],
+        paymentStatus: "unmatched_relayer_transaction",
+        facilitatorResponseSummary: {
+          source: "basescan-account-txlist",
+          hash,
+          ...(typeof tx.blockNumber === "string" ? { blockNumber: tx.blockNumber } : {}),
+          ...(typeof tx.timeStamp === "string" ? { timeStamp: tx.timeStamp } : {}),
+          ...(typeof tx.nonce === "string" ? { nonce: tx.nonce } : {}),
+          ...(typeof tx.from === "string" ? { from: tx.from } : {}),
+          ...(typeof tx.to === "string" ? { to: tx.to } : {}),
+          ...(typeof tx.value === "string" ? { value: tx.value } : {}),
+          ...(typeof tx.gasUsed === "string" ? { gasUsed: tx.gasUsed } : {}),
+          ...(typeof tx.isError === "string" ? { isError: tx.isError } : {})
+        }
+      });
+    }
+  }
+  const ledger = await controlPlane.listPaymentLedger({ limit: 500 });
+  const orphanEntries = [];
+  const incompleteEntries = [];
+  for (const entry of ledger.entries) {
+    if (!entry.hireRequestId && entry.transactionHashes.length > 0) {
+      orphanEntries.push(entry);
+    }
+    if (
+      entry.transactionHashes.length > 0 &&
+      entry.executionStatus !== "completed" &&
+      entry.paymentStatus !== "execution_completed"
+    ) {
+      incompleteEntries.push(entry);
+    }
+  }
+  response.json({
+    ok: true,
+    mode: relayerAddress && basescanApiKey ? "basescan-backfill" : "ledger-local-summary",
+    note: relayerAddress && basescanApiKey
+      ? "BaseScan relayer transactions were compared against the SantaClawz payment ledger and unmatched hashes were backfilled."
+      : "Set CLAWZ_X402_BASE_RELAYER_ADDRESS and CLAWZ_BASESCAN_API_KEY to backfill relayer transactions from BaseScan.",
+    relayerAddress: relayerAddress || null,
+    backfilledTransactionHashCount: backfilledHashes.length,
+    backfilledTransactionHashes: backfilledHashes.slice(0, 50),
+    trackedTransactionHashCount: settledTxHashes.size,
+    totalLedgerEntryCount: ledger.totalLedgerEntryCount,
+    orphanSettlementCount: orphanEntries.length,
+    paidButIncompleteCount: incompleteEntries.length,
+    orphanSettlements: orphanEntries.slice(0, 50),
+    paidButIncomplete: incompleteEntries.slice(0, 50)
+  });
+}));
+
 app.post("/api/x402/quote-intent", route(async (request, response) => {
   try {
     const intentId = queryString(request.query, "intentId");
@@ -1631,16 +1863,26 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       response.status(400).json(paymentSettlementFailureBody(error, { intent: context.intent }));
       return;
     }
-    const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
-    const settlementReference = [
-      settlement.paymentResponse?.settlementReference,
-      remoteSettlement.transaction,
-      remoteSettlement.txHash,
-      remoteSettlement.transactionHash,
-      remoteSettlement.id
-    ].find((value): value is string => typeof value === "string" && value.length > 0);
+    const settlementReference = settlement.settlementEvents.settlementReference;
     const paymentPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
     const paymentResponseDigestSha256 = jsonDigestSha256(settlement.paymentResponse);
+    const paymentLedgerEntry = await recordX402PaymentLedgerSettlement({
+      agentId: context.intent.agentId,
+      sessionId: context.intent.sessionId,
+      pricingMode: context.intent.pricingMode,
+      railPlan: settlement.rail,
+      settlement,
+      paymentPayload,
+      authorizationId: intentId,
+      quoteIntentId: intentId,
+      amountUsd: context.intent.grossAmountUsd,
+      ...(context.intent.sellerNetAmountUsd ? { sellerNetAmountUsd: context.intent.sellerNetAmountUsd } : {}),
+      ...(context.intent.protocolFeeAmountUsd ? { protocolFeeAmountUsd: context.intent.protocolFeeAmountUsd } : {}),
+      ...(context.intent.protocolFeeRecipient ? { protocolFeeRecipient: context.intent.protocolFeeRecipient } : {}),
+      ...(typeof context.consoleState.protocolOwnerFeePolicy.feeBps === "number"
+        ? { protocolFeeBps: context.consoleState.protocolOwnerFeePolicy.feeBps }
+        : {})
+    });
     const approvedIntent =
       context.intent.status === "pending"
         ? await controlPlane.approveExecutionIntent({
@@ -1667,7 +1909,17 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         idempotent: true,
         nextAction: "result_lookup",
         ...(approvedIntent.status === "settled" ? { terminal: true } : {}),
-        ...(settlement.paymentResponse ? { payment: settlement.paymentResponse } : {})
+        ...(settlement.paymentResponse ? { payment: {
+          ...settlement.paymentResponse,
+          ledgerId: paymentLedgerEntry.ledgerId,
+          ...(paymentLedgerEntry.sellerSettlementTxHash
+            ? { sellerSettlementTxHash: paymentLedgerEntry.sellerSettlementTxHash }
+            : {}),
+          ...(paymentLedgerEntry.protocolFeeTxHash
+            ? { protocolFeeTxHash: paymentLedgerEntry.protocolFeeTxHash }
+            : {}),
+          transactionHashes: paymentLedgerEntry.transactionHashes
+        } } : {})
       });
       return;
     }
@@ -1689,6 +1941,8 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
             ? { acceptedQuoteDigestSha256: context.quoteRequest.protocolReturn.digestSha256 }
             : {}),
           ...(settlementReference ? { settlementReference } : {}),
+          ledgerId: paymentLedgerEntry.ledgerId,
+          settlementEvents: settlement.settlementEvents,
           paymentPayloadDigestSha256,
           paymentResponseDigestSha256
         }
@@ -1731,7 +1985,17 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       idempotent: context.intent.status !== "pending",
       nextAction: finalIntent.status === "settled" || finalIntent.status === "executed" ? "result_lookup" : "poll_execution",
       intent: finalIntent,
-      payment: settlement.paymentResponse,
+      payment: {
+        ...settlement.paymentResponse,
+        ledgerId: paymentLedgerEntry.ledgerId,
+        ...(paymentLedgerEntry.sellerSettlementTxHash
+          ? { sellerSettlementTxHash: paymentLedgerEntry.sellerSettlementTxHash }
+          : {}),
+        ...(paymentLedgerEntry.protocolFeeTxHash
+          ? { protocolFeeTxHash: paymentLedgerEntry.protocolFeeTxHash }
+          : {}),
+        transactionHashes: paymentLedgerEntry.transactionHashes
+      },
       paidExecution
     });
   } catch (error) {
@@ -1786,11 +2050,30 @@ app.get("/api/x402/proof", route(async (request, response) => {
       runtime,
       paymentPayload
     });
+    const paymentLedgerEntry = await recordX402PaymentLedgerSettlement({
+      agentId: plan.agentId,
+      sessionId: plan.sessionId,
+      pricingMode: snapshot.consoleState.profile.paymentProfile.pricingMode,
+      railPlan: settlement.rail,
+      settlement,
+      paymentPayload,
+      ...(settlement.settlementEvents.settlementReference
+        ? { authorizationId: settlement.settlementEvents.settlementReference }
+        : {}),
+      ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+      ...(snapshot.consoleState.protocolOwnerFeePolicy.enabled
+        ? { protocolFeeBps: snapshot.consoleState.protocolOwnerFeePolicy.feeBps }
+        : {})
+    });
     setHeaders(response, settlement.headers);
     response.json({
       ok: true,
       paid: true,
-      payment: settlement.paymentResponse,
+      payment: {
+        ...settlement.paymentResponse,
+        ledgerId: paymentLedgerEntry.ledgerId,
+        transactionHashes: paymentLedgerEntry.transactionHashes
+      },
       bundle: buildAgentProofBundle({
         baseUrl: snapshot.baseUrl,
         consoleState: snapshot.consoleState,
@@ -1884,8 +2167,31 @@ app.post("/api/x402/settle", route(async (_request, response) => {
       runtime,
       paymentPayload
     });
+    const paymentLedgerEntry = await recordX402PaymentLedgerSettlement({
+      agentId: plan.agentId,
+      sessionId: plan.sessionId,
+      pricingMode: consoleState.profile.paymentProfile.pricingMode,
+      railPlan: settlement.rail,
+      settlement,
+      paymentPayload,
+      ...(settlement.settlementEvents.settlementReference
+        ? { authorizationId: settlement.settlementEvents.settlementReference }
+        : {}),
+      ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+      ...(consoleState.protocolOwnerFeePolicy.enabled
+        ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
+        : {})
+    });
     setHeaders(response, settlement.headers);
-    response.json(settlement);
+    response.json({
+      ...settlement,
+      paymentLedger: paymentLedgerEntry,
+      paymentResponse: {
+        ...settlement.paymentResponse,
+        ledgerId: paymentLedgerEntry.ledgerId,
+        transactionHashes: paymentLedgerEntry.transactionHashes
+      }
+    });
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to settle x402 payment."
@@ -2365,6 +2671,12 @@ const handleAgentHireRequest = route(async (request, response) => {
           rail?: string;
           amountUsd?: string;
           authorizationId?: string;
+          ledgerId?: string;
+          settlementEvents?: {
+            sellerSettlementTxHash?: string;
+            protocolFeeTxHash?: string;
+            transactionHashes?: string[];
+          };
           settlementReference?: string;
           paymentPayloadDigestSha256?: string;
           paymentResponseDigestSha256?: string;
@@ -2417,21 +2729,31 @@ const handleAgentHireRequest = route(async (request, response) => {
         return;
       }
       setHeaders(response, settlement.headers);
-      const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
-      const settlementReference = [
-        settlement.paymentResponse?.settlementReference,
-        remoteSettlement.transaction,
-        remoteSettlement.txHash,
-        remoteSettlement.transactionHash,
-        remoteSettlement.id
-      ].find((value): value is string => typeof value === "string" && value.length > 0);
+      const settlementReference = settlement.settlementEvents.settlementReference;
+      const paymentPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
+      const paymentResponseDigestSha256 = jsonDigestSha256(settlement.paymentResponse);
+      const paymentLedgerEntry = await recordX402PaymentLedgerSettlement({
+        agentId,
+        sessionId: consoleState.session.sessionId,
+        pricingMode: consoleState.profile.paymentProfile.pricingMode,
+        railPlan: settlement.rail,
+        settlement,
+        paymentPayload,
+        ...(settlementReference ? { authorizationId: settlementReference } : {}),
+        ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+        ...(consoleState.protocolOwnerFeePolicy.enabled
+          ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
+          : {})
+      });
       paymentAuthorization = {
         status: "settled",
         rail: settlement.rail.rail,
         ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
         ...(settlementReference ? { settlementReference, authorizationId: settlementReference } : {}),
-        paymentPayloadDigestSha256: jsonDigestSha256(paymentPayload),
-        paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
+        ledgerId: paymentLedgerEntry.ledgerId,
+        settlementEvents: settlement.settlementEvents,
+        paymentPayloadDigestSha256,
+        paymentResponseDigestSha256
       };
     }
 
@@ -2454,6 +2776,10 @@ const handleAgentHireRequest = route(async (request, response) => {
             ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),
             ...(paymentAuthorization.settlementReference
               ? { settlementReference: paymentAuthorization.settlementReference }
+              : {}),
+            ...(paymentAuthorization.ledgerId ? { ledgerId: paymentAuthorization.ledgerId } : {}),
+            ...(paymentAuthorization.settlementEvents?.transactionHashes?.length
+              ? { transactionHashes: paymentAuthorization.settlementEvents.transactionHashes }
               : {})
           }
         }));

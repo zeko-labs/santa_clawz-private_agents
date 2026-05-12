@@ -54,6 +54,9 @@ import {
   type LiveSessionTurnFlowState,
   type LiveFlowTargets,
   type LiveFlowTurnTarget,
+  type PaymentLedgerEntry,
+  type PaymentLedgerState,
+  type PaymentLedgerStatus,
   type PrivacyApprovalRecord,
   type PrivacyExceptionQueueItem,
   type SocialAnchorBatch,
@@ -574,6 +577,12 @@ interface HirePaymentAuthorization {
   rail?: string;
   amountUsd?: string;
   authorizationId?: string;
+  ledgerId?: string;
+  settlementEvents?: {
+    sellerSettlementTxHash?: string;
+    protocolFeeTxHash?: string;
+    transactionHashes?: string[];
+  };
   quoteRequestId?: string;
   executionRequestId?: string;
   acceptedQuoteDigestSha256?: string;
@@ -679,6 +688,51 @@ interface HireRequestRecord {
   ingressResponseStatusCode?: number;
   protocolReturn?: HireRequestReceipt["protocolReturn"];
   payment?: HirePaymentAuthorization;
+}
+
+interface PaymentLedgerFile {
+  entries: PaymentLedgerEntry[];
+}
+
+interface PaymentLedgerSettlementInput {
+  agentId: string;
+  sessionId: string;
+  quoteIntentId?: string;
+  x402RequestId?: string;
+  resource?: string;
+  pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
+  rail: AgentPaymentRail;
+  networkId: string;
+  assetSymbol: string;
+  assetAddress?: string;
+  amountUsd: string;
+  sellerPayTo?: string;
+  protocolFeeRecipient?: string;
+  protocolFeeBps?: number;
+  sellerNetAmountUsd?: string;
+  protocolFeeAmountUsd?: string;
+  paymentPayloadDigestSha256?: string;
+  paymentRequirementDigestSha256?: string;
+  authorizationId?: string;
+  settlementReference?: string;
+  sellerSettlementTxHash?: string;
+  protocolFeeTxHash?: string;
+  transactionHashes?: string[];
+  facilitatorUrl?: string;
+  facilitatorResponseDigestSha256?: string;
+  facilitatorResponseSummary?: Record<string, unknown>;
+  paymentStatus?: PaymentLedgerStatus;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface PaymentLedgerListOptions {
+  agentId?: string;
+  sessionId?: string;
+  quoteIntentId?: string;
+  hireRequestId?: string;
+  paymentPayloadDigestSha256?: string;
+  limit?: number;
 }
 
 function buildHireOperationalStatus(input: {
@@ -1287,6 +1341,46 @@ function assertSha256Hex(value: string, context: string) {
   }
 }
 
+function isTransactionHash(value: unknown): value is string {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function uniqueTransactionHashes(...groups: Array<readonly string[] | undefined>): string[] {
+  const hashes = new Set<string>();
+  for (const group of groups) {
+    for (const hash of group ?? []) {
+      if (isTransactionHash(hash)) {
+        hashes.add(hash);
+      }
+    }
+  }
+  return [...hashes];
+}
+
+function inferPaymentLedgerSettlementStatus(input: {
+  paymentStatus?: PaymentLedgerStatus;
+  sellerSettlementTxHash?: string;
+  protocolFeeTxHash?: string;
+  transactionHashes?: string[];
+}): PaymentLedgerStatus {
+  if (input.paymentStatus) {
+    return input.paymentStatus;
+  }
+  if (input.sellerSettlementTxHash && input.protocolFeeTxHash) {
+    return "settled";
+  }
+  if (input.sellerSettlementTxHash) {
+    return "seller_settled";
+  }
+  if (input.protocolFeeTxHash) {
+    return "protocol_fee_settled";
+  }
+  if ((input.transactionHashes ?? []).length > 0) {
+    return "settled";
+  }
+  return "payment_verified";
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as T;
@@ -1315,6 +1409,12 @@ function buildDefaultSponsorQueue(): SponsorQueueFile {
 function buildDefaultHireRequestFile(): HireRequestFile {
   return {
     requests: []
+  };
+}
+
+function buildDefaultPaymentLedgerFile(): PaymentLedgerFile {
+  return {
+    entries: []
   };
 }
 
@@ -2054,6 +2154,7 @@ export class ClawzControlPlane {
   private readonly liveFlowStatusPath: string;
   private readonly sponsorQueuePath: string;
   private readonly hireRequestPath: string;
+  private readonly paymentLedgerPath: string;
   private readonly executionIntentPath: string;
   private readonly socialAnchorQueuePath: string;
   private readonly agentBoardPath: string;
@@ -2088,6 +2189,7 @@ export class ClawzControlPlane {
     this.liveFlowStatusPath = path.join(baseDir, "state", "live-session-turn-flow.json");
     this.sponsorQueuePath = path.join(baseDir, "state", "wallet-sponsor-queue.json");
     this.hireRequestPath = path.join(baseDir, "state", "hire-requests.json");
+    this.paymentLedgerPath = path.join(baseDir, "state", "payment-ledger.json");
     this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
     this.agentBoardPath = path.join(baseDir, "state", "agent-message-board.json");
@@ -2276,6 +2378,25 @@ export class ClawzControlPlane {
   private async saveHireRequestFile(file: HireRequestFile) {
     await this.ensureDirs();
     await writeJsonFile(this.hireRequestPath, file);
+  }
+
+  private async loadPaymentLedgerFile(): Promise<PaymentLedgerFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<PaymentLedgerFile>(this.paymentLedgerPath);
+    if (file?.entries) {
+      return {
+        entries: file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId)
+      };
+    }
+
+    const fallback = buildDefaultPaymentLedgerFile();
+    await this.savePaymentLedgerFile(fallback);
+    return fallback;
+  }
+
+  private async savePaymentLedgerFile(file: PaymentLedgerFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.paymentLedgerPath, file);
   }
 
   private async loadExecutionIntentFile(): Promise<ExecutionIntentFile> {
@@ -3863,12 +3984,219 @@ export class ClawzControlPlane {
     });
   }
 
+  private buildPaymentLedgerState(file: PaymentLedgerFile, options: PaymentLedgerListOptions = {}): PaymentLedgerState {
+    const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+      ? Math.max(1, Math.min(Math.floor(options.limit), 500))
+      : 100;
+    const entries = file.entries
+      .filter((entry) => {
+        if (options.agentId && entry.agentId !== options.agentId) {
+          return false;
+        }
+        if (options.sessionId && entry.sessionId !== options.sessionId) {
+          return false;
+        }
+        if (options.quoteIntentId && entry.quoteIntentId !== options.quoteIntentId) {
+          return false;
+        }
+        if (options.hireRequestId && entry.hireRequestId !== options.hireRequestId) {
+          return false;
+        }
+        if (
+          options.paymentPayloadDigestSha256 &&
+          entry.paymentPayloadDigestSha256 !== options.paymentPayloadDigestSha256
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) => Date.parse(right.updatedAtIso) - Date.parse(left.updatedAtIso))
+      .slice(0, limit);
+    return {
+      schemaVersion: "santaclawz-payment-ledger/1.0",
+      generatedAtIso: new Date().toISOString(),
+      totalLedgerEntryCount: file.entries.length,
+      entries
+    };
+  }
+
+  async listPaymentLedger(options: PaymentLedgerListOptions = {}): Promise<PaymentLedgerState> {
+    return this.buildPaymentLedgerState(await this.loadPaymentLedgerFile(), options);
+  }
+
+  async recordPaymentLedgerSettlement(input: PaymentLedgerSettlementInput): Promise<PaymentLedgerEntry> {
+    assertUsdAmount(input.amountUsd, "Payment ledger amountUsd");
+    if (input.paymentPayloadDigestSha256) {
+      assertSha256Hex(input.paymentPayloadDigestSha256, "Payment ledger paymentPayloadDigestSha256");
+    }
+    if (input.paymentRequirementDigestSha256) {
+      assertSha256Hex(input.paymentRequirementDigestSha256, "Payment ledger paymentRequirementDigestSha256");
+    }
+    if (input.facilitatorResponseDigestSha256) {
+      assertSha256Hex(input.facilitatorResponseDigestSha256, "Payment ledger facilitatorResponseDigestSha256");
+    }
+    const nowIso = new Date().toISOString();
+    const file = await this.loadPaymentLedgerFile();
+    const transactionHashes = uniqueTransactionHashes(
+      input.transactionHashes,
+      input.sellerSettlementTxHash ? [input.sellerSettlementTxHash] : undefined,
+      input.protocolFeeTxHash ? [input.protocolFeeTxHash] : undefined
+    );
+    const existingIndex = file.entries.findIndex((entry) => (
+      input.paymentPayloadDigestSha256 && entry.paymentPayloadDigestSha256 === input.paymentPayloadDigestSha256
+    ) || (
+      input.quoteIntentId &&
+      entry.quoteIntentId === input.quoteIntentId &&
+      input.authorizationId &&
+      entry.authorizationId === input.authorizationId
+    ) || (
+      input.settlementReference &&
+      entry.settlementReference === input.settlementReference
+    ));
+    const existing = existingIndex >= 0 ? file.entries[existingIndex] : undefined;
+    const sellerSettlementTxHash = input.sellerSettlementTxHash ?? existing?.sellerSettlementTxHash;
+    const protocolFeeTxHash = input.protocolFeeTxHash ?? existing?.protocolFeeTxHash;
+    const nextTransactionHashes = uniqueTransactionHashes(existing?.transactionHashes, transactionHashes);
+    const existingPaymentStatus = input.paymentStatus ?? existing?.paymentStatus;
+    const nextEntry: PaymentLedgerEntry = {
+      ledgerId: existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+      createdAtIso: existing?.createdAtIso ?? nowIso,
+      updatedAtIso: nowIso,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      ...(input.quoteIntentId ? { quoteIntentId: input.quoteIntentId } : existing?.quoteIntentId ? { quoteIntentId: existing.quoteIntentId } : {}),
+      ...(existing?.hireRequestId ? { hireRequestId: existing.hireRequestId } : {}),
+      ...(input.x402RequestId ? { x402RequestId: input.x402RequestId } : existing?.x402RequestId ? { x402RequestId: existing.x402RequestId } : {}),
+      ...(input.resource ? { resource: input.resource } : existing?.resource ? { resource: existing.resource } : {}),
+      pricingMode: input.pricingMode,
+      rail: input.rail,
+      networkId: input.networkId,
+      assetSymbol: input.assetSymbol,
+      ...(input.assetAddress ? { assetAddress: input.assetAddress } : existing?.assetAddress ? { assetAddress: existing.assetAddress } : {}),
+      amountUsd: input.amountUsd,
+      ...(input.sellerPayTo ? { sellerPayTo: input.sellerPayTo } : existing?.sellerPayTo ? { sellerPayTo: existing.sellerPayTo } : {}),
+      ...(input.protocolFeeRecipient
+        ? { protocolFeeRecipient: input.protocolFeeRecipient }
+        : existing?.protocolFeeRecipient
+          ? { protocolFeeRecipient: existing.protocolFeeRecipient }
+          : {}),
+      ...(typeof input.protocolFeeBps === "number"
+        ? { protocolFeeBps: input.protocolFeeBps }
+        : typeof existing?.protocolFeeBps === "number"
+          ? { protocolFeeBps: existing.protocolFeeBps }
+          : {}),
+      ...(input.sellerNetAmountUsd
+        ? { sellerNetAmountUsd: input.sellerNetAmountUsd }
+        : existing?.sellerNetAmountUsd
+          ? { sellerNetAmountUsd: existing.sellerNetAmountUsd }
+          : {}),
+      ...(input.protocolFeeAmountUsd
+        ? { protocolFeeAmountUsd: input.protocolFeeAmountUsd }
+        : existing?.protocolFeeAmountUsd
+          ? { protocolFeeAmountUsd: existing.protocolFeeAmountUsd }
+          : {}),
+      ...(input.paymentPayloadDigestSha256
+        ? { paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 }
+        : existing?.paymentPayloadDigestSha256
+          ? { paymentPayloadDigestSha256: existing.paymentPayloadDigestSha256 }
+          : {}),
+      ...(input.paymentRequirementDigestSha256
+        ? { paymentRequirementDigestSha256: input.paymentRequirementDigestSha256 }
+        : existing?.paymentRequirementDigestSha256
+          ? { paymentRequirementDigestSha256: existing.paymentRequirementDigestSha256 }
+          : {}),
+      ...(input.authorizationId
+        ? { authorizationId: input.authorizationId }
+        : existing?.authorizationId
+          ? { authorizationId: existing.authorizationId }
+          : {}),
+      ...(input.settlementReference
+        ? { settlementReference: input.settlementReference }
+        : existing?.settlementReference
+          ? { settlementReference: existing.settlementReference }
+          : {}),
+      ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+      ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
+      transactionHashes: nextTransactionHashes,
+      ...(input.facilitatorUrl ? { facilitatorUrl: input.facilitatorUrl } : existing?.facilitatorUrl ? { facilitatorUrl: existing.facilitatorUrl } : {}),
+      ...(input.facilitatorResponseDigestSha256
+        ? { facilitatorResponseDigestSha256: input.facilitatorResponseDigestSha256 }
+        : existing?.facilitatorResponseDigestSha256
+          ? { facilitatorResponseDigestSha256: existing.facilitatorResponseDigestSha256 }
+          : {}),
+      ...(input.facilitatorResponseSummary
+        ? { facilitatorResponseSummary: input.facilitatorResponseSummary }
+        : existing?.facilitatorResponseSummary
+          ? { facilitatorResponseSummary: existing.facilitatorResponseSummary }
+          : {}),
+      paymentStatus: inferPaymentLedgerSettlementStatus({
+        ...(existingPaymentStatus ? { paymentStatus: existingPaymentStatus } : {}),
+        ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+        ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
+        transactionHashes: nextTransactionHashes
+      }),
+      executionStatus: existing?.executionStatus ?? "not_started",
+      returnStatus: existing?.returnStatus ?? "none",
+      ...(input.errorCode ? { errorCode: input.errorCode } : existing?.errorCode ? { errorCode: existing.errorCode } : {}),
+      ...(input.errorMessage ? { errorMessage: input.errorMessage } : existing?.errorMessage ? { errorMessage: existing.errorMessage } : {})
+    };
+    const entries = existingIndex >= 0
+      ? file.entries.map((entry, index) => index === existingIndex ? nextEntry : entry)
+      : [nextEntry, ...file.entries];
+    await this.savePaymentLedgerFile({ entries: entries.slice(0, 2000) });
+    return nextEntry;
+  }
+
+  async updatePaymentLedgerExecution(input: {
+    ledgerId?: string;
+    hireRequestId: string;
+    executionStatus: NonNullable<PaymentLedgerEntry["executionStatus"]>;
+    returnStatus?: NonNullable<PaymentLedgerEntry["returnStatus"]>;
+    errorCode?: string;
+    errorMessage?: string;
+  }): Promise<PaymentLedgerEntry | undefined> {
+    if (!input.ledgerId) {
+      return undefined;
+    }
+    const file = await this.loadPaymentLedgerFile();
+    const index = file.entries.findIndex((entry) => entry.ledgerId === input.ledgerId);
+    if (index < 0) {
+      return undefined;
+    }
+    const existing = file.entries[index]!;
+    const paymentStatus: PaymentLedgerStatus =
+      input.returnStatus === "rejected"
+        ? "return_rejected"
+        : input.executionStatus === "completed"
+          ? "execution_completed"
+          : input.executionStatus === "failed"
+            ? "execution_failed"
+            : input.executionStatus === "forwarded"
+              ? "execution_forwarded"
+              : existing.paymentStatus;
+    const nextEntry: PaymentLedgerEntry = {
+      ...existing,
+      updatedAtIso: new Date().toISOString(),
+      hireRequestId: input.hireRequestId,
+      executionStatus: input.executionStatus,
+      ...(input.returnStatus ? { returnStatus: input.returnStatus } : {}),
+      paymentStatus,
+      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {})
+    };
+    await this.savePaymentLedgerFile({
+      entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
+    });
+    return nextEntry;
+  }
+
   private async ensureBootstrapped() {
     await this.ensureDirs();
     const existingEvents = await this.loadEvents();
     const state = await this.loadState();
     await this.loadSponsorQueueFile();
     await this.loadHireRequestFile();
+    await this.loadPaymentLedgerFile();
     await this.loadExecutionIntentFile();
     await this.loadAgentBoardFile();
     await this.loadRuntimeHeartbeatFile();
@@ -7050,6 +7378,15 @@ export class ClawzControlPlane {
       ingressProtocolReturn?.status === "completed" &&
       ingressProtocolReturn.execution?.completionClassification !== "agent_completed_verified"
     ) {
+      await this.updatePaymentLedgerExecution({
+        ...(paymentAuthorization.ledgerId ? { ledgerId: paymentAuthorization.ledgerId } : {}),
+        hireRequestId: requestId,
+        executionStatus: "failed",
+        returnStatus: "rejected",
+        errorCode: "verified_output_required",
+        errorMessage:
+          "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
+      });
       throw new Error(
         "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
       );
@@ -7092,6 +7429,27 @@ export class ClawzControlPlane {
     await this.saveHireRequestFile({
       requests: [nextRecord, ...hireRequests.requests].slice(0, 200)
     });
+    if (paymentAuthorization.ledgerId) {
+      await this.updatePaymentLedgerExecution({
+        ledgerId: paymentAuthorization.ledgerId,
+        hireRequestId: requestId,
+        executionStatus:
+          ingressProtocolReturn?.status === "completed"
+            ? "completed"
+            : ingressProtocolReturn?.status === "failed" || deliveryFailed
+              ? "failed"
+              : ingressDelivery.deliveryStatus === "forwarded"
+                ? "forwarded"
+                : "submitted",
+        returnStatus:
+          ingressProtocolReturn?.status === "completed"
+            ? "accepted"
+            : ingressProtocolReturn?.status === "failed"
+              ? "rejected"
+              : "none",
+        ...(deliveryError ? { errorCode: "relay_delivery_failed", errorMessage: deliveryError } : {})
+      });
+    }
     await this.enqueueSocialAnchorCandidate({
       sessionId,
       kind: "hire-request-submitted",
@@ -7212,7 +7570,17 @@ export class ClawzControlPlane {
         ...(paymentAuthorization.rail ? { rail: paymentAuthorization.rail } : {}),
         ...(paymentAuthorization.amountUsd ? { amountUsd: paymentAuthorization.amountUsd } : {}),
         ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),
-        ...(paymentAuthorization.settlementReference ? { settlementReference: paymentAuthorization.settlementReference } : {})
+        ...(paymentAuthorization.settlementReference ? { settlementReference: paymentAuthorization.settlementReference } : {}),
+        ...(paymentAuthorization.ledgerId ? { ledgerId: paymentAuthorization.ledgerId } : {}),
+        ...(paymentAuthorization.settlementEvents?.sellerSettlementTxHash
+          ? { sellerSettlementTxHash: paymentAuthorization.settlementEvents.sellerSettlementTxHash }
+          : {}),
+        ...(paymentAuthorization.settlementEvents?.protocolFeeTxHash
+          ? { protocolFeeTxHash: paymentAuthorization.settlementEvents.protocolFeeTxHash }
+          : {}),
+        ...(paymentAuthorization.settlementEvents?.transactionHashes?.length
+          ? { transactionHashes: paymentAuthorization.settlementEvents.transactionHashes }
+          : {})
       },
       paidJobsEnabled
     };

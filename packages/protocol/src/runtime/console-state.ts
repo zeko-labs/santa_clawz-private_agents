@@ -653,6 +653,10 @@ export interface HireRequestReceipt {
     amountUsd?: string;
     authorizationId?: string;
     settlementReference?: string;
+    ledgerId?: string;
+    sellerSettlementTxHash?: string;
+    protocolFeeTxHash?: string;
+    transactionHashes?: string[];
   };
   paidJobsEnabled: boolean;
 }
@@ -727,6 +731,67 @@ export interface ExecutionIntentState {
   settledCount: number;
   refundedCount: number;
   intents: ExecutionIntentRecord[];
+}
+
+export type PaymentLedgerStatus =
+  | "payment_challenged"
+  | "payment_submitted"
+  | "payment_verified"
+  | "seller_settled"
+  | "protocol_fee_settled"
+  | "settled"
+  | "partially_settled"
+  | "already_settled"
+  | "settlement_failed"
+  | "execution_forwarded"
+  | "execution_completed"
+  | "execution_failed"
+  | "return_rejected"
+  | "unmatched_relayer_transaction";
+
+export interface PaymentLedgerEntry {
+  ledgerId: string;
+  createdAtIso: string;
+  updatedAtIso: string;
+  agentId: string;
+  sessionId: string;
+  quoteIntentId?: string;
+  hireRequestId?: string;
+  x402RequestId?: string;
+  resource?: string;
+  pricingMode: AgentPricingMode;
+  rail: AgentPaymentRail;
+  networkId: string;
+  assetSymbol: string;
+  assetAddress?: string;
+  amountUsd: string;
+  sellerPayTo?: string;
+  protocolFeeRecipient?: string;
+  protocolFeeBps?: number;
+  sellerNetAmountUsd?: string;
+  protocolFeeAmountUsd?: string;
+  paymentPayloadDigestSha256?: string;
+  paymentRequirementDigestSha256?: string;
+  authorizationId?: string;
+  settlementReference?: string;
+  sellerSettlementTxHash?: string;
+  protocolFeeTxHash?: string;
+  transactionHashes: string[];
+  facilitatorUrl?: string;
+  facilitatorResponseDigestSha256?: string;
+  facilitatorResponseSummary?: Record<string, unknown>;
+  paymentStatus: PaymentLedgerStatus;
+  executionStatus?: "not_started" | "submitted" | "forwarded" | "completed" | "failed";
+  returnStatus?: "none" | "accepted" | "rejected";
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface PaymentLedgerState {
+  schemaVersion: "santaclawz-payment-ledger/1.0";
+  generatedAtIso: string;
+  totalLedgerEntryCount: number;
+  entries: PaymentLedgerEntry[];
 }
 
 export type AgentRuntimeStatus = "live" | "waiting" | "offline";

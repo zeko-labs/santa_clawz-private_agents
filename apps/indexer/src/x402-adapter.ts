@@ -187,9 +187,70 @@ interface AgentX402VerificationResult {
 interface AgentX402SettlementResult extends AgentX402VerificationResult {
   remoteSettlement: JsonRecord;
   paymentResponse: JsonRecord;
+  settlementEvents: {
+    settlementReference?: string;
+    transactionHashes: string[];
+    sellerSettlementTxHash?: string;
+    protocolFeeTxHash?: string;
+  };
 }
 
 const settlementLedgers = new Map<string, SettlementLedger>();
+
+function extractSettlementTransactionHashes(value: unknown): string[] {
+  const hashes = new Set<string>();
+  const visit = (item: unknown) => {
+    if (typeof item === "string") {
+      if (/^0x[a-fA-F0-9]{64}$/.test(item)) {
+        hashes.add(item);
+      }
+      return;
+    }
+    if (Array.isArray(item)) {
+      for (const next of item) {
+        visit(next);
+      }
+      return;
+    }
+    if (isRecord(item)) {
+      for (const next of Object.values(item)) {
+        visit(next);
+      }
+    }
+  };
+  visit(value);
+  return [...hashes];
+}
+
+function normalizedSettlementEvents(remoteSettlement: JsonRecord) {
+  const transactionHashes = extractSettlementTransactionHashes(remoteSettlement);
+  const sellerSettlementTxHash = [
+    remoteSettlement.transaction,
+    remoteSettlement.txHash,
+    remoteSettlement.transactionHash,
+    remoteSettlement.sellerTransactionHash,
+    isRecord(remoteSettlement.transactionHashes) ? remoteSettlement.transactionHashes.seller : undefined
+  ].find((value): value is string => typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value));
+  const protocolFeeTxHash = [
+    remoteSettlement.protocolFeeTransaction,
+    remoteSettlement.protocolFeeTxHash,
+    remoteSettlement.protocolFeeTransactionHash,
+    isRecord(remoteSettlement.transactionHashes) ? remoteSettlement.transactionHashes.protocolFee : undefined
+  ].find((value): value is string => typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value));
+  const settlementReference = [
+    sellerSettlementTxHash,
+    remoteSettlement.transaction,
+    remoteSettlement.txHash,
+    remoteSettlement.transactionHash,
+    remoteSettlement.id
+  ].find((value): value is string => typeof value === "string" && value.length > 0);
+  return {
+    ...(settlementReference ? { settlementReference } : {}),
+    transactionHashes,
+    ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+    ...(protocolFeeTxHash ? { protocolFeeTxHash } : {})
+  };
+}
 
 function normalizeBaseUrl(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -1826,17 +1887,12 @@ export async function settleAgentX402Payment(input: {
         source: "facilitator-settle",
         note: "The hosted facilitator settle path verifies the payment before broadcasting."
       };
-  const settlementReference = [
-    remoteSettlement.transaction,
-    remoteSettlement.txHash,
-    remoteSettlement.transactionHash,
-    remoteSettlement.id
-  ].find((value): value is string => typeof value === "string" && value.length > 0);
+  const settlementEvents = normalizedSettlementEvents(remoteSettlement);
   const ledger = settlementLedgerForRail(verification.rail);
   const ledgerResult = ledger.settle({
     ...input.paymentPayload,
     resource: input.runtime.paymentRequired.resource,
-    ...(settlementReference ? { settlementReference } : {})
+    ...(settlementEvents.settlementReference ? { settlementReference: settlementEvents.settlementReference } : {})
   }) as JsonRecord;
 
   const paymentResponse = requireZekoX402Module().buildSettlementResponse({
@@ -1855,7 +1911,7 @@ export async function settleAgentX402Payment(input: {
     proofBundleUrl: input.runtime.plan.proofBundleUrl,
     verifyUrl: input.runtime.plan.verifyProofUrl,
     settlementModel: verification.rail.settlementModel,
-    ...(settlementReference ? { settlementReference } : {}),
+    ...(settlementEvents.settlementReference ? { settlementReference: settlementEvents.settlementReference } : {}),
     evm: {
       networkId: verification.rail.networkId,
       facilitatorUrl: buildRemoteFacilitatorNote(verification.rail),
@@ -1869,6 +1925,7 @@ export async function settleAgentX402Payment(input: {
     remoteVerification,
     remoteSettlement,
     paymentResponse,
+    settlementEvents,
     headers: paymentHeaders({
       paymentRequired: input.runtime.paymentRequired,
       paymentPayload: input.paymentPayload,
