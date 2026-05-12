@@ -6680,19 +6680,21 @@ export class ClawzControlPlane {
       trustModeId: focus.trustModeId,
       ...(heartbeatRecord ? { record: heartbeatRecord } : {})
     });
-    const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+    const relayProfile = isRelayDeliveryProfile(profile);
+    const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
     const availability = await this.checkPublicClawzAgentReachability({
       state,
       sessionId: focus.sessionId,
       profile,
       trustModeId: focus.trustModeId
     });
+    const runtimeReachable = relayProfile ? relayConnected : availability.reachable;
     const readiness = buildAgentReadinessState({
       profile,
       ownership,
       published,
       relayConnected,
-      runtimeReachable: availability.reachable,
+      runtimeReachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
       lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId)
@@ -6808,7 +6810,8 @@ export class ClawzControlPlane {
       ...(heartbeatRecord ? { record: heartbeatRecord } : {})
     });
     const relayAgentId = this.agentIdForSession(state, sessionId, trustModeId);
-    const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(relayAgentId) ?? false);
+    const relayProfile = isRelayDeliveryProfile(profile);
+    const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(relayAgentId) ?? false);
     const runtimeStatus: AgentRuntimeStatus = relayConnected ? "live" : reachability.reachable ? heartbeat.status : "offline";
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const published = isSessionPublishedOnZeko({
@@ -6823,13 +6826,21 @@ export class ClawzControlPlane {
       ownership,
       published,
       relayConnected,
-      runtimeReachable: reachability.reachable,
+      runtimeReachable: relayProfile ? relayConnected : reachability.reachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
       lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId)
     });
+    const availabilityReason = relayProfile
+      ? relayConnected
+        ? "SantaClawz relay has an active outbound agent connection."
+        : "SantaClawz relay is waiting for this agent to connect."
+      : reachability.reason ?? "";
     return {
       ...reachability,
+      reachable: relayProfile ? relayConnected : reachability.reachable,
+      status: relayProfile ? relayConnected ? "online" : "offline" : reachability.status,
+      reason: availabilityReason,
       runtimeStatus,
       heartbeat,
       readiness
@@ -8840,7 +8851,13 @@ export class ClawzControlPlane {
     const fallbackProfile = buildDefaultProfile(trustModeId);
     const currentProfile = this.profileForSession(state, focus.sessionId, trustModeId);
     const deployment = await this.getDeploymentState();
-    const wasPublished = liveFlowTargets.turns.some((target) => target.sessionId === focus.sessionId);
+    const socialAnchorQueueFile = await this.loadSocialAnchorQueueFile();
+    const wasPublished = isSessionPublishedOnZeko({
+      liveFlowTargets,
+      socialAnchorQueueFile,
+      sessionId: focus.sessionId,
+      durablePublished: Boolean(state.publishedSessionsBySession[focus.sessionId])
+    });
     const wasPaymentReady = computePaidJobsEnabled(currentProfile, wasPublished, deployment);
     const nextProfile = this.coerceProfileForDeployment(this.sanitizeProfileInput(trustModeId, input, {
       ...fallbackProfile,

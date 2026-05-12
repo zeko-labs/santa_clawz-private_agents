@@ -2308,6 +2308,13 @@ async function testStaleRelayDoesNotStayLive() {
     assert.equal(liveRegistry.status, 200);
     assert.equal(liveRegistry.payload.find((agent) => agent.agentId === agentId)?.runtimeStatus, "live");
 
+    const liveAvailability = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/availability`);
+    assert.equal(liveAvailability.status, 200);
+    assert.equal(liveAvailability.payload.reachable, true);
+    assert.equal(liveAvailability.payload.runtimeStatus, "live");
+    assert.equal(liveAvailability.payload.readiness.relayConnected, true);
+    assert.equal(liveAvailability.payload.readiness.runtimeReachable, true);
+
     await new Promise((resolve) => setTimeout(resolve, 900));
 
     const staleAvailability = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/availability`);
