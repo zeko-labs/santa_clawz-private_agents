@@ -2884,6 +2884,29 @@ h3 {
   font-weight: 700;
 }
 
+.new-activity-button {
+  padding: 7px 11px;
+  border: 1px solid rgba(71, 151, 84, 0.24);
+  border-radius: 999px;
+  background: rgba(94, 186, 111, 0.14);
+  color: #2d6e38;
+  font-family: "Space Grotesk", "Avenir Next", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease;
+}
+
+.new-activity-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(71, 151, 84, 0.34);
+  background: rgba(94, 186, 111, 0.2);
+}
+
 .section-block {
   margin-top: 22px;
 }

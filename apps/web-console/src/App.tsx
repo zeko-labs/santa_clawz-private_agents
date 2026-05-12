@@ -724,6 +724,15 @@ function emptyAgentBoardState(): AgentBoardState {
   };
 }
 
+function emptyPaymentLedgerState(): PaymentLedgerState {
+  return {
+    schemaVersion: "santaclawz-payment-ledger/1.0",
+    generatedAtIso: new Date().toISOString(),
+    totalLedgerEntryCount: 0,
+    entries: []
+  };
+}
+
 function boardMessageTypeLabel(type: AgentBoardState["messages"][number]["messageType"]) {
   if (type === "question") {
     return "Question";
@@ -842,6 +851,21 @@ function isVisiblePaymentEntry(entry: PaymentLedgerEntry) {
     entry.paymentStatus === "return_rejected" ||
     entry.paymentStatus === "execution_failed" ||
     entry.returnStatus === "rejected";
+}
+
+function countUnseenExploreItems(
+  currentBoard: AgentBoardState,
+  currentLedger: PaymentLedgerState | null,
+  nextBoard: AgentBoardState,
+  nextLedger: PaymentLedgerState | null
+) {
+  const currentMessageIds = new Set(currentBoard.messages.map((message) => message.messageId));
+  const currentPaymentIds = new Set((currentLedger?.entries ?? []).filter(isVisiblePaymentEntry).map((entry) => entry.ledgerId));
+  const unseenMessages = nextBoard.messages.filter((message) => !currentMessageIds.has(message.messageId)).length;
+  const unseenPayments = (nextLedger?.entries ?? [])
+    .filter(isVisiblePaymentEntry)
+    .filter((entry) => !currentPaymentIds.has(entry.ledgerId)).length;
+  return unseenMessages + unseenPayments;
 }
 
 function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: AgentRegistryEntry) {
@@ -1472,6 +1496,9 @@ export function App() {
   const [registry, setRegistry] = useState<AgentRegistryEntry[]>([]);
   const [agentBoard, setAgentBoard] = useState<AgentBoardState>(emptyAgentBoardState());
   const [paymentLedger, setPaymentLedger] = useState<PaymentLedgerState | null>(null);
+  const [pendingAgentBoard, setPendingAgentBoard] = useState<AgentBoardState | null>(null);
+  const [pendingPaymentLedger, setPendingPaymentLedger] = useState<PaymentLedgerState | null>(null);
+  const [pendingExploreUpdateCount, setPendingExploreUpdateCount] = useState(0);
   const [profilePaymentLedger, setProfilePaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
   const [agentAvailabilityLoading, setAgentAvailabilityLoading] = useState(false);
@@ -1502,6 +1529,15 @@ export function App() {
   const [sdkTicket, setSdkTicket] = useState<EnrollmentTicket | null>(null);
   const [sdkUrlReservationSalt, setSdkUrlReservationSalt] = useState<string>(createUrlReservationSalt());
   const [sdkError, setSdkError] = useState<string | null>(null);
+  const [exploreActivitySnapshot, setExploreActivitySnapshot] = useState<{
+    agentBoard: AgentBoardState;
+    paymentLedger: PaymentLedgerState | null;
+    initialized: boolean;
+  }>({
+    agentBoard: emptyAgentBoardState(),
+    paymentLedger: null,
+    initialized: false
+  });
   const ethereumPayoutAllowed = hasAdvancedEthereumPayout(profile);
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
   const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
@@ -1519,6 +1555,26 @@ export function App() {
 
   function clearBackgroundError() {
     setBackgroundError(null);
+  }
+
+  function publishExploreActivity(nextBoard: AgentBoardState, nextLedger: PaymentLedgerState | null) {
+    setExploreActivitySnapshot({
+      agentBoard: nextBoard,
+      paymentLedger: nextLedger,
+      initialized: true
+    });
+    setAgentBoard(nextBoard);
+    setPaymentLedger(nextLedger);
+    setPendingAgentBoard(null);
+    setPendingPaymentLedger(null);
+    setPendingExploreUpdateCount(0);
+  }
+
+  function revealPendingExploreActivity() {
+    if (!pendingAgentBoard && !pendingPaymentLedger) {
+      return;
+    }
+    publishExploreActivity(pendingAgentBoard ?? agentBoard, pendingPaymentLedger ?? paymentLedger);
   }
 
   useEffect(() => {
@@ -1707,8 +1763,27 @@ export function App() {
       ])
         .then(([nextBoard, nextPayments]) => {
           if (!cancelled) {
-            setAgentBoard(nextBoard);
-            setPaymentLedger(nextPayments);
+            const currentActivity = exploreActivitySnapshot;
+            const nextLedger = nextPayments ?? emptyPaymentLedgerState();
+            if (!currentActivity.initialized) {
+              publishExploreActivity(nextBoard, nextLedger);
+              clearBackgroundError();
+              return;
+            }
+
+            const unseenCount = countUnseenExploreItems(
+              currentActivity.agentBoard,
+              currentActivity.paymentLedger,
+              nextBoard,
+              nextLedger
+            );
+            if (unseenCount > 0) {
+              setPendingAgentBoard(nextBoard);
+              setPendingPaymentLedger(nextLedger);
+              setPendingExploreUpdateCount(unseenCount);
+            } else {
+              publishExploreActivity(nextBoard, nextLedger);
+            }
             clearBackgroundError();
           }
         })
@@ -1736,7 +1811,7 @@ export function App() {
       }
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [activeSection, sharedAgentId]);
+  }, [activeSection, exploreActivitySnapshot, sharedAgentId]);
 
   useEffect(() => {
     if (activeSection !== "explore" || !sharedAgentId) {
@@ -4964,6 +5039,15 @@ export function App() {
                               : `${exploreActivityItems.length} shown`}
                           </span>
                         </div>
+                        {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
+                          <button
+                            type="button"
+                            className="new-activity-button"
+                            onClick={revealPendingExploreActivity}
+                          >
+                            {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
+                          </button>
+                        ) : null}
                       </div>
                       <div className="agent-board-grid">
                         <div className="agent-board-feed">
