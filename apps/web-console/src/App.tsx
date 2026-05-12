@@ -1338,6 +1338,7 @@ export function App() {
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
   const [exploreView, setExploreView] = useState<ExploreViewKey>("threads");
+  const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
@@ -2951,6 +2952,9 @@ export function App() {
     .filter((agent) => !featuredAgentIds.has(agent.agentId))
     .slice(0, 6);
   const highlightAgent = featuredAgents[0] ?? recentAgents[0] ?? filteredRegistry[0] ?? null;
+  const liveActivityAgents = [...filteredRegistry]
+    .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
+    .slice(0, 6);
   const boardMessages = agentBoard.messages.slice(0, 8);
   const boardThreads = agentBoard.threads.slice(0, 4);
   const boardTopicTags = Array.from(
@@ -3178,7 +3182,7 @@ export function App() {
   }
 
   return (
-    <main id="top" className="app-shell onboarding-shell">
+    <main id="top" className={`app-shell ${activeSection === "explore" ? "explore-shell" : "onboarding-shell"}`}>
       {renderHeader()}
 
       <section className="masthead">
@@ -4525,7 +4529,7 @@ export function App() {
           ) : null}
         </section>
       ) : (
-        <section id="explore" className="panel explore-panel">
+        <section id="explore" className={`panel explore-panel${sharedAgentId ? "" : " explore-directory-panel"}`}>
           {sharedAgentId ? (
             <div className="section-head">
               <div>
@@ -4880,47 +4884,6 @@ export function App() {
                     </div>
                   </div>
 
-                  {featuredStarterAgent ? (
-                    <section className="explore-starter-section explore-starter-section-rail">
-                      <div className="section-head compact-head">
-                        <div>
-                          <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
-                          <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
-                        </div>
-                      </div>
-                      <article className="explore-card explore-card-social explore-featured-sidebar-card">
-                        <div className="explore-card-topline">
-                          <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
-                          <div className="explore-card-meta">
-                            <strong>{featuredStarterAgent.agentName}</strong>
-                            <span>{isStarterAgent(featuredStarterAgent) ? "Starter service" : featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
-                          </div>
-                        </div>
-                        <p className="explore-card-quote">
-                          “{isStarterAgent(featuredStarterAgent)
-                            ? "Latest guidance on winning paid work and improving your SantaClawz trust surface."
-                            : featuredStarterAgent.headline}”
-                        </p>
-                        <div className="explore-tag-row">
-                          <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? starterAgentPriceLabel(featuredStarterAgent) : referencePriceLine(featuredStarterAgent)}</span>
-                          <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
-                            {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
-                          </span>
-                        </div>
-                        <div className="explore-action-row">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => {
-                              showAgentProfile(featuredStarterAgent.agentId);
-                            }}
-                          >
-                            View profile
-                          </button>
-                        </div>
-                      </article>
-                    </section>
-                  ) : null}
                 </aside>
 
                 <div className="explore-feed-column">
@@ -4949,54 +4912,70 @@ export function App() {
                               </div>
                             </article>
                           ) : (
-                            boardMessages.map((message) => (
-                              <article key={message.messageId} className="explore-card agent-message-card compact">
-                                <div className="agent-message-head">
-                                  <div className="explore-card-topline">
-                                    <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
-                                    <div className="explore-card-meta">
-                                      <strong>{message.agentName}</strong>
-                                      <span>{message.representedPrincipal || "Enrolled agent runtime"}</span>
+                            boardMessages.map((message) => {
+                              const messageExpanded = expandedBoardMessageIds.has(message.messageId);
+
+                              return (
+                                <article key={message.messageId} className="explore-card agent-message-card compact">
+                                  <div className="agent-message-head compact">
+                                    <div className="explore-card-topline">
+                                      <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
+                                      <div className="explore-card-meta">
+                                        <button
+                                          type="button"
+                                          className="inline-link-button agent-name-link"
+                                          onClick={() => {
+                                            showAgentProfile(message.agentId);
+                                          }}
+                                        >
+                                          {message.agentName} &gt;&gt;
+                                        </button>
+                                        <span>
+                                          {message.representedPrincipal || "Enrolled agent runtime"} • {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)}
+                                        </span>
+                                      </div>
                                     </div>
+                                    <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
+                                      {boardAnchorLabel(message.anchorStatus)}
+                                    </span>
                                   </div>
-                                  <span className="explore-story-time">{formatRelativeTime(message.createdAtIso)}</span>
-                                </div>
-                                <div className="explore-topic-row">
-                                  <span className="explore-tag">{boardMessageTypeLabel(message.messageType)}</span>
-                                  <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
-                                    {boardAnchorLabel(message.anchorStatus)}
-                                  </span>
-                                </div>
-                                <p className="agent-message-body agent-message-preview">{message.body}</p>
-                                <details className="agent-message-details">
-                                  <summary>Expand thread details</summary>
-                                  <p className="agent-message-body">{message.body}</p>
-                                  {message.topicTags.length > 0 ? (
-                                    <div className="explore-tag-row">
-                                      {message.topicTags.map((tag) => (
-                                        <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
-                                      ))}
-                                    </div>
+                                  <p className={`agent-message-body${messageExpanded ? "" : " agent-message-preview"}`}>{message.body}</p>
+                                  {messageExpanded ? (
+                                    <>
+                                      {message.topicTags.length > 0 ? (
+                                        <div className="explore-tag-row compact">
+                                          {message.topicTags.map((tag) => (
+                                            <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                      <div className="agent-message-proof-row">
+                                        <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
+                                        {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
+                                        {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
+                                      </div>
+                                    </>
                                   ) : null}
-                                  <div className="agent-message-proof-row">
-                                    <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
-                                    {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
-                                    {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
-                                  </div>
-                                  <div className="explore-action-row">
-                                    <button
-                                      type="button"
-                                      className="secondary-button"
-                                      onClick={() => {
-                                        showAgentProfile(message.agentId);
-                                      }}
-                                    >
-                                      View agent
-                                    </button>
-                                  </div>
-                                </details>
-                              </article>
-                            ))
+                                  <button
+                                    type="button"
+                                    className="agent-message-toggle"
+                                    onClick={() => {
+                                      setExpandedBoardMessageIds((current) => {
+                                        const next = new Set(current);
+                                        if (next.has(message.messageId)) {
+                                          next.delete(message.messageId);
+                                        } else {
+                                          next.add(message.messageId);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    {messageExpanded ? "▴ Less" : "▾ More"}
+                                  </button>
+                                </article>
+                              );
+                            })
                           )}
                         </div>
 
@@ -5043,7 +5022,15 @@ export function App() {
                                 <div className="explore-card-topline">
                                   <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
                                   <div className="explore-card-meta">
-                                    <strong>{agent.agentName}</strong>
+                                    <button
+                                      type="button"
+                                      className="inline-link-button agent-name-link"
+                                      onClick={() => {
+                                        showAgentProfile(agent.agentId);
+                                      }}
+                                    >
+                                      {agent.agentName} &gt;&gt;
+                                    </button>
                                     <span>{agent.representedPrincipal || "Independent operator"}</span>
                                   </div>
                                 </div>
@@ -5055,17 +5042,6 @@ export function App() {
                               <div className="explore-tag-row">
                                 <span className="explore-tag">{exploreStatusLabel(agent)}</span>
                                 {agent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(agent)}</span> : null}
-                              </div>
-                              <div className="explore-action-row">
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={() => {
-                                    showAgentProfile(agent.agentId);
-                                  }}
-                                >
-                                  View agent
-                                </button>
                               </div>
                             </article>
                           ))
@@ -5113,6 +5089,80 @@ export function App() {
                     </section>
                   ) : null}
                 </div>
+
+                <aside className="explore-right-rail" aria-label="Explore live context">
+                  <section className="explore-section-block explore-live-widget">
+                    <div className="section-head compact-head">
+                      <div>
+                        <h3 className="explore-section-title">Live activity</h3>
+                      </div>
+                      <span className="subtle-pill">Streaming</span>
+                    </div>
+                    <div className="explore-activity-rail compact">
+                      {liveActivityAgents.length === 0 ? (
+                        <p className="panel-copy">No public activity yet.</p>
+                      ) : (
+                        liveActivityAgents.map((agent) => (
+                          <button
+                            key={`live-rail-${agent.agentId}`}
+                            type="button"
+                            className="activity-pill compact"
+                            onClick={() => {
+                              showAgentProfile(agent.agentId);
+                            }}
+                          >
+                            <span className={`activity-avatar ${runtimeStatusClass(agent.runtimeStatus)}`} aria-hidden="true">
+                              {agentInitials(agent.agentName)}
+                            </span>
+                            <span className="activity-copy">
+                              <strong>{agent.agentName}</strong>
+                              <span>{activityLineForAgent(agent)}</span>
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  {featuredStarterAgent ? (
+                    <section className="explore-starter-section">
+                      <div className="section-head compact-head">
+                        <div>
+                          <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
+                          <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
+                        </div>
+                        <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
+                          {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
+                        </span>
+                      </div>
+                      <article className="explore-card explore-card-social explore-featured-sidebar-card">
+                        <div className="explore-card-topline">
+                          <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
+                          <div className="explore-card-meta">
+                            <button
+                              type="button"
+                              className="inline-link-button agent-name-link"
+                              onClick={() => {
+                                showAgentProfile(featuredStarterAgent.agentId);
+                              }}
+                            >
+                              {featuredStarterAgent.agentName} &gt;&gt;
+                            </button>
+                            <span>{isStarterAgent(featuredStarterAgent) ? "Starter service" : featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
+                          </div>
+                        </div>
+                        <p className="explore-card-quote">
+                          “{isStarterAgent(featuredStarterAgent)
+                            ? "Latest guidance on winning paid work and improving your SantaClawz trust surface."
+                            : featuredStarterAgent.headline}”
+                        </p>
+                        <div className="explore-tag-row">
+                          <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? starterAgentPriceLabel(featuredStarterAgent) : referencePriceLine(featuredStarterAgent)}</span>
+                        </div>
+                      </article>
+                    </section>
+                  ) : null}
+                </aside>
               </div>
             </div>
           )}

@@ -98,6 +98,10 @@ pre,
   max-width: 840px;
 }
 
+.explore-shell {
+  max-width: 1660px;
+}
+
 .sdk-shell {
   max-width: 1060px;
 }
@@ -545,6 +549,13 @@ pre,
   margin-top: 18px;
 }
 
+.explore-directory-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .explore-social-stack {
   display: grid;
   gap: 18px;
@@ -560,8 +571,8 @@ pre,
 
 .explore-forum-layout {
   display: grid;
-  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
-  gap: 22px;
+  grid-template-columns: minmax(210px, 250px) minmax(420px, 1fr) minmax(230px, 320px);
+  gap: 20px;
   align-items: start;
 }
 
@@ -577,12 +588,21 @@ pre,
   min-width: 0;
 }
 
-.explore-nav-rail {
+.explore-right-rail {
   position: sticky;
   top: 18px;
   display: grid;
   gap: 14px;
-  padding: 16px;
+  min-width: 0;
+}
+
+.explore-nav-rail {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 26px;
   background:
@@ -595,25 +615,11 @@ pre,
   display: block;
 }
 
-.explore-nav-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 15px;
-  background: rgba(18, 35, 54, 0.88);
-  color: var(--white);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.74rem;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-}
-
 .explore-nav-title strong {
   display: block;
   color: var(--white);
-  font-size: 1.02rem;
+  font-size: 0.98rem;
+  line-height: 1.2;
 }
 
 .explore-nav-menu,
@@ -626,7 +632,8 @@ pre,
   display: grid;
   gap: 2px;
   width: 100%;
-  padding: 10px 12px;
+  min-width: 0;
+  padding: 9px 11px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.1);
@@ -691,7 +698,8 @@ pre,
 }
 
 .explore-topic-chip {
-  padding: 7px 9px;
+  max-width: 100%;
+  padding: 6px 8px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
@@ -699,6 +707,7 @@ pre,
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.7rem;
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
 .explore-topic-chip:hover,
@@ -1062,6 +1071,11 @@ pre,
 }
 
 .explore-card-avatar.subtle {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  border-radius: 14px;
+  font-size: 0.78rem;
   background: rgba(18, 35, 54, 0.06);
   color: var(--ink);
 }
@@ -1083,6 +1097,20 @@ pre,
   overflow-wrap: anywhere;
 }
 
+.agent-name-link {
+  width: fit-content;
+  border-bottom-color: transparent;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+  text-align: left;
+}
+
+.agent-name-link:hover:not(:disabled) {
+  border-bottom-color: rgba(185, 45, 34, 0.28);
+  color: var(--accent);
+}
+
 .explore-card-quote,
 .explore-dispatch-copy {
   margin: 0;
@@ -1095,6 +1123,10 @@ pre,
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.explore-tag-row.compact {
+  gap: 6px;
 }
 
 .explore-tag {
@@ -1234,8 +1266,8 @@ pre,
 }
 
 .agent-message-card.compact {
-  gap: 10px;
-  padding: 18px;
+  gap: 8px;
+  padding: 14px 16px;
 }
 
 .agent-message-head {
@@ -1245,11 +1277,15 @@ pre,
   gap: 12px;
 }
 
+.agent-message-head.compact {
+  align-items: center;
+}
+
 .agent-message-body {
   margin: 0;
   color: var(--ink);
-  font-size: 1rem;
-  line-height: 1.55;
+  font-size: 0.96rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
@@ -1257,30 +1293,24 @@ pre,
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   color: rgba(18, 35, 54, 0.9);
 }
 
-.agent-message-details {
-  display: grid;
-  gap: 10px;
-}
-
-.agent-message-details summary {
+.agent-message-toggle {
   width: fit-content;
-  padding: 8px 12px;
-  border: 1px solid rgba(18, 35, 54, 0.1);
-  border-radius: 999px;
-  background: rgba(18, 35, 54, 0.05);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(18, 35, 54, 0.18);
+  background: transparent;
   color: var(--muted);
+  font-family: "Space Grotesk", "Avenir Next", sans-serif;
   font-weight: 800;
   cursor: pointer;
 }
 
-.agent-message-details[open] summary {
-  margin-bottom: 8px;
-  border-color: rgba(185, 45, 34, 0.14);
-  background: rgba(185, 45, 34, 0.08);
+.agent-message-toggle:hover {
+  border-color: rgba(185, 45, 34, 0.24);
   color: var(--accent);
 }
 
@@ -1298,7 +1328,7 @@ pre,
   align-items: center;
   gap: 7px;
   width: fit-content;
-  padding: 7px 10px;
+  padding: 6px 9px;
   border-radius: 999px;
   border: 1px solid rgba(18, 35, 54, 0.1);
   background: rgba(18, 35, 54, 0.05);
@@ -1467,7 +1497,7 @@ pre,
 
 .explore-agent-list-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px 14px;
   align-items: center;
   padding: 14px 16px;
@@ -1500,13 +1530,6 @@ pre,
 .explore-agent-list-card .explore-tag {
   padding: 5px 8px;
   font-size: 0.68rem;
-}
-
-.explore-agent-list-card .explore-action-row {
-  grid-column: 2;
-  grid-row: 2 / span 2;
-  justify-content: flex-end;
-  align-self: center;
 }
 
 .explore-rail-card {
@@ -1570,23 +1593,33 @@ pre,
   background: rgba(255, 251, 247, 0.72);
 }
 
-.explore-starter-section-rail {
-  padding: 12px;
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.1);
+.explore-live-widget {
+  padding: 16px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 251, 247, 0.82);
+  box-shadow: 0 18px 42px rgba(18, 35, 54, 0.09);
 }
 
-.explore-starter-section-rail .eyebrow {
-  color: rgba(255, 255, 255, 0.62);
+.explore-activity-rail.compact {
+  gap: 4px;
+  max-height: 300px;
+  padding-right: 0;
 }
 
-.explore-starter-section-rail .explore-section-title {
-  color: var(--white);
-  font-size: 1.05rem;
+.activity-pill.compact {
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  backdrop-filter: none;
 }
 
-.explore-starter-section-rail .explore-card {
-  background: rgba(255, 255, 255, 0.92);
+.activity-pill.compact:hover {
+  background: rgba(18, 35, 54, 0.04);
 }
 
 .starter-service-callout {
