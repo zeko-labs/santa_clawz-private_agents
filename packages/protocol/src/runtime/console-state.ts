@@ -826,6 +826,20 @@ export interface PaymentLedgerEntry {
   paymentStatus: PaymentLedgerStatus;
   executionStatus?: "not_started" | "submitted" | "forwarded" | "completed" | "failed";
   returnStatus?: "none" | "accepted" | "rejected";
+  lifecycleStatus?: {
+    displayStatus:
+      | "paid_completed"
+      | "paid_not_completed"
+      | "payment_authorized"
+      | "return_rejected"
+      | "execution_failed"
+      | "settlement_failed"
+      | "unmatched_transaction";
+    paidButNotCompleted: boolean;
+    needsAttention: boolean;
+    completionStatus: "not_started" | "forwarded" | "completed" | "failed" | "return_rejected";
+    label: string;
+  };
   errorCode?: string;
   errorMessage?: string;
 }

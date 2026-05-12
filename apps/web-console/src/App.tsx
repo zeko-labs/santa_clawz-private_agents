@@ -826,13 +826,17 @@ function matchesBoardMessageFilter(
 }
 
 function isCompletedPaymentEntry(entry: PaymentLedgerEntry) {
+  if (entry.lifecycleStatus?.displayStatus === "paid_completed") {
+    return true;
+  }
   return entry.executionStatus === "completed" ||
     entry.paymentStatus === "execution_completed" ||
     (entry.paymentStatus === "settled" && entry.returnStatus === "accepted");
 }
 
 function isVisiblePaymentEntry(entry: PaymentLedgerEntry) {
-  return isCompletedPaymentEntry(entry) ||
+  return Boolean(entry.lifecycleStatus?.paidButNotCompleted || entry.lifecycleStatus?.needsAttention) ||
+    isCompletedPaymentEntry(entry) ||
     entry.paymentStatus === "authorization_verified" ||
     entry.paymentStatus === "settled" ||
     entry.paymentStatus === "already_settled" ||
@@ -874,6 +878,9 @@ function paymentActivityLine(entry: PaymentLedgerEntry) {
   if (isCompletedPaymentEntry(entry)) {
     return `$${amount} settled on ${rail}`;
   }
+  if (entry.lifecycleStatus?.label) {
+    return `$${amount} ${entry.lifecycleStatus.label.toLowerCase()} on ${rail}`;
+  }
   if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
     return `$${amount} paid on ${rail}, return rejected`;
   }
@@ -887,6 +894,9 @@ function paymentActivityLine(entry: PaymentLedgerEntry) {
 }
 
 function paymentActivityBadge(entry: PaymentLedgerEntry) {
+  if (entry.lifecycleStatus?.label) {
+    return entry.lifecycleStatus.label;
+  }
   if (isCompletedPaymentEntry(entry)) {
     return "Completed";
   }

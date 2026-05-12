@@ -4267,12 +4267,96 @@ export class ClawzControlPlane {
         return true;
       })
       .sort((left, right) => Date.parse(right.updatedAtIso) - Date.parse(left.updatedAtIso))
-      .slice(0, limit);
+      .slice(0, limit)
+      .map((entry) => ({
+        ...entry,
+        lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry)
+      }));
     return {
       schemaVersion: "santaclawz-payment-ledger/1.0",
       generatedAtIso: new Date().toISOString(),
       totalLedgerEntryCount: file.entries.length,
       entries
+    };
+  }
+
+  private buildPaymentLedgerLifecycleStatus(entry: PaymentLedgerEntry): NonNullable<PaymentLedgerEntry["lifecycleStatus"]> {
+    const completed =
+      entry.executionStatus === "completed" ||
+      entry.paymentStatus === "execution_completed" ||
+      (entry.paymentStatus === "settled" && entry.returnStatus === "accepted");
+    const returnRejected = entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected";
+    const executionFailed = entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed";
+    const settlementFailed = entry.paymentStatus === "settlement_failed";
+    const authorized = entry.paymentStatus === "authorization_verified" || entry.paymentStatus === "payment_verified";
+    const paid =
+      authorized ||
+      entry.paymentStatus === "settled" ||
+      entry.paymentStatus === "already_settled" ||
+      entry.paymentStatus === "seller_settled" ||
+      entry.paymentStatus === "protocol_fee_settled" ||
+      entry.paymentStatus === "partially_settled";
+    const paidButNotCompleted = paid && !completed;
+    if (entry.paymentStatus === "unmatched_relayer_transaction") {
+      return {
+        displayStatus: "unmatched_transaction",
+        paidButNotCompleted,
+        needsAttention: true,
+        completionStatus: "not_started",
+        label: "Unmatched on-chain transaction"
+      };
+    }
+    if (returnRejected) {
+      return {
+        displayStatus: "return_rejected",
+        paidButNotCompleted: true,
+        needsAttention: true,
+        completionStatus: "return_rejected",
+        label: "Paid, return rejected"
+      };
+    }
+    if (executionFailed) {
+      return {
+        displayStatus: "execution_failed",
+        paidButNotCompleted: true,
+        needsAttention: true,
+        completionStatus: "failed",
+        label: "Paid, execution failed"
+      };
+    }
+    if (settlementFailed) {
+      return {
+        displayStatus: "settlement_failed",
+        paidButNotCompleted,
+        needsAttention: true,
+        completionStatus: entry.executionStatus === "completed" ? "completed" : "not_started",
+        label: "Settlement failed"
+      };
+    }
+    if (completed) {
+      return {
+        displayStatus: "paid_completed",
+        paidButNotCompleted: false,
+        needsAttention: false,
+        completionStatus: "completed",
+        label: "Paid and completed"
+      };
+    }
+    if (authorized) {
+      return {
+        displayStatus: "payment_authorized",
+        paidButNotCompleted: true,
+        needsAttention: true,
+        completionStatus: entry.executionStatus === "forwarded" ? "forwarded" : "not_started",
+        label: "Payment authorized, awaiting completion"
+      };
+    }
+    return {
+      displayStatus: "paid_not_completed",
+      paidButNotCompleted,
+      needsAttention: paidButNotCompleted,
+      completionStatus: entry.executionStatus === "forwarded" ? "forwarded" : "not_started",
+      label: paidButNotCompleted ? "Paid, not completed" : "Payment recorded"
     };
   }
 
@@ -4285,7 +4369,13 @@ export class ClawzControlPlane {
     if (!trimmed) {
       return undefined;
     }
-    return (await this.loadPaymentLedgerFile()).entries.find((entry) => entry.ledgerId === trimmed);
+    const entry = (await this.loadPaymentLedgerFile()).entries.find((candidate) => candidate.ledgerId === trimmed);
+    return entry
+      ? {
+          ...entry,
+          lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry)
+        }
+      : undefined;
   }
 
   async recordPaymentLedgerSettlement(input: PaymentLedgerSettlementInput): Promise<PaymentLedgerEntry> {
