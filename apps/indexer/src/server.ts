@@ -1258,6 +1258,54 @@ app.get("/api/execution/intents", route(async (request, response) => {
   }
 }));
 
+app.get("/api/execution/intents/:intentId", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(await controlPlane.getExecutionIntentResult(intentId));
+  } catch (error) {
+    response.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to get execution intent."
+    });
+  }
+}));
+
+app.get("/api/execution-intents/:intentId", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(await controlPlane.getExecutionIntentResult(intentId));
+  } catch (error) {
+    response.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to get execution intent."
+    });
+  }
+}));
+
+app.get("/api/executions/:requestId", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    response.json({
+      ok: true,
+      request: await controlPlane.getHireRequest(requestId)
+    });
+  } catch (error) {
+    response.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to get execution request."
+    });
+  }
+}));
+
 app.post("/api/execution/intents", route(async (request, response) => {
   try {
     response.json(await controlPlane.createExecutionIntent(parseExecutionIntentCreateRequest(request.body ?? null)));
@@ -1583,7 +1631,6 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       response.status(400).json(paymentSettlementFailureBody(error, { intent: context.intent }));
       return;
     }
-    setHeaders(response, settlement.headers);
     const remoteSettlement = isRecord(settlement.remoteSettlement) ? settlement.remoteSettlement : {};
     const settlementReference = [
       settlement.paymentResponse?.settlementReference,
@@ -1594,12 +1641,37 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
     ].find((value): value is string => typeof value === "string" && value.length > 0);
     const paymentPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
     const paymentResponseDigestSha256 = jsonDigestSha256(settlement.paymentResponse);
-    const approvedIntent = await controlPlane.approveExecutionIntent({
-      intentId,
-      reference: settlementReference ?? "x402:quote-intent-settled",
-      evidenceDigestSha256: paymentPayloadDigestSha256,
-      note: "Accepted quote x402 payment settled."
-    });
+    const approvedIntent =
+      context.intent.status === "pending"
+        ? await controlPlane.approveExecutionIntent({
+            intentId,
+            reference: settlementReference ?? "x402:quote-intent-settled",
+            evidenceDigestSha256: paymentPayloadDigestSha256,
+            note: "Accepted quote x402 payment settled."
+          })
+        : context.intent.status === "approved" || context.intent.status === "executed" || context.intent.status === "settled"
+          ? context.intent
+          : undefined;
+
+    if (!approvedIntent) {
+      response.status(400).json({
+        error: `Cannot settle quote intent ${intentId} from ${context.intent.status}.`,
+        intent: context.intent
+      });
+      return;
+    }
+
+    if (approvedIntent.status === "executed" || approvedIntent.status === "settled") {
+      response.json({
+        ...(await controlPlane.getExecutionIntentResult(intentId)),
+        idempotent: true,
+        nextAction: "result_lookup",
+        ...(approvedIntent.status === "settled" ? { terminal: true } : {}),
+        ...(settlement.paymentResponse ? { payment: settlement.paymentResponse } : {})
+      });
+      return;
+    }
+
     let paidExecution: Awaited<ReturnType<typeof controlPlane.submitHireRequest>>;
     try {
       paidExecution = await controlPlane.submitHireRequest({
@@ -1646,8 +1718,14 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
           })
         : executedIntent;
 
-    response.json({
+    const responseStatus =
+      paidExecution.operationalStatus?.relayDeliveryStatus === "failed" && paidExecution.status === "submitted"
+        ? 202
+        : 200;
+    response.status(responseStatus).json({
       ok: true,
+      idempotent: context.intent.status !== "pending",
+      nextAction: finalIntent.status === "settled" || finalIntent.status === "executed" ? "result_lookup" : "poll_execution",
       intent: finalIntent,
       payment: settlement.paymentResponse,
       paidExecution
@@ -2619,7 +2697,8 @@ app.post("/api/events/ingest", route(async (request, response) => {
 }));
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const RELAY_RESPONSE_TIMEOUT_MS = 15_000;
+const RELAY_RESPONSE_TIMEOUT_MS =
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS ?? "", 10) || 15_000;
 const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
 const RELAY_HEARTBEAT_GRACE_MS =
   Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;

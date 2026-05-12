@@ -670,6 +670,7 @@ interface HireRequestRecord {
   requesterContact: string;
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
+  deliveryError?: string;
   operationalStatus?: HireRequestReceipt["operationalStatus"];
   ingressBodyDigestSha256?: string;
   ingressResponseStatusCode?: number;
@@ -681,6 +682,7 @@ function buildHireOperationalStatus(input: {
   requestType: HireRequestReceipt["requestType"];
   paymentStatus: HireRequestReceipt["paymentStatus"];
   deliveryStatus?: "forwarded" | "recorded";
+  deliveryFailed?: boolean;
   hireStatus: HireRequestReceipt["status"];
 }): NonNullable<HireRequestReceipt["operationalStatus"]> {
   const paymentStatus =
@@ -697,8 +699,11 @@ function buildHireOperationalStatus(input: {
         : input.requestType === "quote_intake"
           ? "not_attempted"
           : "not_required",
-    relayDeliveryStatus: input.deliveryStatus ?? "not_attempted",
-    agentExecutionStatus: input.hireStatus
+    relayDeliveryStatus: input.deliveryFailed ? "failed" : input.deliveryStatus ?? "not_attempted",
+    agentExecutionStatus:
+      input.deliveryFailed && input.requestType === "paid_execution" && input.hireStatus === "submitted"
+        ? "submitted"
+        : input.hireStatus
   };
 }
 
@@ -3411,8 +3416,24 @@ export class ClawzControlPlane {
           agentId: input.agentId,
           sessionId: input.sessionId,
           signedRequest
-        })
+        }).catch((error: unknown) => ({
+          deliveryFailed: true as const,
+          deliveryError: error instanceof Error ? error.message : String(error),
+          deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(input.agentId)}`
+        }))
       : undefined;
+
+    if (relayResponse && "deliveryFailed" in relayResponse) {
+      return {
+        requestAccepted: true as const,
+        deliveryFailed: true as const,
+        deliveryError: relayResponse.deliveryError,
+        deliveryStatus: undefined,
+        requestKind: signedRequest.requestKind,
+        ingressUrl: relayResponse.deliveryTarget,
+        bodyDigestSha256: signedRequest.bodyDigestSha256
+      };
+    }
 
     const response = relayResponse
       ? {
@@ -6994,6 +7015,11 @@ export class ClawzControlPlane {
     const ingressProtocolReturn = "protocolReturn" in ingressDelivery ? ingressDelivery.protocolReturn : undefined;
     const ingressResponseStatusCode =
       "responseStatusCode" in ingressDelivery ? ingressDelivery.responseStatusCode : undefined;
+    const deliveryError =
+      "deliveryError" in ingressDelivery && typeof ingressDelivery.deliveryError === "string"
+        ? ingressDelivery.deliveryError
+        : undefined;
+    const deliveryFailed = "deliveryFailed" in ingressDelivery && ingressDelivery.deliveryFailed === true;
     const requestType = ingressDelivery.requestKind;
     const paymentStatus = paymentStatusForHireRequest({
       requestType,
@@ -7013,7 +7039,8 @@ export class ClawzControlPlane {
     const operationalStatus = buildHireOperationalStatus({
       requestType,
       paymentStatus,
-      deliveryStatus: ingressDelivery.deliveryStatus,
+      ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
+      deliveryFailed,
       hireStatus
     });
     const nextRecord: HireRequestRecord = {
@@ -7033,7 +7060,8 @@ export class ClawzControlPlane {
         : {}),
       requesterContact,
       deliveryTarget: publicDeliveryTarget,
-      deliveryStatus: ingressDelivery.deliveryStatus,
+      ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
+      ...(deliveryError ? { deliveryError } : {}),
       operationalStatus,
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
       ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
@@ -7147,7 +7175,8 @@ export class ClawzControlPlane {
       ...(settledAmountUsd ? { settledAmountUsd } : {}),
       status: hireStatus,
       deliveryTarget: publicDeliveryTarget,
-      deliveryStatus: ingressDelivery.deliveryStatus,
+      ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
+      ...(deliveryError ? { deliveryError } : {}),
       operationalStatus,
       ingress: {
         url: publicDeliveryTarget,
@@ -7418,6 +7447,77 @@ export class ClawzControlPlane {
 
   async listExecutionIntents(options: ExecutionIntentListOptions = {}): Promise<ExecutionIntentState> {
     return this.buildExecutionIntentState(await this.loadExecutionIntentFile(), options);
+  }
+
+  async getExecutionIntent(intentId: string): Promise<ExecutionIntentRecord> {
+    const trimmedIntentId = intentId.trim();
+    const intent = (await this.loadExecutionIntentFile()).intents.find(
+      (candidate) => candidate.intentId === trimmedIntentId
+    );
+    if (!intent) {
+      throw new Error(`Unknown execution intent: ${trimmedIntentId}`);
+    }
+    return intent;
+  }
+
+  async getHireRequest(requestId: string): Promise<HireRequestRecord> {
+    const trimmedRequestId = requestId.trim();
+    const request = (await this.loadHireRequestFile()).requests.find(
+      (candidate) => candidate.requestId === trimmedRequestId
+    );
+    if (!request) {
+      throw new Error(`Unknown execution request: ${trimmedRequestId}`);
+    }
+    return request;
+  }
+
+  async getExecutionIntentResult(intentId: string) {
+    const [intent, hireRequests] = await Promise.all([
+      this.getExecutionIntent(intentId),
+      this.loadHireRequestFile()
+    ]);
+    const quoteRequest = intent.requestId
+      ? hireRequests.requests.find((request) => request.requestId === intent.requestId)
+      : undefined;
+    const executionRequestIds = intent.lifecycle
+      .filter((entry) => entry.transitionType === "executed" && entry.reference?.startsWith("hire_"))
+      .map((entry) => entry.reference!)
+      .filter((value, index, values) => values.indexOf(value) === index);
+    const executionRequests = hireRequests.requests.filter((request) =>
+      executionRequestIds.includes(request.requestId)
+    );
+    const latestExecution = executionRequests[0];
+    return {
+      ok: true,
+      intent,
+      ...(quoteRequest ? { quoteRequest } : {}),
+      executionRequests,
+      ...(latestExecution ? { latestExecution } : {}),
+      resultStatus:
+        latestExecution?.protocolReturn?.status === "completed"
+          ? "completed"
+          : latestExecution?.protocolReturn?.status === "failed"
+            ? "failed"
+            : latestExecution
+              ? "submitted"
+              : "not_started",
+      ...(latestExecution?.protocolReturn ? { protocolReturn: latestExecution.protocolReturn } : {}),
+      ...(latestExecution?.protocolReturn?.verifiedOutput
+        ? { verifiedOutput: latestExecution.protocolReturn.verifiedOutput }
+        : {}),
+      operationalStatus: {
+        paymentStatus:
+          intent.status === "approved" || intent.status === "executed" || intent.status === "settled"
+            ? "settled"
+            : "pending",
+        settlementStatus:
+          intent.status === "approved" || intent.status === "executed" || intent.status === "settled"
+            ? "settled"
+            : "not_attempted",
+        relayDeliveryStatus: latestExecution?.operationalStatus?.relayDeliveryStatus ?? "not_attempted",
+        agentExecutionStatus: latestExecution?.operationalStatus?.agentExecutionStatus ?? "not_started"
+      }
+    };
   }
 
   async quotePaymentContextForIntent(intentId: string): Promise<QuotePaymentContext> {

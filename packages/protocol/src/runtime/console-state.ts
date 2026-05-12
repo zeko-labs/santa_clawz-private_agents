@@ -600,6 +600,7 @@ export interface HireRequestReceipt {
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded";
+  deliveryError?: string;
   operationalStatus?: HireOperationalStatus;
   ingress?: {
     url: string;

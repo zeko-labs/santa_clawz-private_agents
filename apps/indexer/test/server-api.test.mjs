@@ -1573,6 +1573,12 @@ async function testExecutionIntentLifecycleAnchors() {
     assert.equal(settled.payload.lifecycle.at(-1).transitionType, "settled");
     assert.equal(settled.payload.anchorCandidateIds.length, 4);
 
+    const intentLookup = await requestJson(`${baseUrl}/api/execution-intents/${encodeURIComponent(created.payload.intentId)}`);
+    assert.equal(intentLookup.status, 200);
+    assert.equal(intentLookup.payload.intent.intentId, created.payload.intentId);
+    assert.equal(intentLookup.payload.resultStatus, "not_started");
+    assert.equal(intentLookup.payload.operationalStatus.settlementStatus, "settled");
+
     const terminalRefund = await requestJson(`${baseUrl}/api/execution/intents/${created.payload.intentId}/refund`, {
       method: "POST",
       body: JSON.stringify({
@@ -2272,6 +2278,86 @@ async function testStaleRelayDoesNotStayLive() {
   }
 }
 
+async function testRelayHireFailureCreatesDurableExecutionRecord() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-relay-hire-failure-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "500"
+  });
+  let relaySocket;
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const ticket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Relay Hire Failure Agent",
+        headline: "Keeps durable execution state when the relay response breaks.",
+        representedPrincipal: "Relay failure smoke operator",
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "free-test",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(ticket.status, 200);
+
+    const redeemed = await requestJson(`${baseUrl}/api/enrollment/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ ticket: ticket.payload.ticket })
+    });
+    assert.equal(redeemed.status, 200);
+    const sessionId = redeemed.payload.session.sessionId;
+    const agentId = redeemed.payload.agentId;
+    const adminKey = redeemed.payload.adminAccess.issuedAdminKey;
+
+    const published = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId, localOnly: true })
+    });
+    assert.equal(published.status, 200);
+
+    relaySocket = await connectRelaySocket(baseUrl, agentId, adminKey);
+    const hirePromise = requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Record this even if the relay response disappears.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    const relayHire = await waitForRelayJson(
+      relaySocket,
+      (message) => message.type === "hire_request"
+    );
+    assert.equal(relayHire.request.requestKind, "free_test");
+    relaySocket.destroy();
+
+    const hire = await hirePromise;
+    assert.equal(hire.status, 200);
+    assert.equal(hire.payload.status, "submitted");
+    assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "failed");
+    assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "submitted");
+    assert.match(hire.payload.deliveryError, /relay response|Relay connection/);
+
+    const executionLookup = await requestJson(`${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}`);
+    assert.equal(executionLookup.status, 200);
+    assert.equal(executionLookup.payload.request.requestId, hire.payload.requestId);
+    assert.equal(executionLookup.payload.request.operationalStatus.relayDeliveryStatus, "failed");
+
+    console.log("ok - relay hire response failures create durable execution records");
+  } finally {
+    relaySocket?.destroy();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testMissionAuthVerificationPersists() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-mission-auth-test-"));
   const port = await reservePort();
@@ -2564,6 +2650,7 @@ async function main() {
   await testHireRouteRequiresSafeIngressAndPaymentState();
   await testMainnetFreeTestDisabledByDefault();
   await testStaleRelayDoesNotStayLive();
+  await testRelayHireFailureCreatesDurableExecutionRecord();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
