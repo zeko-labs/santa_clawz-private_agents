@@ -39,6 +39,7 @@ import {
   type AgentBoardMessageType,
   type AgentBoardState,
   type AgentBoardThread,
+  type AgentCompletionScore,
   type AgentProfileState,
   type AgentReadinessState,
   type HireDeliveryReceipt,
@@ -115,6 +116,8 @@ const MAINNET_FREE_TEST_LIMIT_GLOBAL =
   Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_GLOBAL_HIRE_LIMIT_PER_DAY ?? "", 10) || 20;
 const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
+const JOB_COMPLETION_SCORE_WINDOW_SIZE = 100;
+const JOB_COMPLETION_STALE_MS = 30 * 60 * 1000;
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 type HireIngressRequestKind = SantaClawzHireRequestType;
 type HireCompletionClassification =
@@ -1702,6 +1705,69 @@ function lastHireStatusForSession(
     .filter((request) => request.sessionId === sessionId)
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))[0];
   return latest?.status ?? "none";
+}
+
+function paidExecutionTerminalOutcome(request: HireRequestRecord, nowMs = Date.now()): "completed" | "failed" | "pending" {
+  if (request.requestType !== "paid_execution") {
+    return "pending";
+  }
+  if (request.status === "completed" && request.protocolReturn?.status === "completed") {
+    return request.protocolReturn.execution?.completionClassification === "agent_completed_verified"
+      ? "completed"
+      : "failed";
+  }
+  if (
+    request.status === "failed" ||
+    request.protocolReturn?.status === "failed" ||
+    request.deliveryStatus === "return_rejected" ||
+    request.operationalStatus?.relayDeliveryStatus === "failed" ||
+    request.operationalStatus?.relayDeliveryStatus === "return_rejected" ||
+    request.operationalStatus?.agentExecutionStatus === "failed" ||
+    request.operationalStatus?.agentExecutionStatus === "worker_completed_return_rejected"
+  ) {
+    return "failed";
+  }
+
+  const submittedAtMs = Date.parse(request.submittedAtIso);
+  if (!Number.isNaN(submittedAtMs) && nowMs - submittedAtMs >= JOB_COMPLETION_STALE_MS) {
+    return "failed";
+  }
+  return "pending";
+}
+
+function buildAgentCompletionScore(
+  hireRequests: HireRequestFile,
+  sessionId: string,
+  nowMs = Date.now()
+): AgentCompletionScore {
+  const evaluated = hireRequests.requests
+    .filter((request) => request.sessionId === sessionId && request.requestType === "paid_execution")
+    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))
+    .map((request) => ({
+      request,
+      outcome: paidExecutionTerminalOutcome(request, nowMs)
+    }))
+    .filter((entry) => entry.outcome !== "pending")
+    .slice(0, JOB_COMPLETION_SCORE_WINDOW_SIZE);
+  const completedJobCount = evaluated.filter((entry) => entry.outcome === "completed").length;
+  const failedJobCount = evaluated.filter((entry) => entry.outcome === "failed").length;
+  const evaluatedJobCount = evaluated.length;
+  const successRatePct =
+    evaluatedJobCount > 0 ? Math.round((completedJobCount / evaluatedJobCount) * 100) : undefined;
+  const lastEvaluatedAtIso = evaluated[0]?.request.submittedAtIso;
+
+  return {
+    windowSize: JOB_COMPLETION_SCORE_WINDOW_SIZE,
+    evaluatedJobCount,
+    completedJobCount,
+    failedJobCount,
+    ...(successRatePct !== undefined ? { successRatePct } : {}),
+    ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
+    label:
+      successRatePct === undefined
+        ? "No paid jobs yet"
+        : `${completedJobCount}/${evaluatedJobCount} completed`
+  };
 }
 
 function buildAgentReadinessState(input: {
@@ -6922,6 +6988,7 @@ export class ClawzControlPlane {
       paymentReady: hasReadyPaymentProfile(profile),
       lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId)
     });
+    const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId);
     const protocolOwnerFeePolicy = buildProtocolOwnerFeePolicyFromEnv();
     const adminAccess = this.buildAdminAccessState(
       state,
@@ -6968,6 +7035,7 @@ export class ClawzControlPlane {
       payoutAddressConfigured,
       paidJobsEnabled,
       readiness,
+      completionScore,
       protocolOwnerFeePolicy,
       adminAccess,
       ingressAccess,
@@ -7202,6 +7270,7 @@ export class ClawzControlPlane {
           paymentReady,
           lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId)
         });
+        const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);
         return {
           agentId,
           sessionId,
@@ -7253,6 +7322,7 @@ export class ClawzControlPlane {
           ...(runtimeHeartbeat.lastHeartbeatAtIso ? { lastHeartbeatAtIso: runtimeHeartbeat.lastHeartbeatAtIso } : {}),
           ...(runtimeStatusReason ? { runtimeStatusReason } : {}),
           readiness,
+          completionScore,
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "confirmed").length,

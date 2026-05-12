@@ -1459,6 +1459,13 @@ pre,
   align-items: start;
 }
 
+.profile-score-stack {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .proof-score-pill {
   flex: 0 0 auto;
   padding: 9px 12px;
@@ -1468,6 +1475,20 @@ pre,
   color: #2d6e38;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.completion-score-pill {
+  display: grid;
+  gap: 2px;
+  border-color: rgba(197, 53, 45, 0.18);
+  background: rgba(197, 53, 45, 0.08);
+  color: #982d27;
+}
+
+.completion-score-pill small {
+  color: rgba(101, 119, 139, 0.95);
+  font-size: 0.67rem;
+  font-weight: 800;
 }
 
 .proof-signal-row {

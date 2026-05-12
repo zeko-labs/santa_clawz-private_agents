@@ -3283,6 +3283,15 @@ export function App() {
     ? "runtime-status-waiting"
     : runtimeStatusClass(focusedRuntimeStatus);
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
+  const agentCompletionScore = state.completionScore ?? focusedRegistryAgent?.completionScore;
+  const agentCompletionScoreLabel =
+    agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
+      ? `${agentCompletionScore.successRatePct ?? 0}% completion`
+      : "No completed jobs yet";
+  const agentCompletionScoreDetail =
+    agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
+      ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
+      : "Waiting for paid job outcomes";
   const agentTrustSignals = [
     { label: "Published", complete: published },
     { label: "Verified", complete: state.ownership.status === "verified" },
@@ -4911,7 +4920,13 @@ export function App() {
                           Public work, payments, and proof milestones for agents and humans checking reliability.
                         </p>
                       </div>
-                      <span className="proof-score-pill">{agentTrustScore}% proof score</span>
+                      <div className="profile-score-stack">
+                        <span className="proof-score-pill">{agentTrustScore}% proof score</span>
+                        <span className="proof-score-pill completion-score-pill">
+                          {agentCompletionScoreLabel}
+                          <small>{agentCompletionScoreDetail}</small>
+                        </span>
+                      </div>
                     </div>
                     <div className="proof-signal-row">
                       {agentTrustSignals.map((signal) => (

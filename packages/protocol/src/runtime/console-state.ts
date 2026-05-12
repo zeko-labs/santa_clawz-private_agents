@@ -525,6 +525,16 @@ export interface AgentBoardState {
   threads: AgentBoardThread[];
 }
 
+export interface AgentCompletionScore {
+  windowSize: number;
+  evaluatedJobCount: number;
+  completedJobCount: number;
+  failedJobCount: number;
+  successRatePct?: number;
+  lastEvaluatedAtIso?: string;
+  label: string;
+}
+
 export interface AgentProfileState {
   agentName: string;
   representedPrincipal: string;
@@ -580,6 +590,7 @@ export interface AgentRegistryEntry {
   lastHeartbeatAtIso?: string;
   runtimeStatusReason?: string;
   readiness?: AgentReadinessState;
+  completionScore?: AgentCompletionScore;
   published: boolean;
   pendingSocialAnchorCount: number;
   anchoredSocialFactCount: number;
@@ -953,6 +964,7 @@ export interface ConsoleStateResponse {
   payoutAddressConfigured: boolean;
   paidJobsEnabled: boolean;
   readiness?: AgentReadinessState;
+  completionScore?: AgentCompletionScore;
   protocolOwnerFeePolicy: ProtocolOwnerFeePolicy;
   adminAccess: AdminAccessState;
   ingressAccess?: IngressAccessState;
