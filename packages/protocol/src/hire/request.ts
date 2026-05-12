@@ -3,7 +3,7 @@ import type { AgentPaymentRail, AgentPricingMode } from "../runtime/console-stat
 export const SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0" as const;
 
 export type SantaClawzHireRequestType = "quote_intake" | "paid_execution" | "free_test";
-export type SantaClawzHirePaymentStatus = "quote_requested" | "settled" | "paid" | "escrowed" | "free_test";
+export type SantaClawzHirePaymentStatus = "quote_requested" | "authorized" | "settled" | "paid" | "escrowed" | "free_test";
 
 const SERVICE_KEY_PATTERN = /^[a-z0-9][a-z0-9_:-]{0,79}$/;
 
@@ -34,13 +34,13 @@ export function paymentStatusForHireRequest(input: {
   if (input.requestType === "free_test") {
     return "free_test";
   }
-  if (input.paymentStatus === "paid" || input.paymentStatus === "escrowed") {
+  if (input.paymentStatus === "authorized" || input.paymentStatus === "paid" || input.paymentStatus === "escrowed") {
     return input.paymentStatus;
   }
   if (input.paymentStatus === "settled") {
     return "settled";
   }
-  throw new Error("paid_execution requires payment_status=settled, paid, or escrowed.");
+  throw new Error("paid_execution requires payment_status=authorized, settled, paid, or escrowed.");
 }
 
 export function assertValidSantaClawzHireServiceIdentity(identity: SantaClawzHireServiceIdentity): void {
@@ -91,8 +91,8 @@ export function assertValidSantaClawzHirePolicy(policy: SantaClawzHirePaymentPol
   if (policy.pricing_mode !== "fixed-exact" && policy.pricing_mode !== "quote-required") {
     throw new Error("paid_execution requires pricing_mode=fixed-exact or quote-required.");
   }
-  if (!["settled", "paid", "escrowed"].includes(policy.payment_status)) {
-    throw new Error("paid_execution requires payment_status=settled, paid, or escrowed.");
+  if (!["authorized", "settled", "paid", "escrowed"].includes(policy.payment_status)) {
+    throw new Error("paid_execution requires payment_status=authorized, settled, paid, or escrowed.");
   }
   if (!policy.paid_or_escrowed) {
     throw new Error("paid_execution must set paid_or_escrowed=true.");

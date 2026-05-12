@@ -608,6 +608,7 @@ interface HirePaymentAuthorization {
   acceptedQuoteDigestSha256?: string;
   settlementReference?: string;
   paymentPayloadDigestSha256?: string;
+  paymentAuthorizationDigestSha256?: string;
   paymentResponseDigestSha256?: string;
 }
 
@@ -768,7 +769,9 @@ function buildHireOperationalStatus(input: {
   hireStatus: HireRequestReceipt["status"];
 }): NonNullable<HireRequestReceipt["operationalStatus"]> {
   const paymentStatus =
-    input.paymentStatus === "settled" || input.paymentStatus === "paid" || input.paymentStatus === "escrowed"
+    input.paymentStatus === "authorized"
+      ? "authorized"
+      : input.paymentStatus === "settled" || input.paymentStatus === "paid" || input.paymentStatus === "escrowed"
       ? "settled"
       : input.paymentStatus === "quote_requested"
         ? "quote_requested"
@@ -777,7 +780,9 @@ function buildHireOperationalStatus(input: {
     paymentStatus,
     settlementStatus:
       input.requestType === "paid_execution"
-        ? "settled"
+        ? input.paymentStatus === "authorized"
+          ? "authorized"
+          : "settled"
         : input.requestType === "quote_intake"
           ? "not_attempted"
           : "not_required",
@@ -4200,7 +4205,7 @@ export class ClawzControlPlane {
     const sellerSettlementTxHash = input.sellerSettlementTxHash ?? existing?.sellerSettlementTxHash;
     const protocolFeeTxHash = input.protocolFeeTxHash ?? existing?.protocolFeeTxHash;
     const nextTransactionHashes = uniqueTransactionHashes(existing?.transactionHashes, transactionHashes);
-    const existingPaymentStatus = input.paymentStatus ?? existing?.paymentStatus;
+    const existingPaymentStatus = input.paymentStatus ?? (nextTransactionHashes.length > 0 ? undefined : existing?.paymentStatus);
     const nextEntry: PaymentLedgerEntry = {
       ledgerId: existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
       createdAtIso: existing?.createdAtIso ?? nowIso,
@@ -4331,6 +4336,54 @@ export class ClawzControlPlane {
       entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
     });
     return nextEntry;
+  }
+
+  async markHireRequestPaymentSettled(input: {
+    requestId: string;
+    settlementReference?: string;
+    sellerSettlementTxHash?: string;
+    protocolFeeTxHash?: string;
+    transactionHashes?: string[];
+    paymentResponseDigestSha256?: string;
+  }): Promise<HireRequestRecord | undefined> {
+    const file = await this.loadHireRequestFile();
+    const index = file.requests.findIndex((request) => request.requestId === input.requestId);
+    if (index < 0) {
+      return undefined;
+    }
+    const existing = file.requests[index]!;
+    const nextPayment: HirePaymentAuthorization | undefined = existing.payment
+      ? {
+          ...existing.payment,
+          status: "settled",
+          ...(input.settlementReference ? { settlementReference: input.settlementReference } : {}),
+          settlementEvents: {
+            ...(existing.payment.settlementEvents ?? {}),
+            ...(input.sellerSettlementTxHash ? { sellerSettlementTxHash: input.sellerSettlementTxHash } : {}),
+            ...(input.protocolFeeTxHash ? { protocolFeeTxHash: input.protocolFeeTxHash } : {}),
+            ...(input.transactionHashes?.length ? { transactionHashes: input.transactionHashes } : {})
+          },
+          ...(input.paymentResponseDigestSha256 ? { paymentResponseDigestSha256: input.paymentResponseDigestSha256 } : {})
+        }
+      : undefined;
+    const nextRecord: HireRequestRecord = {
+      ...existing,
+      paymentStatus: "settled",
+      ...(existing.operationalStatus
+        ? {
+            operationalStatus: {
+              ...existing.operationalStatus,
+              paymentStatus: "settled",
+              settlementStatus: "settled"
+            }
+          }
+        : {}),
+      ...(nextPayment ? { payment: nextPayment } : {})
+    };
+    await this.saveHireRequestFile({
+      requests: file.requests.map((request, requestIndex) => requestIndex === index ? nextRecord : request)
+    });
+    return nextRecord;
   }
 
   private async ensureBootstrapped() {
@@ -8245,7 +8298,7 @@ export class ClawzControlPlane {
       requestId: quoteRequest.requestId,
       rail,
       settlementModel: options.settlementModel ?? "upfront-x402",
-      paymentStatus: "settled",
+      paymentStatus: "authorized",
       grossAmountUsd: acceptedAmountUsd,
       ...(options.buyerWallet?.trim() ? { buyerWallet: options.buyerWallet.trim() } : {}),
       paymentAuthorizationDigestSha256: acceptedQuoteDigestSha256,

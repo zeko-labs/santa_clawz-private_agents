@@ -595,7 +595,7 @@ export interface HireRequestReceipt {
   submittedAtIso: string;
   requestType: "quote_intake" | "paid_execution" | "free_test";
   pricingMode: AgentPricingMode;
-  paymentStatus: "quote_requested" | "settled" | "paid" | "escrowed" | "free_test";
+  paymentStatus: "quote_requested" | "authorized" | "settled" | "paid" | "escrowed" | "free_test";
   settledAmountUsd?: string;
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
@@ -655,7 +655,7 @@ export interface HireRequestReceipt {
     incidentId?: string;
   };
   payment?: {
-    status: "quote_requested" | "settled" | "paid" | "escrowed" | "free_test";
+    status: "quote_requested" | "authorized" | "settled" | "paid" | "escrowed" | "free_test";
     rail?: string;
     amountUsd?: string;
     authorizationId?: string;
@@ -669,8 +669,8 @@ export interface HireRequestReceipt {
 }
 
 export interface HireOperationalStatus {
-  paymentStatus: "not_required" | "quote_requested" | "free_test" | "settled" | "failed";
-  settlementStatus: "not_required" | "not_attempted" | "settled" | "failed" | "pending";
+  paymentStatus: "not_required" | "quote_requested" | "free_test" | "authorized" | "settled" | "failed";
+  settlementStatus: "not_required" | "not_attempted" | "authorized" | "settled" | "failed" | "pending";
   relayDeliveryStatus: "not_attempted" | "forwarded" | "recorded" | "failed" | "return_rejected";
   agentExecutionStatus:
     | "not_started"
@@ -710,7 +710,7 @@ export interface ExecutionIntentRecord {
   settlementModel: ExecutionIntentSettlementModel;
   status: ExecutionIntentStatus;
   pricingMode: AgentPricingMode;
-  paymentStatus: "settled" | "paid" | "escrowed";
+  paymentStatus: "authorized" | "settled" | "paid" | "escrowed";
   grossAmountUsd: string;
   sellerNetAmountUsd?: string;
   protocolFeeAmountUsd?: string;
@@ -749,6 +749,8 @@ export interface ExecutionIntentState {
 export type PaymentLedgerStatus =
   | "payment_challenged"
   | "payment_submitted"
+  | "authorization_verified"
+  | "not_settled"
   | "payment_verified"
   | "seller_settled"
   | "protocol_fee_settled"

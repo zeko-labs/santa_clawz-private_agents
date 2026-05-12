@@ -422,7 +422,7 @@ function assertHirePolicy(payload) {
     return requestType;
   }
 
-  if (!["fixed-exact", "quote-required"].includes(String(pricingMode)) || !["settled", "paid", "escrowed"].includes(String(paymentStatus))) {
+  if (!["fixed-exact", "quote-required"].includes(String(pricingMode)) || !["authorized", "settled", "paid", "escrowed"].includes(String(paymentStatus))) {
     throw Object.assign(new Error("paid_execution policy mismatch"), { statusCode: 400 });
   }
   if (!payload.paid_or_escrowed || !/^[0-9]+(\.[0-9]{1,6})?$/.test(String(payload.settled_amount_usd ?? ""))) {
@@ -719,8 +719,8 @@ async function handleHire(request, response, args) {
       return;
     }
 
-    if (!payload.paid_or_escrowed || !["settled", "paid", "escrowed"].includes(String(payload.payment_status))) {
-      throw Object.assign(new Error("paid execution requires settled payment or escrow"), { statusCode: 402 });
+    if (!payload.paid_or_escrowed || !["authorized", "settled", "paid", "escrowed"].includes(String(payload.payment_status))) {
+      throw Object.assign(new Error("paid execution requires authorized payment, settled payment, or escrow"), { statusCode: 402 });
     }
 
     if (enrollment.demoCompletePaidExecution || config.demoCompletePaidExecution) {
