@@ -867,7 +867,11 @@ function jsonDigestSha256(value: unknown): string {
 }
 
 function isEvmTransactionHash(value: unknown): value is string {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+  return (
+    typeof value === "string" &&
+    /^0x[a-fA-F0-9]{64}$/.test(value) &&
+    value.toLowerCase() !== `0x${"0".repeat(64)}`
+  );
 }
 
 async function recordX402PaymentLedgerSettlement(input: {
@@ -1716,6 +1720,26 @@ app.get("/api/sessions/:sessionId/payments", route(async (request, response) => 
   }
 }));
 
+app.get("/api/payments/:ledgerId", route(async (request, response) => {
+  try {
+    const ledgerId = request.params.ledgerId;
+    if (!ledgerId) {
+      response.status(400).json({ error: "ledgerId is required." });
+      return;
+    }
+    const entry = await controlPlane.getPaymentLedgerEntry(ledgerId);
+    if (!entry) {
+      response.status(404).json({ error: "Payment ledger entry not found." });
+      return;
+    }
+    response.json(entry);
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load payment ledger entry."
+    });
+  }
+}));
+
 app.get("/api/admin/x402/ledger", route(async (request, response) => {
   try {
     const agentId = queryString(request.query, "agentId");
@@ -1737,7 +1761,7 @@ app.get("/api/admin/x402/ledger", route(async (request, response) => {
   }
 }));
 
-app.post("/api/admin/x402/reconcile", route(async (_request, response) => {
+const handleX402Reconciliation = route(async (_request, response) => {
   const initialLedger = await controlPlane.listPaymentLedger({ limit: 500 });
   const settledTxHashes = new Set<string>();
   for (const entry of initialLedger.entries) {
@@ -1822,7 +1846,10 @@ app.post("/api/admin/x402/reconcile", route(async (_request, response) => {
     orphanSettlements: orphanEntries.slice(0, 50),
     paidButIncomplete: incompleteEntries.slice(0, 50)
   });
-}));
+});
+
+app.post("/api/admin/x402/reconcile", handleX402Reconciliation);
+app.post("/api/admin/x402/reconciliation", handleX402Reconciliation);
 
 app.post("/api/x402/quote-intent", route(async (request, response) => {
   try {
@@ -1977,7 +2004,8 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         : executedIntent;
 
     const responseStatus =
-      paidExecution.operationalStatus?.relayDeliveryStatus === "failed" && paidExecution.status === "submitted"
+      (paidExecution.operationalStatus?.relayDeliveryStatus === "failed" && paidExecution.status === "submitted") ||
+      paidExecution.operationalStatus?.relayDeliveryStatus === "return_rejected"
         ? 202
         : 200;
     response.status(responseStatus).json({
@@ -3319,6 +3347,9 @@ class AgentRelayConnection {
         }
       }
       if (opcode === 0x8) {
+        const closeCode = payload.length >= 2 ? payload.readUInt16BE(0) : 1000;
+        const closeReason = payload.length > 2 ? payload.subarray(2).toString("utf8") : "closed";
+        this.rejectPending(`Relay socket closed with code=${closeCode} reason=${closeReason || "closed"}.`);
         this.close();
         return;
       }
@@ -3332,6 +3363,7 @@ class AgentRelayConnection {
       try {
         this.onMessage(JSON.parse(payload.toString("utf8")));
       } catch {
+        this.rejectPending("Relay sent invalid JSON while SantaClawz was waiting for the agent response.");
         this.close(1003, "invalid json");
         return;
       }

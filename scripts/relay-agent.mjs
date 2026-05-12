@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
@@ -16,7 +18,7 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const ingressEntry = path.join(repoRoot, "starters", "openclaw-public-hire-ingress", "server.mjs");
 
-const BOOLEAN_FLAGS = new Set(["help", "serve", "json", "no-heartbeat"]);
+const BOOLEAN_FLAGS = new Set(["help", "serve", "json", "no-heartbeat", "takeover"]);
 
 function printUsage() {
   console.error(`Usage:
@@ -30,6 +32,7 @@ function printUsage() {
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
+    [--takeover] \\
     [--no-heartbeat] \\
     [--json]
 
@@ -39,6 +42,8 @@ Notes:
   --serve starts the bundled local public-hire ingress starter, which validates
   quote-paid execution and canonical santaclawz-return/1.0 packages locally.
   --local-hire-url points relay traffic at an already running local /hire endpoint.
+  A local per-agent lock prevents duplicate relay processes. Use --takeover only
+  after confirming the previous process is dead or intentionally being replaced.
 `);
 }
 
@@ -314,6 +319,54 @@ function stopChild(child) {
   }
 }
 
+function processIsRunning(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireAgentLock(agentId, takeover) {
+  const lockDir = path.join(os.tmpdir(), "santaclawz-agent-relay-locks");
+  mkdirSync(lockDir, { recursive: true });
+  const lockPath = path.join(lockDir, `${agentId.replace(/[^a-zA-Z0-9_.-]+/g, "_")}.json`);
+  if (!takeover) {
+    try {
+      const existing = JSON.parse(readFileSync(lockPath, "utf8"));
+      const existingPid = Number.parseInt(String(existing.pid ?? ""), 10);
+      if (processIsRunning(existingPid)) {
+        throw new Error(
+          `SantaClawz relay already appears to be running for ${agentId} in pid ${existingPid}. Stop it first, or rerun with --takeover if you intentionally want to replace it.`
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && !("code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+  }
+  writeFileSync(lockPath, `${JSON.stringify({
+    agentId,
+    pid: process.pid,
+    startedAtIso: new Date().toISOString()
+  }, null, 2)}\n`, { mode: 0o600 });
+  return () => {
+    try {
+      const existing = JSON.parse(readFileSync(lockPath, "utf8"));
+      if (Number(existing.pid) === process.pid) {
+        unlinkSync(lockPath);
+      }
+    } catch {
+      // Best-effort cleanup only.
+    }
+  };
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
@@ -337,8 +390,10 @@ const shouldHeartbeat = !args["no-heartbeat"];
 let ingress = null;
 let relay = null;
 let heartbeatInterval = null;
+let releaseLock = null;
 
 try {
+  releaseLock = acquireAgentLock(agentId, Boolean(args.takeover));
   if (shouldServe) {
     ingress = startIngress({
       envFile,
@@ -429,4 +484,5 @@ try {
   if (ingress) {
     stopChild(ingress.child);
   }
+  releaseLock?.();
 }

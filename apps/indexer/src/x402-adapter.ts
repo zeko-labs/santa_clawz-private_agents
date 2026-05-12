@@ -196,12 +196,13 @@ interface AgentX402SettlementResult extends AgentX402VerificationResult {
 }
 
 const settlementLedgers = new Map<string, SettlementLedger>();
+const ZERO_EVM_HASH = `0x${"0".repeat(64)}`;
 
 function extractSettlementTransactionHashes(value: unknown): string[] {
   const hashes = new Set<string>();
   const visit = (item: unknown) => {
     if (typeof item === "string") {
-      if (/^0x[a-fA-F0-9]{64}$/.test(item)) {
+      if (/^0x[a-fA-F0-9]{64}$/.test(item) && item.toLowerCase() !== ZERO_EVM_HASH) {
         hashes.add(item);
       }
       return;
@@ -230,13 +231,17 @@ function normalizedSettlementEvents(remoteSettlement: JsonRecord) {
     remoteSettlement.transactionHash,
     remoteSettlement.sellerTransactionHash,
     isRecord(remoteSettlement.transactionHashes) ? remoteSettlement.transactionHashes.seller : undefined
-  ].find((value): value is string => typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value));
+  ].find((value): value is string =>
+    typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value) && value.toLowerCase() !== ZERO_EVM_HASH
+  );
   const protocolFeeTxHash = [
     remoteSettlement.protocolFeeTransaction,
     remoteSettlement.protocolFeeTxHash,
     remoteSettlement.protocolFeeTransactionHash,
     isRecord(remoteSettlement.transactionHashes) ? remoteSettlement.transactionHashes.protocolFee : undefined
-  ].find((value): value is string => typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value));
+  ].find((value): value is string =>
+    typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value) && value.toLowerCase() !== ZERO_EVM_HASH
+  );
   const settlementReference = [
     sellerSettlementTxHash,
     remoteSettlement.transaction,

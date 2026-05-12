@@ -254,6 +254,16 @@ export class SelfServeSocialAnchoringDisabledError extends Error {
   }
 }
 
+class HireReturnValidationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string
+  ) {
+    super(message);
+    this.name = "HireReturnValidationError";
+  }
+}
+
 interface OwnershipChallengeIssueResult {
   state: ConsoleStateResponse;
   issuedOwnershipChallenge: {
@@ -681,8 +691,12 @@ interface HireRequestRecord {
   budgetMina?: string;
   requesterContact: string;
   deliveryTarget: string;
-  deliveryStatus?: "forwarded" | "recorded";
+  deliveryStatus?: "forwarded" | "recorded" | "return_rejected";
   deliveryError?: string;
+  returnValidationError?: string;
+  returnValidationCode?: string;
+  localResponseStatusCode?: number;
+  localResponseBytes?: number;
   operationalStatus?: HireRequestReceipt["operationalStatus"];
   ingressBodyDigestSha256?: string;
   ingressResponseStatusCode?: number;
@@ -738,8 +752,9 @@ interface PaymentLedgerListOptions {
 function buildHireOperationalStatus(input: {
   requestType: HireRequestReceipt["requestType"];
   paymentStatus: HireRequestReceipt["paymentStatus"];
-  deliveryStatus?: "forwarded" | "recorded";
+  deliveryStatus?: "forwarded" | "recorded" | "return_rejected";
   deliveryFailed?: boolean;
+  returnRejected?: boolean;
   hireStatus: HireRequestReceipt["status"];
 }): NonNullable<HireRequestReceipt["operationalStatus"]> {
   const paymentStatus =
@@ -756,9 +771,15 @@ function buildHireOperationalStatus(input: {
         : input.requestType === "quote_intake"
           ? "not_attempted"
           : "not_required",
-    relayDeliveryStatus: input.deliveryFailed ? "failed" : input.deliveryStatus ?? "not_attempted",
+    relayDeliveryStatus: input.returnRejected
+      ? "return_rejected"
+      : input.deliveryFailed
+        ? "failed"
+        : input.deliveryStatus ?? "not_attempted",
     agentExecutionStatus:
-      input.deliveryFailed && input.requestType === "paid_execution" && input.hireStatus === "submitted"
+      input.returnRejected
+        ? "worker_completed_return_rejected"
+        : input.deliveryFailed && input.requestType === "paid_execution" && input.hireStatus === "submitted"
         ? "submitted"
         : input.hireStatus
   };
@@ -1342,7 +1363,11 @@ function assertSha256Hex(value: string, context: string) {
 }
 
 function isTransactionHash(value: unknown): value is string {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+  return (
+    typeof value === "string" &&
+    /^0x[a-fA-F0-9]{64}$/.test(value) &&
+    value.toLowerCase() !== `0x${"0".repeat(64)}`
+  );
 }
 
 function uniqueTransactionHashes(...groups: Array<readonly string[] | undefined>): string[] {
@@ -3342,12 +3367,15 @@ export class ClawzControlPlane {
     requestId: string;
     requestKind: HireIngressRequestKind;
   }): HireRequestReceipt["protocolReturn"] | undefined {
+    const reject = (message: string, code = "return_schema_rejected"): never => {
+      throw new HireReturnValidationError(message, code);
+    };
     const trimmedResponseText = input.responseText.trim();
     if (trimmedResponseText.length === 0) {
       return undefined;
     }
     if (Buffer.byteLength(input.responseText, "utf8") > HIRE_INGRESS_RETURN_MAX_BYTES) {
-      throw new Error("Public hire ingress returned a protocol response that is too large.");
+      reject("Public hire ingress returned a protocol response that is too large.", "return_too_large");
     }
     if (!trimmedResponseText.startsWith("{")) {
       return undefined;
@@ -3357,53 +3385,55 @@ export class ClawzControlPlane {
     try {
       parsed = JSON.parse(trimmedResponseText);
     } catch {
-      throw new Error("Public hire ingress returned invalid JSON.");
+      reject("Public hire ingress returned invalid JSON.", "return_parse_failed");
     }
     if (!isRecord(parsed) || parsed.schema_version === undefined) {
       return undefined;
     }
     if (parsed.schema_version !== HIRE_RETURN_SCHEMA_VERSION) {
-      throw new Error("Public hire ingress returned an unsupported SantaClawz return schema.");
+      reject("Public hire ingress returned an unsupported SantaClawz return schema.");
     }
 
     const returnedRequestId = assertStringValue(parsed, "request_id", "SantaClawz return package");
     if (returnedRequestId !== input.requestId) {
-      throw new Error("Public hire ingress returned a SantaClawz package for the wrong request_id.");
+      reject("Public hire ingress returned a SantaClawz package for the wrong request_id.");
     }
     if (parsed.agent_private !== true) {
-      throw new Error("SantaClawz return package must set agent_private=true.");
+      reject("SantaClawz return package must set agent_private=true.");
     }
 
-    const status = assertStringValue(parsed, "status", "SantaClawz return package");
-    if (status !== "quoted" && status !== "completed" && status !== "failed") {
-      throw new Error("SantaClawz return package has an unsupported status.");
+    const rawStatus = assertStringValue(parsed, "status", "SantaClawz return package");
+    if (rawStatus !== "quoted" && rawStatus !== "completed" && rawStatus !== "failed") {
+      reject("SantaClawz return package has an unsupported status.");
     }
+    const status = rawStatus as "quoted" | "completed" | "failed";
     if (input.requestKind === "quote_intake" && status === "completed") {
-      throw new Error("Quote intake cannot return completed paid execution.");
+      reject("Quote intake cannot return completed paid execution.");
     }
     if (input.requestKind === "paid_execution" && status === "quoted") {
-      throw new Error("Paid execution cannot return quote-only status.");
+      reject("Paid execution cannot return quote-only status.");
     }
     if (input.requestKind === "free_test" && status === "quoted") {
-      throw new Error("Free-test execution cannot return quote-only status.");
+      reject("Free-test execution cannot return quote-only status.");
     }
 
     const digestSha256 = sha256Hex(input.responseText);
     if (status === "quoted") {
       const quote = parsed.quote;
       if (!isRecord(quote)) {
-        throw new Error("Quoted SantaClawz return package must include quote.");
+        reject("Quoted SantaClawz return package must include quote.");
       }
-      const amountUsd = assertStringValue(quote, "amount_usd", "SantaClawz quote");
+      const quoteRecord = quote as Record<string, unknown>;
+      const amountUsd = assertStringValue(quoteRecord, "amount_usd", "SantaClawz quote");
       assertUsdAmount(amountUsd, "SantaClawz quote amount_usd");
-      if (quote.currency !== "USDC") {
-        throw new Error("SantaClawz quote currency must be USDC.");
+      if (quoteRecord.currency !== "USDC") {
+        reject("SantaClawz quote currency must be USDC.");
       }
-      const expiresAtIso = assertStringValue(quote, "expires_at_iso", "SantaClawz quote");
+      const expiresAtIso = assertStringValue(quoteRecord, "expires_at_iso", "SantaClawz quote");
       if (Number.isNaN(Date.parse(expiresAtIso))) {
-        throw new Error("SantaClawz quote expires_at_iso must be an ISO date-time.");
+        reject("SantaClawz quote expires_at_iso must be an ISO date-time.");
       }
-      const summary = assertStringValue(quote, "summary", "SantaClawz quote");
+      const summary = assertStringValue(quoteRecord, "summary", "SantaClawz quote");
       return {
         schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
         status,
@@ -3420,43 +3450,49 @@ export class ClawzControlPlane {
     if (status === "completed") {
       const verifiedOutput = parsed.verified_output;
       if (!isRecord(verifiedOutput)) {
-        throw new Error("Completed SantaClawz return package must include verified_output.");
+        reject("Completed SantaClawz return package must include verified_output.");
       }
-      const packageHash = assertStringValue(verifiedOutput, "package_hash", "SantaClawz verified_output");
+      const verifiedOutputRecord = verifiedOutput as Record<string, unknown>;
+      const packageHash = assertStringValue(verifiedOutputRecord, "package_hash", "SantaClawz verified_output");
       assertSha256Hex(packageHash, "SantaClawz verified_output package_hash");
-      if (verifiedOutput.hash_algorithm !== "sha256") {
-        throw new Error("SantaClawz verified_output hash_algorithm must be sha256.");
+      if (verifiedOutputRecord.hash_algorithm !== "sha256") {
+        reject("SantaClawz verified_output hash_algorithm must be sha256.");
       }
-      const verificationManifest = verifiedOutput.verification_manifest;
+      const verificationManifest = verifiedOutputRecord.verification_manifest;
       if (!isRecord(verificationManifest)) {
-        throw new Error("SantaClawz verified_output must include verification_manifest.");
+        reject("SantaClawz verified_output must include verification_manifest.");
       }
+      const verificationManifestRecord = verificationManifest as Record<string, unknown>;
       assertSha256Hex(
-        assertStringValue(verificationManifest, "input_digest_sha256", "SantaClawz verification_manifest"),
+        assertStringValue(verificationManifestRecord, "input_digest_sha256", "SantaClawz verification_manifest"),
         "SantaClawz verification_manifest input_digest_sha256"
       );
-      if (!Array.isArray(verificationManifest.checks_performed)) {
-        throw new Error("SantaClawz verification_manifest checks_performed must be an array.");
+      if (!Array.isArray(verificationManifestRecord.checks_performed)) {
+        reject("SantaClawz verification_manifest checks_performed must be an array.");
       }
-      if (!Array.isArray(verificationManifest.files_produced)) {
-        throw new Error("SantaClawz verification_manifest files_produced must be an array.");
+      if (!Array.isArray(verificationManifestRecord.files_produced)) {
+        reject("SantaClawz verification_manifest files_produced must be an array.");
       }
-      if (!Array.isArray(verificationManifest.blocked_suspicious_instructions)) {
-        throw new Error("SantaClawz verification_manifest blocked_suspicious_instructions must be an array.");
+      if (!Array.isArray(verificationManifestRecord.blocked_suspicious_instructions)) {
+        reject("SantaClawz verification_manifest blocked_suspicious_instructions must be an array.");
       }
-      if (!Array.isArray(verifiedOutput.deliverables)) {
-        throw new Error("SantaClawz verified_output deliverables must be an array.");
+      if (!Array.isArray(verifiedOutputRecord.deliverables)) {
+        reject("SantaClawz verified_output deliverables must be an array.");
       }
-      const checksPerformedCount = verificationManifest.checks_performed.length;
-      const filesProducedCount = verificationManifest.files_produced.length;
-      const deliverableCount = verifiedOutput.deliverables.length;
-      for (const [index, deliverable] of verifiedOutput.deliverables.entries()) {
+      const checksPerformed = verificationManifestRecord.checks_performed as unknown[];
+      const filesProduced = verificationManifestRecord.files_produced as unknown[];
+      const deliverables = verifiedOutputRecord.deliverables as unknown[];
+      const checksPerformedCount = checksPerformed.length;
+      const filesProducedCount = filesProduced.length;
+      const deliverableCount = deliverables.length;
+      for (const [index, deliverable] of deliverables.entries()) {
         if (!isRecord(deliverable)) {
-          throw new Error(`SantaClawz verified_output deliverable ${index} must be an object.`);
+          reject(`SantaClawz verified_output deliverable ${index} must be an object.`);
         }
-        assertStringValue(deliverable, "name", `SantaClawz verified_output deliverable ${index}`);
+        const deliverableRecord = deliverable as Record<string, unknown>;
+        assertStringValue(deliverableRecord, "name", `SantaClawz verified_output deliverable ${index}`);
         assertSha256Hex(
-          assertStringValue(deliverable, "sha256", `SantaClawz verified_output deliverable ${index}`),
+          assertStringValue(deliverableRecord, "sha256", `SantaClawz verified_output deliverable ${index}`),
           `SantaClawz verified_output deliverable ${index} sha256`
         );
       }
@@ -3470,9 +3506,9 @@ export class ClawzControlPlane {
       const marketplaceCompletionCredit =
         typeof parsed.marketplace_completion_credit === "boolean" ? parsed.marketplace_completion_credit : undefined;
       const manifestMode =
-        typeof verificationManifest.mode === "string" ? verificationManifest.mode.trim().toLowerCase() : "";
+        typeof verificationManifestRecord.mode === "string" ? verificationManifestRecord.mode.trim().toLowerCase() : "";
       const zekoAttestationIncluded =
-        isRecord(verifiedOutput.zeko_attestation) || isRecord(parsed.zeko_attestation_payload);
+        isRecord(verifiedOutputRecord.zeko_attestation) || isRecord(parsed.zeko_attestation_payload);
       const completionClassification: HireCompletionClassification =
         executionMode === "demo-complete" ||
         manifestMode === "demo" ||
@@ -3493,7 +3529,7 @@ export class ClawzControlPlane {
           deliverableCount,
           filesProducedCount,
           checksPerformedCount,
-          verificationManifestDigestSha256: canonicalDigest(verificationManifest).sha256Hex,
+          verificationManifestDigestSha256: canonicalDigest(verificationManifestRecord).sha256Hex,
           zekoAttestationIncluded
         },
         execution: {
@@ -3596,11 +3632,34 @@ export class ClawzControlPlane {
       );
     }
     const responseText = await response.text().catch(() => "");
-    const protocolReturn = this.parseHireIngressProtocolReturn({
-      responseText,
-      requestId: input.requestId,
-      requestKind: signedRequest.requestKind
-    });
+    const responseBytes = Buffer.byteLength(responseText, "utf8");
+    let protocolReturn: HireRequestReceipt["protocolReturn"] | undefined;
+    try {
+      protocolReturn = this.parseHireIngressProtocolReturn({
+        responseText,
+        requestId: input.requestId,
+        requestKind: signedRequest.requestKind
+      });
+    } catch (error) {
+      const validationError = error instanceof Error ? error.message : "Public hire ingress returned an invalid response.";
+      if (signedRequest.requestKind !== "paid_execution") {
+        throw error;
+      }
+      return {
+        requestAccepted: true as const,
+        deliveryFailed: true as const,
+        deliveryError:
+          `Agent runtime responded with HTTP ${response.status} (${responseBytes} bytes), but SantaClawz rejected the return: ${validationError}`,
+        deliveryStatus: "return_rejected" as const,
+        requestKind: signedRequest.requestKind,
+        ingressUrl: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
+        bodyDigestSha256: signedRequest.bodyDigestSha256,
+        responseStatusCode: response.status,
+        responseBytes,
+        returnValidationError: validationError,
+        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected"
+      };
+    }
 
     return {
       deliveryStatus: "forwarded" as const,
@@ -3608,6 +3667,7 @@ export class ClawzControlPlane {
       ingressUrl: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
       bodyDigestSha256: signedRequest.bodyDigestSha256,
       responseStatusCode: response.status,
+      responseBytes,
       ...(protocolReturn ? { protocolReturn } : {})
     };
   }
@@ -4022,6 +4082,14 @@ export class ClawzControlPlane {
 
   async listPaymentLedger(options: PaymentLedgerListOptions = {}): Promise<PaymentLedgerState> {
     return this.buildPaymentLedgerState(await this.loadPaymentLedgerFile(), options);
+  }
+
+  async getPaymentLedgerEntry(ledgerId: string): Promise<PaymentLedgerEntry | undefined> {
+    const trimmed = ledgerId.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return (await this.loadPaymentLedgerFile()).entries.find((entry) => entry.ledgerId === trimmed);
   }
 
   async recordPaymentLedgerSettlement(input: PaymentLedgerSettlementInput): Promise<PaymentLedgerEntry> {
@@ -7363,11 +7431,24 @@ export class ClawzControlPlane {
     const ingressProtocolReturn = "protocolReturn" in ingressDelivery ? ingressDelivery.protocolReturn : undefined;
     const ingressResponseStatusCode =
       "responseStatusCode" in ingressDelivery ? ingressDelivery.responseStatusCode : undefined;
+    const ingressResponseBytes =
+      "responseBytes" in ingressDelivery && typeof ingressDelivery.responseBytes === "number"
+        ? ingressDelivery.responseBytes
+        : undefined;
+    const returnValidationError =
+      "returnValidationError" in ingressDelivery && typeof ingressDelivery.returnValidationError === "string"
+        ? ingressDelivery.returnValidationError
+        : undefined;
+    const returnValidationCode =
+      "returnValidationCode" in ingressDelivery && typeof ingressDelivery.returnValidationCode === "string"
+        ? ingressDelivery.returnValidationCode
+        : undefined;
     const deliveryError =
       "deliveryError" in ingressDelivery && typeof ingressDelivery.deliveryError === "string"
         ? ingressDelivery.deliveryError
         : undefined;
     const deliveryFailed = "deliveryFailed" in ingressDelivery && ingressDelivery.deliveryFailed === true;
+    const returnRejected = ingressDelivery.deliveryStatus === "return_rejected";
     const requestType = ingressDelivery.requestKind;
     const paymentStatus = paymentStatusForHireRequest({
       requestType,
@@ -7392,12 +7473,13 @@ export class ClawzControlPlane {
       );
     }
     const settledAmountUsd = requestType === "paid_execution" ? paymentAuthorization.amountUsd : undefined;
-    const hireStatus: HireRequestReceipt["status"] = ingressProtocolReturn?.status ?? "submitted";
+    const hireStatus: HireRequestReceipt["status"] = returnRejected ? "failed" : ingressProtocolReturn?.status ?? "submitted";
     const operationalStatus = buildHireOperationalStatus({
       requestType,
       paymentStatus,
       ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
       deliveryFailed,
+      returnRejected,
       hireStatus
     });
     const nextRecord: HireRequestRecord = {
@@ -7419,6 +7501,10 @@ export class ClawzControlPlane {
       deliveryTarget: publicDeliveryTarget,
       ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
       ...(deliveryError ? { deliveryError } : {}),
+      ...(returnValidationError ? { returnValidationError } : {}),
+      ...(returnValidationCode ? { returnValidationCode } : {}),
+      ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
+      ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
       ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
@@ -7434,7 +7520,9 @@ export class ClawzControlPlane {
         ledgerId: paymentAuthorization.ledgerId,
         hireRequestId: requestId,
         executionStatus:
-          ingressProtocolReturn?.status === "completed"
+          returnRejected
+            ? "failed"
+            : ingressProtocolReturn?.status === "completed"
             ? "completed"
             : ingressProtocolReturn?.status === "failed" || deliveryFailed
               ? "failed"
@@ -7442,12 +7530,19 @@ export class ClawzControlPlane {
                 ? "forwarded"
                 : "submitted",
         returnStatus:
-          ingressProtocolReturn?.status === "completed"
+          returnRejected
+            ? "rejected"
+            : ingressProtocolReturn?.status === "completed"
             ? "accepted"
             : ingressProtocolReturn?.status === "failed"
               ? "rejected"
               : "none",
-        ...(deliveryError ? { errorCode: "relay_delivery_failed", errorMessage: deliveryError } : {})
+        ...(deliveryError
+          ? {
+              errorCode: returnValidationCode ?? "relay_delivery_failed",
+              errorMessage: deliveryError
+            }
+          : {})
       });
     }
     await this.enqueueSocialAnchorCandidate({
@@ -7555,6 +7650,10 @@ export class ClawzControlPlane {
       deliveryTarget: publicDeliveryTarget,
       ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
       ...(deliveryError ? { deliveryError } : {}),
+      ...(returnValidationError ? { returnValidationError } : {}),
+      ...(returnValidationCode ? { returnValidationCode } : {}),
+      ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
+      ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
       ingress: {
         url: publicDeliveryTarget,
@@ -7562,6 +7661,9 @@ export class ClawzControlPlane {
         timestamp: submittedAtIso,
         bodyDigestSha256: ingressDelivery.bodyDigestSha256,
         ...(typeof ingressResponseStatusCode === "number" ? { responseStatusCode: ingressResponseStatusCode } : {}),
+        ...(typeof ingressResponseBytes === "number" ? { responseBytes: ingressResponseBytes } : {}),
+        ...(returnValidationError ? { returnValidationError } : {}),
+        ...(returnValidationCode ? { returnValidationCode } : {}),
         signatureHeader: "X-SantaClawz-Signature"
       },
       ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),

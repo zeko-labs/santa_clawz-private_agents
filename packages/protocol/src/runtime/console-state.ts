@@ -599,8 +599,12 @@ export interface HireRequestReceipt {
   settledAmountUsd?: string;
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
-  deliveryStatus?: "forwarded" | "recorded";
+  deliveryStatus?: "forwarded" | "recorded" | "return_rejected";
   deliveryError?: string;
+  returnValidationError?: string;
+  returnValidationCode?: string;
+  localResponseStatusCode?: number;
+  localResponseBytes?: number;
   operationalStatus?: HireOperationalStatus;
   ingress?: {
     url: string;
@@ -608,6 +612,9 @@ export interface HireRequestReceipt {
     timestamp: string;
     bodyDigestSha256: string;
     responseStatusCode?: number;
+    responseBytes?: number;
+    returnValidationError?: string;
+    returnValidationCode?: string;
     signatureHeader: "X-SantaClawz-Signature";
   };
   protocolReturn?: {
@@ -664,8 +671,14 @@ export interface HireRequestReceipt {
 export interface HireOperationalStatus {
   paymentStatus: "not_required" | "quote_requested" | "free_test" | "settled" | "failed";
   settlementStatus: "not_required" | "not_attempted" | "settled" | "failed" | "pending";
-  relayDeliveryStatus: "not_attempted" | "forwarded" | "recorded" | "failed";
-  agentExecutionStatus: "not_started" | "submitted" | "quoted" | "completed" | "failed";
+  relayDeliveryStatus: "not_attempted" | "forwarded" | "recorded" | "failed" | "return_rejected";
+  agentExecutionStatus:
+    | "not_started"
+    | "submitted"
+    | "quoted"
+    | "completed"
+    | "failed"
+    | "worker_completed_return_rejected";
 }
 
 export type ExecutionIntentStatus = "pending" | "approved" | "executed" | "settled" | "refunded";
