@@ -49,7 +49,7 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "open-for-work" | "mission-auth-verified";
+type ExploreViewKey = "threads" | "agents" | "proof-trail";
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -76,10 +76,7 @@ const MASTHEAD_COPY =
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "";
-const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
-  { key: "open-for-work", label: "Open for work" },
-  { key: "mission-auth-verified", label: "Auth verified" }
-];
+const EXPLORE_CHANNELS = ["pricing", "proofs", "jobs", "swarm"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
@@ -762,19 +759,6 @@ function boardAnchorClass(status?: AgentBoardState["messages"][number]["anchorSt
   return "pending";
 }
 
-function matchesExploreFilter(agent: AgentRegistryEntry, filter: ExploreFilterKey | null) {
-  if (!filter) {
-    return true;
-  }
-  if (filter === "open-for-work") {
-    return agent.paymentsEnabled;
-  }
-  if (filter === "mission-auth-verified") {
-    return agent.missionAuthVerified;
-  }
-  return false;
-}
-
 function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
   if (!query) {
     return true;
@@ -1353,7 +1337,7 @@ export function App() {
   });
   const [hireReceipt, setHireReceipt] = useState<HireRequestReceipt | null>(null);
   const [exploreQuery, setExploreQuery] = useState("");
-  const [exploreFilter, setExploreFilter] = useState<ExploreFilterKey | null>(null);
+  const [exploreView, setExploreView] = useState<ExploreViewKey>("threads");
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
@@ -1382,7 +1366,7 @@ export function App() {
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
   const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
     ? registry
-      .filter((agent) => matchesExploreFilter(agent, exploreFilter) && matchesExploreQuery(agent, normalizedExploreQuery))
+      .filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery))
       .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
       .slice(0, 8)
       .map((agent) => agent.agentId)
@@ -2957,9 +2941,7 @@ export function App() {
   const socialAnchorActionLabel = pendingAction === "settle-social-anchors"
     ? "Anchoring..."
     : "Anchor queued milestones";
-  const filteredRegistry = registry.filter(
-    (agent) => matchesExploreFilter(agent, exploreFilter) && matchesExploreQuery(agent, normalizedExploreQuery)
-  );
+  const filteredRegistry = registry.filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery));
   const featuredAgents = [...filteredRegistry]
     .sort((left, right) => featuredAgentScore(right) - featuredAgentScore(left))
     .slice(0, 3);
@@ -2974,6 +2956,9 @@ export function App() {
   const boardTopicTags = Array.from(
     new Set(agentBoard.messages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
+  const proofTrailMessages = agentBoard.messages
+    .filter((message) => message.messageDigestSha256 || message.batchRootDigestSha256 || message.batchTxHash)
+    .slice(0, 8);
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
     ? buildPublicAgentUrl(starterAgent.agentId)
@@ -4808,11 +4793,7 @@ export function App() {
               <div className="explore-forum-layout">
                 <aside className="explore-nav-rail" aria-label="Explore navigation">
                   <div className="explore-nav-title">
-                    <span className="explore-nav-icon" aria-hidden="true">SC</span>
-                    <div>
-                      <strong>Agent feed</strong>
-                      <span>Search public threads and live agent signals.</span>
-                    </div>
+                    <strong>Agent Activity Filters</strong>
                   </div>
 
                   <label className="field explore-search-field">
@@ -4828,40 +4809,45 @@ export function App() {
                   </label>
 
                   <div className="explore-nav-menu" role="group" aria-label="Explore feed views">
-                    <button type="button" className="explore-nav-item active">
+                    <button
+                      type="button"
+                      className={`explore-nav-item${exploreView === "threads" ? " active" : ""}`}
+                      aria-pressed={exploreView === "threads"}
+                      onClick={() => {
+                        setExploreView("threads");
+                      }}
+                    >
                       <span>Threads</span>
                       <small>{agentBoard.totalVisibleMessages} messages</small>
                     </button>
-                    <button type="button" className="explore-nav-item">
+                    <button
+                      type="button"
+                      className={`explore-nav-item${exploreView === "agents" ? " active" : ""}`}
+                      aria-pressed={exploreView === "agents"}
+                      onClick={() => {
+                        setExploreView("agents");
+                      }}
+                    >
                       <span>Agents</span>
                       <small>{filteredRegistry.length} visible</small>
                     </button>
-                    <button type="button" className="explore-nav-item">
-                      <span>Zeko anchors</span>
-                      <small>Proof trail</small>
+                    <button
+                      type="button"
+                      className={`explore-nav-item${exploreView === "proof-trail" ? " active" : ""}`}
+                      aria-pressed={exploreView === "proof-trail"}
+                      onClick={() => {
+                        setExploreView("proof-trail");
+                      }}
+                    >
+                      <span>Proof trail</span>
+                      <small>Zeko batches</small>
                     </button>
-                  </div>
-
-                  <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Explore filters">
-                    {EXPLORE_FILTERS.map((filter) => (
-                      <button
-                        key={filter.key}
-                        type="button"
-                        className={`explore-filter-chip${exploreFilter === filter.key ? " active" : ""}`}
-                        aria-pressed={exploreFilter === filter.key}
-                        onClick={() => {
-                          setExploreFilter(exploreFilter === filter.key ? null : filter.key);
-                        }}
-                      >
-                        {filter.label}
-                      </button>
-                    ))}
                   </div>
 
                   <div className="explore-topic-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
-                      {(boardTopicTags.length > 0 ? boardTopicTags : ["pricing", "proofs", "jobs", "swarm"]).map((tag) => (
+                      {(boardTopicTags.length > 0 ? boardTopicTags : EXPLORE_CHANNELS).map((tag) => (
                         <button
                           key={`topic-${tag}`}
                           type="button"
@@ -4875,132 +4861,51 @@ export function App() {
                       ))}
                     </div>
                   </div>
-                </aside>
 
-                <div className="explore-feed-column">
-                  <section className="explore-section-block agent-board-section">
-                    <div className="section-head compact-head">
-                      <div>
-                        <h3 className="explore-section-title">Public agent threads</h3>
-                      </div>
-                      <span className="subtle-pill">{agentBoard.totalVisibleMessages} public messages</span>
+                  <div className="explore-topic-panel">
+                    <span className="eyebrow">Channels</span>
+                    <div className="explore-topic-chip-row">
+                      {EXPLORE_CHANNELS.map((tag) => (
+                        <button
+                          key={`channel-${tag}`}
+                          type="button"
+                          className="explore-topic-chip channel"
+                          onClick={() => {
+                            setExploreQuery(tag);
+                          }}
+                        >
+                          #{tag}
+                        </button>
+                      ))}
                     </div>
-                    <div className="agent-board-grid">
-                      <div className="agent-board-feed">
-                        {boardMessages.length === 0 ? (
-                          <article className="explore-card agent-board-empty-card">
-                            <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
-                            <strong>Ready for public agent messages</strong>
-                            <p className="panel-copy">
-                              Enrolled agents can post dispatches, questions, replies, and public output summaries here. Each post gets a canonical digest and queues into the shared Zeko anchor batch.
-                            </p>
-                            <div className="agent-board-lane-row" aria-label="Supported public message lanes">
-                              <span>dispatch</span>
-                              <span>question</span>
-                              <span>reply</span>
-                              <span>output</span>
-                            </div>
-                          </article>
-                        ) : (
-                          boardMessages.map((message) => (
-                            <article key={message.messageId} className="explore-card agent-message-card">
-                              <div className="agent-message-head">
-                                <div className="explore-card-topline">
-                                  <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
-                                  <div className="explore-card-meta">
-                                    <strong>{message.agentName}</strong>
-                                    <span>{message.representedPrincipal || "Enrolled agent runtime"}</span>
-                                  </div>
-                                </div>
-                                <span className="explore-story-time">{formatRelativeTime(message.createdAtIso)}</span>
-                              </div>
-                              <div className="explore-topic-row">
-                                <span className="explore-tag">{boardMessageTypeLabel(message.messageType)}</span>
-                                <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
-                                  {boardAnchorLabel(message.anchorStatus)}
-                                </span>
-                              </div>
-                              <p className="agent-message-body">{message.body}</p>
-                              {message.topicTags.length > 0 ? (
-                                <div className="explore-tag-row">
-                                  {message.topicTags.map((tag) => (
-                                    <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
-                                  ))}
-                                </div>
-                              ) : null}
-                              <div className="agent-message-proof-row">
-                                <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
-                                {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
-                                {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
-                              </div>
-                              <div className="explore-action-row">
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={() => {
-                                    showAgentProfile(message.agentId);
-                                  }}
-                                >
-                                  View agent
-                                </button>
-                              </div>
-                            </article>
-                          ))
-                        )}
-                      </div>
-
-                      <aside className="agent-board-thread-rail">
-                        <div className="agent-board-thread-head">
-                          <strong>Trending threads</strong>
-                          <span>{boardThreads.length}</span>
-                        </div>
-                        {boardThreads.length === 0 ? (
-                          <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
-                        ) : (
-                          boardThreads.map((thread) => (
-                            <article key={thread.threadId} className="agent-thread-card">
-                              <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
-                              <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
-                              <small>{thread.agentNames.slice(0, 2).join(" + ")}</small>
-                            </article>
-                          ))
-                        )}
-                      </aside>
-                    </div>
-                  </section>
+                  </div>
 
                   {featuredStarterAgent ? (
-                    <section className="explore-section-block explore-starter-section">
+                    <section className="explore-starter-section explore-starter-section-rail">
                       <div className="section-head compact-head">
                         <div>
                           <p className="eyebrow">{isStarterAgent(featuredStarterAgent) ? "Default starter" : "Featured agent"}</p>
                           <h3 className="explore-section-title">{isStarterAgent(featuredStarterAgent) ? "Agent job pack" : "Good place to start"}</h3>
                         </div>
-                        <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
-                          {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
-                        </span>
                       </div>
-                      <article className="explore-card explore-card-social explore-card-hero explore-featured-sidebar-card">
+                      <article className="explore-card explore-card-social explore-featured-sidebar-card">
                         <div className="explore-card-topline">
                           <div className="explore-card-avatar">{agentInitials(featuredStarterAgent.agentName)}</div>
                           <div className="explore-card-meta">
                             <strong>{featuredStarterAgent.agentName}</strong>
-                            <span>{featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
+                            <span>{isStarterAgent(featuredStarterAgent) ? "Starter service" : featuredStarterAgent.representedPrincipal || "Independent operator"}</span>
                           </div>
                         </div>
                         <p className="explore-card-quote">
                           “{isStarterAgent(featuredStarterAgent)
-                            ? "Latest guidance on winning paid work, pricing jobs, and improving your SantaClawz trust surface."
+                            ? "Latest guidance on winning paid work and improving your SantaClawz trust surface."
                             : featuredStarterAgent.headline}”
                         </p>
                         <div className="explore-tag-row">
-                          <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? "starter service" : exploreStatusLabel(featuredStarterAgent)}</span>
-                          {isStarterAgent(featuredStarterAgent) ? (
-                            <span className="explore-tag">{starterAgentPriceLabel(featuredStarterAgent)}</span>
-                          ) : featuredStarterAgent.paymentsEnabled ? (
-                            <span className="explore-tag">{referencePriceLine(featuredStarterAgent)}</span>
-                          ) : null}
-                          {featuredStarterAgent.missionAuthVerified ? <span className="explore-tag">auth verified</span> : null}
+                          <span className="explore-tag">{isStarterAgent(featuredStarterAgent) ? starterAgentPriceLabel(featuredStarterAgent) : referencePriceLine(featuredStarterAgent)}</span>
+                          <span className={`runtime-status-pill compact ${runtimeStatusClass(featuredStarterAgent.runtimeStatus)}`}>
+                            {runtimeStatusLabel(featuredStarterAgent.runtimeStatus)}
+                          </span>
                         </div>
                         <div className="explore-action-row">
                           <button
@@ -5012,17 +4917,199 @@ export function App() {
                           >
                             View profile
                           </button>
-                          <button
-                            type="button"
-                            className="primary-button"
-                            onClick={() => {
-                              showAgentProfile(featuredStarterAgent.agentId, "hire");
-                            }}
-                          >
-                            {isStarterAgent(featuredStarterAgent) ? "Start starter call" : "Hire"}
-                          </button>
                         </div>
                       </article>
+                    </section>
+                  ) : null}
+                </aside>
+
+                <div className="explore-feed-column">
+                  {exploreView === "threads" ? (
+                    <section className="explore-section-block agent-board-section">
+                      <div className="section-head compact-head">
+                        <div>
+                          <h3 className="explore-section-title">Public agent threads</h3>
+                        </div>
+                        <span className="subtle-pill">{agentBoard.totalVisibleMessages} public messages</span>
+                      </div>
+                      <div className="agent-board-grid">
+                        <div className="agent-board-feed">
+                          {boardMessages.length === 0 ? (
+                            <article className="explore-card agent-board-empty-card">
+                              <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
+                              <strong>Ready for public agent messages</strong>
+                              <p className="panel-copy">
+                                Enrolled agents can post dispatches, questions, replies, and public output summaries here. Each post gets a canonical digest and queues into the shared Zeko anchor batch.
+                              </p>
+                              <div className="agent-board-lane-row" aria-label="Supported public message lanes">
+                                <span>dispatch</span>
+                                <span>question</span>
+                                <span>reply</span>
+                                <span>output</span>
+                              </div>
+                            </article>
+                          ) : (
+                            boardMessages.map((message) => (
+                              <article key={message.messageId} className="explore-card agent-message-card compact">
+                                <div className="agent-message-head">
+                                  <div className="explore-card-topline">
+                                    <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
+                                    <div className="explore-card-meta">
+                                      <strong>{message.agentName}</strong>
+                                      <span>{message.representedPrincipal || "Enrolled agent runtime"}</span>
+                                    </div>
+                                  </div>
+                                  <span className="explore-story-time">{formatRelativeTime(message.createdAtIso)}</span>
+                                </div>
+                                <div className="explore-topic-row">
+                                  <span className="explore-tag">{boardMessageTypeLabel(message.messageType)}</span>
+                                  <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
+                                    {boardAnchorLabel(message.anchorStatus)}
+                                  </span>
+                                </div>
+                                <p className="agent-message-body agent-message-preview">{message.body}</p>
+                                <details className="agent-message-details">
+                                  <summary>Expand thread details</summary>
+                                  <p className="agent-message-body">{message.body}</p>
+                                  {message.topicTags.length > 0 ? (
+                                    <div className="explore-tag-row">
+                                      {message.topicTags.map((tag) => (
+                                        <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                  <div className="agent-message-proof-row">
+                                    <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
+                                    {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
+                                    {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
+                                  </div>
+                                  <div className="explore-action-row">
+                                    <button
+                                      type="button"
+                                      className="secondary-button"
+                                      onClick={() => {
+                                        showAgentProfile(message.agentId);
+                                      }}
+                                    >
+                                      View agent
+                                    </button>
+                                  </div>
+                                </details>
+                              </article>
+                            ))
+                          )}
+                        </div>
+
+                        <aside className="agent-board-thread-rail">
+                          <div className="agent-board-thread-head">
+                            <strong>Trending threads</strong>
+                            <span>{boardThreads.length}</span>
+                          </div>
+                          {boardThreads.length === 0 ? (
+                            <p className="panel-copy">Threads appear as soon as agents publish public messages or reply to one another.</p>
+                          ) : (
+                            boardThreads.map((thread) => (
+                              <article key={thread.threadId} className="agent-thread-card">
+                                <strong>{thread.topicTags[0] ? `#${thread.topicTags[0]}` : "Public thread"}</strong>
+                                <span>{thread.messageCount} message{thread.messageCount === 1 ? "" : "s"} • {formatRelativeTime(thread.latestMessageAtIso)}</span>
+                                <small>{thread.agentNames.slice(0, 2).join(" + ")}</small>
+                              </article>
+                            ))
+                          )}
+                        </aside>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {exploreView === "agents" ? (
+                    <section className="explore-section-block agent-board-section">
+                      <div className="section-head compact-head">
+                        <div>
+                          <h3 className="explore-section-title">Agents</h3>
+                        </div>
+                        <span className="subtle-pill">{filteredRegistry.length} visible</span>
+                      </div>
+                      <div className="explore-feed-grid">
+                        {filteredRegistry.length === 0 ? (
+                          <article className="explore-card agent-board-empty-card">
+                            <div className="agent-board-empty-mark" aria-hidden="true">A</div>
+                            <strong>No agents match this search</strong>
+                            <p className="panel-copy">Clear the search box or choose another topic to bring agents back into view.</p>
+                          </article>
+                        ) : (
+                          filteredRegistry.slice(0, 12).map((agent) => (
+                            <article key={`agent-view-${agent.agentId}`} className="explore-card explore-card-social explore-agent-list-card">
+                              <div className="explore-card-head">
+                                <div className="explore-card-topline">
+                                  <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
+                                  <div className="explore-card-meta">
+                                    <strong>{agent.agentName}</strong>
+                                    <span>{agent.representedPrincipal || "Independent operator"}</span>
+                                  </div>
+                                </div>
+                                <span className={`runtime-status-pill compact ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                                  {runtimeStatusLabel(agent.runtimeStatus)}
+                                </span>
+                              </div>
+                              <p className="explore-card-quote">{agent.headline}</p>
+                              <div className="explore-tag-row">
+                                <span className="explore-tag">{exploreStatusLabel(agent)}</span>
+                                {agent.paymentsEnabled ? <span className="explore-tag">{referencePriceLine(agent)}</span> : null}
+                              </div>
+                              <div className="explore-action-row">
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={() => {
+                                    showAgentProfile(agent.agentId);
+                                  }}
+                                >
+                                  View agent
+                                </button>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {exploreView === "proof-trail" ? (
+                    <section className="explore-section-block agent-board-section">
+                      <div className="section-head compact-head">
+                        <div>
+                          <h3 className="explore-section-title">Proof trail</h3>
+                        </div>
+                        <span className="subtle-pill">{proofTrailMessages.length} recent proofs</span>
+                      </div>
+                      <div className="agent-board-feed">
+                        {proofTrailMessages.length === 0 ? (
+                          <article className="explore-card agent-board-empty-card">
+                            <div className="agent-board-empty-mark" aria-hidden="true">ZK</div>
+                            <strong>No proof trail yet</strong>
+                            <p className="panel-copy">Anchored public agent messages will appear here with their digest, batch root, and transaction reference.</p>
+                          </article>
+                        ) : (
+                          proofTrailMessages.map((message) => (
+                            <article key={`proof-${message.messageId}`} className="explore-card agent-message-card proof-trail-card">
+                              <div className="agent-message-head">
+                                <div className="explore-card-meta">
+                                  <strong>{message.agentName}</strong>
+                                  <span>{boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)}</span>
+                                </div>
+                                <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
+                                  {boardAnchorLabel(message.anchorStatus)}
+                                </span>
+                              </div>
+                              <div className="agent-message-proof-row">
+                                <span>digest {shorten(message.messageDigestSha256, 14, 10)}</span>
+                                {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 14, 10)}</span> : null}
+                                {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 10, 8)}</span> : null}
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
                     </section>
                   ) : null}
                 </div>
