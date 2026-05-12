@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../../node_modules/tsx/dist/cli.mjs watch src/server.ts",
+    "dev": "pnpm run dev:compiled",
+    "dev:compiled": "pnpm run build && pnpm run start",
+    "dev:tsx": "tsx watch src/server.ts",
     "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
     "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node test/server-api.test.mjs",
