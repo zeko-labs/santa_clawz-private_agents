@@ -20,6 +20,8 @@ const BOOLEAN_FLAGS = new Set(["help", "serve", "json", "no-heartbeat"]);
 
 function printUsage() {
   console.error(`Usage:
+  pnpm agent:serve -- --env-file .env.santaclawz --serve
+
   pnpm relay:agent -- \\
     --env-file .env.santaclawz \\
     [--serve] \\
@@ -34,7 +36,8 @@ function printUsage() {
 Notes:
   Use this after one-time enrollment. It reads the private .env.santaclawz file,
   reconnects the SantaClawz outbound relay, and keeps heartbeat status live.
-  --serve starts the bundled local public-hire ingress starter.
+  --serve starts the bundled local public-hire ingress starter, which validates
+  quote-paid execution and canonical santaclawz-return/1.0 packages locally.
   --local-hire-url points relay traffic at an already running local /hire endpoint.
 `);
 }

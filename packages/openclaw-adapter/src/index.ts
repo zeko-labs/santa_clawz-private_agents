@@ -1,4 +1,10 @@
-import type { PrivacyProvingLocation } from "@clawz/protocol";
+import {
+  buildSantaClawzCompletedReturn,
+  normalizeSantaClawzCompletedReturn,
+  santaClawzReturnDigest,
+  type BuildSantaClawzCompletedReturnInput,
+  type PrivacyProvingLocation
+} from "@clawz/protocol";
 
 export interface OpenClawSessionReference {
   sessionId: string;
@@ -82,4 +88,19 @@ export function buildOpenClawInstallPlan(): OpenClawInstallPlan {
       "Choose the proving location: client, server, or sovereign-rollup."
     ]
   };
+}
+
+export function buildOpenClawSantaClawzCompletedReturn(input: BuildSantaClawzCompletedReturnInput) {
+  return buildSantaClawzCompletedReturn(input);
+}
+
+export function normalizeOpenClawSantaClawzCompletedReturn(
+  value: unknown,
+  fallback: { requestId: string; inputDigestSha256: string }
+) {
+  return normalizeSantaClawzCompletedReturn(value, fallback);
+}
+
+export function digestOpenClawSantaClawzReturn(value: unknown) {
+  return santaClawzReturnDigest(value);
 }

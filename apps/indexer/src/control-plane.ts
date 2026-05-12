@@ -574,6 +574,9 @@ interface HirePaymentAuthorization {
   rail?: string;
   amountUsd?: string;
   authorizationId?: string;
+  quoteRequestId?: string;
+  executionRequestId?: string;
+  acceptedQuoteDigestSha256?: string;
   settlementReference?: string;
   paymentPayloadDigestSha256?: string;
   paymentResponseDigestSha256?: string;
@@ -3144,6 +3147,16 @@ export class ClawzControlPlane {
       pricing_mode: input.profile.paymentProfile.pricingMode,
       payment_status: paymentStatus,
       ...(settledAmountUsd ? { settled_amount_usd: settledAmountUsd } : {}),
+      ...(requestType === "paid_execution" && input.paymentAuthorization.quoteRequestId
+        ? { quote_request_id: input.paymentAuthorization.quoteRequestId }
+        : {}),
+      ...(requestType === "paid_execution" && input.paymentAuthorization.authorizationId
+        ? { intent_id: input.paymentAuthorization.authorizationId }
+        : {}),
+      ...(requestType === "paid_execution" ? { execution_request_id: input.requestId } : {}),
+      ...(requestType === "paid_execution" && input.paymentAuthorization.acceptedQuoteDigestSha256
+        ? { accepted_quote_digest_sha256: input.paymentAuthorization.acceptedQuoteDigestSha256 }
+        : {}),
       paid_or_escrowed: requestType === "paid_execution" && input.paymentAuthorization.status !== "not-required",
       payment: {
         status: paymentStatus,
@@ -3155,6 +3168,13 @@ export class ClawzControlPlane {
           : {}),
         ...(requestType === "paid_execution" && input.paymentAuthorization.authorizationId
           ? { authorization_id: input.paymentAuthorization.authorizationId }
+          : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.quoteRequestId
+          ? { quote_request_id: input.paymentAuthorization.quoteRequestId }
+          : {}),
+        ...(requestType === "paid_execution" ? { execution_request_id: input.requestId } : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.acceptedQuoteDigestSha256
+          ? { accepted_quote_digest_sha256: input.paymentAuthorization.acceptedQuoteDigestSha256 }
           : {}),
         ...(requestType === "paid_execution" && input.paymentAuthorization.settlementReference
           ? { settlement_reference: input.paymentAuthorization.settlementReference }
@@ -7516,7 +7536,12 @@ export class ClawzControlPlane {
             : "not_attempted",
         relayDeliveryStatus: latestExecution?.operationalStatus?.relayDeliveryStatus ?? "not_attempted",
         agentExecutionStatus: latestExecution?.operationalStatus?.agentExecutionStatus ?? "not_started"
-      }
+      },
+      proofStatus: latestExecution?.protocolReturn?.verifiedOutput
+        ? latestExecution.protocolReturn.verifiedOutput.zekoAttestationIncluded
+          ? "anchored_or_attested"
+          : "return_validated"
+        : "not_started"
     };
   }
 

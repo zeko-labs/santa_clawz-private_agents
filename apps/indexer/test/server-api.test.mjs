@@ -258,7 +258,7 @@ async function startHireIngress(port) {
           }
         } else if (parsed.request_type === "paid_execution") {
           if (
-            parsed.pricing_mode !== "fixed-exact" ||
+            !["fixed-exact", "quote-required"].includes(parsed.pricing_mode) ||
             !["settled", "paid", "escrowed"].includes(parsed.payment_status) ||
             parsed.payment?.status !== parsed.payment_status ||
             parsed.payment?.amount_usd !== parsed.settled_amount_usd ||
@@ -266,6 +266,19 @@ async function startHireIngress(port) {
           ) {
             response.statusCode = 402;
             response.end(JSON.stringify({ error: "bad paid execution policy" }));
+            return;
+          }
+          if (
+            parsed.pricing_mode === "quote-required" &&
+            (!String(parsed.quote_request_id ?? "").startsWith("hire_") ||
+              !String(parsed.intent_id ?? "").startsWith("exec_") ||
+              parsed.execution_request_id !== parsed.request_id ||
+              parsed.payment?.quote_request_id !== parsed.quote_request_id ||
+              parsed.payment?.execution_request_id !== parsed.request_id ||
+              parsed.payment?.accepted_quote_digest_sha256 !== parsed.accepted_quote_digest_sha256)
+          ) {
+            response.statusCode = 400;
+            response.end(JSON.stringify({ error: "bad quote paid execution lineage" }));
             return;
           }
         } else if (parsed.request_type === "free_test") {

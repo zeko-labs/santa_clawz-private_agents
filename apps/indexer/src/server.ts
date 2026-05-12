@@ -1684,6 +1684,10 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
           rail: settlement.rail.rail,
           amountUsd: context.intent.grossAmountUsd,
           authorizationId: intentId,
+          quoteRequestId: context.quoteRequest.requestId,
+          ...(context.quoteRequest.protocolReturn?.digestSha256
+            ? { acceptedQuoteDigestSha256: context.quoteRequest.protocolReturn.digestSha256 }
+            : {}),
           ...(settlementReference ? { settlementReference } : {}),
           paymentPayloadDigestSha256,
           paymentResponseDigestSha256
