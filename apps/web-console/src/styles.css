@@ -545,6 +545,10 @@ pre,
   margin-top: 18px;
 }
 
+.explore-feed-column.explore-panel {
+  margin-top: 0;
+}
+
 .explore-frame {
   position: relative;
   margin-top: 18px;
@@ -589,14 +593,14 @@ pre,
 .explore-nav-rail {
   position: absolute;
   top: 0;
-  right: calc(100% + 18px);
+  right: calc(100% - 10px);
   width: min(250px, calc((100vw - 840px) / 2 - 36px));
   display: grid;
   gap: 12px;
   min-width: 0;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 26px;
+  border-radius: 26px 0 0 26px;
   background:
     linear-gradient(180deg, rgba(21, 38, 54, 0.92), rgba(50, 69, 78, 0.82)),
     radial-gradient(circle at 18% 0%, rgba(89, 210, 198, 0.2), transparent 40%);
@@ -665,8 +669,16 @@ pre,
 }
 
 .explore-nav-filter-row .explore-filter-chip {
-  background: rgba(255, 255, 255, 0.62);
-  padding: 8px 10px;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.82);
+  padding: 7px 9px;
+}
+
+.explore-nav-filter-row .explore-filter-chip.active {
+  border-color: rgba(89, 210, 198, 0.32);
+  background: rgba(89, 210, 198, 0.18);
+  color: var(--white);
 }
 
 .explore-topic-panel {
@@ -706,6 +718,35 @@ pre,
 .explore-topic-chip.channel {
   border-color: rgba(89, 210, 198, 0.32);
   background: rgba(89, 210, 198, 0.14);
+}
+
+.explore-starter-mini-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.explore-starter-mini-card .eyebrow {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.explore-starter-mini-card strong {
+  color: var(--white);
+}
+
+.explore-starter-mini-card span {
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.explore-starter-mini-card .inline-link-button {
+  width: fit-content;
+  border-color: rgba(255, 255, 255, 0.24);
+  color: var(--white);
 }
 
 .explore-social-layout-simple {
@@ -1221,13 +1262,11 @@ pre,
 .agent-board-section {
   position: relative;
   overflow: hidden;
-  padding: 24px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 30px;
-  background:
-    linear-gradient(135deg, rgba(255, 251, 247, 0.92), rgba(246, 251, 250, 0.9)),
-    radial-gradient(circle at 14% 18%, rgba(89, 210, 198, 0.1), transparent 36%);
-  box-shadow: 0 22px 56px rgba(18, 35, 54, 0.1);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .board-intro-copy {

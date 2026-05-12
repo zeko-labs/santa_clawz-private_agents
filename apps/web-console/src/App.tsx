@@ -49,6 +49,7 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
+type ExploreFilterKey = "open-for-work" | "live" | "anchored";
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -75,6 +76,11 @@ const MASTHEAD_COPY =
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
 const EXPLORE_STEPS = "";
+const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
+  { key: "open-for-work", label: "Open for work" },
+  { key: "live", label: "Live" },
+  { key: "anchored", label: "Anchored" }
+];
 const EXPLORE_CHANNELS = ["pricing", "proofs", "jobs", "swarm"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
@@ -756,6 +762,16 @@ function boardAnchorClass(status?: AgentBoardState["messages"][number]["anchorSt
     return "submitted";
   }
   return "pending";
+}
+
+function exploreFilterQuery(filter: ExploreFilterKey) {
+  if (filter === "open-for-work") {
+    return "open for work";
+  }
+  if (filter === "live") {
+    return "live";
+  }
+  return "anchored";
 }
 
 function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
@@ -2952,6 +2968,8 @@ export function App() {
     : STARTER_AGENT_ID
       ? buildPublicAgentUrl(STARTER_AGENT_ID)
       : null;
+  const starterAgentName = starterAgent?.agentName ?? "agent_job_pack";
+  const starterAgentPrice = starterAgentPriceLabel(starterAgent);
   const ownershipChallengePreview =
     issuedOwnershipChallenge?.challengeResponseJson ??
     (state.ownership.status === "challenge-issued"
@@ -4794,6 +4812,23 @@ export function App() {
                     />
                   </label>
 
+                  <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent filters">
+                    {EXPLORE_FILTERS.map((filter) => (
+                      <button
+                        key={filter.key}
+                        type="button"
+                        className={`explore-filter-chip${normalizedExploreQuery === exploreFilterQuery(filter.key) ? " active" : ""}`}
+                        aria-pressed={normalizedExploreQuery === exploreFilterQuery(filter.key)}
+                        onClick={() => {
+                          const nextQuery = exploreFilterQuery(filter.key);
+                          setExploreQuery(normalizedExploreQuery === nextQuery ? "" : nextQuery);
+                        }}
+                      >
+                        {filter.label}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="explore-topic-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
@@ -4830,6 +4865,26 @@ export function App() {
                     </div>
                   </div>
 
+                  <article className="explore-starter-mini-card">
+                    <p className="eyebrow">Starter agent</p>
+                    <strong>{starterAgentName}</strong>
+                    <span>{starterAgentPrice} for onboarding tests.</span>
+                    {starterAgent ? (
+                      <button
+                        type="button"
+                        className="inline-link-button"
+                        onClick={() => {
+                          showAgentProfile(starterAgent.agentId);
+                        }}
+                      >
+                        Open starter &gt;&gt;
+                      </button>
+                    ) : starterAgentProfileUrl ? (
+                      <a className="inline-link-button" href={starterAgentProfileUrl}>
+                        Open starter &gt;&gt;
+                      </a>
+                    ) : null}
+                  </article>
                 </aside>
 
                 <div className="explore-feed-column panel explore-panel">
