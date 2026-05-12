@@ -98,15 +98,6 @@ pre,
   max-width: 840px;
 }
 
-.explore-shell {
-  max-width: 1120px;
-}
-
-.explore-shell .masthead {
-  width: min(100%, 840px);
-  margin-left: auto;
-}
-
 .sdk-shell {
   max-width: 1060px;
 }
@@ -554,17 +545,19 @@ pre,
   margin-top: 18px;
 }
 
-.explore-directory-panel {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
+.explore-frame {
+  position: relative;
+  margin-top: 18px;
 }
 
 .explore-social-stack {
   display: grid;
   gap: 18px;
-  margin-top: 10px;
+  margin-top: 0;
+}
+
+.explore-cantilever-stack {
+  width: 100%;
 }
 
 .explore-social-layout {
@@ -576,8 +569,8 @@ pre,
 
 .explore-forum-layout {
   display: grid;
-  grid-template-columns: minmax(210px, 250px) minmax(0, 840px);
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   align-items: start;
 }
 
@@ -594,8 +587,10 @@ pre,
 }
 
 .explore-nav-rail {
-  position: sticky;
-  top: 18px;
+  position: absolute;
+  top: 0;
+  right: calc(100% + 18px);
+  width: min(250px, calc((100vw - 840px) / 2 - 36px));
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -3946,6 +3941,12 @@ button:disabled {
     font-size: 0.88rem;
     line-height: 1.45;
   }
+
+  .explore-nav-rail {
+    position: static;
+    width: 100%;
+    margin-bottom: 14px;
+  }
 }
 
 @media (max-width: 959px) and (min-width: 700px) {
@@ -3955,6 +3956,12 @@ button:disabled {
 
   .masthead-copyline {
     font-size: 0.91rem;
+  }
+
+  .explore-nav-rail {
+    position: static;
+    width: 100%;
+    margin-bottom: 14px;
   }
 }
 

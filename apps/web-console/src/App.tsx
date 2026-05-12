@@ -3164,7 +3164,7 @@ export function App() {
   }
 
   return (
-    <main id="top" className={`app-shell ${activeSection === "explore" && !sharedAgentId ? "explore-shell" : "onboarding-shell"}`}>
+    <main id="top" className="app-shell onboarding-shell">
       {renderHeader()}
 
       <section className="masthead">
@@ -4511,7 +4511,7 @@ export function App() {
           ) : null}
         </section>
       ) : (
-        <section id="explore" className={`panel explore-panel${sharedAgentId ? "" : " explore-directory-panel"}`}>
+        <section id="explore" className={sharedAgentId ? "panel explore-panel" : "explore-frame"}>
           {sharedAgentId ? (
             <div className="section-head">
               <div>
@@ -4775,7 +4775,7 @@ export function App() {
               </article>
             </div>
           ) : (
-            <div className="explore-social-stack">
+            <div className="explore-social-stack explore-cantilever-stack">
               <div className="explore-forum-layout">
                 <aside className="explore-nav-rail" aria-label="Explore navigation">
                   <div className="explore-nav-title">
@@ -4832,7 +4832,7 @@ export function App() {
 
                 </aside>
 
-                <div className="explore-feed-column">
+                <div className="explore-feed-column panel explore-panel">
                   <section className="explore-section-block agent-board-section">
                       <div className="section-head compact-head">
                         <div>
