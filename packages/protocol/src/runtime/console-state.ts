@@ -606,6 +606,7 @@ export interface HireRequestReceipt {
   localResponseStatusCode?: number;
   localResponseBytes?: number;
   operationalStatus?: HireOperationalStatus;
+  deliveryReceipt?: HireDeliveryReceipt;
   ingress?: {
     url: string;
     requestId: string;
@@ -679,6 +680,27 @@ export interface HireOperationalStatus {
     | "completed"
     | "failed"
     | "worker_completed_return_rejected";
+}
+
+export type HireDeliveryReceiptStage =
+  | "relay_forwarded"
+  | "runtime_accepted"
+  | "runtime_responded"
+  | "return_validated"
+  | "return_rejected"
+  | "relay_disconnected"
+  | "relay_timeout"
+  | "runtime_rejected";
+
+export interface HireDeliveryReceipt {
+  stage: HireDeliveryReceiptStage;
+  target: string;
+  occurredAtIso: string;
+  relayMessageId?: string;
+  runtimeStatusCode?: number;
+  runtimeResponseBytes?: number;
+  returnValidationCode?: string;
+  errorMessage?: string;
 }
 
 export type ExecutionIntentStatus = "pending" | "approved" | "executed" | "settled" | "refunded";
@@ -826,6 +848,7 @@ export interface PaymentLedgerEntry {
   paymentStatus: PaymentLedgerStatus;
   executionStatus?: "not_started" | "submitted" | "forwarded" | "completed" | "failed";
   returnStatus?: "none" | "accepted" | "rejected";
+  deliveryReceipt?: HireDeliveryReceipt;
   lifecycleStatus?: {
     displayStatus:
       | "paid_completed"

@@ -41,6 +41,7 @@ import {
   type AgentBoardThread,
   type AgentProfileState,
   type AgentReadinessState,
+  type HireDeliveryReceipt,
   type HireRequestReceipt,
   type SponsorQueueJob,
   type SponsorQueueState,
@@ -138,6 +139,7 @@ type RelayHireDeliveryHandler = (input: {
   statusCode: number;
   body: string;
   deliveryTarget: string;
+  relayMessageId?: string;
 }>;
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
@@ -729,6 +731,7 @@ interface HireRequestRecord {
   localResponseStatusCode?: number;
   localResponseBytes?: number;
   operationalStatus?: HireRequestReceipt["operationalStatus"];
+  deliveryReceipt?: HireDeliveryReceipt;
   ingressBodyDigestSha256?: string;
   ingressResponseStatusCode?: number;
   protocolReturn?: HireRequestReceipt["protocolReturn"];
@@ -3773,6 +3776,10 @@ export class ClawzControlPlane {
     if (process.env.CLAWZ_HIRE_FORWARDING_ENABLED === "false") {
       return {
         deliveryStatus: "recorded" as const,
+        deliveryReceipt: this.buildHireDeliveryReceipt({
+          stage: "runtime_accepted",
+          target: signedRequest.ingressUrl
+        }),
         requestKind: signedRequest.requestKind,
         ingressUrl: signedRequest.ingressUrl,
         bodyDigestSha256: signedRequest.bodyDigestSha256
@@ -3792,11 +3799,20 @@ export class ClawzControlPlane {
       : undefined;
 
     if (relayResponse && "deliveryFailed" in relayResponse) {
+      const relayError = relayResponse.deliveryError;
+      const stage: HireDeliveryReceipt["stage"] = /timed out|timeout/i.test(relayError)
+        ? "relay_timeout"
+        : "relay_disconnected";
       return {
         requestAccepted: true as const,
         deliveryFailed: true as const,
-        deliveryError: relayResponse.deliveryError,
+        deliveryError: relayError,
         deliveryStatus: undefined,
+        deliveryReceipt: this.buildHireDeliveryReceipt({
+          stage,
+          target: relayResponse.deliveryTarget,
+          errorMessage: relayError
+        }),
         requestKind: signedRequest.requestKind,
         ingressUrl: relayResponse.deliveryTarget,
         bodyDigestSha256: signedRequest.bodyDigestSha256
@@ -3842,6 +3858,15 @@ export class ClawzControlPlane {
         deliveryError:
           `Agent runtime responded with HTTP ${response.status} (${responseBytes} bytes), but SantaClawz rejected the return: ${validationError}`,
         deliveryStatus: "return_rejected" as const,
+        deliveryReceipt: this.buildHireDeliveryReceipt({
+          stage: "return_rejected",
+          target: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
+          ...(relayResponse?.relayMessageId ? { relayMessageId: relayResponse.relayMessageId } : {}),
+          runtimeStatusCode: response.status,
+          runtimeResponseBytes: responseBytes,
+          returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+          errorMessage: validationError
+        }),
         requestKind: signedRequest.requestKind,
         ingressUrl: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
         bodyDigestSha256: signedRequest.bodyDigestSha256,
@@ -3854,6 +3879,13 @@ export class ClawzControlPlane {
 
     return {
       deliveryStatus: "forwarded" as const,
+      deliveryReceipt: this.buildHireDeliveryReceipt({
+        stage: protocolReturn ? "return_validated" : "runtime_responded",
+        target: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
+        ...(relayResponse?.relayMessageId ? { relayMessageId: relayResponse.relayMessageId } : {}),
+        runtimeStatusCode: response.status,
+        runtimeResponseBytes: responseBytes
+      }),
       requestKind: signedRequest.requestKind,
       ingressUrl: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
       bodyDigestSha256: signedRequest.bodyDigestSha256,
@@ -3872,6 +3904,27 @@ export class ClawzControlPlane {
       throw new Error("SantaClawz relay is not enabled on this backend.");
     }
     return this.relayHireDeliveryHandler(input);
+  }
+
+  private buildHireDeliveryReceipt(input: {
+    stage: HireDeliveryReceipt["stage"];
+    target: string;
+    relayMessageId?: string;
+    runtimeStatusCode?: number;
+    runtimeResponseBytes?: number;
+    returnValidationCode?: string;
+    errorMessage?: string;
+  }): HireDeliveryReceipt {
+    return {
+      stage: input.stage,
+      target: input.target,
+      occurredAtIso: new Date().toISOString(),
+      ...(input.relayMessageId ? { relayMessageId: input.relayMessageId } : {}),
+      ...(typeof input.runtimeStatusCode === "number" ? { runtimeStatusCode: input.runtimeStatusCode } : {}),
+      ...(typeof input.runtimeResponseBytes === "number" ? { runtimeResponseBytes: input.runtimeResponseBytes } : {}),
+      ...(input.returnValidationCode ? { returnValidationCode: input.returnValidationCode } : {}),
+      ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 500) } : {})
+    };
   }
 
   private buildOwnershipChallengeRecord(openClawUrl: string, issuedAtIso: string): SessionOwnershipChallengeRecord {
@@ -4506,6 +4559,7 @@ export class ClawzControlPlane {
     hireRequestId: string;
     executionStatus: NonNullable<PaymentLedgerEntry["executionStatus"]>;
     returnStatus?: NonNullable<PaymentLedgerEntry["returnStatus"]>;
+    deliveryReceipt?: HireDeliveryReceipt;
     errorCode?: string;
     errorMessage?: string;
   }): Promise<PaymentLedgerEntry | undefined> {
@@ -4534,6 +4588,7 @@ export class ClawzControlPlane {
       hireRequestId: input.hireRequestId,
       executionStatus: input.executionStatus,
       ...(input.returnStatus ? { returnStatus: input.returnStatus } : {}),
+      ...(input.deliveryReceipt ? { deliveryReceipt: input.deliveryReceipt } : {}),
       paymentStatus,
       ...(input.errorCode ? { errorCode: input.errorCode } : {}),
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {})
@@ -7859,6 +7914,7 @@ export class ClawzControlPlane {
         : undefined;
     const deliveryFailed = "deliveryFailed" in ingressDelivery && ingressDelivery.deliveryFailed === true;
     const returnRejected = ingressDelivery.deliveryStatus === "return_rejected";
+    const deliveryReceipt = "deliveryReceipt" in ingressDelivery ? ingressDelivery.deliveryReceipt : undefined;
     const requestType = ingressDelivery.requestKind;
     const paymentStatus = paymentStatusForHireRequest({
       requestType,
@@ -7874,6 +7930,7 @@ export class ClawzControlPlane {
         hireRequestId: requestId,
         executionStatus: "failed",
         returnStatus: "rejected",
+        ...(deliveryReceipt ? { deliveryReceipt } : {}),
         errorCode: "verified_output_required",
         errorMessage:
           "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
@@ -7916,6 +7973,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
+      ...(deliveryReceipt ? { deliveryReceipt } : {}),
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
       ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
       ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
@@ -7947,6 +8005,7 @@ export class ClawzControlPlane {
             : ingressProtocolReturn?.status === "failed"
               ? "rejected"
               : "none",
+        ...(deliveryReceipt ? { deliveryReceipt } : {}),
         ...(deliveryError
           ? {
               errorCode: returnValidationCode ?? "relay_delivery_failed",
@@ -8065,6 +8124,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
+      ...(deliveryReceipt ? { deliveryReceipt } : {}),
       ingress: {
         url: publicDeliveryTarget,
         requestId,

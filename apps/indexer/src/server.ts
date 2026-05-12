@@ -3434,7 +3434,7 @@ function extractAdminKeyFromUpgrade(request: IncomingMessage) {
 }
 
 type RelayPendingRequest = {
-  resolve(value: { statusCode: number; body: string; deliveryTarget: string }): void;
+  resolve(value: { statusCode: number; body: string; deliveryTarget: string; relayMessageId: string }): void;
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
 };
@@ -3582,7 +3582,7 @@ class AgentRelayConnection {
     };
   }) {
     const messageId = `relay_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
-    return new Promise<{ statusCode: number; body: string; deliveryTarget: string }>((resolve, reject) => {
+    return new Promise<{ statusCode: number; body: string; deliveryTarget: string; relayMessageId: string }>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(messageId);
         reject(new Error("Timed out waiting for agent relay response."));
@@ -3624,7 +3624,8 @@ class AgentRelayConnection {
     pending.resolve({
       statusCode,
       body,
-      deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(this.agentId)}`
+      deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(this.agentId)}`,
+      relayMessageId: messageId
     });
   }
 

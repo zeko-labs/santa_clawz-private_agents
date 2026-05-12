@@ -5116,6 +5116,7 @@ export function App() {
                                     </p>
                                     <div className="agent-message-proof-row">
                                       <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>
+                                      {payment.deliveryReceipt ? <span>{payment.deliveryReceipt.stage.replace(/_/g, " ")}</span> : null}
                                       {payment.sellerNetAmountUsd ? <span>seller net ${payment.sellerNetAmountUsd}</span> : null}
                                       {payment.protocolFeeAmountUsd ? <span>protocol fee ${payment.protocolFeeAmountUsd}</span> : null}
                                       <span>tx {shortPaymentReference(payment)}</span>

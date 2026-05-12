@@ -2408,12 +2408,15 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(hire.payload.status, "submitted");
     assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "failed");
     assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "submitted");
+    assert.equal(["relay_disconnected", "relay_timeout"].includes(hire.payload.deliveryReceipt.stage), true);
+    assert.match(hire.payload.deliveryReceipt.target, /^santaclawz-relay:\/\//);
     assert.match(hire.payload.deliveryError, /relay response|Relay connection/);
 
     const executionLookup = await requestJson(`${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}`);
     assert.equal(executionLookup.status, 200);
     assert.equal(executionLookup.payload.request.requestId, hire.payload.requestId);
     assert.equal(executionLookup.payload.request.operationalStatus.relayDeliveryStatus, "failed");
+    assert.equal(["relay_disconnected", "relay_timeout"].includes(executionLookup.payload.request.deliveryReceipt.stage), true);
 
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
