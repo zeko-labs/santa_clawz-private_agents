@@ -47,7 +47,16 @@ export async function requestJson(url, init = {}) {
       ...(init.headers ?? {})
     }
   });
-  const payload = await response.json().catch(() => null);
+  const text = await response.text().catch(() => "");
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = {
+      error: `SantaClawz API returned non-JSON response (${response.status}).`,
+      responsePreview: text.slice(0, 240)
+    };
+  }
   return {
     ok: response.ok,
     status: response.status,
@@ -142,6 +151,20 @@ export async function publishSocialAnchors(config, options) {
       agentId: config.agentId,
       ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
       ...(options.localOnly ? { localOnly: true } : {}),
+      operatorNote: options.operatorNote
+    })
+  });
+}
+
+export async function refreshSellerReadiness(config, options) {
+  return requestJson(`${config.apiBase}/api/agents/${encodeURIComponent(config.agentId)}/readiness/refresh`, {
+    method: "POST",
+    headers: adminHeaders(config.adminKey),
+    body: JSON.stringify({
+      sessionId: config.sessionId,
+      publish: options.publish !== false,
+      ...(options.localOnly ? { localOnly: true } : {}),
+      verifyAvailability: options.verifyAvailability !== false,
       operatorNote: options.operatorNote
     })
   });
@@ -293,12 +316,18 @@ export async function runSellerReadiness(config) {
   const beforePlan = await fetchX402Plan(resolvedConfig);
   let heartbeat;
   let publish;
+  let refresh;
 
   if (options.heartbeat) {
     heartbeat = await postHeartbeat(resolvedConfig);
   }
   if (options.publish && beforePlan.payload?.published !== true) {
-    publish = await publishSocialAnchors(resolvedConfig, options);
+    refresh = await refreshSellerReadiness(resolvedConfig, options);
+    publish = {
+      ok: refresh.ok && refresh.payload?.publish?.ok !== false,
+      status: refresh.status,
+      payload: refresh.payload?.publish ?? refresh.payload
+    };
   }
 
   const [afterState, afterPlan, availability, zekoHealth] = await Promise.all([

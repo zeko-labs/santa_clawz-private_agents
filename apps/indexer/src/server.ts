@@ -1764,6 +1764,32 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
   }
 }));
 
+app.post("/api/agents/:agentId/readiness/refresh", route(async (request, response) => {
+  const body = isRecord(request.body) ? request.body : {};
+  try {
+    const agentId = request.params.agentId;
+    if (!agentId) {
+      response.status(400).json({ error: "agentId is required." });
+      return;
+    }
+    response.json(
+      await controlPlane.refreshSellerReadiness({
+        agentId,
+        ...(optionalString(body.sessionId) ? { sessionId: optionalString(body.sessionId)! } : {}),
+        ...(typeof body.publish === "boolean" ? { publish: body.publish } : {}),
+        ...(typeof body.localOnly === "boolean" ? { localOnly: body.localOnly } : {}),
+        ...(typeof body.verifyAvailability === "boolean" ? { verifyAvailability: body.verifyAvailability } : {}),
+        ...(typeof body.operatorNote === "string" ? { operatorNote: body.operatorNote } : {}),
+        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
+      })
+    );
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to refresh seller readiness."
+    });
+  }
+}));
+
 app.get("/api/agents/:agentId/payments", route(async (request, response) => {
   try {
     const agentId = request.params.agentId;
@@ -3706,6 +3732,23 @@ class AgentRelayHub {
     return false;
   }
 
+  statusFor(agentId: string) {
+    const connection = this.connectionsByAgent.get(agentId);
+    const connected = Boolean(connection && connection.isFresh());
+    if (connection && !connected) {
+      connection.terminate("Relay heartbeat is stale.");
+    }
+    return {
+      agentId,
+      connected,
+      status: connected ? "connected" : "waiting",
+      checkedAtIso: new Date().toISOString(),
+      reason: connected
+        ? "SantaClawz relay has an active fresh websocket connection."
+        : "SantaClawz relay is waiting for a fresh agent websocket connection."
+    };
+  }
+
   async deliverHire(input: {
     agentId: string;
     sessionId: string;
@@ -3877,10 +3920,29 @@ const relayHub = new AgentRelayHub(controlPlane);
 controlPlane.setRelayRuntimeStatusProvider((agentId) => relayHub.isConnected(agentId));
 controlPlane.setRelayHireDeliveryHandler((input) => relayHub.deliverHire(input));
 
+app.get("/api/agents/:agentId/relay-status", route(async (request, response) => {
+  const agentId = request.params.agentId;
+  if (!agentId) {
+    response.status(400).json({ error: "agentId is required." });
+    return;
+  }
+  response.json(relayHub.statusFor(agentId));
+}));
+
 const server = createServer(app);
 server.on("upgrade", (request, socket) => {
   void relayHub.handleUpgrade(request, socket).catch((error) => {
-    socket.write(`HTTP/1.1 400 Bad Request\r\ncontent-type: text/plain\r\n\r\n${error instanceof Error ? error.message : "relay failed"}`);
+    const message = error instanceof Error ? error.message : "relay failed";
+    const status = /admin key|unauthorized|unknown agent|missing/i.test(message) ? "401 Unauthorized" : "400 Bad Request";
+    socket.write(
+      [
+        `HTTP/1.1 ${status}`,
+        "content-type: application/json",
+        "cache-control: no-store",
+        "\r\n",
+        JSON.stringify({ error: message, code: "relay_handshake_failed" })
+      ].join("\r\n")
+    );
     socket.destroy();
   });
 });

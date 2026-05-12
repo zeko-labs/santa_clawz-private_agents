@@ -174,7 +174,7 @@ const ALL_LIVE_FLOW_METHODS = Array.from(
 );
 
 interface ConsolePersistenceState {
-  schemaVersion: 5;
+  schemaVersion: 6;
   currentSessionId: string;
   activeMode: TrustModeId;
   wallet: ShadowWalletState;
@@ -184,6 +184,7 @@ interface ConsolePersistenceState {
   adminKeysBySession: Record<string, SessionAdminAccessRecord>;
   ingressSecretsBySession: Record<string, SessionIngressSecretRecord>;
   ownershipBySession: Record<string, SessionOwnershipRecord>;
+  publishedSessionsBySession: Record<string, PublishedSessionRecord>;
   deletedAgentRegistrationsBySession: Record<string, DeletedAgentRegistrationRecord>;
   enrollmentTicketsById: Record<string, EnrollmentTicketRecord>;
 }
@@ -198,6 +199,13 @@ interface DeletedAgentRegistrationRecord {
   agentId: string;
   deletedAtIso: string;
   reason: string;
+}
+
+interface PublishedSessionRecord {
+  publishedAtIso: string;
+  source: "live-flow" | "social-anchor" | "readiness-refresh" | "migration";
+  batchId?: string;
+  rootDigestSha256?: string;
 }
 
 interface SessionIngressSecretRecord {
@@ -424,6 +432,16 @@ interface SocialAnchorSettleOptions {
   expectedBatchId?: string;
   expectedRootDigestSha256?: string;
   localOnly?: boolean;
+  operatorNote?: string;
+  adminKey?: string;
+}
+
+interface SellerReadinessRefreshOptions {
+  sessionId?: string;
+  agentId?: string;
+  publish?: boolean;
+  localOnly?: boolean;
+  verifyAvailability?: boolean;
   operatorNote?: string;
   adminKey?: string;
 }
@@ -991,7 +1009,7 @@ function buildPrivacyExceptions(nowIso: string): PrivacyExceptionQueueItem[] {
 
 function buildDefaultState(nowIso: string): ConsolePersistenceState {
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     currentSessionId: DEFAULT_SESSION_ID,
     activeMode: "private",
     wallet: buildWalletState(nowIso),
@@ -1007,6 +1025,7 @@ function buildDefaultState(nowIso: string): ConsolePersistenceState {
     ownershipBySession: {
       [DEFAULT_SESSION_ID]: buildDefaultOwnershipRecord(true)
     },
+    publishedSessionsBySession: {},
     deletedAgentRegistrationsBySession: {},
     enrollmentTicketsById: {}
   };
@@ -2236,8 +2255,10 @@ function isSessionPublishedOnZeko(input: {
   liveFlowTargets: LiveFlowTargets;
   socialAnchorQueueFile: SocialAnchorQueueFile;
   sessionId: string;
+  durablePublished?: boolean;
 }): boolean {
   return (
+    input.durablePublished === true ||
     input.liveFlowTargets.turns.some((target) => target.sessionId === input.sessionId) ||
     hasConfirmedZekoPublication(input.socialAnchorQueueFile.items, input.sessionId)
   );
@@ -2355,7 +2376,7 @@ export class ClawzControlPlane {
             };
       const migratedState: ConsolePersistenceState = {
         ...state,
-        schemaVersion: 5,
+        schemaVersion: 6,
         agentIdsBySession:
           state.agentIdsBySession && Object.keys(state.agentIdsBySession).length > 0
             ? state.agentIdsBySession
@@ -2376,11 +2397,12 @@ export class ClawzControlPlane {
             : Object.fromEntries(
                 Object.entries(resolvedProfiles).map(([sessionId]) => [sessionId, buildDefaultOwnershipRecord(true)])
               ),
+        publishedSessionsBySession: state.publishedSessionsBySession ?? {},
         deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {},
         enrollmentTicketsById: state.enrollmentTicketsById ?? {}
       };
       if (
-        state.schemaVersion !== 5 ||
+        state.schemaVersion !== 6 ||
         !state.agentIdsBySession ||
         Object.keys(state.agentIdsBySession).length === 0 ||
         !state.profilesBySession ||
@@ -2388,6 +2410,7 @@ export class ClawzControlPlane {
         !state.adminKeysBySession ||
         !state.ingressSecretsBySession ||
         !state.ownershipBySession ||
+        !state.publishedSessionsBySession ||
         !state.deletedAgentRegistrationsBySession ||
         !state.enrollmentTicketsById
       ) {
@@ -2404,6 +2427,88 @@ export class ClawzControlPlane {
   private async saveState(state: ConsolePersistenceState) {
     await this.ensureDirs();
     await writeJsonFile(this.statePath, state);
+  }
+
+  private async markSessionPublished(input: {
+    sessionId: string;
+    publishedAtIso: string;
+    source: PublishedSessionRecord["source"];
+    batchId?: string;
+    rootDigestSha256?: string;
+  }): Promise<void> {
+    const state = await this.loadState();
+    const existing = state.publishedSessionsBySession[input.sessionId];
+    if (existing) {
+      return;
+    }
+    await this.saveState({
+      ...state,
+      publishedSessionsBySession: {
+        ...state.publishedSessionsBySession,
+        [input.sessionId]: {
+          publishedAtIso: input.publishedAtIso,
+          source: input.source,
+          ...(input.batchId ? { batchId: input.batchId } : {}),
+          ...(input.rootDigestSha256 ? { rootDigestSha256: input.rootDigestSha256 } : {})
+        }
+      }
+    });
+  }
+
+  private socialAnchorBatchPublishesAgent(batch: Pick<SocialAnchorBatch, "candidateKinds">): boolean {
+    return (
+      batch.candidateKinds.includes("agent-published") ||
+      (batch.candidateKinds.includes("agent-registered") && batch.candidateKinds.includes("ownership-verified"))
+    );
+  }
+
+  private async ensureAgentPublishedAnchorCandidate(state: ConsolePersistenceState, sessionId: string): Promise<{
+    created: boolean;
+    alreadyPublished: boolean;
+  }> {
+    const queue = await this.loadSocialAnchorQueueFile();
+    const existingPublishedCandidate = queue.items.find(
+      (item) => item.sessionId === sessionId && item.kind === "agent-published"
+    );
+    if (existingPublishedCandidate?.status === "confirmed") {
+      await this.markSessionPublished({
+        sessionId,
+        publishedAtIso: existingPublishedCandidate.confirmedAtIso ?? existingPublishedCandidate.anchoredAtIso ?? existingPublishedCandidate.occurredAtIso,
+        source: "migration",
+        ...(existingPublishedCandidate.batchId ? { batchId: existingPublishedCandidate.batchId } : {}),
+        ...(existingPublishedCandidate.batchRootDigestSha256
+          ? { rootDigestSha256: existingPublishedCandidate.batchRootDigestSha256 }
+          : {})
+      });
+      return { created: false, alreadyPublished: true };
+    }
+    if (
+      existingPublishedCandidate &&
+      (existingPublishedCandidate.status === "pending" ||
+        existingPublishedCandidate.status === "submitted" ||
+        existingPublishedCandidate.status === "retrying")
+    ) {
+      return { created: false, alreadyPublished: false };
+    }
+
+    const ownership = this.ownershipForSession(state, sessionId);
+    if (ownership.status !== "verified") {
+      throw new Error("Verify control of the PublicClawz agent URL before publishing on Zeko.");
+    }
+    const agentId = this.agentIdForSession(state, sessionId);
+    const profile = this.profileForSession(state, sessionId);
+    await this.enqueueSocialAnchorCandidate({
+      sessionId,
+      kind: "agent-published",
+      summary: `${profile.agentName} published on Zeko and is now visible in Explore.`,
+      occurredAtIso: new Date().toISOString(),
+      payload: {
+        agentId,
+        networkId: (await this.getDeploymentState()).networkId,
+        source: "seller-readiness-refresh"
+      }
+    });
+    return { created: true, alreadyPublished: false };
   }
 
   private async loadEvents(): Promise<ClawzEvent[]> {
@@ -5278,6 +5383,15 @@ export class ClawzControlPlane {
       batches: [nextBatch, ...queue.batches].slice(0, 80)
     });
     await this.saveSocialAnchorQueueFile(nextQueue);
+    if (batchStatus === "confirmed" && this.socialAnchorBatchPublishesAgent(nextBatch)) {
+      await this.markSessionPublished({
+        sessionId,
+        publishedAtIso: nextBatch.confirmedAtIso ?? settledAtIso,
+        source: "social-anchor",
+        batchId: batchExport.batchId,
+        rootDigestSha256: batchExport.rootDigestSha256
+      });
+    }
 
     await this.appendEvent(
       "SessionCheckpointed",
@@ -5446,6 +5560,15 @@ export class ClawzControlPlane {
           observedAnchorField: observed.latestBatchRoot
         });
         await this.saveSocialAnchorQueueFile(nextQueue);
+        if (this.socialAnchorBatchPublishesAgent(activeBatch)) {
+          await this.markSessionPublished({
+            sessionId: activeBatch.sessionId,
+            publishedAtIso: observed.observedAtIso,
+            source: "social-anchor",
+            batchId: activeBatch.batchId,
+            rootDigestSha256: activeBatch.rootDigestSha256
+          });
+        }
         return nextQueue;
       }
     } catch (error) {
@@ -5505,6 +5628,15 @@ export class ClawzControlPlane {
           }
         );
         await this.saveSocialAnchorQueueFile(nextQueue);
+        if (this.socialAnchorBatchPublishesAgent(activeBatch)) {
+          await this.markSessionPublished({
+            sessionId: activeBatch.sessionId,
+            publishedAtIso: chainResult.observedAtIso ?? new Date().toISOString(),
+            source: "social-anchor",
+            batchId: activeBatch.batchId,
+            rootDigestSha256: activeBatch.rootDigestSha256
+          });
+        }
         return nextQueue;
       }
 
@@ -6385,6 +6517,11 @@ export class ClawzControlPlane {
               networkId: "zeko_testnet"
             }
           });
+          await this.markSessionPublished({
+            sessionId: finalSessionId,
+            publishedAtIso: report.generatedAtIso ?? new Date().toISOString(),
+            source: "live-flow"
+          });
         }
 
         return this.getConsoleState({
@@ -6528,7 +6665,8 @@ export class ClawzControlPlane {
     const published = isSessionPublishedOnZeko({
       liveFlowTargets,
       socialAnchorQueueFile,
-      sessionId: focus.sessionId
+      sessionId: focus.sessionId,
+      durablePublished: Boolean(state.publishedSessionsBySession[focus.sessionId])
     });
     const paymentsEnabled = profile.paymentProfile.enabled;
     const paymentProfileReady = hasReadyPaymentProfile(profile);
@@ -6676,7 +6814,8 @@ export class ClawzControlPlane {
     const published = isSessionPublishedOnZeko({
       liveFlowTargets,
       socialAnchorQueueFile,
-      sessionId
+      sessionId,
+      durablePublished: Boolean(state.publishedSessionsBySession[sessionId])
     });
     const ownership = this.ownershipForSession(state, sessionId);
     const readiness = buildAgentReadinessState({
@@ -6792,7 +6931,8 @@ export class ClawzControlPlane {
         const published = isSessionPublishedOnZeko({
           liveFlowTargets,
           socialAnchorQueueFile,
-          sessionId
+          sessionId,
+          durablePublished: Boolean(state.publishedSessionsBySession[sessionId])
         });
         const anchoredBatches = socialAnchorQueueFile.batches
           .filter((batch) => batch.status === "confirmed" && sessionAnchors.some((item) => item.batchId === batch.batchId))
@@ -7519,7 +7659,8 @@ export class ClawzControlPlane {
     const published = isSessionPublishedOnZeko({
       liveFlowTargets,
       socialAnchorQueueFile,
-      sessionId
+      sessionId,
+      durablePublished: Boolean(state.publishedSessionsBySession[sessionId])
     });
     if (!published) {
       throw new Error("This agent needs to publish on Zeko before it can accept hire requests.");
@@ -8555,6 +8696,106 @@ export class ClawzControlPlane {
     const sessionId = this.resolveOwnedSessionId(state, options);
     this.assertAdminAccess(state, sessionId, options.adminKey);
     return this.settleSocialAnchorBatchForSession(sessionId, options);
+  }
+
+  async refreshSellerReadiness(options: SellerReadinessRefreshOptions = {}) {
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, options);
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const agentId = this.agentIdForSession(state, sessionId);
+    const publishRequested = options.publish !== false;
+    const consoleStateOptions = {
+      sessionId,
+      ...(options.adminKey ? { adminKey: options.adminKey } : {})
+    };
+    const before = await this.getConsoleState(consoleStateOptions);
+    let publish:
+      | {
+          attempted: boolean;
+          ok: boolean;
+          status: number;
+          createdCandidate?: boolean;
+          alreadyPublished?: boolean;
+          error?: string;
+          confirmedCount?: number;
+          anchoredCount?: number;
+          latestRootDigestSha256?: string;
+        }
+      | undefined;
+
+    if (publishRequested && before.published !== true) {
+      try {
+        const ensured = await this.ensureAgentPublishedAnchorCandidate(state, sessionId);
+        const queue = await this.settleSocialAnchorBatchForSession(sessionId, {
+          ...(options.localOnly ? { localOnly: true } : {}),
+          operatorNote: options.operatorNote ?? "Seller readiness refresh"
+        });
+        publish = {
+          attempted: true,
+          ok: true,
+          status: 200,
+          createdCandidate: ensured.created,
+          alreadyPublished: ensured.alreadyPublished,
+          confirmedCount: queue.confirmedCount,
+          anchoredCount: queue.anchoredCount,
+          ...(queue.latestRootDigestSha256 ? { latestRootDigestSha256: queue.latestRootDigestSha256 } : {})
+        };
+      } catch (error) {
+        publish = {
+          attempted: true,
+          ok: false,
+          status: error instanceof SelfServeSocialAnchoringDisabledError ? 403 : 400,
+          error: error instanceof Error ? error.message : "Unable to refresh publish state."
+        };
+      }
+    } else {
+      publish = {
+        attempted: false,
+        ok: before.published === true,
+        status: before.published === true ? 200 : 204,
+        alreadyPublished: before.published === true
+      };
+    }
+
+    const [stateAfter, availability] = await Promise.all([
+      this.getConsoleState(consoleStateOptions),
+      options.verifyAvailability === false
+        ? Promise.resolve(undefined)
+        : this.getAgentRuntimeAvailability({ sessionId, agentId }).catch((error: unknown) => ({
+            agentId,
+            sessionId,
+            openClawUrl: "",
+            runtimeDeliveryMode: "santaclawz-relay" as const,
+            checkedAtIso: new Date().toISOString(),
+            reachable: false,
+            status: "offline" as const,
+            reason: error instanceof Error ? error.message : "Unable to verify runtime availability."
+          }))
+    ]);
+    const readiness = stateAfter.readiness;
+    return {
+      agentId,
+      sessionId,
+      generatedAtIso: new Date().toISOString(),
+      hireable: readiness?.hireable === true,
+      relayConnected: readiness?.relayConnected === true,
+      heartbeatLive: readiness?.heartbeatLive === true,
+      runtimeReachable: readiness?.runtimeReachable === true,
+      workerReachable: readiness?.workerReachable === true,
+      paymentReady: readiness?.paymentReady === true,
+      published: stateAfter.published === true,
+      lastJobStatus: readiness?.lastJobStatus ?? "none",
+      blockers: readiness?.blockers ?? [],
+      publish,
+      ...(availability ? { availability } : {}),
+      state: {
+        paidJobsEnabled: stateAfter.paidJobsEnabled,
+        paymentProfileReady: stateAfter.paymentProfileReady,
+        payoutAddressConfigured: stateAfter.payoutAddressConfigured,
+        pricingMode: stateAfter.profile.paymentProfile.pricingMode,
+        runtimeDeliveryMode: stateAfter.profile.runtimeDelivery.mode
+      }
+    };
   }
 
   async setTrustMode(modeId: TrustModeId, sessionId?: string, adminKey?: string): Promise<ConsoleStateResponse> {

@@ -925,6 +925,7 @@ export interface AgentX402Plan {
   agentId: string;
   sessionId: string;
   published: boolean;
+  readiness?: AgentReadinessState;
   paymentsEnabled: boolean;
   paymentProfileReady: boolean;
   payoutAddressConfigured: boolean;

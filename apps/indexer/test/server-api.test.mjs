@@ -1774,6 +1774,24 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(publishedAgent?.publicAgentUrl, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}`);
     assert.equal(publishedAgent?.publicHireUrl, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
 
+    const readinessRefresh = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/readiness/refresh`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        publish: true,
+        localOnly: true
+      })
+    });
+    assert.equal(readinessRefresh.status, 200);
+    assert.equal(readinessRefresh.payload.published, true);
+    assert.equal(readinessRefresh.payload.publish.alreadyPublished, true);
+    assert.equal(Array.isArray(readinessRefresh.payload.blockers), true);
+
+    const relayStatus = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/relay-status`);
+    assert.equal(relayStatus.status, 200);
+    assert.equal(relayStatus.payload.connected, false);
+
     const oversizedHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
@@ -1893,6 +1911,10 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(quoteReady.payload.paidJobsEnabled, false);
     assert.equal(quoteReady.payload.readiness.paymentReady, true);
     assert.equal(Array.isArray(quoteReady.payload.readiness.blockers), true);
+    const quotePlan = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`);
+    assert.equal(quotePlan.status, 200);
+    assert.equal(quotePlan.payload.published, true);
+    assert.equal(quotePlan.payload.readiness.published, true);
 
     const accepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

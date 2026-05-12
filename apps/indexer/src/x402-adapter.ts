@@ -1062,6 +1062,7 @@ export function buildAgentX402Plan(input: {
     agentId,
     sessionId,
     published,
+    ...(consoleState.readiness ? { readiness: consoleState.readiness } : {}),
     paymentsEnabled: consoleState.paymentsEnabled,
     paymentProfileReady: consoleState.paymentProfileReady,
     payoutAddressConfigured: consoleState.payoutAddressConfigured,

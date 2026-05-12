@@ -155,6 +155,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         pathname === "/api/zeko/health" ||
         pathname === "/.well-known/x402.json" ||
         /^\/api\/agents\/[^/]+\/availability$/.test(pathname) ||
+        /^\/api\/agents\/[^/]+\/relay-status$/.test(pathname) ||
         /^\/api\/agents\/[^/]+\/x402-plan$/.test(pathname))) ||
     (method === "POST" &&
       (pathname === "/api/console/register" ||
@@ -172,6 +173,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         pathname === "/api/mission-auth/check" ||
         pathname === "/api/console/trust-mode" ||
         pathname === "/api/console/profile" ||
+        (/^\/api\/agents\/[^/]+\/readiness\/refresh$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/archive$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/quotes\/[^/]+\/accept$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/heartbeat$/.test(pathname)) ||
