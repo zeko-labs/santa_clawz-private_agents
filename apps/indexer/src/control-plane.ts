@@ -205,6 +205,7 @@ interface SessionIngressSecretRecord {
   tokenHint: string;
   signingSecret: string;
   signingSecretHint: string;
+  serviceKey?: string;
   issuedAtIso: string;
 }
 
@@ -1082,6 +1083,14 @@ function serviceKeyForAgent(profile: Pick<AgentProfileState, "agentName" | "open
   }
 
   return serviceKeySlug(profile.agentName || agentId.split("--")[0] || agentId);
+}
+
+function enrolledServiceKeyForAgent(
+  ingressRecord: SessionIngressSecretRecord | undefined,
+  profile: Pick<AgentProfileState, "agentName" | "openClawUrl" | "runtimeDelivery">,
+  agentId: string
+): string {
+  return ingressRecord?.serviceKey ?? serviceKeyForAgent(profile, agentId);
 }
 
 function buildAdminKey() {
@@ -2902,6 +2911,7 @@ export class ClawzControlPlane {
     return {
       hasIngressToken: Boolean(record),
       hasSigningSecret: Boolean(record?.signingSecret),
+      ...(record?.serviceKey ? { serviceKey: record.serviceKey } : {}),
       ...(record?.tokenHint ? { tokenHint: record.tokenHint } : {}),
       ...(record?.signingSecretHint ? { signingSecretHint: record.signingSecretHint } : {}),
       ...(issuedIngressToken ? { issuedIngressToken } : {}),
@@ -3349,7 +3359,7 @@ export class ClawzControlPlane {
         ? { rail: input.paymentAuthorization.rail }
         : {})
     });
-    const serviceKey = serviceKeyForAgent(input.profile, input.agentId);
+    const serviceKey = enrolledServiceKeyForAgent(input.ingressRecord, input.profile, input.agentId);
     assertValidSantaClawzHireServiceIdentity({
       service: serviceKey,
       service_key: serviceKey
@@ -5002,14 +5012,15 @@ export class ClawzControlPlane {
     const parentMessage = parentMessageId
       ? file.messages.find((message) => message.messageId === parentMessageId && message.moderationStatus === "visible")
       : undefined;
-    if (parentMessageId && !parentMessage) {
+    const fallbackThreadId = sanitizeOptionalBoardId(options.threadId, "thread_");
+    if (parentMessageId && !parentMessage && !fallbackThreadId) {
       throw new Error("Parent public agent message was not found.");
     }
 
     const messageType = parentMessage ? "reply" : sanitizeAgentBoardMessageType(options.messageType);
     const threadId =
       parentMessage?.threadId ??
-      sanitizeOptionalBoardId(options.threadId, "thread_") ??
+      fallbackThreadId ??
       `thread_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
     const messageId = `msg_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
     const createdAtIso = new Date().toISOString();
@@ -6749,7 +6760,7 @@ export class ClawzControlPlane {
     return {
       agentId: options.agentId,
       sessionId,
-      serviceKey: serviceKeyForAgent(profile, options.agentId)
+      serviceKey: enrolledServiceKeyForAgent(state.ingressSecretsBySession[sessionId], profile, options.agentId)
     };
   }
 
@@ -6828,7 +6839,7 @@ export class ClawzControlPlane {
           publicHireUrl: publicAgentHireUrlFor(agentId),
           openClawUrl: "",
           runtimeDeliveryMode: profile.runtimeDelivery.mode,
-          serviceKey: serviceKeyForAgent(profile, agentId),
+          serviceKey: enrolledServiceKeyForAgent(state.ingressSecretsBySession[sessionId], profile, agentId),
           trustModeId,
           trustModeLabel: trustMode.label,
           proofLevel: trustMode.proofLevel,
@@ -7139,6 +7150,7 @@ export class ClawzControlPlane {
     }
 
     const agentId = reservedIds?.agentId ?? buildStableAgentId(profile.agentName, sessionId);
+    const serviceKey = serviceKeyForAgent(profile, agentId);
     const adminKey = buildAdminKey();
     const ingressToken = buildIngressToken();
     const signingSecret = buildIngressSigningSecret();
@@ -7167,6 +7179,7 @@ export class ClawzControlPlane {
           tokenHint: ingressTokenHint(ingressToken),
           signingSecret,
           signingSecretHint: ingressTokenHint(signingSecret),
+          serviceKey,
           issuedAtIso: registeredAtIso
         }
       },

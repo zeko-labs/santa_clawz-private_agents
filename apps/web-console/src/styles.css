@@ -2725,6 +2725,12 @@ h3 {
   color: rgba(255, 248, 239, 0.92);
 }
 
+.subtle-status-banner {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(8, 18, 30, 0.35);
+  color: rgba(255, 248, 239, 0.84);
+}
+
 .status-banner-success {
   border-color: rgba(22, 113, 88, 0.18);
   background: rgba(22, 113, 88, 0.1);

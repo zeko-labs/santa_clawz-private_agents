@@ -57,6 +57,25 @@ const securityConfig = resolveSecurityConfig();
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const startedAtIso = new Date().toISOString();
+const startedAtMs = Date.now();
+
+function deploymentVersion() {
+  return {
+    commitSha:
+      process.env.RENDER_GIT_COMMIT ??
+      process.env.COMMIT_SHA ??
+      process.env.GIT_COMMIT ??
+      process.env.SOURCE_VERSION ??
+      "unknown",
+    renderServiceId: process.env.RENDER_SERVICE_ID,
+    renderServiceName: process.env.RENDER_SERVICE_NAME,
+    nodeEnv: process.env.NODE_ENV,
+    runtimeEnv: process.env.CLAWZ_RUNTIME_ENV,
+    startedAtIso,
+    uptimeSeconds: Math.max(0, Math.round((Date.now() - startedAtMs) / 1000))
+  };
+}
 
 interface IndexerRequest<
   Params extends Record<string, string> = Record<string, string>,
@@ -1201,7 +1220,16 @@ async function verifyInteropProof(
 app.get("/health", route((_request, response) => {
   response.json({
     ok: true,
-    service: "clawz-indexer"
+    service: "clawz-indexer",
+    version: deploymentVersion()
+  });
+}));
+
+app.get("/version", route((_request, response) => {
+  response.json({
+    ok: true,
+    service: "clawz-indexer",
+    version: deploymentVersion()
   });
 }));
 
@@ -1238,6 +1266,7 @@ app.get("/ready", route(async (_request, response) => {
       ok: checks.every((check) => check.ok),
       service: "clawz-indexer",
       generatedAtIso: new Date().toISOString(),
+      version: deploymentVersion(),
       security: publicSecurityStatus(securityConfig),
       deployment: {
         mode: deployment.mode,

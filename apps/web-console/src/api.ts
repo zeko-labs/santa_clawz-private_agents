@@ -287,14 +287,30 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
     headers.set("x-clawz-admin-key", adminKey);
   }
 
-  let response: Response;
+  let response: Response | undefined;
+  const method = String(init?.method ?? "GET").toUpperCase();
+  const attempts = method === "GET" ? 2 : 1;
+  let lastNetworkError: unknown;
   try {
-    response = await fetch(`${API_BASE}${path}`, {
-      headers,
-      ...init
-    });
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        response = await fetch(`${API_BASE}${path}`, {
+          headers,
+          ...init
+        });
+        break;
+      } catch (error) {
+        lastNetworkError = error;
+        if (attempt < attempts) {
+          await new Promise((resolve) => window.setTimeout(resolve, 650));
+        }
+      }
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Network request failed.";
+    lastNetworkError = error;
+  }
+  if (!response) {
+    const message = lastNetworkError instanceof Error ? lastNetworkError.message : "Network request failed.";
     throw new Error(
       `SantaClawz could not reach the onboarding API at ${API_BASE}. Check that the Render backend is live and CORS allows this domain. (${message})`
     );

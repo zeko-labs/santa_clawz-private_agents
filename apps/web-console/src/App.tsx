@@ -1415,6 +1415,7 @@ export function App() {
   const [manageLookupValue, setManageLookupValue] = useState(initialRoute.sessionId ?? initialRoute.agentId ?? "");
   const [profile, setProfile] = useState<AgentProfileDraft>(normalizeProfileDraft());
   const [error, setError] = useState<string | null>(null);
+  const [backgroundError, setBackgroundError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [registry, setRegistry] = useState<AgentRegistryEntry[]>([]);
@@ -1461,6 +1462,14 @@ export function App() {
     : [];
   const exploreAvailabilityKey = exploreAvailabilityAgentIds.join("|");
 
+  function reportBackgroundError(nextError: Error, fallback: string) {
+    setBackgroundError(nextError.message || fallback);
+  }
+
+  function clearBackgroundError() {
+    setBackgroundError(null);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1472,6 +1481,7 @@ export function App() {
 
         setState(nextState);
         setError(null);
+        clearBackgroundError();
 
         if (!selectedSessionId && !sharedAgentId) {
           setSelectedSessionId(nextState.session.sessionId);
@@ -1479,7 +1489,11 @@ export function App() {
       })
       .catch((nextError: Error) => {
         if (!cancelled) {
-          setError(nextError.message);
+          if (state) {
+            reportBackgroundError(nextError, "SantaClawz background refresh failed.");
+          } else {
+            setError(nextError.message);
+          }
         }
       });
 
@@ -1513,7 +1527,7 @@ export function App() {
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
-            setError(nextError.message);
+            reportBackgroundError(nextError, "SantaClawz background refresh failed.");
           }
         });
     }, 2500);
@@ -1566,6 +1580,7 @@ export function App() {
       void updateAgentProfile(profileForSave, profileSessionId)
         .then((nextState) => {
           setState(nextState);
+          clearBackgroundError();
         })
         .catch((nextError: Error) => {
           setError(nextError.message);
@@ -1598,7 +1613,7 @@ export function App() {
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
-            setError(nextError.message);
+            reportBackgroundError(nextError, "SantaClawz registry refresh failed.");
           }
         });
     };
@@ -1643,11 +1658,12 @@ export function App() {
           if (!cancelled) {
             setAgentBoard(nextBoard);
             setPaymentLedger(nextPayments);
+            clearBackgroundError();
           }
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
-            setError(nextError.message);
+            reportBackgroundError(nextError, "SantaClawz activity refresh failed.");
           }
         });
     };
@@ -1683,11 +1699,12 @@ export function App() {
         .then((nextLedger) => {
           if (!cancelled) {
             setProfilePaymentLedger(nextLedger);
+            clearBackgroundError();
           }
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
-            setError(nextError.message);
+            reportBackgroundError(nextError, "SantaClawz payment ledger refresh failed.");
           }
         });
     };
@@ -1782,12 +1799,13 @@ export function App() {
           if (!cancelled) {
             setAgentAvailability(availability);
             setRegistry((currentRegistry) => mergeAvailabilityIntoRegistry(currentRegistry, availability));
+            clearBackgroundError();
           }
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
             setAgentAvailability(null);
-            setError(nextError.message);
+            reportBackgroundError(nextError, "SantaClawz availability refresh failed.");
           }
         })
         .finally(() => {
@@ -3336,6 +3354,7 @@ export function App() {
       </section>
 
       {error ? <p className="status-banner">{error}</p> : null}
+      {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
         <section id="configure" className="step-stack configure-stack">

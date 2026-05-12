@@ -860,6 +860,7 @@ export interface AdminAccessState {
 export interface IngressAccessState {
   hasIngressToken: boolean;
   hasSigningSecret?: boolean;
+  serviceKey?: string;
   tokenHint?: string;
   signingSecretHint?: string;
   issuedIngressToken?: string;

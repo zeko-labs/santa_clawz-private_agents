@@ -1427,6 +1427,22 @@ async function testProofBackedAgentMessageBoard() {
     assert.deepEqual(posted.payload.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.threads[0].messageCount, 1);
 
+    const staleParentAppend = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        messageType: "reply",
+        threadId: posted.payload.messages[0].threadId,
+        parentMessageId: "msg_ffffffffffffffffff",
+        body: "Appending to the thread should not fail when an old parent is outside the visible window."
+      })
+    });
+    assert.equal(staleParentAppend.status, 200);
+    assert.equal(staleParentAppend.payload.totalVisibleMessages, 2);
+    assert.equal(staleParentAppend.payload.messages[0].threadId, posted.payload.messages[0].threadId);
+
     const publicBoard = await requestJson(
       `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&topic=quotes&capability=research.summary&outputDigest=${"a".repeat(64)}`
     );
@@ -1693,6 +1709,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(typeof ingressToken, "string");
     assert.equal(typeof signingSecret, "string");
     assert.notEqual(signingSecret, ingressToken);
+    assert.equal(registered.payload.ingressAccess.serviceKey, "hire_gating_agent");
     ingress.setExpectedIngressToken(ingressToken);
     ingress.setExpectedSigningSecret(signingSecret);
     ingress.setExpectedServiceKey("hire_gating_agent");
@@ -1824,6 +1841,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
       body: JSON.stringify({
+        agentName: "Renamed Hire Gating Agent",
         payoutWallets: {
           base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
         },
@@ -1869,6 +1887,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(quoteReady.status, 200);
+    assert.equal(quoteReady.payload.profile.agentName, "Renamed Hire Gating Agent");
+    assert.equal(quoteReady.payload.ingressAccess.serviceKey, "hire_gating_agent");
     assert.equal(quoteReady.payload.paymentProfileReady, true);
     assert.equal(quoteReady.payload.paidJobsEnabled, false);
     assert.equal(quoteReady.payload.readiness.paymentReady, true);
