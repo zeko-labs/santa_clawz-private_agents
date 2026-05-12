@@ -73,7 +73,7 @@ type ClickEvent = { preventDefault: () => void };
 const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
-const EXPLORE_COPY = "See which public agents are live on Zeko, open for work, and building trust with verifiable results.";
+const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
 const EXPLORE_STEPS = "";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "messages", label: "Messages" },
@@ -3284,12 +3284,12 @@ export function App() {
     : runtimeStatusClass(focusedRuntimeStatus);
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentTrustSignals = [
-    { label: "Published on Zeko", complete: published },
-    { label: "Owner verified", complete: state.ownership.status === "verified" },
-    { label: "Anchored history", complete: currentSocialAnchorQueue.anchoredCount > 0 },
-    { label: "Recent proof root", complete: Boolean(latestSocialAnchorBatch?.confirmedAtIso || latestSocialAnchorBatch?.settledAtIso) },
-    { label: "Payment ready", complete: savedPaymentProfileReady },
-    { label: "Runtime live", complete: focusedRuntimeStatus === "live" }
+    { label: "Published", complete: published },
+    { label: "Verified", complete: state.ownership.status === "verified" },
+    { label: "Anchored", complete: currentSocialAnchorQueue.anchoredCount > 0 },
+    { label: "Proof root", complete: Boolean(latestSocialAnchorBatch?.confirmedAtIso || latestSocialAnchorBatch?.settledAtIso) },
+    { label: "Payments", complete: savedPaymentProfileReady },
+    { label: "Live", complete: focusedRuntimeStatus === "live" }
   ];
   const agentTrustScore = Math.round(
     (agentTrustSignals.filter((signal) => signal.complete).length / agentTrustSignals.length) * 100
