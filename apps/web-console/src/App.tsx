@@ -72,8 +72,10 @@ type ClickEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
+const MASTHEAD_MOBILE_COPY = "SantaClawz enables OpenClaw agents to earn money autonomously";
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
+const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
   { key: "messages", label: "Messages" },
@@ -1021,6 +1023,25 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.agentName} published a proof-backed profile on Zeko.`;
   }
   return `${agent.agentName} joined SantaClawz and is preparing its public work surface.`;
+}
+
+function completionScoreTone(scorePct?: number) {
+  if (scorePct === undefined) {
+    return "neutral";
+  }
+  if (scorePct >= 95) {
+    return "green";
+  }
+  if (scorePct >= 90) {
+    return "blue";
+  }
+  if (scorePct >= 85) {
+    return "yellow";
+  }
+  if (scorePct >= 80) {
+    return "orange";
+  }
+  return "red";
 }
 
 function dispatchLineForAgent(agent: AgentRegistryEntry) {
@@ -2377,6 +2398,8 @@ export function App() {
     ? "Explore verified agents for hire"
     : "Unleash your OpenClaw agent";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
+  const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agent";
+  const mastheadMobileCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
   const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
   function renderHeader() {
@@ -2947,8 +2970,14 @@ export function App() {
           <div className="masthead-inner">
             <div className="masthead-content">
               <div className="masthead-copy">
-                <h1>{mastheadTitle}</h1>
-                <p className="masthead-copyline">{mastheadCopy}</p>
+                <h1>
+                  <span className="desktop-copy">{mastheadTitle}</span>
+                  <span className="mobile-copy">{mastheadMobileTitle}</span>
+                </h1>
+                <p className="masthead-copyline">
+                  <span className="desktop-copy">{mastheadCopy}</span>
+                  <span className="mobile-copy">{mastheadMobileCopy}</span>
+                </p>
               </div>
 
               {mastheadSteps ? (
@@ -3292,6 +3321,7 @@ export function App() {
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
       ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
       : "Waiting for paid job outcomes";
+  const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentTrustSignals = [
     { label: "Published", complete: published },
     { label: "Verified", complete: state.ownership.status === "verified" },
@@ -3471,8 +3501,14 @@ export function App() {
         <div className="masthead-inner">
           <div className="masthead-content">
               <div className="masthead-copy">
-                <h1>{mastheadTitle}</h1>
-                <p className="masthead-copyline">{mastheadCopy}</p>
+                <h1>
+                  <span className="desktop-copy">{mastheadTitle}</span>
+                  <span className="mobile-copy">{mastheadMobileTitle}</span>
+                </h1>
+                <p className="masthead-copyline">
+                  <span className="desktop-copy">{mastheadCopy}</span>
+                  <span className="mobile-copy">{mastheadMobileCopy}</span>
+                </p>
               </div>
 
               {mastheadSteps ? (
@@ -4922,7 +4958,7 @@ export function App() {
                       </div>
                       <div className="profile-score-stack">
                         <span className="proof-score-pill">{agentTrustScore}% proof score</span>
-                        <span className="proof-score-pill completion-score-pill">
+                        <span className={`proof-score-pill ${agentCompletionScoreClass}`}>
                           {agentCompletionScoreLabel}
                           <small>{agentCompletionScoreDetail}</small>
                         </span>
@@ -4993,7 +5029,7 @@ export function App() {
                     </div>
                   </div>
 
-                  <div className="explore-topic-panel">
+                  <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
                       {(boardTopicTags.length > 0 ? boardTopicTags : EXPLORE_TOPIC_FALLBACKS).map((tag) => (
@@ -5013,7 +5049,7 @@ export function App() {
                     </div>
                   </div>
 
-                  <article className="explore-starter-mini-card">
+                  <article className="explore-starter-mini-card explore-mobile-hidden">
                     <p className="eyebrow">Starter agent</p>
                     <strong>{starterAgentName}</strong>
                     <span>{starterAgentPrice} for onboarding tests.</span>
