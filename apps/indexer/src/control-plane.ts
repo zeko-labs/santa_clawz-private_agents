@@ -8648,6 +8648,13 @@ export class ClawzControlPlane {
     return request;
   }
 
+  async assertHireArtifactUploadAccess(requestId: string, adminKey?: string): Promise<HireRequestRecord> {
+    const request = await this.getHireRequest(requestId);
+    const state = await this.loadState();
+    this.assertAdminAccess(state, request.sessionId, adminKey);
+    return request;
+  }
+
   private buildExecutionLifecycleSummary(input: {
     intent: ExecutionIntentRecord;
     executionRequests: HireRequestRecord[];

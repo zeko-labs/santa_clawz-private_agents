@@ -9,6 +9,9 @@ NODE_ENV=production
 CLAWZ_RUNTIME_ENV=production
 CLAWZ_REGULATED_ENTERPRISE=true
 CLAWZ_DATA_DIR=/var/lib/clawz
+CLAWZ_ARTIFACT_STORE_DIR=/var/lib/clawz/artifacts
+CLAWZ_ARTIFACT_ENCRYPTION_KEY_BASE64=<32-byte-base64-key>
+CLAWZ_ARTIFACT_RETENTION_DAYS=10
 CLAWZ_REQUIRE_API_AUTH=true
 CLAWZ_API_KEY_SHA256=<sha256-of-operator-api-key>
 CLAWZ_ALLOWED_ORIGINS=https://console.example.com
@@ -31,7 +34,10 @@ CLAWZ_ALLOWED_ORIGINS=https://santaclawz.ai
 That keeps operator and ingestion routes protected while allowing the public site to call only the onboarding surface:
 
 - `GET /api/console/state`
+- `GET /api/artifacts/:artifactId/manifest`
+- `GET /api/artifacts/:artifactId/download`
 - `POST /api/console/trust-mode`
+- `POST /api/executions/:requestId/artifacts`
 - `POST /api/wallet/sponsor`
 - `GET /api/wallet/sponsor/queue`
 - `POST /api/wallet/recovery/prepare`
@@ -151,6 +157,8 @@ Local file-backed blob storage remains supported for single-node operators when 
 The bundled privacy gateway implements the object-store contract using a private durable filesystem mount. This is intentionally simple: it gives operators a production-separable privacy boundary now, while still letting a cloud object-store proxy replace the storage backend without changing the indexer.
 
 For agent job outputs, the buyer should receive usable work, not only a hash. The relay return should stay compact and carry a summary, artifact manifest pointer, bundle digest, file counts, and verification metadata; the actual deliverables can live in the sealed blob store or another approved artifact backend. For small outputs, the return package may include bounded `buyer_visible_outputs` inline. For larger jobs, the return should include `artifact_manifest_url`, `artifact_bundle_digest_sha256`, and per-deliverable hashes, then SantaClawz should expose a buyer-authenticated artifact endpoint or short-lived signed download URL. For private or sensitive jobs, SantaClawz might show only a gated/signed download link, a redacted preview, or a digest until the buyer authenticates. But the core promise is: buyers receive usable work, and the proof layer makes that work trustworthy.
+
+The indexer includes a V1 disk-backed artifact handoff for Render single-node deployments. A seller with the agent admin key can upload a completed job bundle to `POST /api/executions/:requestId/artifacts` as `application/octet-stream`; SantaClawz encrypts the bytes at rest with `CLAWZ_ARTIFACT_ENCRYPTION_KEY_BASE64`, stores them under `CLAWZ_ARTIFACT_STORE_DIR`, returns a tokenized manifest/download URL, and deletes expired artifacts during background cleanup. The default retention is 10 days and the default upload limit is 25 MB; tune with `CLAWZ_ARTIFACT_RETENTION_DAYS` and `CLAWZ_ARTIFACT_MAX_BYTES`. This is a practical pass-through layer, not permanent archival storage: buyers should download and retain their own deliverables, while the returned digest lets them verify the downloaded bytes match the paid/proved result.
 
 ## Public Proof Surface
 

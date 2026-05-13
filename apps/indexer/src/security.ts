@@ -125,6 +125,10 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && /^\/api\/artifacts\/[^/]+\/(manifest|download)$/.test(pathname)) {
+    return true;
+  }
+
   if (config.publicProofSurface !== "disabled" && method === "GET" && pathname.startsWith("/.well-known/")) {
     return true;
   }
@@ -176,6 +180,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         (/^\/api\/agents\/[^/]+\/readiness\/refresh$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/archive$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/quotes\/[^/]+\/accept$/.test(pathname)) ||
+        (/^\/api\/executions\/[^/]+\/artifacts$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/heartbeat$/.test(pathname)) ||
         pathname === "/api/social/anchors/settle" ||
         pathname === "/api/social/anchors/commit" ||
@@ -252,7 +257,7 @@ export function applyBaseSecurityHeaders(
 
   response.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, authorization, x-api-key, x-clawz-admin-key, x-request-id"
+    "content-type, authorization, x-api-key, x-clawz-admin-key, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
   );
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }

@@ -520,6 +520,15 @@ async function requestJson(url, init) {
   };
 }
 
+async function requestBytes(url, init) {
+  const response = await fetch(url, init);
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: Buffer.from(await response.arrayBuffer())
+  };
+}
+
 async function runJsonCommand(command, args, cwd) {
   const stdout = [];
   const stderr = [];
@@ -2172,6 +2181,39 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.completionClassification, "demo_completion");
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.marketplaceCompletionCredit, false);
     assert.equal(ingress.receivedHireRequestIds.has(freeTestAccepted.payload.requestId), true);
+
+    const artifactBody = Buffer.from("Ask again after one brave sip of coffee.\n", "utf8");
+    const artifactUpload = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=answer.md&contentType=text/markdown`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-clawz-admin-key": adminKey
+        },
+        body: artifactBody
+      }
+    );
+    assert.equal(artifactUpload.status, 200);
+    assert.equal(artifactUpload.payload.artifact.requestId, freeTestAccepted.payload.requestId);
+    assert.equal(artifactUpload.payload.artifact.filename, "answer.md");
+    assert.equal(artifactUpload.payload.artifact.contentType, "text/markdown");
+    assert.equal(artifactUpload.payload.artifact.artifactBundleDigestSha256, createHash("sha256").update(artifactBody).digest("hex"));
+    assert.match(artifactUpload.payload.artifact.artifactDownloadUrl, /\/api\/artifacts\/artifact_[a-f0-9]+\/download\?token=/);
+    assert.deepEqual(artifactUpload.payload.verifiedOutputPatch, {
+      artifact_manifest_url: artifactUpload.payload.artifact.artifactManifestUrl,
+      artifact_bundle_digest_sha256: artifactUpload.payload.artifact.artifactBundleDigestSha256
+    });
+
+    const artifactManifest = await requestJson(artifactUpload.payload.artifact.artifactManifestUrl, { method: "GET" });
+    assert.equal(artifactManifest.status, 200);
+    assert.equal(artifactManifest.payload.artifact.digestSha256, artifactUpload.payload.artifact.artifactBundleDigestSha256);
+    assert.equal(artifactManifest.payload.artifact.plaintextBytes, artifactBody.length);
+
+    const artifactDownload = await requestBytes(artifactUpload.payload.artifact.artifactDownloadUrl, { method: "GET" });
+    assert.equal(artifactDownload.status, 200);
+    assert.equal(artifactDownload.headers.get("x-santaclawz-artifact-digest-sha256"), artifactUpload.payload.artifact.artifactBundleDigestSha256);
+    assert.deepEqual(artifactDownload.body, artifactBody);
 
     const freeTestLimited = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

@@ -2,6 +2,7 @@ import express from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
+import path from "node:path";
 
 import {
   type AgentBoardMessageType,
@@ -32,6 +33,7 @@ import {
   type CreateExecutionIntentOptions,
   type ExecutionIntentTransitionOptions
 } from "./control-plane.js";
+import { ArtifactStore } from "./artifact-store.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
 import {
   apiAuthMiddleware,
@@ -53,6 +55,8 @@ import {
 } from "./x402-adapter.js";
 
 const app = express();
+const expressRaw = (express as unknown as { raw(options?: unknown): unknown }).raw;
+const appWithRouteMiddleware = app as unknown as { post(path: string, ...handlers: unknown[]): void };
 const securityConfig = resolveSecurityConfig();
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
@@ -93,7 +97,7 @@ interface IndexerResponse<ResBody = unknown> {
   end(): IndexerResponse<ResBody>;
   json(body: ResBody | unknown): IndexerResponse<ResBody>;
   set(name: string, value: string): IndexerResponse<ResBody>;
-  send(body: string): IndexerResponse<ResBody>;
+  send(body: string | Buffer): IndexerResponse<ResBody>;
   status(code: number): IndexerResponse<ResBody>;
   type(contentType: string): IndexerResponse<ResBody>;
 }
@@ -139,8 +143,21 @@ app.options(
 app.use(apiAuthMiddleware(securityConfig));
 app.use(express.json({ limit: "64kb" }));
 
-const controlPlane = await ClawzControlPlane.boot(process.env.CLAWZ_DATA_DIR?.trim() || undefined);
+const clawzDataDir = process.env.CLAWZ_DATA_DIR?.trim() || path.join(process.cwd(), ".clawz-data");
+const controlPlane = await ClawzControlPlane.boot(clawzDataDir);
 controlPlane.startSharedSocialAnchorDrainer();
+const artifactStore = new ArtifactStore(process.env.CLAWZ_ARTIFACT_STORE_DIR?.trim() || path.join(clawzDataDir, "artifacts"));
+await artifactStore.ensureDirs();
+void artifactStore.cleanupExpired().catch((error) => {
+  console.error(`Artifact cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+});
+const artifactCleanupInterval = setInterval(() => {
+  void artifactStore.cleanupExpired().catch((error) => {
+    console.error(`Artifact cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}, 6 * 60 * 60 * 1000);
+const artifactCleanupIntervalWithUnref = artifactCleanupInterval as unknown as { unref?: () => void };
+artifactCleanupIntervalWithUnref.unref?.();
 const REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
 const REGISTRATION_LIMIT = 5;
 const registrationAttempts = new Map<string, { count: number; resetAt: number }>();
@@ -251,6 +268,28 @@ function queryString(query: unknown, key: string): string | undefined {
 
 function adminKeyHeader(request: IndexerRequest) {
   return optionalString(request.header("x-clawz-admin-key"));
+}
+
+function tokenQuery(request: IndexerRequest) {
+  return queryString(request.query, "token");
+}
+
+function requestBaseUrl(request: IndexerRequest) {
+  const configured = process.env.CLAWZ_SITE_BASE?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+  const proto = request.header("x-forwarded-proto")?.split(",")[0]?.trim() || "http";
+  const host = request.header("x-forwarded-host")?.split(",")[0]?.trim() || request.header("host")?.trim();
+  if (host) {
+    return `${proto}://${host}`.replace(/\/+$/, "");
+  }
+  return "https://santaclawz.ai";
+}
+
+function contentDispositionAttachment(filename: string) {
+  const safe = filename.replace(/["\\\r\n]/g, "_");
+  return `attachment; filename="${safe}"`;
 }
 
 function requestIdentity(request: IndexerRequest) {
@@ -1496,6 +1535,78 @@ app.get("/api/executions/:requestId", route(async (request, response) => {
       error: error instanceof Error ? error.message : "Unable to get execution request."
     });
   }
+}));
+
+appWithRouteMiddleware.post(
+  "/api/executions/:requestId/artifacts",
+  expressRaw({
+    type: "application/octet-stream",
+    limit: process.env.CLAWZ_ARTIFACT_MAX_BYTES?.trim() || "25mb"
+  }),
+  route(async (request, response) => {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    if (!(request.body instanceof Uint8Array)) {
+      response.status(415).json({ error: "Upload artifacts as application/octet-stream." });
+      return;
+    }
+
+    const hireRequest = await controlPlane.assertHireArtifactUploadAccess(requestId, adminKeyHeader(request));
+    const artifactBody = Buffer.from(request.body);
+    const filename = queryString(request.query, "filename") ?? optionalString(request.header("x-clawz-artifact-filename"));
+    const contentType =
+      queryString(request.query, "contentType") ??
+      optionalString(request.header("x-clawz-artifact-content-type")) ??
+      optionalString(request.header("content-type"));
+    const artifact = await artifactStore.create({
+      requestId: hireRequest.requestId,
+      ...(filename ? { filename } : {}),
+      ...(contentType ? { contentType } : {}),
+      body: artifactBody,
+      baseUrl: requestBaseUrl(request)
+    });
+
+    response.json({
+      ok: true,
+      artifact,
+      verifiedOutputPatch: {
+        artifact_manifest_url: artifact.artifactManifestUrl,
+        artifact_bundle_digest_sha256: artifact.artifactBundleDigestSha256
+      }
+    });
+  })
+);
+
+app.get("/api/artifacts/:artifactId/manifest", route(async (request, response) => {
+  const artifactId = request.params.artifactId;
+  const token = tokenQuery(request);
+  if (!artifactId || !token) {
+    response.status(400).json({ error: "artifactId and token are required." });
+    return;
+  }
+  response.json({
+    ok: true,
+    artifact: await artifactStore.manifest(artifactId, token)
+  });
+}));
+
+app.get("/api/artifacts/:artifactId/download", route(async (request, response) => {
+  const artifactId = request.params.artifactId;
+  const token = tokenQuery(request);
+  if (!artifactId || !token) {
+    response.status(400).json({ error: "artifactId and token are required." });
+    return;
+  }
+
+  const artifact = await artifactStore.read(artifactId, token);
+  response
+    .set("content-type", artifact.metadata.contentType)
+    .set("content-disposition", contentDispositionAttachment(artifact.metadata.filename))
+    .set("x-santaclawz-artifact-digest-sha256", artifact.metadata.digestSha256)
+    .send(artifact.body);
 }));
 
 app.post("/api/execution/intents", route(async (request, response) => {
