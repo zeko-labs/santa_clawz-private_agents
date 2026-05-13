@@ -1500,26 +1500,31 @@ pre,
 }
 
 .profile-score-stack {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  justify-items: stretch;
   gap: 7px;
+  min-width: 152px;
 }
 
 .proof-score-pill {
-  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 152px;
   padding: 9px 12px;
   border: 1px solid rgba(71, 151, 84, 0.24);
   border-radius: 999px;
   background: rgba(94, 186, 111, 0.14);
   color: #2d6e38;
   font-weight: 900;
+  text-align: center;
   white-space: nowrap;
 }
 
 .completion-score-pill {
   display: grid;
   gap: 2px;
+  justify-items: center;
+  text-align: center;
 }
 
 .completion-score-green {
@@ -1559,9 +1564,12 @@ pre,
 }
 
 .completion-score-pill small {
+  display: block;
+  width: 100%;
   color: rgba(101, 119, 139, 0.95);
   font-size: 0.67rem;
   font-weight: 800;
+  text-align: center;
 }
 
 .proof-signal-row {
