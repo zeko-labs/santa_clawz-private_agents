@@ -46,6 +46,7 @@ type DuplicateClaimTarget = {
   canReclaim: boolean;
 };
 type ExploreFilterKey = "messages" | "agents" | "payments";
+type ExploreAgentSortKey = "online" | "completion";
 type ExploreActivityItem =
   | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry };
@@ -72,7 +73,8 @@ type ClickEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
   "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
-const MASTHEAD_MOBILE_COPY = "SantaClawz enables OpenClaw agents to earn money autonomously";
+const MASTHEAD_MOBILE_COPY =
+  "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails.";
 const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
@@ -1525,6 +1527,7 @@ export function App() {
   const [agentAvailabilityLoading, setAgentAvailabilityLoading] = useState(false);
   const [exploreQuery, setExploreQuery] = useState("");
   const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
+  const [exploreAgentSort, setExploreAgentSort] = useState<ExploreAgentSortKey>("online");
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
@@ -3259,7 +3262,23 @@ export function App() {
   const boardTopicTags = Array.from(
     new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
-  const visibleExploreAgents = filteredRegistry.slice(0, 12);
+  const visibleExploreAgents = [...filteredRegistry]
+    .sort((left, right) => {
+      if (exploreAgentSort === "completion") {
+        const rightCompletion = right.completionScore?.successRatePct ?? -1;
+        const leftCompletion = left.completionScore?.successRatePct ?? -1;
+        if (rightCompletion !== leftCompletion) {
+          return rightCompletion - leftCompletion;
+        }
+      }
+      const rightOnline = Number(right.runtimeStatus === "live" && right.paidJobsEnabled);
+      const leftOnline = Number(left.runtimeStatus === "live" && left.paidJobsEnabled);
+      if (rightOnline !== leftOnline) {
+        return rightOnline - leftOnline;
+      }
+      return (right.lastUpdatedAtIso ?? "").localeCompare(left.lastUpdatedAtIso ?? "");
+    })
+    .slice(0, 12);
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
     ? buildPublicAgentUrl(starterAgent.agentId)
@@ -5010,8 +5029,8 @@ export function App() {
                     />
                   </label>
 
-                  <div className="explore-topic-panel">
-                    <span className="eyebrow">Filters</span>
+                  <div className="explore-topic-panel explore-filter-panel">
+                    <span className="eyebrow">Filters:</span>
                     <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent filters">
                       {EXPLORE_FILTERS.map((filter) => (
                         <button
@@ -5028,6 +5047,33 @@ export function App() {
                       ))}
                     </div>
                   </div>
+                  {selectedExploreFilter === "agents" ? (
+                    <div className="explore-topic-panel explore-filter-panel explore-sort-panel">
+                      <span className="eyebrow">Sort:</span>
+                      <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent sort">
+                        <button
+                          type="button"
+                          className={`explore-filter-chip${exploreAgentSort === "online" ? " active" : ""}`}
+                          aria-pressed={exploreAgentSort === "online"}
+                          onClick={() => {
+                            setExploreAgentSort("online");
+                          }}
+                        >
+                          Online
+                        </button>
+                        <button
+                          type="button"
+                          className={`explore-filter-chip${exploreAgentSort === "completion" ? " active" : ""}`}
+                          aria-pressed={exploreAgentSort === "completion"}
+                          onClick={() => {
+                            setExploreAgentSort("completion");
+                          }}
+                        >
+                          Completion
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
@@ -5179,13 +5225,15 @@ export function App() {
                                           <span>Payment • {formatRelativeTime(payment.updatedAtIso)}</span>
                                         </div>
                                       </div>
+                                    </div>
+                                    <div className="payment-activity-summary">
+                                      <p className="agent-message-body">
+                                        {paymentActivityLine(payment)}.
+                                      </p>
                                       <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
                                         {paymentActivityBadge(payment)}
                                       </span>
                                     </div>
-                                    <p className="agent-message-body">
-                                      {paymentActivityLine(payment)}.
-                                    </p>
                                     <div className="agent-message-proof-row">
                                       <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>
                                       {payment.deliveryReceipt ? <span>{payment.deliveryReceipt.stage.replace(/_/g, " ")}</span> : null}

@@ -675,6 +675,27 @@ pre,
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.explore-filter-panel,
+.explore-sort-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.explore-filter-panel .eyebrow,
+.explore-sort-panel .eyebrow {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.explore-filter-panel .explore-nav-filter-row {
+  flex: 1 1 auto;
+}
+
+.explore-sort-panel .explore-nav-filter-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .explore-nav-filter-row .explore-filter-chip {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.12);
@@ -1398,6 +1419,21 @@ pre,
 
 .payment-activity-card {
   border-color: rgba(71, 151, 84, 0.16);
+}
+
+.payment-activity-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.payment-activity-summary .agent-message-body {
+  flex: 1 1 auto;
+}
+
+.payment-activity-summary .board-proof-pill {
+  flex: 0 0 auto;
 }
 
 .profile-url-action {
@@ -4318,6 +4354,63 @@ button:disabled {
     font-size: 0.92rem;
   }
 
+  .explore-filter-panel,
+  .explore-sort-panel {
+    align-items: center;
+    gap: 7px;
+  }
+
+  .explore-nav-filter-row {
+    gap: 6px;
+  }
+
+  .explore-nav-filter-row .explore-filter-chip {
+    padding: 6px 6px;
+    font-size: 0.64rem;
+    letter-spacing: 0.02em;
+  }
+
+  .agent-message-card.compact {
+    padding: 12px 14px;
+  }
+
+  .agent-message-head.compact {
+    align-items: flex-start;
+  }
+
+  .agent-message-head .explore-card-topline {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .agent-message-head .explore-card-avatar.subtle {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+    border-radius: 12px;
+    font-size: 0.68rem;
+  }
+
+  .agent-message-body {
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  .payment-activity-summary {
+    align-items: flex-start;
+  }
+
+  .payment-activity-summary .board-proof-pill {
+    align-self: flex-start;
+    padding: 5px 7px;
+    font-size: 0.62rem;
+  }
+
+  .agent-message-proof-row {
+    gap: 5px 8px;
+    font-size: 0.63rem;
+  }
+
   .explore-topic-list-panel,
   .explore-mobile-hidden {
     display: none;
@@ -4332,7 +4425,6 @@ button:disabled {
   }
 
   .explore-card-head,
-  .agent-message-head,
   .explore-card-topline,
   .explore-card-foot,
   .explore-action-row {
