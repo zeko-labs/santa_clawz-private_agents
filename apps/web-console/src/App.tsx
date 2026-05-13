@@ -5091,7 +5091,7 @@ export function App() {
                             setExploreAgentSort("success");
                           }}
                         >
-                          %success
+                          %Success
                         </button>
                       </div>
                     </div>

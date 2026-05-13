@@ -675,6 +675,10 @@ pre,
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.explore-sort-panel .explore-nav-filter-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .explore-nav-filter-row .explore-filter-chip {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.12);
