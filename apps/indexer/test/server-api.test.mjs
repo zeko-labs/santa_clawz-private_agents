@@ -529,6 +529,28 @@ async function requestBytes(url, init) {
   };
 }
 
+function buildTinyZip(entries) {
+  const chunks = [];
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const data = Buffer.from(entry.data, "utf8");
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(0, 6);
+    header.writeUInt16LE(0, 8);
+    header.writeUInt16LE(0, 10);
+    header.writeUInt16LE(0, 12);
+    header.writeUInt32LE(0, 14);
+    header.writeUInt32LE(data.length, 18);
+    header.writeUInt32LE(data.length, 22);
+    header.writeUInt16LE(name.length, 26);
+    header.writeUInt16LE(0, 28);
+    chunks.push(header, name, data);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function runJsonCommand(command, args, cwd) {
   const stdout = [];
   const stderr = [];
@@ -2199,6 +2221,10 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(artifactUpload.payload.artifact.filename, "answer.md");
     assert.equal(artifactUpload.payload.artifact.contentType, "text/markdown");
     assert.equal(artifactUpload.payload.artifact.artifactBundleDigestSha256, createHash("sha256").update(artifactBody).digest("hex"));
+    assert.equal(artifactUpload.payload.artifact.safety.status, "clean");
+    assert.equal(artifactUpload.payload.artifact.safety.scanner, "santaclawz-static-policy-v1");
+    assert.equal(artifactUpload.payload.artifact.safety.fileKind, "md");
+    assert.equal(artifactUpload.payload.artifact.safety.malwareScanner, "not_configured");
     assert.match(artifactUpload.payload.artifact.artifactDownloadUrl, /\/api\/artifacts\/artifact_[a-f0-9]+\/download\?token=/);
     assert.deepEqual(artifactUpload.payload.verifiedOutputPatch, {
       artifact_manifest_url: artifactUpload.payload.artifact.artifactManifestUrl,
@@ -2209,11 +2235,44 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(artifactManifest.status, 200);
     assert.equal(artifactManifest.payload.artifact.digestSha256, artifactUpload.payload.artifact.artifactBundleDigestSha256);
     assert.equal(artifactManifest.payload.artifact.plaintextBytes, artifactBody.length);
+    assert.equal(artifactManifest.payload.artifact.safety.status, "clean");
 
     const artifactDownload = await requestBytes(artifactUpload.payload.artifact.artifactDownloadUrl, { method: "GET" });
     assert.equal(artifactDownload.status, 200);
     assert.equal(artifactDownload.headers.get("x-santaclawz-artifact-digest-sha256"), artifactUpload.payload.artifact.artifactBundleDigestSha256);
     assert.deepEqual(artifactDownload.body, artifactBody);
+
+    const blockedScriptUpload = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=install.sh&contentType=text/x-shellscript`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-clawz-admin-key": adminKey
+        },
+        body: Buffer.from("#!/bin/sh\necho nope\n", "utf8")
+      }
+    );
+    assert.equal(blockedScriptUpload.status, 400);
+    assert.equal(blockedScriptUpload.payload.code, "artifact_safety_blocked");
+    assert.equal(blockedScriptUpload.payload.safety.status, "blocked");
+    assert.match(blockedScriptUpload.payload.sellerMessage, /non-executable/i);
+
+    const blockedZipUpload = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=bundle.zip&contentType=application/zip`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-clawz-admin-key": adminKey
+        },
+        body: buildTinyZip([{ name: "../evil.sh", data: "echo bad" }])
+      }
+    );
+    assert.equal(blockedZipUpload.status, 400);
+    assert.equal(blockedZipUpload.payload.code, "artifact_safety_blocked");
+    assert.equal(blockedZipUpload.payload.safety.archive.executableEntries.includes("../evil.sh"), true);
+    assert.equal(blockedZipUpload.payload.safety.archive.suspiciousEntries.includes("../evil.sh"), true);
 
     const freeTestLimited = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

@@ -33,7 +33,7 @@ import {
   type CreateExecutionIntentOptions,
   type ExecutionIntentTransitionOptions
 } from "./control-plane.js";
-import { ArtifactStore } from "./artifact-store.js";
+import { ArtifactSafetyError, ArtifactStore } from "./artifact-store.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
 import {
   apiAuthMiddleware,
@@ -1561,17 +1561,35 @@ appWithRouteMiddleware.post(
       queryString(request.query, "contentType") ??
       optionalString(request.header("x-clawz-artifact-content-type")) ??
       optionalString(request.header("content-type"));
-    const artifact = await artifactStore.create({
-      requestId: hireRequest.requestId,
-      ...(filename ? { filename } : {}),
-      ...(contentType ? { contentType } : {}),
-      body: artifactBody,
-      baseUrl: requestBaseUrl(request)
-    });
+    let artifact;
+    try {
+      artifact = await artifactStore.create({
+        requestId: hireRequest.requestId,
+        ...(filename ? { filename } : {}),
+        ...(contentType ? { contentType } : {}),
+        body: artifactBody,
+        baseUrl: requestBaseUrl(request)
+      });
+    } catch (error) {
+      if (error instanceof ArtifactSafetyError) {
+        response.status(400).json({
+          ok: false,
+          code: "artifact_safety_blocked",
+          retryable: false,
+          safety: error.report,
+          buyerMessage: error.report.buyerMessage,
+          sellerMessage: error.report.sellerMessage
+        });
+        return;
+      }
+      throw error;
+    }
 
     response.json({
       ok: true,
       artifact,
+      buyerMessage: artifact.safety.buyerMessage,
+      sellerMessage: artifact.safety.sellerMessage,
       verifiedOutputPatch: {
         artifact_manifest_url: artifact.artifactManifestUrl,
         artifact_bundle_digest_sha256: artifact.artifactBundleDigestSha256
