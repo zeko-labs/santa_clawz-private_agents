@@ -1080,10 +1080,23 @@ function normalizeRuntimeDelivery(input: Partial<AgentProfileState["runtimeDeliv
       : typeof fallback?.runtimeIngressUrl === "string" && fallback.runtimeIngressUrl.trim().length > 0
         ? fallback.runtimeIngressUrl.trim().slice(0, 280)
         : undefined;
+  const runtimeRoutes = {
+    ...(typeof input?.runtimeRoutes?.quote_intake === "string" && input.runtimeRoutes.quote_intake.trim().length > 0
+      ? { quote_intake: input.runtimeRoutes.quote_intake.trim().slice(0, 280) }
+      : typeof fallback?.runtimeRoutes?.quote_intake === "string" && fallback.runtimeRoutes.quote_intake.trim().length > 0
+        ? { quote_intake: fallback.runtimeRoutes.quote_intake.trim().slice(0, 280) }
+        : {}),
+    ...(typeof input?.runtimeRoutes?.paid_execution === "string" && input.runtimeRoutes.paid_execution.trim().length > 0
+      ? { paid_execution: input.runtimeRoutes.paid_execution.trim().slice(0, 280) }
+      : typeof fallback?.runtimeRoutes?.paid_execution === "string" && fallback.runtimeRoutes.paid_execution.trim().length > 0
+        ? { paid_execution: fallback.runtimeRoutes.paid_execution.trim().slice(0, 280) }
+        : {})
+  };
 
   return {
     mode,
-    ...(mode === "self-hosted" && runtimeIngressUrl ? { runtimeIngressUrl } : {})
+    ...(mode === "self-hosted" && runtimeIngressUrl ? { runtimeIngressUrl } : {}),
+    ...(Object.keys(runtimeRoutes).length > 0 ? { runtimeRoutes } : {})
   };
 }
 
@@ -3775,6 +3788,35 @@ export class ClawzControlPlane {
         typeof verificationManifestRecord.mode === "string" ? verificationManifestRecord.mode.trim().toLowerCase() : "";
       const zekoAttestationIncluded =
         isRecord(verifiedOutputRecord.zeko_attestation) || isRecord(parsed.zeko_attestation_payload);
+      const artifactManifestUrl =
+        typeof verifiedOutputRecord.artifact_manifest_url === "string" && verifiedOutputRecord.artifact_manifest_url.trim().length > 0
+          ? verifiedOutputRecord.artifact_manifest_url.trim().slice(0, 2048)
+          : undefined;
+      const artifactBundleDigestSha256 =
+        typeof verifiedOutputRecord.artifact_bundle_digest_sha256 === "string" &&
+        /^[a-f0-9]{64}$/i.test(verifiedOutputRecord.artifact_bundle_digest_sha256)
+          ? verifiedOutputRecord.artifact_bundle_digest_sha256.toLowerCase()
+          : undefined;
+      const buyerVisibleOutputs = Array.isArray(verifiedOutputRecord.buyer_visible_outputs)
+        ? verifiedOutputRecord.buyer_visible_outputs
+            .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+            .slice(0, 10)
+            .map((entry, index) => ({
+              name:
+                typeof entry.name === "string" && entry.name.trim().length > 0
+                  ? entry.name.trim().slice(0, 240)
+                  : `output-${index + 1}`,
+              ...(typeof entry.content_type === "string" && entry.content_type.trim().length > 0
+                ? { contentType: entry.content_type.trim().slice(0, 120) }
+                : {}),
+              ...(typeof entry.text === "string" && entry.text.trim().length > 0
+                ? { text: entry.text.slice(0, 8000) }
+                : {}),
+              ...(typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/i.test(entry.sha256)
+                ? { sha256: entry.sha256.toLowerCase() }
+                : {})
+            }))
+        : undefined;
       const completionClassification: HireCompletionClassification =
         executionMode === "demo-complete" ||
         manifestMode === "demo" ||
@@ -3795,8 +3837,11 @@ export class ClawzControlPlane {
           deliverableCount,
           filesProducedCount,
           checksPerformedCount,
+          ...(artifactManifestUrl ? { artifactManifestUrl } : {}),
+          ...(artifactBundleDigestSha256 ? { artifactBundleDigestSha256 } : {}),
           verificationManifestDigestSha256: canonicalDigest(verificationManifestRecord).sha256Hex,
-          zekoAttestationIncluded
+          zekoAttestationIncluded,
+          ...(buyerVisibleOutputs && buyerVisibleOutputs.length > 0 ? { buyerVisibleOutputs } : {})
         },
         execution: {
           runtimeStatus: "completed",

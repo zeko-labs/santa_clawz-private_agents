@@ -591,11 +591,22 @@ function parseRuntimeDelivery(value: unknown): Partial<AgentProfileState["runtim
   if (!mode) {
     return undefined;
   }
+  const runtimeRoutes = isRecord(value.runtimeRoutes)
+    ? {
+        ...(typeof value.runtimeRoutes.quote_intake === "string" && value.runtimeRoutes.quote_intake.trim().length > 0
+          ? { quote_intake: value.runtimeRoutes.quote_intake.trim().slice(0, 280) }
+          : {}),
+        ...(typeof value.runtimeRoutes.paid_execution === "string" && value.runtimeRoutes.paid_execution.trim().length > 0
+          ? { paid_execution: value.runtimeRoutes.paid_execution.trim().slice(0, 280) }
+          : {})
+      }
+    : undefined;
   return {
     mode,
     ...(typeof value.runtimeIngressUrl === "string" && value.runtimeIngressUrl.trim().length > 0
       ? { runtimeIngressUrl: value.runtimeIngressUrl.trim() }
-      : {})
+      : {}),
+    ...(runtimeRoutes && Object.keys(runtimeRoutes).length > 0 ? { runtimeRoutes } : {})
   };
 }
 

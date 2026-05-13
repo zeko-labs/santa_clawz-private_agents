@@ -156,6 +156,46 @@
             }
           }
         },
+        "artifact_manifest_url": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "artifact_bundle_digest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "verification_manifest_digest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "buyer_visible_outputs": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "content_type": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 8000
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
         "zeko_attestation": {
           "type": "object"
         }

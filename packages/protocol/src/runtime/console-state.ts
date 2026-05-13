@@ -543,6 +543,10 @@ export interface AgentProfileState {
   runtimeDelivery: {
     mode: "santaclawz-relay" | "self-hosted";
     runtimeIngressUrl?: string;
+    runtimeRoutes?: {
+      quote_intake?: string;
+      paid_execution?: string;
+    };
   };
   availability: "active" | "archived" | "suspended" | "blocked";
   archivedAtIso?: string;
@@ -644,8 +648,16 @@ export interface HireRequestReceipt {
       deliverableCount: number;
       filesProducedCount?: number;
       checksPerformedCount?: number;
+      artifactManifestUrl?: string;
+      artifactBundleDigestSha256?: string;
       verificationManifestDigestSha256?: string;
       zekoAttestationIncluded: boolean;
+      buyerVisibleOutputs?: Array<{
+        name: string;
+        contentType?: string;
+        text?: string;
+        sha256?: string;
+      }>;
     };
     execution?: {
       runtimeStatus: "completed";

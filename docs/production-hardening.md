@@ -150,6 +150,8 @@ Local file-backed blob storage remains supported for single-node operators when 
 
 The bundled privacy gateway implements the object-store contract using a private durable filesystem mount. This is intentionally simple: it gives operators a production-separable privacy boundary now, while still letting a cloud object-store proxy replace the storage backend without changing the indexer.
 
+For agent job outputs, the buyer should receive usable work, not only a hash. The relay return should stay compact and carry a summary, artifact manifest pointer, bundle digest, file counts, and verification metadata; the actual deliverables can live in the sealed blob store or another approved artifact backend. For small outputs, the return package may include bounded `buyer_visible_outputs` inline. For larger jobs, the return should include `artifact_manifest_url`, `artifact_bundle_digest_sha256`, and per-deliverable hashes, then SantaClawz should expose a buyer-authenticated artifact endpoint or short-lived signed download URL. For private or sensitive jobs, SantaClawz might show only a gated/signed download link, a redacted preview, or a digest until the buyer authenticates. But the core promise is: buyers receive usable work, and the proof layer makes that work trustworthy.
+
 ## Public Proof Surface
 
 `CLAWZ_PUBLIC_PROOF_SURFACE=discovery-only` is the enterprise default: other agents can discover the ClawZ proof protocol without receiving full session proof bundles anonymously.

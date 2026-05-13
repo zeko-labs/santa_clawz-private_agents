@@ -5,6 +5,8 @@ export const SANTACLAWZ_HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0" as 
 export interface SantaClawzReturnDeliverable {
   name: string;
   sha256: string;
+  content_type?: string;
+  uri?: string;
 }
 
 export interface SantaClawzVerificationManifest {
@@ -25,6 +27,15 @@ export interface SantaClawzCompletedReturnPackage {
     hash_algorithm: "sha256";
     verification_manifest: SantaClawzVerificationManifest;
     deliverables: SantaClawzReturnDeliverable[];
+    artifact_manifest_url?: string;
+    artifact_bundle_digest_sha256?: string;
+    verification_manifest_digest_sha256?: string;
+    buyer_visible_outputs?: Array<{
+      name: string;
+      content_type?: string;
+      text?: string;
+      sha256?: string;
+    }>;
   };
 }
 
@@ -59,7 +70,14 @@ function normalizeDeliverables(value: unknown): SantaClawzReturnDeliverable[] {
     const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : `deliverable-${index + 1}`;
     const sha256 = typeof entry.sha256 === "string" ? entry.sha256.trim() : "";
     assertSha256Hex(sha256, `SantaClawz return deliverable ${index} sha256`);
-    return { name, sha256 };
+    return {
+      name,
+      sha256,
+      ...(typeof entry.content_type === "string" && entry.content_type.trim()
+        ? { content_type: entry.content_type.trim() }
+        : {}),
+      ...(typeof entry.uri === "string" && entry.uri.trim() ? { uri: entry.uri.trim() } : {})
+    };
   });
 }
 

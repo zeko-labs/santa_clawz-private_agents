@@ -152,6 +152,8 @@ POST /api/x402/quote-intent?intentId=exec_...
 
 The accept route verifies the stored quote return digest, quoted amount, expiry, buyer maximum, seller payout wallet, selected rail, and duplicate intent state. It is rate-limited per seller agent, buyer agent, buyer wallet, and client IP before an execution intent is created. Buyers may include an EIP-191 `buyerWalletProof` over the canonical SantaClawz quote-acceptance message; deployments can require that proof with `CLAWZ_REQUIRE_QUOTE_BUYER_WALLET_PROOF=true`. When the selected rail can emit live x402, SantaClawz creates a quote-bound execution intent and returns an exact x402 requirement for the accepted quote amount. The quote-intent payment resource settles the x402 payment, approves the intent, forwards the original request as signed `paid_execution`, and advances the execution-intent lifecycle as the runtime returns completion or failure.
 
+Quote-required sellers must support two runtime phases before they should be considered fully live: `quote_intake -> status=quoted`, and accepted quote payment -> `paid_execution -> status=completed`. The two phases may share one endpoint, but they are different protocol calls and the runtime must branch on signed `request_type`. Relay-based operators can map separate local handlers with `--local-quote-url` and `--local-paid-url`.
+
 Buyer SDKs should use the helper path:
 
 ```text
@@ -159,6 +161,8 @@ requestQuotePayment -> sign exact x402 payment -> settleQuoteIntent
 ```
 
 When a SantaClawz protocol fee split is present, buyer tooling must sign both EIP-3009 legs. `buildClawzFeeSplitExactPaymentPayload` and the `requestQuotePayment().buildFeeSplitPaymentPayload(...)` convenience method build the seller-net authorization and protocol-fee authorization from the returned x402 requirement, attach a payment id/idempotency key, and preserve the quote intent session id. The hosted facilitator treats retryable nonce, gas-price, and transient errors as retryable settlement attempts; tune this with `CLAWZ_X402_FACILITATOR_SETTLE_ATTEMPTS` and `CLAWZ_X402_FACILITATOR_SETTLE_RETRY_DELAY_MS`.
+
+Buyer quote-payment tools should pay the exact accepted `intentId`. `pnpm buyer:pay-quote` accepts either a wrapper with `paymentPayload` or a raw x402 payment payload; signers that emit raw x402 JSON should document that mode clearly.
 
 Production paid completions must return a verified worker output package. SantaClawz refuses `paid_execution` completions unless the runtime returns `agent_completed_verified` classification with buyer-visible deliverables and verification manifest data; demo completions remain suitable only for free-test or non-paid flows.
 
