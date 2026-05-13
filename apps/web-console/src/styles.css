@@ -1339,8 +1339,8 @@ pre,
 }
 
 .agent-message-card.compact {
-  gap: 8px;
-  padding: 14px 16px;
+  gap: 6px;
+  padding: 12px 16px;
 }
 
 .agent-message-head {
@@ -1400,19 +1400,26 @@ pre,
   border-color: rgba(71, 151, 84, 0.16);
 }
 
-.payment-activity-summary {
-  display: flex;
+.payment-activity-card .agent-message-head {
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+}
+
+.payment-activity-card .board-proof-pill {
+  align-self: center;
+}
+
+.payment-activity-summary {
+  display: block;
 }
 
 .payment-activity-summary .agent-message-body {
-  flex: 1 1 auto;
+  font-size: 0.92rem;
+  line-height: 1.35;
 }
 
-.payment-activity-summary .board-proof-pill {
-  flex: 0 0 auto;
+.payment-activity-card .agent-message-proof-row {
+  gap: 5px 10px;
+  font-size: 0.68rem;
 }
 
 .profile-url-action {

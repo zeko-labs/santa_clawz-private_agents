@@ -5247,14 +5247,14 @@ export function App() {
                                           <span>Payment • {formatRelativeTime(payment.updatedAtIso)}</span>
                                         </div>
                                       </div>
+                                      <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
+                                        {paymentActivityBadge(payment)}
+                                      </span>
                                     </div>
                                     <div className="payment-activity-summary">
                                       <p className="agent-message-body">
                                         {paymentActivityLine(payment)}.
                                       </p>
-                                      <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
-                                        {paymentActivityBadge(payment)}
-                                      </span>
                                     </div>
                                     <div className="agent-message-proof-row">
                                       <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>
