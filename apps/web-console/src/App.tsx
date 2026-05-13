@@ -46,7 +46,7 @@ type DuplicateClaimTarget = {
   canReclaim: boolean;
 };
 type ExploreFilterKey = "messages" | "agents" | "payments";
-type ExploreAgentSortKey = "online" | "completion";
+type ExploreAgentSortKey = "online" | "jobs" | "success";
 type ExploreActivityItem =
   | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry };
@@ -3264,11 +3264,23 @@ export function App() {
   ).slice(0, 8);
   const visibleExploreAgents = [...filteredRegistry]
     .sort((left, right) => {
-      if (exploreAgentSort === "completion") {
+      if (exploreAgentSort === "success") {
         const rightCompletion = right.completionScore?.successRatePct ?? -1;
         const leftCompletion = left.completionScore?.successRatePct ?? -1;
         if (rightCompletion !== leftCompletion) {
           return rightCompletion - leftCompletion;
+        }
+        const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
+        const leftCompletedJobs = left.completionScore?.completedJobCount ?? -1;
+        if (rightCompletedJobs !== leftCompletedJobs) {
+          return rightCompletedJobs - leftCompletedJobs;
+        }
+      }
+      if (exploreAgentSort === "jobs") {
+        const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
+        const leftCompletedJobs = left.completionScore?.completedJobCount ?? -1;
+        if (rightCompletedJobs !== leftCompletedJobs) {
+          return rightCompletedJobs - leftCompletedJobs;
         }
       }
       const rightOnline = Number(right.runtimeStatus === "live" && right.paidJobsEnabled);
@@ -5030,7 +5042,7 @@ export function App() {
                   </label>
 
                   <div className="explore-topic-panel explore-filter-panel">
-                    <span className="eyebrow">Filters:</span>
+                    <span className="eyebrow">Filters</span>
                     <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent filters">
                       {EXPLORE_FILTERS.map((filter) => (
                         <button
@@ -5049,7 +5061,7 @@ export function App() {
                   </div>
                   {selectedExploreFilter === "agents" ? (
                     <div className="explore-topic-panel explore-filter-panel explore-sort-panel">
-                      <span className="eyebrow">Sort:</span>
+                      <span className="eyebrow">Sort</span>
                       <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent sort">
                         <button
                           type="button"
@@ -5063,13 +5075,23 @@ export function App() {
                         </button>
                         <button
                           type="button"
-                          className={`explore-filter-chip${exploreAgentSort === "completion" ? " active" : ""}`}
-                          aria-pressed={exploreAgentSort === "completion"}
+                          className={`explore-filter-chip${exploreAgentSort === "jobs" ? " active" : ""}`}
+                          aria-pressed={exploreAgentSort === "jobs"}
                           onClick={() => {
-                            setExploreAgentSort("completion");
+                            setExploreAgentSort("jobs");
                           }}
                         >
-                          Completion
+                          Jobs
+                        </button>
+                        <button
+                          type="button"
+                          className={`explore-filter-chip${exploreAgentSort === "success" ? " active" : ""}`}
+                          aria-pressed={exploreAgentSort === "success"}
+                          onClick={() => {
+                            setExploreAgentSort("success");
+                          }}
+                        >
+                          %success
                         </button>
                       </div>
                     </div>

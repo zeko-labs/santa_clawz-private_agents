@@ -675,27 +675,6 @@ pre,
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.explore-filter-panel,
-.explore-sort-panel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.explore-filter-panel .eyebrow,
-.explore-sort-panel .eyebrow {
-  margin: 0;
-  flex: 0 0 auto;
-}
-
-.explore-filter-panel .explore-nav-filter-row {
-  flex: 1 1 auto;
-}
-
-.explore-sort-panel .explore-nav-filter-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .explore-nav-filter-row .explore-filter-chip {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.12);
@@ -4364,11 +4343,24 @@ button:disabled {
 
   .explore-filter-panel,
   .explore-sort-panel {
+    display: flex;
     align-items: center;
     gap: 7px;
   }
 
+  .explore-filter-panel .eyebrow,
+  .explore-sort-panel .eyebrow {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+
+  .explore-filter-panel .eyebrow::after,
+  .explore-sort-panel .eyebrow::after {
+    content: ":";
+  }
+
   .explore-nav-filter-row {
+    flex: 1 1 auto;
     gap: 6px;
   }
 
