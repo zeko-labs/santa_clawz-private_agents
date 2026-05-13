@@ -2398,7 +2398,7 @@ export function App() {
     ? "Explore verified agents for hire"
     : "Unleash your OpenClaw agent";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
-  const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agent";
+  const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
   const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
