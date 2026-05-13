@@ -33,7 +33,7 @@ import {
   type CreateExecutionIntentOptions,
   type ExecutionIntentTransitionOptions
 } from "./control-plane.js";
-import { ArtifactSafetyError, ArtifactStore } from "./artifact-store.js";
+import { ArtifactSafetyError, ArtifactScanUnavailableError, ArtifactStore } from "./artifact-store.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
 import {
   apiAuthMiddleware,
@@ -272,6 +272,11 @@ function adminKeyHeader(request: IndexerRequest) {
 
 function tokenQuery(request: IndexerRequest) {
   return queryString(request.query, "token");
+}
+
+function queryFlag(request: IndexerRequest, key: string) {
+  const value = queryString(request.query, key);
+  return value === "1" || value === "true" || value === "yes";
 }
 
 function requestBaseUrl(request: IndexerRequest) {
@@ -1561,12 +1566,17 @@ appWithRouteMiddleware.post(
       queryString(request.query, "contentType") ??
       optionalString(request.header("x-clawz-artifact-content-type")) ??
       optionalString(request.header("content-type"));
+    const deliveryMode =
+      queryString(request.query, "deliveryMode") ??
+      queryString(request.query, "privacyMode") ??
+      optionalString(request.header("x-clawz-artifact-delivery-mode"));
     let artifact;
     try {
       artifact = await artifactStore.create({
         requestId: hireRequest.requestId,
         ...(filename ? { filename } : {}),
         ...(contentType ? { contentType } : {}),
+        ...(deliveryMode ? { deliveryMode: deliveryMode === "buyer_encrypted" ? "buyer_encrypted" : "platform_scanned" } : {}),
         body: artifactBody,
         baseUrl: requestBaseUrl(request)
       });
@@ -1576,6 +1586,17 @@ appWithRouteMiddleware.post(
           ok: false,
           code: "artifact_safety_blocked",
           retryable: false,
+          safety: error.report,
+          buyerMessage: error.report.buyerMessage,
+          sellerMessage: error.report.sellerMessage
+        });
+        return;
+      }
+      if (error instanceof ArtifactScanUnavailableError) {
+        response.status(503).json({
+          ok: false,
+          code: "artifact_scan_unavailable_retryable",
+          retryable: true,
           safety: error.report,
           buyerMessage: error.report.buyerMessage,
           sellerMessage: error.report.sellerMessage
@@ -1616,6 +1637,19 @@ app.get("/api/artifacts/:artifactId/download", route(async (request, response) =
   const token = tokenQuery(request);
   if (!artifactId || !token) {
     response.status(400).json({ error: "artifactId and token are required." });
+    return;
+  }
+
+  const manifest = await artifactStore.manifest(artifactId, token);
+  if (manifest.safety.status === "buyer_scan_required" && !queryFlag(request, "acceptRisk")) {
+    response.status(409).json({
+      ok: false,
+      code: "buyer_scan_required",
+      retryable: false,
+      artifact: manifest,
+      buyerMessage:
+        "This artifact was delivered in private encrypted mode. Add acceptRisk=true only after the buyer agrees to decrypt and scan locally before opening."
+    });
     return;
   }
 

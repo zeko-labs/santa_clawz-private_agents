@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Socket } from "node:net";
 
 interface ArtifactMetadata {
   artifactId: string;
@@ -13,6 +14,7 @@ interface ArtifactMetadata {
   plaintextBytes: number;
   encryptedBytes: number;
   digestSha256: string;
+  deliveryMode?: ArtifactDeliveryMode;
   safety?: ArtifactSafetyReport;
   ivBase64: string;
   authTagBase64: string;
@@ -23,6 +25,7 @@ interface ArtifactCreateOptions {
   requestId: string;
   filename?: string;
   contentType?: string;
+  deliveryMode?: ArtifactDeliveryMode;
   body: Buffer;
   baseUrl: string;
 }
@@ -37,6 +40,8 @@ interface ArtifactCreateResult {
   contentType: string;
   bytes: number;
   expiresAtIso: string;
+  deliveryMode: ArtifactDeliveryMode;
+  requiresBuyerDownloadAcceptance: boolean;
   safety: ArtifactSafetyReport;
 }
 
@@ -45,12 +50,18 @@ interface ArtifactReadResult {
   body: Buffer;
 }
 
-type ArtifactSafetyStatus = "clean" | "blocked";
+type ArtifactDeliveryMode = "platform_scanned" | "buyer_encrypted";
+type ArtifactSafetyStatus = "clean" | "blocked" | "buyer_scan_required" | "scan_unavailable";
 
 interface ArtifactSafetyReport {
   status: ArtifactSafetyStatus;
-  scanner: "santaclawz-static-policy-v1";
-  malwareScanner: "not_configured";
+  scanner: "santaclawz-static-policy-v1" | "santaclawz-private-ciphertext-v1";
+  malwareScanner: "not_configured" | "clamav" | "buyer_scan_required" | "scan_unavailable";
+  malwareScannerVerdict?: "clean" | "infected" | "unavailable" | "not_scanned";
+  malwareSignature?: string;
+  scanDurationMs?: number;
+  privacyMode: "platform_scanned_then_encrypted_at_rest" | "platform_ciphertext_only_buyer_scan_required";
+  platformContentVisibility: "plaintext_during_platform_scan" | "ciphertext_only";
   fileKind: string;
   extension: string;
   declaredContentType: string;
@@ -68,6 +79,12 @@ interface ArtifactSafetyReport {
 }
 
 export class ArtifactSafetyError extends Error {
+  constructor(readonly report: ArtifactSafetyReport) {
+    super(report.sellerMessage);
+  }
+}
+
+export class ArtifactScanUnavailableError extends Error {
   constructor(readonly report: ArtifactSafetyReport) {
     super(report.sellerMessage);
   }
@@ -114,6 +131,8 @@ const EXECUTABLE_EXTENSIONS = new Set([
 
 const NESTED_ARCHIVE_EXTENSIONS = new Set([".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"]);
 
+const PRIVATE_ENCRYPTED_EXTENSIONS = new Set([".sczenc", ".enc", ".age", ".gpg", ".pgp"]);
+
 function sha256Hex(value: Buffer | string) {
   const hash = createHash("sha256");
   const update = hash.update as unknown as (input: Buffer | string, encoding?: string) => { digest(encoding: "hex"): string };
@@ -126,6 +145,13 @@ function parsePositiveInteger(value: string | undefined, fallback: number, min: 
     return fallback;
   }
   return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function envFlag(value: string | undefined, fallback: boolean) {
+  if (value === undefined || value.trim().length === 0) {
+    return fallback;
+  }
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
 function resolveEncryptionKey(baseDir: string) {
@@ -352,6 +378,9 @@ function buildSafetyReport(input: {
     status,
     scanner: "santaclawz-static-policy-v1",
     malwareScanner: "not_configured",
+    malwareScannerVerdict: "not_scanned",
+    privacyMode: "platform_scanned_then_encrypted_at_rest",
+    platformContentVisibility: "plaintext_during_platform_scan",
     fileKind: extension === ".zip" ? "restricted_archive" : extension ? extension.slice(1) : "unknown",
     extension,
     declaredContentType: input.declaredContentType,
@@ -373,12 +402,153 @@ function publicArtifactBase(baseUrl: string, artifactId: string) {
   return `${baseUrl.replace(/\/+$/, "")}/api/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
+function normalizeDeliveryMode(value: string | undefined): ArtifactDeliveryMode {
+  return value === "buyer_encrypted" ? "buyer_encrypted" : "platform_scanned";
+}
+
+function buildPrivateCiphertextSafetyReport(input: {
+  filename: string;
+  declaredContentType: string;
+  detectedContentType: string;
+}): ArtifactSafetyReport {
+  const extension = extensionFor(input.filename);
+  const reasons: string[] = [];
+  if (!PRIVATE_ENCRYPTED_EXTENSIONS.has(extension)) {
+    reasons.push(
+      `Private buyer-encrypted delivery requires an encrypted artifact extension: ${Array.from(PRIVATE_ENCRYPTED_EXTENSIONS).join(", ")}.`
+    );
+  }
+
+  const status: ArtifactSafetyStatus = reasons.length === 0 ? "buyer_scan_required" : "blocked";
+  return {
+    status,
+    scanner: "santaclawz-private-ciphertext-v1",
+    malwareScanner: "buyer_scan_required",
+    malwareScannerVerdict: "not_scanned",
+    privacyMode: "platform_ciphertext_only_buyer_scan_required",
+    platformContentVisibility: "ciphertext_only",
+    fileKind: "encrypted_artifact",
+    extension,
+    declaredContentType: input.declaredContentType,
+    detectedContentType: input.detectedContentType,
+    reasons,
+    buyerMessage:
+      status === "buyer_scan_required"
+        ? "SantaClawz stored encrypted artifact bytes only. Decrypt locally, scan locally, and open only if your local scanner reports clean."
+        : "SantaClawz blocked this private artifact because it did not look like an encrypted buyer-delivery bundle.",
+    sellerMessage:
+      status === "buyer_scan_required"
+        ? "Encrypted private artifact accepted. SantaClawz cannot inspect the plaintext; buyer must decrypt and scan locally."
+        : `Private artifact blocked. Upload buyer-encrypted ciphertext with an encrypted-artifact extension. Reasons: ${reasons.join(" ")}`
+  };
+}
+
+interface MalwareScanResult {
+  scanner: "clamav";
+  verdict: "clean" | "infected" | "unavailable";
+  signature?: string;
+  durationMs: number;
+  error?: string;
+}
+
+function clamAvConfigured() {
+  return process.env.CLAWZ_ARTIFACT_MALWARE_SCANNER?.trim().toLowerCase() === "clamav";
+}
+
+function clamAvHost() {
+  return process.env.CLAWZ_CLAMAV_HOST?.trim() || process.env.CLAWZ_CLAMAV_ENDPOINT?.trim() || "127.0.0.1";
+}
+
+function clamAvPort() {
+  return parsePositiveInteger(process.env.CLAWZ_CLAMAV_PORT, 3310, 1, 65535);
+}
+
+function clamAvTimeoutMs() {
+  return parsePositiveInteger(process.env.CLAWZ_CLAMAV_TIMEOUT_MS, 15000, 1000, 60000);
+}
+
+function buildUint32BE(value: number) {
+  return Buffer.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+}
+
+async function scanWithClamAv(body: Buffer): Promise<MalwareScanResult> {
+  const startedAt = Date.now();
+  try {
+    const net = (await import("node:net")) as unknown as {
+      createConnection(options: { host: string; port: number }, onConnect?: () => void): Socket & {
+        setTimeout(timeoutMs: number, callback?: () => void): void;
+      };
+    };
+    const response = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      let responseText = "";
+      const socket = net.createConnection({ host: clamAvHost(), port: clamAvPort() }, () => {
+        socket.write("zINSTREAM\0");
+        for (let offset = 0; offset < body.length; offset += 1024 * 1024) {
+          const chunk = body.subarray(offset, Math.min(body.length, offset + 1024 * 1024));
+          socket.write(buildUint32BE(chunk.length));
+          socket.write(Buffer.from(chunk));
+        }
+        socket.write(buildUint32BE(0));
+      });
+      const finish = (error?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.destroy();
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(responseText);
+      };
+      socket.setTimeout(clamAvTimeoutMs(), () => finish(new Error("ClamAV scan timed out.")));
+      socket.on("data", (chunk) => {
+        responseText += chunk.toString("utf8");
+      });
+      socket.once("error", () => finish(new Error("ClamAV connection failed.")));
+      socket.once("close", () => finish());
+    });
+
+    const normalized = response.replace(/\0/g, "").trim();
+    if (/\bOK$/.test(normalized)) {
+      return { scanner: "clamav", verdict: "clean", durationMs: Date.now() - startedAt };
+    }
+    const found = normalized.match(/: (.+) FOUND$/);
+    if (found) {
+      return {
+        scanner: "clamav",
+        verdict: "infected",
+        ...(found[1] ? { signature: found[1] } : {}),
+        durationMs: Date.now() - startedAt
+      };
+    }
+    return {
+      scanner: "clamav",
+      verdict: "unavailable",
+      durationMs: Date.now() - startedAt,
+      error: normalized || "Unexpected ClamAV response."
+    };
+  } catch (error) {
+    return {
+      scanner: "clamav",
+      verdict: "unavailable",
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 export class ArtifactStore {
   private readonly metadataDir: string;
   private readonly dataDir: string;
   private readonly encryptionKey: Buffer;
   private readonly retentionDays: number;
   private readonly maxBytes: number;
+  private readonly maxArtifactsPerRequest: number;
+  private readonly maxBytesPerRequest: number;
+  private readonly scanRequired: boolean;
 
   constructor(private readonly baseDir: string) {
     this.metadataDir = path.join(baseDir, "metadata");
@@ -386,6 +556,14 @@ export class ArtifactStore {
     this.encryptionKey = resolveEncryptionKey(baseDir);
     this.retentionDays = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_RETENTION_DAYS, 10, 1, 90);
     this.maxBytes = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_MAX_BYTES, 25 * 1024 * 1024, 1024, 250 * 1024 * 1024);
+    this.maxArtifactsPerRequest = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_MAX_PER_REQUEST, 5, 1, 100);
+    this.maxBytesPerRequest = parsePositiveInteger(
+      process.env.CLAWZ_ARTIFACT_MAX_BYTES_PER_REQUEST,
+      100 * 1024 * 1024,
+      1024,
+      1024 * 1024 * 1024
+    );
+    this.scanRequired = envFlag(process.env.CLAWZ_ARTIFACT_SCAN_REQUIRED, false);
   }
 
   async ensureDirs() {
@@ -401,27 +579,40 @@ export class ArtifactStore {
     if (options.body.length > this.maxBytes) {
       throw new Error(`Artifact body exceeds the ${this.maxBytes} byte limit.`);
     }
+    await this.assertRequestQuota(options.requestId.trim(), options.body.length);
 
     const artifactId = `artifact_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
     const token = randomBytes(32).toString("base64url");
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.encryptionKey, iv);
-    const encrypted = Buffer.concat([cipher.update(options.body), cipher.final()]);
-    const authTag = cipher.getAuthTag();
     const createdAt = new Date();
     const expiresAt = new Date(createdAt.getTime() + this.retentionDays * 24 * 60 * 60 * 1000);
     const filename = safeFilename(options.filename);
     const contentType = sanitizeContentType(options.contentType);
+    const deliveryMode = normalizeDeliveryMode(options.deliveryMode);
     const detectedContentType = detectContentType(options.body, extensionFor(filename));
-    const safety = buildSafetyReport({
-      filename,
-      declaredContentType: contentType,
-      detectedContentType,
-      body: options.body
-    });
-    if (safety.status !== "clean") {
+    const safety =
+      deliveryMode === "buyer_encrypted"
+        ? buildPrivateCiphertextSafetyReport({
+            filename,
+            declaredContentType: contentType,
+            detectedContentType
+          })
+        : await this.buildPlatformSafetyReport({
+            filename,
+            declaredContentType: contentType,
+            detectedContentType,
+            body: options.body
+          });
+    if (safety.status === "blocked") {
       throw new ArtifactSafetyError(safety);
     }
+    if (safety.status === "scan_unavailable") {
+      throw new ArtifactScanUnavailableError(safety);
+    }
+
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.encryptionKey, iv);
+    const encrypted = Buffer.concat([cipher.update(options.body), cipher.final()]);
+    const authTag = cipher.getAuthTag();
 
     const metadata: ArtifactMetadata = {
       artifactId,
@@ -433,6 +624,7 @@ export class ArtifactStore {
       plaintextBytes: options.body.length,
       encryptedBytes: encrypted.length,
       digestSha256: sha256Hex(options.body),
+      deliveryMode,
       safety,
       ivBase64: iv.toString("base64"),
       authTagBase64: authTag.toString("base64"),
@@ -454,6 +646,8 @@ export class ArtifactStore {
       contentType,
       bytes: metadata.plaintextBytes,
       expiresAtIso: metadata.expiresAtIso,
+      deliveryMode,
+      requiresBuyerDownloadAcceptance: safety.status === "buyer_scan_required",
       safety
     };
   }
@@ -465,6 +659,10 @@ export class ArtifactStore {
 
   async read(artifactId: string, token: string): Promise<ArtifactReadResult> {
     const metadata = await this.readAuthorizedMetadata(artifactId, token);
+    const safety = this.resolveSafety(metadata);
+    if (safety.status === "blocked" || safety.status === "scan_unavailable") {
+      throw new Error("Artifact is not available for buyer download because its safety status is not clean.");
+    }
     const encrypted = await readBinaryFile(this.dataPath(metadata.artifactId));
     const decipher = createDecipheriv("aes-256-gcm", this.encryptionKey, Buffer.from(metadata.ivBase64, "base64"));
     decipher.setAuthTag(Buffer.from(metadata.authTagBase64, "base64"));
@@ -518,19 +716,8 @@ export class ArtifactStore {
   }
 
   private publicMetadata(metadata: ArtifactMetadata) {
-    const safety = metadata.safety ?? {
-      status: "clean" as const,
-      scanner: "santaclawz-static-policy-v1" as const,
-      malwareScanner: "not_configured" as const,
-      fileKind: extensionFor(metadata.filename).slice(1) || "legacy",
-      extension: extensionFor(metadata.filename),
-      declaredContentType: metadata.contentType,
-      detectedContentType: metadata.contentType,
-      reasons: [],
-      buyerMessage:
-        "SantaClawz static safety metadata was not present on this legacy artifact. Treat agent artifacts as untrusted and verify the displayed hash before opening.",
-      sellerMessage: "Legacy artifact is available for buyer delivery, but it predates V1 static safety metadata."
-    };
+    const safety = this.resolveSafety(metadata);
+    const deliveryMode = metadata.deliveryMode ?? "platform_scanned";
     return {
       artifactId: metadata.artifactId,
       requestId: metadata.requestId,
@@ -542,7 +729,28 @@ export class ArtifactStore {
       plaintextBytes: metadata.plaintextBytes,
       encryptedBytes: metadata.encryptedBytes,
       digestSha256: metadata.digestSha256,
+      deliveryMode,
+      requiresBuyerDownloadAcceptance: safety.status === "buyer_scan_required",
       safety
+    };
+  }
+
+  private resolveSafety(metadata: ArtifactMetadata): ArtifactSafetyReport {
+    return metadata.safety ?? {
+      status: "clean" as const,
+      scanner: "santaclawz-static-policy-v1" as const,
+      malwareScanner: "not_configured" as const,
+      malwareScannerVerdict: "not_scanned" as const,
+      privacyMode: "platform_scanned_then_encrypted_at_rest" as const,
+      platformContentVisibility: "plaintext_during_platform_scan" as const,
+      fileKind: extensionFor(metadata.filename).slice(1) || "legacy",
+      extension: extensionFor(metadata.filename),
+      declaredContentType: metadata.contentType,
+      detectedContentType: metadata.contentType,
+      reasons: [],
+      buyerMessage:
+        "SantaClawz static safety metadata was not present on this legacy artifact. Treat agent artifacts as untrusted and verify the displayed hash before opening.",
+      sellerMessage: "Legacy artifact is available for buyer delivery, but it predates V1 static safety metadata."
     };
   }
 
@@ -556,6 +764,103 @@ export class ArtifactStore {
 
   private dataPath(artifactId: string) {
     return path.join(this.dataDir, `${artifactId}.bin`);
+  }
+
+  private async assertRequestQuota(requestId: string, nextBytes: number) {
+    const names = await readdir(this.metadataDir);
+    let count = 0;
+    let bytes = 0;
+    const now = Date.now();
+    for (const name of names) {
+      if (!name.endsWith(".json")) {
+        continue;
+      }
+      try {
+        const metadata = JSON.parse(await readFile(path.join(this.metadataDir, name), "utf8")) as ArtifactMetadata;
+        if (metadata.requestId !== requestId || Date.parse(metadata.expiresAtIso) <= now) {
+          continue;
+        }
+        count += 1;
+        bytes += metadata.plaintextBytes;
+      } catch {
+        // Malformed metadata does not count against request quotas.
+      }
+    }
+    if (count >= this.maxArtifactsPerRequest) {
+      throw new Error(`Artifact limit reached for this request. Maximum artifacts per request: ${this.maxArtifactsPerRequest}.`);
+    }
+    if (bytes + nextBytes > this.maxBytesPerRequest) {
+      throw new Error(`Artifact byte quota exceeded for this request. Maximum bytes per request: ${this.maxBytesPerRequest}.`);
+    }
+  }
+
+  private async buildPlatformSafetyReport(input: {
+    filename: string;
+    declaredContentType: string;
+    detectedContentType: string;
+    body: Buffer;
+  }) {
+    let safety = buildSafetyReport(input);
+    if (safety.status !== "clean") {
+      return safety;
+    }
+
+    if (!clamAvConfigured()) {
+      if (!this.scanRequired) {
+        return safety;
+      }
+      return {
+        ...safety,
+        status: "scan_unavailable" as const,
+        malwareScanner: "scan_unavailable" as const,
+        malwareScannerVerdict: "unavailable" as const,
+        reasons: ["Malware scanning is required, but ClamAV is not configured."],
+        buyerMessage: "SantaClawz could not make this artifact downloadable because malware scanning is required but unavailable.",
+        sellerMessage: "Artifact scan unavailable. Retry after the platform ClamAV service is configured and healthy."
+      };
+    }
+
+    const scan = await scanWithClamAv(input.body);
+    if (scan.verdict === "clean") {
+      return {
+        ...safety,
+        malwareScanner: "clamav" as const,
+        malwareScannerVerdict: "clean" as const,
+        scanDurationMs: scan.durationMs,
+        buyerMessage:
+          "SantaClawz static safety checks and private ClamAV scan passed. Treat agent artifacts as untrusted and verify the displayed hash before opening.",
+        sellerMessage: "Artifact accepted for buyer delivery after static safety checks and private ClamAV scan."
+      };
+    }
+    if (scan.verdict === "infected") {
+      return {
+        ...safety,
+        status: "blocked" as const,
+        malwareScanner: "clamav" as const,
+        malwareScannerVerdict: "infected" as const,
+        ...(scan.signature ? { malwareSignature: scan.signature } : {}),
+        scanDurationMs: scan.durationMs,
+        reasons: [`ClamAV reported malware${scan.signature ? `: ${scan.signature}` : ""}.`],
+        buyerMessage: "SantaClawz blocked this artifact because the private malware scanner reported a threat.",
+        sellerMessage: `Artifact blocked by ClamAV${scan.signature ? ` (${scan.signature})` : ""}. Upload a clean work-product file.`
+      };
+    }
+    return {
+      ...safety,
+      status: this.scanRequired ? ("scan_unavailable" as const) : ("clean" as const),
+      malwareScanner: "scan_unavailable" as const,
+      malwareScannerVerdict: "unavailable" as const,
+      scanDurationMs: scan.durationMs,
+      reasons: this.scanRequired
+        ? [`ClamAV scan unavailable${scan.error ? `: ${scan.error}` : ""}.`]
+        : [`ClamAV scan unavailable${scan.error ? `: ${scan.error}` : ""}; static policy passed and scan is not required.`],
+      buyerMessage: this.scanRequired
+        ? "SantaClawz could not make this artifact downloadable because the private malware scanner was unavailable."
+        : "SantaClawz static safety checks passed, but private malware scanning was unavailable. Treat this artifact as untrusted.",
+      sellerMessage: this.scanRequired
+        ? "Artifact scan unavailable. Retry after the platform ClamAV service is healthy."
+        : "Artifact accepted by static policy, but ClamAV was unavailable and scan-required mode is off."
+    };
   }
 }
 

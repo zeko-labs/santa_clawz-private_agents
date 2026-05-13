@@ -2225,6 +2225,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(artifactUpload.payload.artifact.safety.scanner, "santaclawz-static-policy-v1");
     assert.equal(artifactUpload.payload.artifact.safety.fileKind, "md");
     assert.equal(artifactUpload.payload.artifact.safety.malwareScanner, "not_configured");
+    assert.equal(artifactUpload.payload.artifact.safety.privacyMode, "platform_scanned_then_encrypted_at_rest");
+    assert.equal(artifactUpload.payload.artifact.safety.platformContentVisibility, "plaintext_during_platform_scan");
+    assert.equal(artifactUpload.payload.artifact.requiresBuyerDownloadAcceptance, false);
     assert.match(artifactUpload.payload.artifact.artifactDownloadUrl, /\/api\/artifacts\/artifact_[a-f0-9]+\/download\?token=/);
     assert.deepEqual(artifactUpload.payload.verifiedOutputPatch, {
       artifact_manifest_url: artifactUpload.payload.artifact.artifactManifestUrl,
@@ -2241,6 +2244,33 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(artifactDownload.status, 200);
     assert.equal(artifactDownload.headers.get("x-santaclawz-artifact-digest-sha256"), artifactUpload.payload.artifact.artifactBundleDigestSha256);
     assert.deepEqual(artifactDownload.body, artifactBody);
+
+    const encryptedBody = Buffer.from("ciphertext-only-for-buyer-local-decrypt-and-scan", "utf8");
+    const privateArtifactUpload = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=private-output.sczenc&contentType=application/vnd.santaclawz.encrypted-artifact&deliveryMode=buyer_encrypted`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-clawz-admin-key": adminKey
+        },
+        body: encryptedBody
+      }
+    );
+    assert.equal(privateArtifactUpload.status, 200);
+    assert.equal(privateArtifactUpload.payload.artifact.deliveryMode, "buyer_encrypted");
+    assert.equal(privateArtifactUpload.payload.artifact.requiresBuyerDownloadAcceptance, true);
+    assert.equal(privateArtifactUpload.payload.artifact.safety.status, "buyer_scan_required");
+    assert.equal(privateArtifactUpload.payload.artifact.safety.platformContentVisibility, "ciphertext_only");
+    assert.equal(privateArtifactUpload.payload.artifact.safety.malwareScanner, "buyer_scan_required");
+
+    const privateDownloadBlocked = await requestJson(privateArtifactUpload.payload.artifact.artifactDownloadUrl, { method: "GET" });
+    assert.equal(privateDownloadBlocked.status, 409);
+    assert.equal(privateDownloadBlocked.payload.code, "buyer_scan_required");
+
+    const privateDownloadAccepted = await requestBytes(`${privateArtifactUpload.payload.artifact.artifactDownloadUrl}&acceptRisk=true`, { method: "GET" });
+    assert.equal(privateDownloadAccepted.status, 200);
+    assert.deepEqual(privateDownloadAccepted.body, encryptedBody);
 
     const blockedScriptUpload = await requestJson(
       `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=install.sh&contentType=text/x-shellscript`,

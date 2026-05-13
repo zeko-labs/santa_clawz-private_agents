@@ -12,6 +12,8 @@ CLAWZ_DATA_DIR=/var/lib/clawz
 CLAWZ_ARTIFACT_STORE_DIR=/var/lib/clawz/artifacts
 CLAWZ_ARTIFACT_ENCRYPTION_KEY_BASE64=<32-byte-base64-key>
 CLAWZ_ARTIFACT_RETENTION_DAYS=10
+CLAWZ_ARTIFACT_MAX_PER_REQUEST=5
+CLAWZ_ARTIFACT_MAX_BYTES_PER_REQUEST=104857600
 CLAWZ_REQUIRE_API_AUTH=true
 CLAWZ_API_KEY_SHA256=<sha256-of-operator-api-key>
 CLAWZ_ALLOWED_ORIGINS=https://console.example.com
@@ -160,7 +162,21 @@ For agent job outputs, the buyer should receive usable work, not only a hash. Th
 
 The indexer includes a V1 disk-backed artifact handoff for Render single-node deployments. A seller with the agent admin key can upload a completed job bundle to `POST /api/executions/:requestId/artifacts` as `application/octet-stream`; SantaClawz encrypts the bytes at rest with `CLAWZ_ARTIFACT_ENCRYPTION_KEY_BASE64`, stores them under `CLAWZ_ARTIFACT_STORE_DIR`, returns a tokenized manifest/download URL, and deletes expired artifacts during background cleanup. The default retention is 10 days and the default upload limit is 25 MB; tune with `CLAWZ_ARTIFACT_RETENTION_DAYS` and `CLAWZ_ARTIFACT_MAX_BYTES`. This is a practical pass-through layer, not permanent archival storage: buyers should download and retain their own deliverables, while the returned digest lets them verify the downloaded bytes match the paid/proved result.
 
-V1 artifact safety treats seller uploads as untrusted even when payment and proof verification pass. Default delivery accepts non-executable work-product files only: `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, `.pdf`, `.docx`, `.pptx`, `.png`, `.jpg`, and restricted `.zip`. The static policy blocks executable/script extensions, mismatched magic bytes for common binary formats, invalid JSON, PDFs with active/embedded-content markers, and archives with path traversal, password-protected entries, nested archives, suspicious compression ratios, or executable/script entries. Artifact upload and manifest responses include a `safety` object with `status`, `scanner`, `malwareScanner`, `fileKind`, `reasons`, `buyerMessage`, and `sellerMessage` so buyer and seller agents can explain what happened without reverse-engineering the policy. `malwareScanner` is currently `not_configured`; wire ClamAV or a managed scanner behind the same status field before enabling higher-risk artifact classes.
+V1 artifact safety treats seller uploads as untrusted even when payment and proof verification pass. Default `platform_scanned` delivery accepts non-executable work-product files only: `.txt`, `.md`, `.json`, `.csv`, `.xlsx`, `.pdf`, `.docx`, `.pptx`, `.png`, `.jpg`, and restricted `.zip`. The static policy blocks executable/script extensions, mismatched magic bytes for common binary formats, invalid JSON, PDFs with active/embedded-content markers, and archives with path traversal, password-protected entries, nested archives, suspicious compression ratios, or executable/script entries. Upload storage protections also enforce per-file byte limits, per-request artifact count limits, per-request byte quotas, random artifact IDs, encrypted-at-rest bytes, attachment-only downloads, no server-side rendering/execution, and 10-day cleanup.
+
+Private jobs can use `deliveryMode=buyer_encrypted`. In that lane, the seller uploads ciphertext with an encrypted-artifact extension such as `.sczenc`; SantaClawz stores encrypted bytes and records `safety.status=buyer_scan_required`, `privacyMode=platform_ciphertext_only_buyer_scan_required`, and `platformContentVisibility=ciphertext_only`. Buyers must explicitly accept download risk with `acceptRisk=true`, then decrypt and scan locally before opening. This keeps SantaClawz out of the plaintext path for sensitive jobs while making the buyer-side responsibility machine-readable.
+
+Optional ClamAV hardwiring is controlled by:
+
+```bash
+CLAWZ_ARTIFACT_MALWARE_SCANNER=clamav
+CLAWZ_CLAMAV_HOST=santaclawz-clamav
+CLAWZ_CLAMAV_PORT=3310
+CLAWZ_CLAMAV_TIMEOUT_MS=15000
+CLAWZ_ARTIFACT_SCAN_REQUIRED=true
+```
+
+When ClamAV is configured, `platform_scanned` artifacts pass static policy first and then ClamAV `INSTREAM` scanning before buyer delivery. If `CLAWZ_ARTIFACT_SCAN_REQUIRED=true` and ClamAV is unavailable, uploads fail with `artifact_scan_unavailable_retryable`. If scan-required mode is off, static-policy-clean artifacts can still be accepted, but the `safety` object records `malwareScanner=scan_unavailable` so buyer and seller agents can communicate the weaker safety state.
 
 ## Public Proof Surface
 
