@@ -3453,7 +3453,17 @@ function extractAdminKeyFromUpgrade(request: IncomingMessage) {
 }
 
 type RelayPendingRequest = {
-  resolve(value: { statusCode: number; body: string; deliveryTarget: string; relayMessageId: string }): void;
+  resolve(value: {
+    statusCode: number;
+    body: string;
+    deliveryTarget: string;
+    relayMessageId: string;
+    workerStatusCode?: number;
+    workerResponseBytes?: number;
+    workerResponseDigestSha256?: string;
+    relayBodyBytes?: number;
+    relayBodyDigestSha256?: string;
+  }): void;
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
 };
@@ -3639,12 +3649,39 @@ class AgentRelayConnection {
     const statusCode = typeof message.statusCode === "number" && Number.isFinite(message.statusCode)
       ? Math.round(message.statusCode)
       : 502;
-    const body = typeof message.body === "string" ? message.body.slice(0, RELAY_MESSAGE_MAX_BYTES) : "";
+    const body =
+      message.bodyEncoding === "base64" && typeof message.bodyBase64 === "string"
+        ? Buffer.from(message.bodyBase64, "base64").toString("utf8").slice(0, RELAY_MESSAGE_MAX_BYTES)
+        : typeof message.body === "string"
+          ? message.body.slice(0, RELAY_MESSAGE_MAX_BYTES)
+          : "";
+    const workerStatusCode = typeof message.workerStatusCode === "number" && Number.isFinite(message.workerStatusCode)
+      ? Math.round(message.workerStatusCode)
+      : undefined;
+    const workerResponseBytes = typeof message.workerResponseBytes === "number" && Number.isFinite(message.workerResponseBytes)
+      ? Math.round(message.workerResponseBytes)
+      : undefined;
+    const workerResponseDigestSha256 =
+      typeof message.workerResponseDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(message.workerResponseDigestSha256)
+        ? message.workerResponseDigestSha256.toLowerCase()
+        : undefined;
+    const relayBodyBytes = typeof message.relayBodyBytes === "number" && Number.isFinite(message.relayBodyBytes)
+      ? Math.round(message.relayBodyBytes)
+      : undefined;
+    const relayBodyDigestSha256 =
+      typeof message.relayBodyDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(message.relayBodyDigestSha256)
+        ? message.relayBodyDigestSha256.toLowerCase()
+        : undefined;
     pending.resolve({
       statusCode,
       body,
       deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(this.agentId)}`,
-      relayMessageId: messageId
+      relayMessageId: messageId,
+      ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
+      ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
+      ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
+      ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+      ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {})
     });
   }
 
@@ -3712,6 +3749,13 @@ class AgentRelayConnection {
       try {
         this.onMessage(JSON.parse(payload.toString("utf8")));
       } catch {
+        console.error(JSON.stringify({
+          event: "relay_invalid_json",
+          agentId: this.agentId,
+          payloadBytes: payload.length,
+          payloadDigestSha256: createHash("sha256").update(payload.toString("base64")).digest("hex"),
+          payloadPreview: payload.toString("utf8").slice(0, 200)
+        }));
         this.rejectPending("Relay sent invalid JSON while SantaClawz was waiting for the agent response.");
         this.close(1003, "invalid json");
         return;

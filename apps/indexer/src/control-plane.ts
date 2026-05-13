@@ -143,6 +143,11 @@ type RelayHireDeliveryHandler = (input: {
   body: string;
   deliveryTarget: string;
   relayMessageId?: string;
+  workerStatusCode?: number;
+  workerResponseBytes?: number;
+  workerResponseDigestSha256?: string;
+  relayBodyBytes?: number;
+  relayBodyDigestSha256?: string;
 }>;
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
@@ -3931,6 +3936,11 @@ export class ClawzControlPlane {
           ...(relayResponse?.relayMessageId ? { relayMessageId: relayResponse.relayMessageId } : {}),
           runtimeStatusCode: response.status,
           runtimeResponseBytes: responseBytes,
+          ...(relayResponse?.workerStatusCode !== undefined ? { workerStatusCode: relayResponse.workerStatusCode } : {}),
+          ...(relayResponse?.workerResponseBytes !== undefined ? { workerResponseBytes: relayResponse.workerResponseBytes } : {}),
+          ...(relayResponse?.workerResponseDigestSha256 ? { workerResponseDigestSha256: relayResponse.workerResponseDigestSha256 } : {}),
+          ...(relayResponse?.relayBodyBytes !== undefined ? { relayBodyBytes: relayResponse.relayBodyBytes } : {}),
+          ...(relayResponse?.relayBodyDigestSha256 ? { relayBodyDigestSha256: relayResponse.relayBodyDigestSha256 } : {}),
           returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
           errorMessage: validationError
         }),
@@ -3951,7 +3961,12 @@ export class ClawzControlPlane {
         target: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
         ...(relayResponse?.relayMessageId ? { relayMessageId: relayResponse.relayMessageId } : {}),
         runtimeStatusCode: response.status,
-        runtimeResponseBytes: responseBytes
+        runtimeResponseBytes: responseBytes,
+        ...(relayResponse?.workerStatusCode !== undefined ? { workerStatusCode: relayResponse.workerStatusCode } : {}),
+        ...(relayResponse?.workerResponseBytes !== undefined ? { workerResponseBytes: relayResponse.workerResponseBytes } : {}),
+        ...(relayResponse?.workerResponseDigestSha256 ? { workerResponseDigestSha256: relayResponse.workerResponseDigestSha256 } : {}),
+        ...(relayResponse?.relayBodyBytes !== undefined ? { relayBodyBytes: relayResponse.relayBodyBytes } : {}),
+        ...(relayResponse?.relayBodyDigestSha256 ? { relayBodyDigestSha256: relayResponse.relayBodyDigestSha256 } : {})
       }),
       requestKind: signedRequest.requestKind,
       ingressUrl: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
@@ -3979,6 +3994,11 @@ export class ClawzControlPlane {
     relayMessageId?: string;
     runtimeStatusCode?: number;
     runtimeResponseBytes?: number;
+    workerStatusCode?: number;
+    workerResponseBytes?: number;
+    workerResponseDigestSha256?: string;
+    relayBodyBytes?: number;
+    relayBodyDigestSha256?: string;
     returnValidationCode?: string;
     errorMessage?: string;
   }): HireDeliveryReceipt {
@@ -3989,6 +4009,11 @@ export class ClawzControlPlane {
       ...(input.relayMessageId ? { relayMessageId: input.relayMessageId } : {}),
       ...(typeof input.runtimeStatusCode === "number" ? { runtimeStatusCode: input.runtimeStatusCode } : {}),
       ...(typeof input.runtimeResponseBytes === "number" ? { runtimeResponseBytes: input.runtimeResponseBytes } : {}),
+      ...(typeof input.workerStatusCode === "number" ? { workerStatusCode: input.workerStatusCode } : {}),
+      ...(typeof input.workerResponseBytes === "number" ? { workerResponseBytes: input.workerResponseBytes } : {}),
+      ...(input.workerResponseDigestSha256 ? { workerResponseDigestSha256: input.workerResponseDigestSha256 } : {}),
+      ...(typeof input.relayBodyBytes === "number" ? { relayBodyBytes: input.relayBodyBytes } : {}),
+      ...(input.relayBodyDigestSha256 ? { relayBodyDigestSha256: input.relayBodyDigestSha256 } : {}),
       ...(input.returnValidationCode ? { returnValidationCode: input.returnValidationCode } : {}),
       ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 500) } : {})
     };

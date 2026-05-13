@@ -30,6 +30,8 @@ function printUsage() {
     --env-file .env.santaclawz \\
     [--serve] \\
     [--local-hire-url http://127.0.0.1:8797/hire] \\
+    [--local-quote-url http://127.0.0.1:8797/quote] \\
+    [--local-paid-url http://127.0.0.1:8797/hire] \\
     [--api-base https://api.santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
@@ -44,6 +46,8 @@ Notes:
   --serve starts the bundled local public-hire ingress starter, which validates
   quote-paid execution and canonical santaclawz-return/1.0 packages locally.
   --local-hire-url points relay traffic at an already running local /hire endpoint.
+  Quote-required agents can route quote_intake and paid_execution separately
+  with --local-quote-url and --local-paid-url.
   A local per-agent lock prevents duplicate relay processes. Use --takeover only
   after confirming the previous process is dead or intentionally being replaced.
 `);
@@ -328,8 +332,13 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     return;
   }
   const request = message.request && typeof message.request === "object" ? message.request : {};
+  const requestKind = typeof request.requestKind === "string" ? request.requestKind : "";
+  const targetUrl =
+    localHireUrl && typeof localHireUrl === "object"
+      ? localHireUrl[requestKind] || localHireUrl.default
+      : localHireUrl;
   try {
-    const response = await fetch(localHireUrl, {
+    const response = await fetch(targetUrl, {
       method: "POST",
       headers: request.headers && typeof request.headers === "object" ? request.headers : {},
       body: typeof request.body === "string" ? request.body : "{}"
@@ -339,17 +348,30 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       body,
       requestBody: typeof request.body === "string" ? request.body : "{}"
     });
+    const bodyBytes = Buffer.byteLength(normalized.body, "utf8");
     const responseEnvelope = {
       type: "hire_response",
       messageId: message.messageId,
       statusCode: response.status,
-      body: normalized.body
+      ...(bodyBytes > 2048
+        ? {
+            bodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
+            bodyEncoding: "base64"
+          }
+        : { body: normalized.body }),
+      workerStatusCode: response.status,
+      workerResponseBytes: Buffer.byteLength(body, "utf8"),
+      workerResponseDigestSha256: sha256Hex(body),
+      relayBodyBytes: bodyBytes,
+      relayBodyDigestSha256: sha256Hex(normalized.body)
     };
     const sent = sendJson(responseEnvelope);
     if (normalized.normalized) {
       console.error(JSON.stringify({
         event: "relay_worker_response_normalized",
         messageId: message.messageId,
+        requestKind,
+        localHireUrl: targetUrl,
         statusCode: response.status,
         responseBytes: Buffer.byteLength(body, "utf8"),
         relayPayloadBytes: sent.bytes,
@@ -360,6 +382,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       console.error(JSON.stringify({
         event: "relay_worker_response_forwarded",
         messageId: message.messageId,
+        requestKind,
+        localHireUrl: targetUrl,
         statusCode: response.status,
         responseBytes: Buffer.byteLength(body, "utf8"),
         relayPayloadBytes: sent.bytes,
@@ -681,6 +705,19 @@ try {
   if (!localHireUrl) {
     throw new Error("Relay resume needs --serve or --local-hire-url http://127.0.0.1:8797/hire.");
   }
+  const localQuoteUrl =
+    typeof args["local-quote-url"] === "string" && args["local-quote-url"].trim().length > 0
+      ? normalizeBaseUrl(args["local-quote-url"].trim())
+      : process.env.CLAWZ_LOCAL_QUOTE_URL?.trim() || "";
+  const localPaidUrl =
+    typeof args["local-paid-url"] === "string" && args["local-paid-url"].trim().length > 0
+      ? normalizeBaseUrl(args["local-paid-url"].trim())
+      : process.env.CLAWZ_LOCAL_PAID_HIRE_URL?.trim() || process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL?.trim() || "";
+  const localHireRoutes = {
+    default: localHireUrl,
+    ...(localQuoteUrl ? { quote_intake: localQuoteUrl } : {}),
+    ...(localPaidUrl ? { paid_execution: localPaidUrl } : {})
+  };
 
   if (shouldHeartbeat) {
     const firstHeartbeat = await postHeartbeat({
@@ -713,11 +750,12 @@ try {
     sessionId,
     apiBase,
     localHireUrl,
+    localHireRoutes,
     servingIngress: ingress?.baseUrl,
     heartbeat: shouldHeartbeat ? "live" : "skipped"
   };
   console.log(JSON.stringify(summary, null, 2));
-  console.error(`SantaClawz relay starting for ${agentId}. Forwarding signed jobs to ${localHireUrl}. Press Ctrl-C to stop.`);
+  console.error(`SantaClawz relay starting for ${agentId}. Forwarding signed jobs to ${JSON.stringify(localHireRoutes)}. Press Ctrl-C to stop.`);
 
   const stopPromise = new Promise((resolve) => {
     const stop = () => {
@@ -738,14 +776,14 @@ try {
         apiBase,
         agentId,
         adminKey,
-        localHireUrl
+        localHireUrl: localHireRoutes
       });
       attempt = 0;
       console.error(JSON.stringify({
         event: "relay_connected",
         agentId,
         relayUrl: relay.relayUrl,
-        localHireUrl,
+        localHireUrl: localHireRoutes,
         connectedAtIso: new Date().toISOString()
       }));
       await Promise.race([relay.closed, stopPromise]);

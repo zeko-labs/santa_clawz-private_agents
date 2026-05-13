@@ -2521,27 +2521,26 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
       relayLogs
     );
 
+    const deliverables = Array.from({ length: 28 }, (_, index) => ({
+      name: `job-pack-artifact-${String(index + 1).padStart(2, "0")}.json`,
+      sha256: createHash("sha256").update(`job-pack-artifact-${index + 1}`).digest("hex")
+    }));
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({
       schema_version: "santaclawz-return/1.0",
       request_id: requestId,
       status: "completed",
       agent_private: true,
-      noisy_worker_trace: "x".repeat(6000),
+      noisy_worker_trace: "x".repeat(9000),
       verified_output: {
         package_hash: "d".repeat(64),
         hash_algorithm: "sha256",
         verification_manifest: {
           input_digest_sha256: "e".repeat(64),
-          checks_performed: ["worker_completed"],
-          files_produced: ["answer.json"],
+          checks_performed: ["worker_completed", "manifest_verified", "deliverables_hashed"],
+          files_produced: deliverables.map((deliverable) => deliverable.name),
           blocked_suspicious_instructions: []
         },
-        deliverables: [
-          {
-            name: "answer.json",
-            sha256: "f".repeat(64)
-          }
-        ]
+        deliverables
       }
     }));
 
@@ -2558,7 +2557,13 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
     assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "forwarded");
     assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "completed");
     assert.equal(hire.payload.protocolReturn.status, "completed");
-    assert.equal(hire.payload.protocolReturn.verifiedOutput.deliverableCount, 1);
+    assert.equal(hire.payload.protocolReturn.verifiedOutput.deliverableCount, 28);
+    assert.equal(hire.payload.deliveryReceipt.workerStatusCode, 200);
+    assert.ok(hire.payload.deliveryReceipt.workerResponseBytes > 10_000);
+    assert.match(hire.payload.deliveryReceipt.workerResponseDigestSha256, /^[a-f0-9]{64}$/);
+    assert.ok(hire.payload.deliveryReceipt.relayBodyBytes > 4_000);
+    assert.match(hire.payload.deliveryReceipt.relayBodyDigestSha256, /^[a-f0-9]{64}$/);
+    assert.match(relayLogs.stderr.join(""), /"relayPayloadBytes":[4-9][0-9]{3}/);
     assert.match(relayLogs.stderr.join(""), /relay_worker_response_normalized/);
 
     console.log("ok - official relay normalizes large worker responses into accepted hire_response JSON");

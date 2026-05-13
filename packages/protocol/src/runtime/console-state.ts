@@ -710,6 +710,11 @@ export interface HireDeliveryReceipt {
   relayMessageId?: string;
   runtimeStatusCode?: number;
   runtimeResponseBytes?: number;
+  workerStatusCode?: number;
+  workerResponseBytes?: number;
+  workerResponseDigestSha256?: string;
+  relayBodyBytes?: number;
+  relayBodyDigestSha256?: string;
   returnValidationCode?: string;
   errorMessage?: string;
 }
