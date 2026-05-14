@@ -4645,12 +4645,13 @@ export class ClawzControlPlane {
         ? input.preferredProvingLocation
         : fallback.preferredProvingLocation;
     const legacyPayoutAddress = (input as { payoutAddress?: unknown }).payoutAddress;
-    const openClawUrl = typeof input.openClawUrl === "string" ? input.openClawUrl.trim().slice(0, 280) : fallback.openClawUrl;
+    const inputOpenClawUrl = typeof input.openClawUrl === "string" ? input.openClawUrl.trim().slice(0, 280) : undefined;
+    const openClawUrl = inputOpenClawUrl ?? fallback.openClawUrl;
     const runtimeDelivery =
       input.runtimeDelivery
         ? normalizeRuntimeDelivery(input.runtimeDelivery, fallback.runtimeDelivery)
-        : openClawUrl.trim().length > 0 && fallback.runtimeDelivery.mode === "santaclawz-relay"
-          ? { mode: "self-hosted" as const, runtimeIngressUrl: openClawUrl }
+        : inputOpenClawUrl && fallback.runtimeDelivery.mode === "santaclawz-relay"
+          ? { mode: "self-hosted" as const, runtimeIngressUrl: inputOpenClawUrl }
           : normalizeRuntimeDelivery(undefined, fallback.runtimeDelivery);
     const availability =
       input.availability === "archived" ||

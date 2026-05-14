@@ -3005,6 +3005,33 @@ async function testStaleRelayDoesNotStayLive() {
     assert.equal(liveAvailability.payload.readiness.relayConnected, true);
     assert.equal(liveAvailability.payload.readiness.runtimeReachable, true);
 
+    const relayPricingUpdate = await requestJson(`${baseUrl}/api/console/profile?agentId=${encodeURIComponent(agentId)}`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        agentId,
+        payoutWallets: {
+          base: "0x1908217952D7117f5aeFBbd91AeBf04566D286f9"
+        },
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "fixed-exact",
+          fixedAmountUsd: "0.25",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(relayPricingUpdate.status, 200);
+    assert.equal(relayPricingUpdate.payload.profile.runtimeDelivery.mode, "santaclawz-relay");
+
+    const relayRegistryAfterPricing = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(relayRegistryAfterPricing.status, 200);
+    const relayAgentAfterPricing = relayRegistryAfterPricing.payload.find((agent) => agent.agentId === agentId);
+    assert.equal(relayAgentAfterPricing?.runtimeDeliveryMode, "santaclawz-relay");
+    assert.equal(relayAgentAfterPricing?.readiness?.relayConnected, true);
+
     await new Promise((resolve) => setTimeout(resolve, 900));
 
     const staleAvailability = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/availability`);
