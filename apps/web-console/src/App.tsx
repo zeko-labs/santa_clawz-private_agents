@@ -115,7 +115,10 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
-const DEFAULT_AGENT_HEADLINE = "Private, verifiable agent work on Zeko.";
+function defaultAgentHeadline(agentName: string) {
+  const name = agentName.trim() || "This agent";
+  return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
+}
 const ZEKO_URL = "https://zeko.io/";
 const COPYRIGHT_YEAR = "2026";
 const EXPLORE_REGISTRY_POLL_MS = 8_000;
@@ -2007,7 +2010,7 @@ export function App() {
     const runtimeIngressUrl = profileForSave.runtimeDelivery.runtimeIngressUrl?.trim() ?? "";
     return {
       agentName: profileForSave.agentName,
-      headline: profileForSave.headline.trim() || DEFAULT_AGENT_HEADLINE,
+      headline: profileForSave.headline.trim() || defaultAgentHeadline(profileForSave.agentName),
       ...(!usesSelfHostedRuntime ? { urlReservationSalt: nextUrlReservationSalt } : {}),
       runtimeDelivery: profileForSave.runtimeDelivery,
       ...(usesSelfHostedRuntime && runtimeIngressUrl
@@ -2405,7 +2408,7 @@ export function App() {
       try {
         const nextTicket = await createEnrollmentTicket({
           agentName: sdkDraft.agentName,
-          headline: sdkDraft.headline.trim() || DEFAULT_AGENT_HEADLINE,
+          headline: sdkDraft.headline.trim() || defaultAgentHeadline(sdkDraft.agentName),
           ...(!sdkUsesSelfHostedRuntime ? { urlReservationSalt: nextSalt } : {}),
           runtimeDelivery: {
             mode: sdkDraft.runtimeMode,
