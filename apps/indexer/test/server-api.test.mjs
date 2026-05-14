@@ -2452,6 +2452,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(directReceipt.payload.receipt.scanPolicy, "buyer_required");
     assert.equal(directReceipt.payload.receipt.artifactDigestSha256, directDigest);
     assert.equal(directReceipt.payload.receipt.buyerAcceptanceStatus, "pending");
+    assert.equal(directReceipt.payload.receipt.deliveryState, "receipt_recorded");
     assert.match(directReceipt.payload.receiptManifestUrl, /\/api\/artifact-receipts\/receipt_[a-f0-9]+\?token=/);
     assert.match(directReceipt.payload.buyerAcknowledgementUrl, /\/api\/artifact-receipts\/receipt_[a-f0-9]+\/acknowledge\?token=/);
     assert.deepEqual(directReceipt.payload.verifiedOutputPatch, {
@@ -2466,10 +2467,20 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     const directReceiptAck = await requestJson(directReceipt.payload.buyerAcknowledgementUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accepted: true, note: "digest verified by buyer agent" })
+      body: JSON.stringify({
+        accepted: true,
+        bytesReceivedByBuyer: true,
+        digestVerified: true,
+        buyerScanStatus: "passed",
+        note: "digest verified by buyer agent"
+      })
     });
     assert.equal(directReceiptAck.status, 200);
     assert.equal(directReceiptAck.payload.receipt.buyerAcceptanceStatus, "accepted");
+    assert.equal(directReceiptAck.payload.receipt.deliveryState, "buyer_accepted");
+    assert.equal(directReceiptAck.payload.receipt.bytesReceivedByBuyer, true);
+    assert.equal(directReceiptAck.payload.receipt.digestVerified, true);
+    assert.equal(directReceiptAck.payload.receipt.buyerScanStatus, "passed");
     assert.equal(directReceiptAck.payload.receipt.buyerAcknowledgementNote, "digest verified by buyer agent");
 
     const externalDigest = createHash("sha256").update("external reference bytes").digest("hex");

@@ -127,9 +127,12 @@ async function main() {
       createClawzAgentClient,
       createClawzQuotePaymentClient,
       ClawzRetryablePlatformError,
+      artifactBytesDigestMatches,
       buildClawzFeeStackPreview,
       buildClawzFeeSplitExactPaymentPayload,
       buildClawzQuoteAcceptanceWalletProof,
+      buildSantaClawzBuyerInboxEnvelope,
+      buyerInboxEnvelopeDigestSha256,
       validateClawzFeeCompatibility
     } = await import(
       pathToFileURL(sdkEntry).href
@@ -379,6 +382,31 @@ async function main() {
     assert.equal(feeSplitPayload.feeAuthorization.typedData.message.value, "420");
     assert.match(feeSplitPayload.paymentContextDigest, /^[a-f0-9]{64}$/);
     assert.match(feeSplitPayload.authorizationDigest, /^[a-f0-9]{64}$/);
+
+    const directArtifactDigest = "d".repeat(64);
+    const buyerInboxEnvelope = buildSantaClawzBuyerInboxEnvelope({
+      requestId: "hire_sdk_direct",
+      deliveryChannel: "buyer-agent-inbox://sdk-test",
+      artifact: {
+        filename: "answer.md",
+        contentType: "text/markdown",
+        sizeBytes: 12,
+        digestSha256: directArtifactDigest
+      },
+      sellerAgentId: "agent_sdk",
+      sellerDeliveryReceipt: "posted to buyer inbox"
+    });
+    assert.equal(buyerInboxEnvelope.schema_version, "santaclawz-buyer-inbox-delivery/1.0");
+    assert.equal(buyerInboxEnvelope.scan_policy, "buyer_required");
+    assert.equal(buyerInboxEnvelope.artifact.digest_sha256, directArtifactDigest);
+    assert.match(buyerInboxEnvelopeDigestSha256(buyerInboxEnvelope), /^[a-f0-9]{64}$/);
+    assert.equal(
+      artifactBytesDigestMatches({
+        bytes: "hello direct",
+        expectedSha256: "db72a6e363c9ffcede9bb620256eb2b294a07b575a0401574c7636e65a953878"
+      }),
+      true
+    );
 
     console.log("ok - agent sdk discovers, verifies, and speaks MCP against a live SantaClawz runtime");
   } finally {

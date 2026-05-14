@@ -99,7 +99,96 @@ export interface ClawzHireRequestInput {
   taskPrompt: string;
   requesterContact: string;
   budgetMina?: string;
+  jobPrivacy?: Record<string, unknown>;
+  artifactDelivery?: Record<string, unknown>;
   paymentPayload?: Record<string, unknown>;
+}
+
+export type ClawzArtifactReceiptDeliveryMode = "direct_receipt" | "external_reference";
+export type ClawzArtifactReceiptTransport = "buyer_agent_inbox" | "external_url" | "out_of_band" | "custom";
+export type ClawzArtifactReceiptScanPolicy = "buyer_required" | "external_unverified" | "external_verified" | "none";
+export type ClawzArtifactReceiptBuyerScanStatus = "not_scanned" | "passed" | "failed" | "not_required";
+export type ClawzArtifactReceiptAcceptanceStatus = "pending" | "accepted" | "rejected" | "not_required";
+export type ClawzArtifactReceiptDeliveryState =
+  | "receipt_recorded"
+  | "bytes_received_by_buyer"
+  | "digest_verified"
+  | "buyer_scan_passed"
+  | "buyer_scan_failed"
+  | "buyer_accepted"
+  | "buyer_rejected";
+
+export interface ClawzArtifactReceipt {
+  receiptId: string;
+  requestId: string;
+  createdAtIso: string;
+  updatedAtIso: string;
+  deliveredAtIso: string;
+  deliveryMode: ClawzArtifactReceiptDeliveryMode;
+  transport: ClawzArtifactReceiptTransport;
+  scanPolicy: ClawzArtifactReceiptScanPolicy;
+  digestRequired: true;
+  buyerAcceptanceRequired: boolean;
+  buyerAcceptanceStatus: ClawzArtifactReceiptAcceptanceStatus;
+  buyerAcknowledgedAtIso?: string;
+  buyerAcknowledgementNote?: string;
+  deliveryState: ClawzArtifactReceiptDeliveryState;
+  bytesReceivedByBuyer?: boolean;
+  digestVerified?: boolean;
+  buyerScanStatus?: ClawzArtifactReceiptBuyerScanStatus;
+  filename: string;
+  contentType: string;
+  artifactDigestSha256: string;
+  artifactSizeBytes: number;
+  artifactUrl?: string;
+  deliveryChannel?: string;
+  sellerDeliveryReceipt?: string;
+  sellerSignature?: string;
+  manifestDigestSha256: string;
+}
+
+export interface ClawzArtifactReceiptCreateInput {
+  requestId: string;
+  deliveryMode: ClawzArtifactReceiptDeliveryMode;
+  transport?: ClawzArtifactReceiptTransport;
+  scanPolicy?: ClawzArtifactReceiptScanPolicy;
+  buyerAcceptanceRequired?: boolean;
+  filename: string;
+  contentType?: string;
+  artifactDigestSha256: string;
+  artifactSizeBytes: number;
+  artifactUrl?: string;
+  deliveryChannel?: string;
+  sellerDeliveryReceipt?: string;
+  sellerSignature?: string;
+  deliveredAtIso?: string;
+}
+
+export interface ClawzArtifactReceiptCreateResponse {
+  ok: true;
+  receipt: ClawzArtifactReceipt;
+  receiptManifestUrl: string;
+  buyerAcknowledgementUrl?: string;
+  verifiedOutputPatch: {
+    artifact_manifest_url: string;
+    artifact_bundle_digest_sha256: string;
+  };
+  buyerMessage: string;
+  sellerMessage: string;
+}
+
+export interface ClawzArtifactReceiptAcknowledgementInput {
+  acknowledgementUrl: string;
+  accepted: boolean;
+  note?: string;
+  bytesReceivedByBuyer?: boolean;
+  digestVerified?: boolean;
+  buyerScanStatus?: ClawzArtifactReceiptBuyerScanStatus;
+}
+
+export interface ClawzArtifactReceiptResponse {
+  ok: true;
+  receipt: ClawzArtifactReceipt;
 }
 
 export interface ClawzEnrollmentTicketInput {
@@ -360,10 +449,60 @@ export class ClawzAgentClient {
           taskPrompt,
           requesterContact,
           ...(input.budgetMina?.trim() ? { budgetMina: input.budgetMina.trim() } : {}),
+          ...(input.jobPrivacy ? { jobPrivacy: input.jobPrivacy } : {}),
+          ...(input.artifactDelivery ? { artifactDelivery: input.artifactDelivery } : {}),
           ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {})
         })
       }
     );
+  }
+
+  async createArtifactReceipt(input: ClawzArtifactReceiptCreateInput): Promise<ClawzArtifactReceiptCreateResponse> {
+    if (!this.adminKey) {
+      throw new Error("createArtifactReceipt requires an adminKey from the seller agent's private .env.santaclawz file.");
+    }
+    const requestId = input.requestId.trim();
+    if (!requestId) {
+      throw new Error("createArtifactReceipt requires requestId.");
+    }
+    return this.postJson<ClawzArtifactReceiptCreateResponse>(
+      `/api/executions/${encodeURIComponent(requestId)}/artifact-receipts`,
+      {
+        deliveryMode: input.deliveryMode,
+        ...(input.transport ? { transport: input.transport } : {}),
+        ...(input.scanPolicy ? { scanPolicy: input.scanPolicy } : {}),
+        ...(typeof input.buyerAcceptanceRequired === "boolean" ? { buyerAcceptanceRequired: input.buyerAcceptanceRequired } : {}),
+        filename: input.filename,
+        ...(input.contentType ? { contentType: input.contentType } : {}),
+        artifactDigestSha256: input.artifactDigestSha256,
+        artifactSizeBytes: input.artifactSizeBytes,
+        ...(input.artifactUrl ? { artifactUrl: input.artifactUrl } : {}),
+        ...(input.deliveryChannel ? { deliveryChannel: input.deliveryChannel } : {}),
+        ...(input.sellerDeliveryReceipt ? { sellerDeliveryReceipt: input.sellerDeliveryReceipt } : {}),
+        ...(input.sellerSignature ? { sellerSignature: input.sellerSignature } : {}),
+        ...(input.deliveredAtIso ? { deliveredAtIso: input.deliveredAtIso } : {})
+      }
+    );
+  }
+
+  async acknowledgeArtifactReceipt(input: ClawzArtifactReceiptAcknowledgementInput): Promise<ClawzArtifactReceiptResponse> {
+    const acknowledgementUrl = input.acknowledgementUrl.trim();
+    if (!acknowledgementUrl) {
+      throw new Error("acknowledgeArtifactReceipt requires acknowledgementUrl.");
+    }
+    return this.readJson<ClawzArtifactReceiptResponse>(acknowledgementUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        accepted: input.accepted,
+        ...(input.note ? { note: input.note } : {}),
+        ...(typeof input.bytesReceivedByBuyer === "boolean" ? { bytesReceivedByBuyer: input.bytesReceivedByBuyer } : {}),
+        ...(typeof input.digestVerified === "boolean" ? { digestVerified: input.digestVerified } : {}),
+        ...(input.buyerScanStatus ? { buyerScanStatus: input.buyerScanStatus } : {})
+      })
+    });
   }
 
   async createEnrollmentTicket(input: ClawzEnrollmentTicketInput): Promise<ClawzEnrollmentTicket> {

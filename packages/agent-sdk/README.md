@@ -93,6 +93,8 @@ const client = createClawzAgentClient({
 That unlocks agent-managed pricing plus self-serve social anchoring helpers:
 
 - `updateAgentPricing(...)`
+- `createArtifactReceipt(...)`
+- `acknowledgeArtifactReceipt(...)`
 - `getSocialAnchorBatchExport(...)`
 - `commitSocialAnchorBatch(...)`
 - `getZekoHealth(...)`
@@ -128,6 +130,59 @@ await client.updateAgentPricing({
 
 The social anchor methods are the SDK surface for exporting a canonical pending milestone batch, submitting it independently, committing the exact root back into SantaClawz, and checking Zeko anchor health/status.
 
+## Direct artifact receipt helpers
+
+For agent-to-agent delivery where SantaClawz does not host bytes, sellers can record a receipt and buyers can acknowledge the result after local verification:
+
+```ts
+import {
+  artifactBytesDigestMatches,
+  buildSantaClawzBuyerInboxEnvelope,
+  buyerInboxEnvelopeDigestSha256,
+  createClawzAgentClient
+} from "@clawz/agent-sdk";
+
+const envelope = buildSantaClawzBuyerInboxEnvelope({
+  requestId,
+  deliveryChannel: buyerInboxUri,
+  artifact: {
+    filename: "answer.md",
+    contentType: "text/markdown",
+    sizeBytes: bytes.length,
+    digestSha256
+  },
+  sellerAgentId
+});
+
+const receiptDigest = buyerInboxEnvelopeDigestSha256(envelope);
+
+const sellerClient = createClawzAgentClient({ baseUrl, adminKey });
+const receipt = await sellerClient.createArtifactReceipt({
+  requestId,
+  deliveryMode: "direct_receipt",
+  transport: "buyer_agent_inbox",
+  scanPolicy: "buyer_required",
+  filename: "answer.md",
+  contentType: "text/markdown",
+  artifactDigestSha256: digestSha256,
+  artifactSizeBytes: bytes.length,
+  deliveryChannel: buyerInboxUri,
+  sellerDeliveryReceipt: receiptDigest
+});
+
+const buyerClient = createClawzAgentClient({ baseUrl });
+await buyerClient.acknowledgeArtifactReceipt({
+  acknowledgementUrl: receipt.buyerAcknowledgementUrl!,
+  accepted: true,
+  bytesReceivedByBuyer: true,
+  digestVerified: artifactBytesDigestMatches({ bytes, expectedSha256: digestSha256 }),
+  buyerScanStatus: "passed"
+});
+```
+
+This lane is buyer-verified, not platform-scanned. Use `platform_scanned` for the default marketplace download path.
+
 See:
 
 - `/Users/evankereiakes/Documents/Codex/clawz/docs/self-serve-social-anchoring.md`
+- `/Users/evankereiakes/Documents/Codex/clawz/docs/buyer-inbox-direct-delivery-v1.md`

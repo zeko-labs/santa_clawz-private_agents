@@ -11,6 +11,8 @@ SantaClawz V1 keeps procurement, work staging, messaging, and delivery separate 
 
 Procurement should not own staging, and delivery should not own messaging. Once a seller is selected, every path converges into the same tokenized job workspace.
 
+Work stages are independent of procurement mode. A direct hire, quote-required job, bid-selected job, or auto-routed job can all move through the same `intake -> accepted -> in_progress -> delivery -> review -> final` lifecycle.
+
 ## Job Workspace
 
 Every hire receipt includes:
@@ -96,3 +98,5 @@ The buyer-facing flow should be one job room:
 5. Final action: accept, request revision, or dispute later.
 
 Procurement modes can remain simple in V1: direct hire, quote-required, and external/manual routing. Bids and auto-routing can be added later by creating procurement intents that resolve into the same `requestId` workspace.
+
+For direct buyer-agent inbox delivery, the workspace thread is where the buyer shares its inbox endpoint and constraints. The delivery proof itself should still be recorded through `/api/executions/:requestId/artifact-receipts`, then acknowledged by the buyer after bytes, digest, and local scan status are known.

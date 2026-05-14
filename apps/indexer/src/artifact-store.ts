@@ -25,6 +25,15 @@ type ArtifactReceiptDeliveryMode = "direct_receipt" | "external_reference";
 type ArtifactReceiptTransport = "buyer_agent_inbox" | "external_url" | "out_of_band" | "custom";
 type ArtifactReceiptScanPolicy = "buyer_required" | "external_unverified" | "external_verified" | "none";
 type ArtifactReceiptAcceptanceStatus = "pending" | "accepted" | "rejected" | "not_required";
+type ArtifactReceiptBuyerScanStatus = "not_scanned" | "passed" | "failed" | "not_required";
+type ArtifactReceiptDeliveryState =
+  | "receipt_recorded"
+  | "bytes_received_by_buyer"
+  | "digest_verified"
+  | "buyer_scan_passed"
+  | "buyer_scan_failed"
+  | "buyer_accepted"
+  | "buyer_rejected";
 
 interface ArtifactReceiptMetadata {
   receiptId: string;
@@ -40,6 +49,9 @@ interface ArtifactReceiptMetadata {
   buyerAcceptanceStatus: ArtifactReceiptAcceptanceStatus;
   buyerAcknowledgedAtIso?: string;
   buyerAcknowledgementNote?: string;
+  bytesReceivedByBuyer?: boolean;
+  digestVerified?: boolean;
+  buyerScanStatus?: ArtifactReceiptBuyerScanStatus;
   filename: string;
   contentType: string;
   artifactDigestSha256: string;
@@ -108,6 +120,10 @@ interface ArtifactReceiptPublicMetadata {
   buyerAcceptanceStatus: ArtifactReceiptAcceptanceStatus;
   buyerAcknowledgedAtIso?: string;
   buyerAcknowledgementNote?: string;
+  deliveryState: ArtifactReceiptDeliveryState;
+  bytesReceivedByBuyer?: boolean;
+  digestVerified?: boolean;
+  buyerScanStatus?: ArtifactReceiptBuyerScanStatus;
   filename: string;
   contentType: string;
   artifactDigestSha256: string;
@@ -539,6 +555,28 @@ function sanitizeOptionalText(value: string | undefined, maxLength: number) {
 
 function buildReceiptManifestDigest(input: Omit<ArtifactReceiptMetadata, "manifestDigestSha256" | "tokenHashSha256">) {
   return sha256Hex(JSON.stringify(input));
+}
+
+function receiptDeliveryState(metadata: ArtifactReceiptMetadata): ArtifactReceiptDeliveryState {
+  if (metadata.buyerAcceptanceStatus === "rejected") {
+    return "buyer_rejected";
+  }
+  if (metadata.buyerAcceptanceStatus === "accepted") {
+    return "buyer_accepted";
+  }
+  if (metadata.buyerScanStatus === "failed") {
+    return "buyer_scan_failed";
+  }
+  if (metadata.buyerScanStatus === "passed") {
+    return "buyer_scan_passed";
+  }
+  if (metadata.digestVerified) {
+    return "digest_verified";
+  }
+  if (metadata.bytesReceivedByBuyer) {
+    return "bytes_received_by_buyer";
+  }
+  return "receipt_recorded";
 }
 
 function buildPrivateCiphertextSafetyReport(input: {
@@ -1007,18 +1045,32 @@ export class ArtifactStore {
     return this.publicReceipt(metadata);
   }
 
-  async acknowledgeReceipt(receiptId: string, token: string, input: { accepted: boolean; note?: string }) {
+  async acknowledgeReceipt(
+    receiptId: string,
+    token: string,
+    input: {
+      accepted: boolean;
+      note?: string;
+      bytesReceivedByBuyer?: boolean;
+      digestVerified?: boolean;
+      buyerScanStatus?: ArtifactReceiptBuyerScanStatus;
+    }
+  ) {
     const metadata = await this.readAuthorizedReceipt(receiptId, token);
     if (!metadata.buyerAcceptanceRequired) {
       return this.publicReceipt(metadata);
     }
     const note = sanitizeOptionalText(input.note, 240);
+    const acknowledgedAtIso = new Date().toISOString();
     const updated: ArtifactReceiptMetadata = {
       ...metadata,
-      updatedAtIso: new Date().toISOString(),
+      updatedAtIso: acknowledgedAtIso,
       buyerAcceptanceStatus: input.accepted ? "accepted" : "rejected",
-      buyerAcknowledgedAtIso: new Date().toISOString(),
-      ...(note ? { buyerAcknowledgementNote: note } : {})
+      buyerAcknowledgedAtIso: acknowledgedAtIso,
+      ...(note ? { buyerAcknowledgementNote: note } : {}),
+      ...(typeof input.bytesReceivedByBuyer === "boolean" ? { bytesReceivedByBuyer: input.bytesReceivedByBuyer } : {}),
+      ...(typeof input.digestVerified === "boolean" ? { digestVerified: input.digestVerified } : {}),
+      ...(input.buyerScanStatus ? { buyerScanStatus: input.buyerScanStatus } : {})
     };
     await writeJsonFile(this.receiptPath(receiptId), updated);
     return this.publicReceipt(updated);
@@ -1080,6 +1132,10 @@ export class ArtifactStore {
       buyerAcceptanceStatus: metadata.buyerAcceptanceStatus,
       ...(metadata.buyerAcknowledgedAtIso ? { buyerAcknowledgedAtIso: metadata.buyerAcknowledgedAtIso } : {}),
       ...(metadata.buyerAcknowledgementNote ? { buyerAcknowledgementNote: metadata.buyerAcknowledgementNote } : {}),
+      deliveryState: receiptDeliveryState(metadata),
+      ...(typeof metadata.bytesReceivedByBuyer === "boolean" ? { bytesReceivedByBuyer: metadata.bytesReceivedByBuyer } : {}),
+      ...(typeof metadata.digestVerified === "boolean" ? { digestVerified: metadata.digestVerified } : {}),
+      ...(metadata.buyerScanStatus ? { buyerScanStatus: metadata.buyerScanStatus } : {}),
       filename: metadata.filename,
       contentType: metadata.contentType,
       artifactDigestSha256: metadata.artifactDigestSha256,

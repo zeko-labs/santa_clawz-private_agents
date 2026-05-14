@@ -244,6 +244,9 @@ type ArtifactReceiptBody = {
 type ArtifactReceiptAcknowledgementBody = {
   accepted?: unknown;
   note?: unknown;
+  bytesReceivedByBuyer?: unknown;
+  digestVerified?: unknown;
+  buyerScanStatus?: unknown;
 };
 type JobMessageBody = {
   authorRole?: unknown;
@@ -969,7 +972,10 @@ function parseArtifactReceiptAcknowledgementBody(body: unknown): ArtifactReceipt
   return isRecord(body)
     ? {
         accepted: body.accepted,
-        note: body.note
+        note: body.note,
+        bytesReceivedByBuyer: body.bytesReceivedByBuyer,
+        digestVerified: body.digestVerified,
+        buyerScanStatus: body.buyerScanStatus
       }
     : {};
 }
@@ -2036,11 +2042,21 @@ app.post("/api/artifact-receipts/:receiptId/acknowledge", route(async (request, 
     response.status(400).json({ error: "accepted must be true or false." });
     return;
   }
+  const buyerScanStatus =
+    body.buyerScanStatus === "not_scanned" ||
+    body.buyerScanStatus === "passed" ||
+    body.buyerScanStatus === "failed" ||
+    body.buyerScanStatus === "not_required"
+      ? body.buyerScanStatus
+      : undefined;
   response.json({
     ok: true,
     receipt: await artifactStore.acknowledgeReceipt(receiptId, token, {
       accepted: body.accepted,
-      ...(typeof body.note === "string" ? { note: body.note } : {})
+      ...(typeof body.note === "string" ? { note: body.note } : {}),
+      ...(typeof body.bytesReceivedByBuyer === "boolean" ? { bytesReceivedByBuyer: body.bytesReceivedByBuyer } : {}),
+      ...(typeof body.digestVerified === "boolean" ? { digestVerified: body.digestVerified } : {}),
+      ...(buyerScanStatus ? { buyerScanStatus } : {})
     })
   });
 }));
