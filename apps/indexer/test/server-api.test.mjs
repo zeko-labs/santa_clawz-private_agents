@@ -2288,6 +2288,21 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(privateArtifactUpload.payload.artifact.safety.platformContentVisibility, "ciphertext_only");
     assert.equal(privateArtifactUpload.payload.artifact.safety.malwareScanner, "buyer_scan_required");
 
+    const privateAgeUpload = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=private-output.age&contentType=application/octet-stream`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-clawz-admin-key": adminKey
+        },
+        body: Buffer.from("age-ciphertext-placeholder", "utf8")
+      }
+    );
+    assert.equal(privateAgeUpload.status, 200);
+    assert.equal(privateAgeUpload.payload.artifact.deliveryMode, "buyer_encrypted");
+    assert.equal(privateAgeUpload.payload.artifact.safety.status, "buyer_scan_required");
+
     const privateDownloadBlocked = await requestJson(privateArtifactUpload.payload.artifact.artifactDownloadUrl, { method: "GET" });
     assert.equal(privateDownloadBlocked.status, 409);
     assert.equal(privateDownloadBlocked.payload.code, "buyer_scan_required");

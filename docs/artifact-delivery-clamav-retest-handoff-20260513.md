@@ -166,6 +166,8 @@ internal port: 3310
 optional disk: /var/lib/clamav
 ```
 
+If Render gives the ClamAV private service a fully qualified internal host, use that exact host in `CLAWZ_CLAMAV_HOST`. The indexer also accepts `CLAWZ_CLAMAV_ENDPOINT` values such as `tcp://santa-clawz-clamav-scan:3310` or `santa-clawz-clamav-scan:3310`.
+
 ## Retest Priorities
 
 1. Confirm existing paid/quote/free-test flows still complete as before.
@@ -174,7 +176,7 @@ optional disk: /var/lib/clamav
 4. Upload a blocked extension like `.sh` and expect `artifact_safety_blocked`.
 5. Upload a zip with `../evil.sh` and expect `artifact_safety_blocked`.
 6. Request `buyer_encrypted` in hire, confirm seller signed payload includes `input.artifact_delivery`.
-7. Upload `.sczenc` without `deliveryMode` override and confirm it defaults to `buyer_encrypted`.
+7. Upload `.sczenc`, `.age`, `.gpg`, `.pgp`, or `.enc` without `deliveryMode` override and confirm it defaults to `buyer_encrypted`.
 8. Confirm private download requires `acceptRisk=true`.
 9. Temporarily misconfigure ClamAV host in staging if possible and confirm normal artifacts fail with `artifact_scan_unavailable_retryable` when scan-required is true.
 

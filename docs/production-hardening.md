@@ -192,6 +192,8 @@ CLAWZ_CLAMAV_TIMEOUT_MS=15000
 CLAWZ_ARTIFACT_SCAN_REQUIRED=true
 ```
 
+Set `CLAWZ_CLAMAV_HOST` to the Render private service hostname. If Render exposes a host with a port or scheme, use `CLAWZ_CLAMAV_ENDPOINT` instead, for example `tcp://santa-clawz-clamav-scan:3310`.
+
 When ClamAV is configured, `platform_scanned` artifacts pass static policy first and then ClamAV `INSTREAM` scanning before buyer delivery. If `CLAWZ_ARTIFACT_SCAN_REQUIRED=true` and ClamAV is unavailable, uploads fail with `artifact_scan_unavailable_retryable`. If scan-required mode is off, static-policy-clean artifacts can still be accepted, but the `safety` object records `malwareScanner=scan_unavailable` so buyer and seller agents can communicate the weaker safety state.
 
 ## Public Proof Surface

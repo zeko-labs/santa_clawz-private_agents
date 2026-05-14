@@ -402,8 +402,18 @@ function publicArtifactBase(baseUrl: string, artifactId: string) {
   return `${baseUrl.replace(/\/+$/, "")}/api/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
-function normalizeDeliveryMode(value: string | undefined): ArtifactDeliveryMode {
-  return value === "buyer_encrypted" ? "buyer_encrypted" : "platform_scanned";
+function isPrivateEncryptedFilename(filename: string) {
+  return PRIVATE_ENCRYPTED_EXTENSIONS.has(extensionFor(filename));
+}
+
+function normalizeDeliveryMode(value: string | undefined, filename: string): ArtifactDeliveryMode {
+  if (value === "buyer_encrypted") {
+    return "buyer_encrypted";
+  }
+  if (value === "platform_scanned") {
+    return "platform_scanned";
+  }
+  return isPrivateEncryptedFilename(filename) ? "buyer_encrypted" : "platform_scanned";
 }
 
 function buildPrivateCiphertextSafetyReport(input: {
@@ -455,12 +465,42 @@ function clamAvConfigured() {
   return process.env.CLAWZ_ARTIFACT_MALWARE_SCANNER?.trim().toLowerCase() === "clamav";
 }
 
-function clamAvHost() {
-  return process.env.CLAWZ_CLAMAV_HOST?.trim() || process.env.CLAWZ_CLAMAV_ENDPOINT?.trim() || "127.0.0.1";
+function parseHostPort(value: string | undefined, fallbackPort: number) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `tcp://${trimmed}`;
+    const url = new URL(withScheme);
+    return {
+      host: url.hostname,
+      port: url.port ? parsePositiveInteger(url.port, fallbackPort, 1, 65535) : fallbackPort
+    };
+  } catch {
+    const lastColon = trimmed.lastIndexOf(":");
+    if (lastColon > 0 && !trimmed.includes("/")) {
+      return {
+        host: trimmed.slice(0, lastColon),
+        port: parsePositiveInteger(trimmed.slice(lastColon + 1), fallbackPort, 1, 65535)
+      };
+    }
+    return {
+      host: trimmed,
+      port: fallbackPort
+    };
+  }
 }
 
-function clamAvPort() {
-  return parsePositiveInteger(process.env.CLAWZ_CLAMAV_PORT, 3310, 1, 65535);
+function clamAvTarget() {
+  const configuredPort = parsePositiveInteger(process.env.CLAWZ_CLAMAV_PORT, 3310, 1, 65535);
+  return (
+    parseHostPort(process.env.CLAWZ_CLAMAV_ENDPOINT, configuredPort) ??
+    parseHostPort(process.env.CLAWZ_CLAMAV_HOST, configuredPort) ?? {
+      host: "127.0.0.1",
+      port: configuredPort
+    }
+  );
 }
 
 function clamAvTimeoutMs() {
@@ -473,6 +513,7 @@ function buildUint32BE(value: number) {
 
 async function scanWithClamAv(body: Buffer): Promise<MalwareScanResult> {
   const startedAt = Date.now();
+  const target = clamAvTarget();
   try {
     const net = (await import("node:net")) as unknown as {
       createConnection(options: { host: string; port: number }, onConnect?: () => void): Socket & {
@@ -482,7 +523,7 @@ async function scanWithClamAv(body: Buffer): Promise<MalwareScanResult> {
     const response = await new Promise<string>((resolve, reject) => {
       let settled = false;
       let responseText = "";
-      const socket = net.createConnection({ host: clamAvHost(), port: clamAvPort() }, () => {
+      const socket = net.createConnection({ host: target.host, port: target.port }, () => {
         socket.write("zINSTREAM\0");
         for (let offset = 0; offset < body.length; offset += 1024 * 1024) {
           const chunk = body.subarray(offset, Math.min(body.length, offset + 1024 * 1024));
@@ -503,11 +544,11 @@ async function scanWithClamAv(body: Buffer): Promise<MalwareScanResult> {
         }
         resolve(responseText);
       };
-      socket.setTimeout(clamAvTimeoutMs(), () => finish(new Error("ClamAV scan timed out.")));
+      socket.setTimeout(clamAvTimeoutMs(), () => finish(new Error(`ClamAV scan timed out at ${target.host}:${target.port}.`)));
       socket.on("data", (chunk) => {
         responseText += chunk.toString("utf8");
       });
-      socket.once("error", () => finish(new Error("ClamAV connection failed.")));
+      socket.once("error", () => finish(new Error(`ClamAV connection failed at ${target.host}:${target.port}.`)));
       socket.once("close", () => finish());
     });
 
@@ -587,7 +628,7 @@ export class ArtifactStore {
     const expiresAt = new Date(createdAt.getTime() + this.retentionDays * 24 * 60 * 60 * 1000);
     const filename = safeFilename(options.filename);
     const contentType = sanitizeContentType(options.contentType);
-    const deliveryMode = normalizeDeliveryMode(options.deliveryMode);
+    const deliveryMode = normalizeDeliveryMode(options.deliveryMode, filename);
     const detectedContentType = detectContentType(options.body, extensionFor(filename));
     const safety =
       deliveryMode === "buyer_encrypted"
