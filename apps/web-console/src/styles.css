@@ -1580,6 +1580,7 @@ pre,
 
 .profile-history-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
 }
@@ -1593,7 +1594,7 @@ pre,
 
 .profile-score-stack {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(132px, 1fr));
   gap: 8px;
   width: 100%;
   margin-top: 12px;
@@ -1612,6 +1613,7 @@ pre,
   font-weight: 900;
   text-align: center;
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .completion-score-pill {
@@ -1666,7 +1668,7 @@ pre,
   color: var(--muted);
 }
 
-.completion-score-pill small {
+.proof-score-pill small {
   display: block;
   width: 100%;
   color: rgba(101, 119, 139, 0.95);

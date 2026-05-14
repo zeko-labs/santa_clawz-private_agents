@@ -3058,7 +3058,7 @@ export function App() {
       ? `${agentJobActivityStats.totalJobCount} total jobs`
       : paidOutcomeFallbackCount > 0
         ? `${paidOutcomeFallbackCount} paid outcomes`
-        : "No job activity yet";
+        : "No job totals yet";
   const agentJobActivityDetail =
     agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
       ? `${agentJobActivityStats.publicJobCount} public / ${agentJobActivityStats.privateJobCount} private`
@@ -4077,8 +4077,11 @@ export function App() {
                         </p>
                       </div>
                     </div>
-                    <div className="profile-score-stack">
-                      <span className="proof-score-pill">{agentTrustScore}% proof score</span>
+                    <div className="profile-score-stack" aria-label="Agent proof, success, and job activity metrics">
+                      <span className="proof-score-pill">
+                        {agentTrustScore}% proof
+                        <small>score</small>
+                      </span>
                       <span className={`proof-score-pill ${agentCompletionScoreClass}`}>
                         {agentCompletionScoreLabel}
                         <small>{agentCompletionScoreDetail}</small>
@@ -4202,7 +4205,7 @@ export function App() {
                             setExploreAgentSort("success");
                           }}
                         >
-                          %Success
+                          Success
                         </button>
                       </div>
                     </div>
