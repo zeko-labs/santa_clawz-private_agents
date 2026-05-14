@@ -152,8 +152,7 @@ Indexer env should include:
 
 ```bash
 CLAWZ_ARTIFACT_MALWARE_SCANNER=clamav
-CLAWZ_CLAMAV_HOST=santa-clawz-clamav-scan
-CLAWZ_CLAMAV_PORT=3310
+CLAWZ_CLAMAV_ENDPOINT=<render-internal-host>:3310
 CLAWZ_CLAMAV_TIMEOUT_MS=15000
 CLAWZ_ARTIFACT_SCAN_REQUIRED=true
 ```
@@ -166,7 +165,26 @@ internal port: 3310
 optional disk: /var/lib/clamav
 ```
 
-If Render gives the ClamAV private service a fully qualified internal host, use that exact host in `CLAWZ_CLAMAV_HOST`. The indexer also accepts `CLAWZ_CLAMAV_ENDPOINT` values such as `tcp://santa-clawz-clamav-scan:3310` or `santa-clawz-clamav-scan:3310`.
+Use the exact internal address from the ClamAV private service's Render dashboard: **Connect -> Internal**. Render private service addresses are stable host:port values with a generated suffix, for example `<service-name>-<hash>:3310`; the friendly service name by itself is often not resolvable from another service. Put that full value in `CLAWZ_CLAMAV_ENDPOINT`, with or without a `tcp://` prefix.
+
+After updating the indexer env var and redeploying, check:
+
+```bash
+curl -sS -H "x-api-key: $CLAWZ_API_KEY" \
+  https://www.santaclawz.ai/api/admin/artifacts/scanner-health
+```
+
+Expected healthy response includes:
+
+```json
+{
+  "ok": true,
+  "code": "artifact_scanner_reachable",
+  "scanner": "clamav",
+  "reachable": true,
+  "response": "PONG"
+}
+```
 
 ## Retest Priorities
 

@@ -461,6 +461,20 @@ interface MalwareScanResult {
   error?: string;
 }
 
+interface ClamAvHealthResult {
+  configured: boolean;
+  scanner: "clamav" | "not_configured";
+  target: {
+    host: string;
+    port: number;
+  };
+  timeoutMs: number;
+  reachable: boolean;
+  response?: string;
+  error?: string;
+  durationMs: number;
+}
+
 function clamAvConfigured() {
   return process.env.CLAWZ_ARTIFACT_MALWARE_SCANNER?.trim().toLowerCase() === "clamav";
 }
@@ -509,6 +523,76 @@ function clamAvTimeoutMs() {
 
 function buildUint32BE(value: number) {
   return Buffer.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+}
+
+async function pingClamAv(): Promise<ClamAvHealthResult> {
+  const startedAt = Date.now();
+  const target = clamAvTarget();
+  const timeoutMs = clamAvTimeoutMs();
+  const base = {
+    configured: clamAvConfigured(),
+    scanner: clamAvConfigured() ? "clamav" as const : "not_configured" as const,
+    target,
+    timeoutMs
+  };
+  if (!base.configured) {
+    return {
+      ...base,
+      reachable: false,
+      error: "CLAWZ_ARTIFACT_MALWARE_SCANNER is not set to clamav.",
+      durationMs: Date.now() - startedAt
+    };
+  }
+
+  try {
+    const net = (await import("node:net")) as unknown as {
+      createConnection(options: { host: string; port: number }, onConnect?: () => void): Socket & {
+        setTimeout(timeoutMs: number, callback?: () => void): void;
+      };
+    };
+    const response = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      let responseText = "";
+      const socket = net.createConnection({ host: target.host, port: target.port }, () => {
+        socket.write("zPING\0");
+      });
+      const finish = (error?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.destroy();
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(responseText.replace(/\0/g, "").trim());
+      };
+      socket.setTimeout(timeoutMs, () => finish(new Error(`ClamAV ping timed out at ${target.host}:${target.port}.`)));
+      socket.on("data", (chunk) => {
+        responseText += chunk.toString("utf8");
+        if (responseText.includes("PONG") || responseText.includes("\0")) {
+          finish();
+        }
+      });
+      socket.once("error", () => finish(new Error(`ClamAV connection failed at ${target.host}:${target.port}.`)));
+      socket.once("close", () => finish());
+    });
+    return {
+      ...base,
+      reachable: response === "PONG",
+      response,
+      ...(response === "PONG" ? {} : { error: response || "Unexpected ClamAV ping response." }),
+      durationMs: Date.now() - startedAt
+    };
+  } catch (error) {
+    return {
+      ...base,
+      reachable: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAt
+    };
+  }
 }
 
 async function scanWithClamAv(body: Buffer): Promise<MalwareScanResult> {
@@ -610,6 +694,10 @@ export class ArtifactStore {
   async ensureDirs() {
     await mkdir(this.metadataDir, { recursive: true, mode: 0o700 });
     await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
+  }
+
+  async scannerHealth() {
+    return pingClamAv();
   }
 
   async create(options: ArtifactCreateOptions): Promise<ArtifactCreateResult> {

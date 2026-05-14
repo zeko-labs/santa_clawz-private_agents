@@ -2139,6 +2139,16 @@ app.get("/api/payments/:ledgerId", route(async (request, response) => {
   }
 }));
 
+app.get("/api/admin/artifacts/scanner-health", route(async (_request, response) => {
+  const health = await artifactStore.scannerHealth();
+  response.status(health.reachable ? 200 : 503).json({
+    ok: health.reachable,
+    code: health.reachable ? "artifact_scanner_reachable" : "artifact_scanner_unavailable",
+    retryable: !health.reachable,
+    ...health
+  });
+}));
+
 app.get("/api/admin/x402/ledger", route(async (request, response) => {
   try {
     const agentId = queryString(request.query, "agentId");

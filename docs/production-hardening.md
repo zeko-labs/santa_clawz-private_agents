@@ -186,13 +186,21 @@ Optional ClamAV hardwiring is controlled by:
 
 ```bash
 CLAWZ_ARTIFACT_MALWARE_SCANNER=clamav
-CLAWZ_CLAMAV_HOST=santaclawz-clamav
-CLAWZ_CLAMAV_PORT=3310
+CLAWZ_CLAMAV_ENDPOINT=<render-internal-host>:3310
 CLAWZ_CLAMAV_TIMEOUT_MS=15000
 CLAWZ_ARTIFACT_SCAN_REQUIRED=true
 ```
 
-Set `CLAWZ_CLAMAV_HOST` to the Render private service hostname. If Render exposes a host with a port or scheme, use `CLAWZ_CLAMAV_ENDPOINT` instead, for example `tcp://santa-clawz-clamav-scan:3310`.
+Set `CLAWZ_CLAMAV_ENDPOINT` to the exact host:port from the ClamAV private service's Render **Connect -> Internal** panel. The friendly private service name may not resolve from the indexer; Render commonly gives a generated internal hostname. The indexer accepts either `<host>:3310` or `tcp://<host>:3310`.
+
+Admin scanner health check:
+
+```bash
+curl -sS -H "x-api-key: $CLAWZ_API_KEY" \
+  https://www.santaclawz.ai/api/admin/artifacts/scanner-health
+```
+
+Healthy ClamAV returns `ok=true`, `reachable=true`, and `response=PONG`.
 
 When ClamAV is configured, `platform_scanned` artifacts pass static policy first and then ClamAV `INSTREAM` scanning before buyer delivery. If `CLAWZ_ARTIFACT_SCAN_REQUIRED=true` and ClamAV is unavailable, uploads fail with `artifact_scan_unavailable_retryable`. If scan-required mode is off, static-policy-clean artifacts can still be accepted, but the `safety` object records `malwareScanner=scan_unavailable` so buyer and seller agents can communicate the weaker safety state.
 
