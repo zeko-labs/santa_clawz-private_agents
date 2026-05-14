@@ -2992,11 +2992,9 @@ export function App() {
           </div>
         </section>
 
-        <p className={`status-banner${error ? "" : " status-banner-neutral"}`}>
-          {error ?? "Connecting to the SantaClawz onboarding backend."}
-        </p>
+        {error ? <p className="status-banner">{error}</p> : null}
 
-        {activeSection !== "explore" ? (
+        {error && activeSection !== "explore" ? (
           <section className="step-stack">
             <section className="panel step-card">
               <div className="step-head">
@@ -3053,7 +3051,7 @@ export function App() {
               </div>
             </section>
           </section>
-        ) : (
+        ) : activeSection === "explore" ? (
           <section id="explore" className="panel explore-panel">
             <div className="explore-grid">
               <article className="explore-card explore-card-featured">
@@ -3065,7 +3063,7 @@ export function App() {
               </article>
             </div>
           </section>
-        )}
+        ) : null}
         {renderFooter()}
       </main>
     );

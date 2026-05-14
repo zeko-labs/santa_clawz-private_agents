@@ -61,7 +61,7 @@ export function createRetryablePlatformFailure(input: {
     relayDeliveryStatus: input.relayDeliveryStatus ?? "not_confirmed",
     agentExecutionStatus: input.agentExecutionStatus ?? "not_confirmed",
     error:
-      "SantaClawz relay is temporarily unavailable and the payment or delivery state could not be confirmed. Retry with the same idempotent payment payload.",
+      "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment.",
     ...(responsePreview ? { responsePreview } : {})
   };
 }

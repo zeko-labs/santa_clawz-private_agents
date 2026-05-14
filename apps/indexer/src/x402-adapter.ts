@@ -1880,7 +1880,7 @@ export async function settleAgentX402Payment(input: {
     const message = resultError(remoteSettlement) ?? "Facilitator failed to settle the x402 payment.";
     throw new Error(
       isRetryableFacilitatorSettlementError(message)
-        ? `${message} Retry the same payment payload so the facilitator can deduplicate by paymentId/idempotency metadata.`
+        ? `${message} Wait until service is restored, then retry with the same payment payload so the facilitator can deduplicate by paymentId/idempotency metadata.`
         : message
     );
   }
