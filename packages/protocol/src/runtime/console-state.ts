@@ -621,6 +621,13 @@ export interface HireRequestReceipt {
   localResponseStatusCode?: number;
   localResponseBytes?: number;
   operationalStatus?: HireOperationalStatus;
+  artifactDelivery?: {
+    mode: "platform_scanned" | "buyer_encrypted";
+    encryptionScheme?: string;
+    buyerPublicKey?: string;
+    acceptedFormats?: string[];
+    localScanRequired?: boolean;
+  };
   deliveryReceipt?: HireDeliveryReceipt;
   ingress?: {
     url: string;

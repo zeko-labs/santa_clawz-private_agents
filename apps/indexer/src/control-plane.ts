@@ -68,6 +68,7 @@ import {
   type SocialAnchorCandidateKind,
   type SocialAnchorQueueState,
   type SantaClawzQuoteAcceptanceWalletProof,
+  type SantaClawzArtifactDeliveryPreference,
   type ShadowWalletState,
   type TrustModeId,
   type ZekoContractDeployment,
@@ -600,6 +601,7 @@ interface SubmitHireRequestOptions {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   paymentAuthorization?: HirePaymentAuthorization;
 }
 
@@ -731,6 +733,7 @@ interface HireRequestRecord {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded" | "return_rejected";
   deliveryError?: string;
@@ -3524,6 +3527,7 @@ export class ClawzControlPlane {
     taskPrompt: string;
     requesterContact: string;
     budgetMina?: string;
+    artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     paymentAuthorization: HirePaymentAuthorization;
   }): SignedHireIngressRequest {
     const ingressUrl = isRelayDeliveryProfile(input.profile)
@@ -3615,6 +3619,23 @@ export class ClawzControlPlane {
         title: input.taskPrompt.split(/\r?\n/)[0]?.trim().slice(0, 120) || "SantaClawz hire request",
         client_request: input.taskPrompt,
         requester_contact: input.requesterContact,
+        ...(input.artifactDelivery
+          ? {
+              artifact_delivery: {
+                mode: input.artifactDelivery.mode,
+                ...(input.artifactDelivery.encryptionScheme
+                  ? { encryption_scheme: input.artifactDelivery.encryptionScheme }
+                  : {}),
+                ...(input.artifactDelivery.buyerPublicKey
+                  ? { buyer_public_key: input.artifactDelivery.buyerPublicKey }
+                  : {}),
+                ...(input.artifactDelivery.acceptedFormats?.length
+                  ? { accepted_formats: input.artifactDelivery.acceptedFormats }
+                  : {}),
+                local_scan_required: input.artifactDelivery.localScanRequired ?? input.artifactDelivery.mode === "buyer_encrypted"
+              }
+            }
+          : {}),
         provided_inputs: [],
         requested_deliverables: [],
         ...(input.budgetMina ? { budget: input.budgetMina } : {})
@@ -8104,6 +8125,7 @@ export class ClawzControlPlane {
       submittedAtIso,
       taskPrompt,
       requesterContact,
+      ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
         : {}),
@@ -8182,6 +8204,7 @@ export class ClawzControlPlane {
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
         : {}),
       requesterContact,
+      ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       deliveryTarget: publicDeliveryTarget,
       ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
       ...(deliveryError ? { deliveryError } : {}),
@@ -8341,6 +8364,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
+      ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(deliveryReceipt ? { deliveryReceipt } : {}),
       ingress: {
         url: publicDeliveryTarget,

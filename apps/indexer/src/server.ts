@@ -20,6 +20,7 @@ import {
   type ExecutionIntentSettlementModel,
   type ExecutionIntentStatus,
   type PrivacyApprovalRecord,
+  type SantaClawzArtifactDeliveryPreference,
   type SantaClawzQuoteAcceptanceWalletProof,
   type TrustModeId,
   type WitnessPlanLike,
@@ -219,6 +220,7 @@ type HireRequestBody = {
   taskPrompt?: unknown;
   budgetMina?: unknown;
   requesterContact?: unknown;
+  artifactDelivery?: unknown;
   paymentPayload?: unknown;
 };
 type QuoteAcceptRequestBody = {
@@ -388,6 +390,53 @@ function parsePayoutWallets(value: unknown): AgentProfileState["payoutWallets"] 
     ...(typeof value.zeko === "string" ? { zeko: value.zeko } : {}),
     ...(typeof value.base === "string" ? { base: value.base } : {}),
     ...(typeof value.ethereum === "string" ? { ethereum: value.ethereum } : {})
+  };
+}
+
+function parseArtifactDeliveryPreference(value: unknown): SantaClawzArtifactDeliveryPreference | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const mode = value.mode === "buyer_encrypted" ? "buyer_encrypted" : value.mode === "platform_scanned" ? "platform_scanned" : undefined;
+  if (!mode) {
+    throw new Error("artifactDelivery.mode must be platform_scanned or buyer_encrypted.");
+  }
+  const encryptionScheme = typeof value.encryptionScheme === "string"
+    ? value.encryptionScheme.trim().slice(0, 40)
+    : typeof value.encryption_scheme === "string"
+      ? value.encryption_scheme.trim().slice(0, 40)
+      : undefined;
+  const buyerPublicKey = typeof value.buyerPublicKey === "string"
+    ? value.buyerPublicKey.trim().slice(0, 512)
+    : typeof value.buyer_public_key === "string"
+      ? value.buyer_public_key.trim().slice(0, 512)
+      : undefined;
+  const acceptedFormatsSource = Array.isArray(value.acceptedFormats)
+    ? value.acceptedFormats
+    : Array.isArray(value.accepted_formats)
+      ? value.accepted_formats
+      : undefined;
+  const acceptedFormats = acceptedFormatsSource
+    ?.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim().slice(0, 24))
+    .slice(0, 8);
+  const localScanRequired =
+    typeof value.localScanRequired === "boolean"
+      ? value.localScanRequired
+      : typeof value.local_scan_required === "boolean"
+        ? value.local_scan_required
+        : mode === "buyer_encrypted";
+
+  if (mode === "buyer_encrypted" && !buyerPublicKey) {
+    throw new Error("artifactDelivery.buyerPublicKey is required for buyer_encrypted delivery.");
+  }
+
+  return {
+    mode,
+    ...(encryptionScheme ? { encryptionScheme } : {}),
+    ...(buyerPublicKey ? { buyerPublicKey } : {}),
+    ...(acceptedFormats && acceptedFormats.length > 0 ? { acceptedFormats } : {}),
+    localScanRequired
   };
 }
 
@@ -785,6 +834,7 @@ function parseHireRequest(body: unknown): HireRequestBody {
         taskPrompt: body.taskPrompt,
         budgetMina: body.budgetMina,
         requesterContact: body.requesterContact,
+        artifactDelivery: body.artifactDelivery,
         paymentPayload: body.paymentPayload
       }
     : {};
@@ -1569,7 +1619,8 @@ appWithRouteMiddleware.post(
     const deliveryMode =
       queryString(request.query, "deliveryMode") ??
       queryString(request.query, "privacyMode") ??
-      optionalString(request.header("x-clawz-artifact-delivery-mode"));
+      optionalString(request.header("x-clawz-artifact-delivery-mode")) ??
+      hireRequest.artifactDelivery?.mode;
     let artifact;
     try {
       artifact = await artifactStore.create({
@@ -2264,6 +2315,7 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         taskPrompt: context.quoteRequest.taskPrompt,
         requesterContact: context.quoteRequest.requesterContact,
         ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
+        ...(context.quoteRequest.artifactDelivery ? { artifactDelivery: context.quoteRequest.artifactDelivery } : {}),
         paymentAuthorization: {
           status: "authorized",
           rail: verification.rail.rail,
@@ -3055,6 +3107,7 @@ const handleAgentHireRequest = route(async (request, response) => {
     }
     const taskPrompt = typeof body.taskPrompt === "string" ? body.taskPrompt.trim() : "";
     const requesterContact = typeof body.requesterContact === "string" ? body.requesterContact.trim() : "";
+    const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
     if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
       response.status(400).json({ error: `taskPrompt must be ${HIRE_TASK_PROMPT_MAX_LENGTH} characters or less.` });
       return;
@@ -3187,6 +3240,7 @@ const handleAgentHireRequest = route(async (request, response) => {
         taskPrompt,
         requesterContact,
         ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {}),
+        ...(artifactDelivery ? { artifactDelivery } : {}),
         ...(paymentAuthorization ? { paymentAuthorization } : {})
       });
       if (

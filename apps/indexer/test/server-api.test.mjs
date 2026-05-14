@@ -185,6 +185,7 @@ async function startHireIngress(port) {
   let expectedServiceKey = "";
   let nextProtocolReturnFactory = null;
   const receivedHireRequestIds = new Set();
+  const receivedHireRequests = new Map();
   const server = createServer((request, response) => {
     const url = request.url ?? "/";
 
@@ -302,6 +303,7 @@ async function startHireIngress(port) {
           return;
         }
         receivedHireRequestIds.add(requestId);
+        receivedHireRequests.set(requestId, parsed);
         if (nextProtocolReturnFactory) {
           const protocolReturn = nextProtocolReturnFactory({ requestId, request: parsed });
           nextProtocolReturnFactory = null;
@@ -341,6 +343,7 @@ async function startHireIngress(port) {
       nextProtocolReturnFactory = nextFactory;
     },
     receivedHireRequestIds,
+    receivedHireRequests,
     close() {
       return stopHttpServer(server);
     }
@@ -2181,7 +2184,14 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       method: "POST",
       body: JSON.stringify({
         taskPrompt: "Run a signed free test request.",
-        requesterContact: "buyer@example.com"
+        requesterContact: "buyer@example.com",
+        artifactDelivery: {
+          mode: "buyer_encrypted",
+          encryptionScheme: "age",
+          buyerPublicKey: "age1santaclawztestbuyerpublickey0000000000000000000000000000000000000000",
+          acceptedFormats: ["sczenc", "age"],
+          localScanRequired: true
+        }
       })
     });
     assert.equal(freeTestAccepted.status, 200);
@@ -2203,10 +2213,24 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.completionClassification, "demo_completion");
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.marketplaceCompletionCredit, false);
     assert.equal(ingress.receivedHireRequestIds.has(freeTestAccepted.payload.requestId), true);
+    assert.deepEqual(freeTestAccepted.payload.artifactDelivery, {
+      mode: "buyer_encrypted",
+      encryptionScheme: "age",
+      buyerPublicKey: "age1santaclawztestbuyerpublickey0000000000000000000000000000000000000000",
+      acceptedFormats: ["sczenc", "age"],
+      localScanRequired: true
+    });
+    assert.deepEqual(ingress.receivedHireRequests.get(freeTestAccepted.payload.requestId).input.artifact_delivery, {
+      mode: "buyer_encrypted",
+      encryption_scheme: "age",
+      buyer_public_key: "age1santaclawztestbuyerpublickey0000000000000000000000000000000000000000",
+      accepted_formats: ["sczenc", "age"],
+      local_scan_required: true
+    });
 
     const artifactBody = Buffer.from("Ask again after one brave sip of coffee.\n", "utf8");
     const artifactUpload = await requestJson(
-      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=answer.md&contentType=text/markdown`,
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=answer.md&contentType=text/markdown&deliveryMode=platform_scanned`,
       {
         method: "POST",
         headers: {
@@ -2247,7 +2271,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
 
     const encryptedBody = Buffer.from("ciphertext-only-for-buyer-local-decrypt-and-scan", "utf8");
     const privateArtifactUpload = await requestJson(
-      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=private-output.sczenc&contentType=application/vnd.santaclawz.encrypted-artifact&deliveryMode=buyer_encrypted`,
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=private-output.sczenc&contentType=application/vnd.santaclawz.encrypted-artifact`,
       {
         method: "POST",
         headers: {
@@ -2273,7 +2297,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.deepEqual(privateDownloadAccepted.body, encryptedBody);
 
     const blockedScriptUpload = await requestJson(
-      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=install.sh&contentType=text/x-shellscript`,
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=install.sh&contentType=text/x-shellscript&deliveryMode=platform_scanned`,
       {
         method: "POST",
         headers: {
@@ -2289,7 +2313,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.match(blockedScriptUpload.payload.sellerMessage, /non-executable/i);
 
     const blockedZipUpload = await requestJson(
-      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=bundle.zip&contentType=application/zip`,
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifacts?filename=bundle.zip&contentType=application/zip&deliveryMode=platform_scanned`,
       {
         method: "POST",
         headers: {

@@ -5,6 +5,14 @@ export const SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0" a
 export type SantaClawzHireRequestType = "quote_intake" | "paid_execution" | "free_test";
 export type SantaClawzHirePaymentStatus = "quote_requested" | "authorized" | "settled" | "paid" | "escrowed" | "free_test";
 
+export interface SantaClawzArtifactDeliveryPreference {
+  mode: "platform_scanned" | "buyer_encrypted";
+  encryptionScheme?: "age" | "sczenc" | "gpg" | string;
+  buyerPublicKey?: string;
+  acceptedFormats?: string[];
+  localScanRequired?: boolean;
+}
+
 const SERVICE_KEY_PATTERN = /^[a-z0-9][a-z0-9_:-]{0,79}$/;
 
 export interface SantaClawzHireServiceIdentity {
