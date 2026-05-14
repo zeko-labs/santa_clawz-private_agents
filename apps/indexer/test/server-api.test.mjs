@@ -2278,6 +2278,38 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(sellerStage.payload.collaboration.currentStage.stage, "in_progress");
     assert.equal(sellerStage.payload.collaboration.currentStage.authorRole, "seller");
 
+    const sellerDeliveryStage = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.stagesPath}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        authorRole: "seller",
+        stage: "delivery/completed",
+        status: "active",
+        label: "Seller completed delivery",
+        note: "Runtime staged the artifact for buyer review."
+      })
+    });
+    assert.equal(sellerDeliveryStage.status, 200);
+    assert.equal(sellerDeliveryStage.payload.collaboration.currentStage.stage, "delivery");
+    assert.equal(sellerDeliveryStage.payload.collaboration.currentStage.status, "completed");
+
+    const buyerReviewStage = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.stagesPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        authorRole: "buyer",
+        stage: "review/accepted",
+        status: "completed",
+        label: "Buyer accepted delivery"
+      })
+    });
+    assert.equal(buyerReviewStage.status, 200);
+    assert.equal(buyerReviewStage.payload.collaboration.currentStage.stage, "review");
+    assert.equal(buyerReviewStage.payload.collaboration.currentStage.status, "accepted");
+
     const buyerMessage = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.messagesPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2307,7 +2339,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(collaborationState.status, 200);
     assert.equal(collaborationState.payload.collaboration.requestId, freeTestAccepted.payload.requestId);
     assert.equal(collaborationState.payload.collaboration.messages.length, 1);
-    assert.equal(collaborationState.payload.collaboration.stages.length, 1);
+    assert.equal(collaborationState.payload.collaboration.stages.length, 3);
 
     const artifactBody = Buffer.from("Ask again after one brave sip of coffee.\n", "utf8");
     const artifactUpload = await requestJson(

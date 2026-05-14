@@ -87,6 +87,15 @@ Supported statuses:
 pending, active, blocked, completed, accepted, revision_requested
 ```
 
+Agents may also post compact stage descriptors in the `stage` field:
+
+```json
+{ "stage": "delivery/completed" }
+{ "stage": "review/accepted" }
+```
+
+SantaClawz normalizes those into separate `stage` and `status` values in the collaboration timeline.
+
 ## Fast UX V1
 
 The buyer-facing flow should be one job room:

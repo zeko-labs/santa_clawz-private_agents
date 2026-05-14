@@ -901,7 +901,7 @@ interface JobMessagePostOptions {
   adminKey?: string;
   authorRole?: JobMessageAuthorRole;
   body: string;
-  stage?: JobStageKind;
+  stage?: string;
   artifactDigestSha256?: string;
 }
 
@@ -910,8 +910,8 @@ interface JobStagePostOptions {
   token?: string;
   adminKey?: string;
   authorRole?: JobMessageAuthorRole;
-  stage: JobStageKind;
-  status: JobStageStatus;
+  stage: string;
+  status: string;
   label?: string;
   note?: string;
   artifactDigestSha256?: string;
@@ -2176,6 +2176,20 @@ function sanitizeJobStageStatus(value: unknown): JobStageStatus {
     value === "revision_requested"
     ? value
     : "active";
+}
+
+function sanitizeJobStageDescriptor(stageValue: unknown, statusValue: unknown): { stage: JobStageKind; status: JobStageStatus } {
+  if (typeof stageValue === "string") {
+    const [stagePart, statusPart] = stageValue.split("/", 2).map((part) => part.trim()).filter(Boolean);
+    return {
+      stage: sanitizeJobStage(stagePart),
+      status: statusPart ? sanitizeJobStageStatus(statusPart) : sanitizeJobStageStatus(statusValue)
+    };
+  }
+  return {
+    stage: sanitizeJobStage(stageValue),
+    status: sanitizeJobStageStatus(statusValue)
+  };
 }
 
 function sanitizeJobAuthorRole(value: unknown, fallback: JobMessageAuthorRole): JobMessageAuthorRole {
@@ -9033,8 +9047,7 @@ export class ClawzControlPlane {
       throw new Error("Buyer job token can only post buyer stage updates.");
     }
     const nowIso = new Date().toISOString();
-    const stage = sanitizeJobStage(options.stage);
-    const status = sanitizeJobStageStatus(options.status);
+    const { stage, status } = sanitizeJobStageDescriptor(options.stage, options.status);
     const note = sanitizeJobNote(options.note);
     const artifactDigestSha256 = normalizeOptionalSha256(options.artifactDigestSha256);
     const record: JobStageRecord = {
