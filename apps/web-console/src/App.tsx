@@ -23,7 +23,6 @@ import {
   fetchAgentRegistry,
   fetchConsoleState,
   fetchPaymentLedger,
-  getStoredAdminKey,
   getApiBase,
   issueOwnershipChallenge,
   type OwnershipChallengeIssueResponse,
@@ -31,7 +30,6 @@ import {
   runLiveSessionTurnFlow,
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
-  storeAdminKey,
   sponsorWallet,
   updateAgentProfile,
   verifyOwnershipChallenge
@@ -121,8 +119,6 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
-const OPENCLAW_HEARTBEAT_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/openclaw-heartbeat.md";
 const ZEKO_URL = "https://zeko.io/";
 const COPYRIGHT_YEAR = "2026";
 const EXPLORE_REGISTRY_POLL_MS = 8_000;
@@ -480,77 +476,6 @@ function initialSelectedSessionId(route: AppRouteState) {
     return route.sessionId;
   }
   return route.section === "configure" && !route.agentId ? ONBOARDING_SESSION_ID : null;
-}
-
-const MANAGE_SESSION_ID_PATTERN = /^session_agent_[a-z0-9]{8,64}$/;
-const MANAGE_AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,180}--session_agent_[a-z0-9]{8,64}$/;
-
-function normalizeManageTargetToken(value: string) {
-  return value.trim().replace(/[.,]+$/g, "");
-}
-
-function parseManageTargetToken(value: string) {
-  const target = normalizeManageTargetToken(value);
-  if (!target) {
-    return null;
-  }
-  if (MANAGE_SESSION_ID_PATTERN.test(target)) {
-    return { sessionId: target };
-  }
-  if (MANAGE_AGENT_ID_PATTERN.test(target)) {
-    return { agentId: target };
-  }
-  return null;
-}
-
-function isSantaClawzManageUrl(url: URL) {
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    return false;
-  }
-  const hostname = url.hostname.toLowerCase();
-  if (hostname === "santaclawz.ai" || hostname.endsWith(".santaclawz.ai")) {
-    return true;
-  }
-  if (typeof window !== "undefined" && hostname === window.location.hostname.toLowerCase()) {
-    return true;
-  }
-  return hostname === "localhost" || hostname === "127.0.0.1";
-}
-
-function parseManageAgentTarget(value: string) {
-  let target = normalizeManageTargetToken(value);
-  if (!target) {
-    return null;
-  }
-
-  try {
-    const url = new URL(target);
-    if (!isSantaClawzManageUrl(url)) {
-      return null;
-    }
-    const sessionId = url.searchParams.get("sessionId")?.trim();
-    const agentId = url.searchParams.get("agentId")?.trim();
-    if (sessionId) {
-      return parseManageTargetToken(sessionId);
-    }
-    if (agentId) {
-      return parseManageTargetToken(agentId);
-    }
-
-    const segments = url.pathname.split("/").map((segment) => segment.trim()).filter(Boolean);
-    const knownRouteIndex = segments.findIndex((segment) =>
-      segment === "configure" || segment === "manage" || segment === "explore" || segment === "agent"
-    );
-    if (knownRouteIndex < 0) {
-      return null;
-    }
-    const pathTarget = segments[knownRouteIndex + 1] ?? "";
-    target = normalizeManageTargetToken(decodeURIComponent(pathTarget));
-  } catch {
-    // Plain session ids and public agent ids are expected here.
-  }
-
-  return parseManageTargetToken(target);
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -1510,7 +1435,6 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [sharedAgentId, setSharedAgentId] = useState<string | null>(initialRoute.agentId);
   const [sharedAgentFocus, setSharedAgentFocus] = useState<"profile" | "hire">(initialRoute.agentFocus);
-  const [manageLookupValue, setManageLookupValue] = useState(initialRoute.sessionId ?? initialRoute.agentId ?? "");
   const [profile, setProfile] = useState<AgentProfileDraft>(normalizeProfileDraft());
   const [error, setError] = useState<string | null>(null);
   const [backgroundError, setBackgroundError] = useState<string | null>(null);
@@ -1531,7 +1455,6 @@ export function App() {
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
   const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
-  const [adminKeyDraft, setAdminKeyDraft] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [urlReservationSalt, setUrlReservationSalt] = useState<string>(createUrlReservationSalt());
@@ -2002,17 +1925,6 @@ export function App() {
   }, [ethereumPayoutAllowed, selectedPayoutWalletKey]);
 
   useEffect(() => {
-    if (!state) {
-      return;
-    }
-
-    const storedKey = getStoredAdminKey(state.session.sessionId, state.agentId);
-    if (storedKey && storedKey !== adminKeyDraft) {
-      setAdminKeyDraft(storedKey);
-    }
-  }, [adminKeyDraft, state]);
-
-  useEffect(() => {
     setIssuedOwnershipChallenge(null);
   }, [state?.session.sessionId, sharedAgentId]);
 
@@ -2296,9 +2208,6 @@ export function App() {
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
       setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
-      if (nextSection === "configure") {
-        setManageLookupValue("");
-      }
       window.history.pushState(null, "", buildSectionPath(nextSection));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -2324,39 +2233,9 @@ export function App() {
     setNavOpen(false);
     setSharedAgentFocus("profile");
     setSelectedSessionId(nextSessionId ?? null);
-    setManageLookupValue(nextSessionId ?? "");
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", buildSectionPath("configure", nextSessionId));
       window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }
-
-  async function openManageTargetAction() {
-    const target = parseManageAgentTarget(manageLookupValue);
-    if (!target) {
-      setError("Paste a SantaClawz profile URL, public agent ID, or session_agent_... record to manage an agent.");
-      return;
-    }
-
-    setPendingAction("open-manage-agent");
-    setError(null);
-    try {
-      const nextState = await fetchConsoleState(target.sessionId, target.sessionId ? undefined : target.agentId);
-      setState(nextState);
-      setSharedAgentId(null);
-      setSelectedSessionId(nextState.session.sessionId);
-      setActiveSection("configure");
-      setActiveStaticPage(null);
-      setActiveHiddenPage(null);
-      setManageLookupValue(target.sessionId ?? target.agentId ?? nextState.session.sessionId);
-      if (typeof window !== "undefined") {
-        window.history.pushState(null, "", buildSectionPath("configure", nextState.session.sessionId));
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Could not open that agent registration.");
-    } finally {
-      setPendingAction(null);
     }
   }
 
@@ -3070,7 +2949,6 @@ export function App() {
   }
 
   const sessionId = selectedSessionId ?? state.session.sessionId;
-  const manageTargetReady = Boolean(parseManageAgentTarget(manageLookupValue));
   const launchTarget = state.liveFlowTargets.turns.find(
     (target) => target.sessionId === sessionId && target.canStartNextTurn
   );
@@ -3200,20 +3078,6 @@ export function App() {
   const routedPublicAgentHireUrl =
     sharedAgentId ?? state.agentId ? buildPublicAgentHireUrl(sharedAgentId ?? state.agentId) : null;
   const shareOnXUrl = publicAgentUrl && registeredAgentId ? buildShareOnXUrl(publicAgentUrl, registeredAgentId) : null;
-  const heartbeatAgentId = registeredAgentId ?? sharedAgentId ?? state.agentId;
-  const currentAdminKey = getStoredAdminKey(sessionId, heartbeatAgentId);
-  const heartbeatSenderCommand = [
-    `CLAWZ_API_BASE=${shellQuote(getApiBase())}`,
-    `CLAWZ_AGENT_ID=${shellQuote(heartbeatAgentId)}`,
-    `CLAWZ_AGENT_ADMIN_KEY=${shellQuote(currentAdminKey || "sck_...")}`,
-    "pnpm heartbeat:agent"
-  ].join(" \\\n");
-  const heartbeatCurlCommand = [
-    `curl -X POST ${shellQuote(`${getApiBase()}/api/agents/${encodeURIComponent(heartbeatAgentId)}/heartbeat`)} \\`,
-    `  -H ${shellQuote("content-type: application/json")} \\`,
-    `  -H ${shellQuote(`x-clawz-admin-key: ${currentAdminKey || "sck_..."}`)} \\`,
-    `  -d ${shellQuote(JSON.stringify({ status: "live", ttlSeconds: 30, note: "Local OpenClaw gateway heartbeat" }))}`
-  ].join("\n");
   const currentSocialAnchorQueue = isRegisteredSession
     ? state.socialAnchorQueue
     : {
@@ -3497,29 +3361,6 @@ export function App() {
       }
     });
     setError(null);
-  }
-
-  function unlockAdminAccess() {
-    const trimmedKey = adminKeyDraft.trim();
-    const targetAgentId = registeredAgentId ?? state?.agentId;
-    if (!trimmedKey) {
-      setError("Paste the agent admin key first.");
-      return;
-    }
-
-    storeAdminKey(trimmedKey, sessionId, targetAgentId);
-    setPendingAction("unlock-admin");
-    setError(null);
-    void fetchConsoleState(sessionId, targetAgentId)
-      .then((nextState) => {
-        setState(nextState);
-      })
-      .catch((nextError: Error) => {
-        setError(nextError.message);
-      })
-      .finally(() => {
-        setPendingAction(null);
-      });
   }
 
   return (
@@ -4025,154 +3866,7 @@ export function App() {
                   </button>
                 </div>
               </div>
-
           </div>
-          </section>
-          <section className="panel step-card manage-selector-card">
-            <div className="step-head">
-              <div className="step-title">
-                <div>
-                  <h2>Manage agent</h2>
-                  <p className="panel-copy">
-                    Enter enrolled SantaClawz agent URL to update existing settings or inspect proof history.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="manage-agent-card">
-              <div>
-                <span className="metric">Agent registration</span>
-                <p className="panel-copy manage-session-note">
-                  Paste a public profile URL, public agent ID, or session_agent_... record. New agents should still enroll from the command above so they can save their admin key.
-                </p>
-              </div>
-              <form
-                className="manage-agent-open-form"
-                onSubmit={(event: FormSubmitEvent) => {
-                  event.preventDefault();
-                  void openManageTargetAction();
-                }}
-              >
-                <label className="field manage-agent-input-field">
-                  <span>Agent URL or ID</span>
-                  <input
-                    className="text-input"
-                    value={manageLookupValue}
-                    onChange={(event: ValueInputEvent) => {
-                      setManageLookupValue(event.target.value);
-                    }}
-                    placeholder="https://santaclawz.ai/agent/... or session_agent_..."
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="primary-button"
-                  disabled={pendingAction === "open-manage-agent" || !manageTargetReady}
-                >
-                  {pendingAction === "open-manage-agent" ? "Viewing..." : "View agent"}
-                </button>
-              </form>
-              {isRegisteredSession ? (
-                <p className="panel-copy manage-current-agent">
-                  Current: {state.profile.agentName || state.agentId} ({state.session.sessionId})
-                </p>
-              ) : null}
-            </div>
-
-            {isRegisteredSession ? (
-              <div className="ownership-panel">
-                <div>
-                  <span className="metric">Admin access</span>
-                  <p className="panel-copy">
-                    {hasAdminAccess
-                      ? "This browser can manage the agent. Keep the admin key if you want to update it from another device later."
-                      : `Paste the admin key to unlock agent settings. ${state.adminAccess.keyHint ? `Saved hint: ${state.adminAccess.keyHint}.` : ""}`}
-                  </p>
-                </div>
-                <div className="ownership-actions">
-                  {hasAdminAccess ? (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={!currentAdminKey}
-                      onClick={() => {
-                        if (currentAdminKey) {
-                          void copyValue("admin-key", currentAdminKey);
-                        }
-                      }}
-                    >
-                      {copiedKey === "admin-key" ? "Copied admin key" : "Copy admin key"}
-                    </button>
-                  ) : (
-                    <>
-                      <input
-                        className="text-input ownership-input"
-                        value={adminKeyDraft}
-                        onChange={(event: ValueInputEvent) => {
-                          setAdminKeyDraft(event.target.value);
-                        }}
-                        placeholder="sck_..."
-                      />
-                      <button
-                        type="button"
-                        className="primary-button"
-                        disabled={pendingAction === "unlock-admin"}
-                        onClick={() => {
-                          unlockAdminAccess();
-                        }}
-                      >
-                        {pendingAction === "unlock-admin" ? "Unlocking..." : "Unlock agent"}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {isRegisteredSession ? (
-              <div className="ownership-panel heartbeat-setup-panel">
-                <div>
-                  <span className="metric">OpenClaw heartbeat</span>
-                  <p className="panel-copy">
-                    Run this beside the OpenClaw ingress every 10-20 seconds so Explore can show Live. If it stops, the profile falls back to Waiting; if the OpenClaw runtime URL cannot be reached, hire and payment stay disabled.
-                  </p>
-                </div>
-                <div className="command-strip compact-command-strip">
-                  <code>{heartbeatSenderCommand}</code>
-                  <button
-                    className="copy-button"
-                    disabled={!currentAdminKey}
-                    onClick={() => {
-                      void copyValue("heartbeat-sender-command", heartbeatSenderCommand);
-                    }}
-                  >
-                    {copiedKey === "heartbeat-sender-command" ? "Copied" : currentAdminKey ? "Copy" : "Unlock first"}
-                  </button>
-                </div>
-                <details className="advanced-payment-details heartbeat-curl-details">
-                  <summary>Use raw curl instead</summary>
-                  <div className="command-strip compact-command-strip">
-                    <code>{heartbeatCurlCommand}</code>
-                    <button
-                      className="copy-button"
-                      disabled={!currentAdminKey}
-                      onClick={() => {
-                        void copyValue("heartbeat-curl-command", heartbeatCurlCommand);
-                      }}
-                    >
-                      {copiedKey === "heartbeat-curl-command" ? "Copied" : currentAdminKey ? "Copy" : "Unlock first"}
-                    </button>
-                  </div>
-                </details>
-                <div className="ownership-actions">
-                  <a className="secondary-button" href={OPENCLAW_HEARTBEAT_GUIDE_URL} target="_blank" rel="noreferrer">
-                    Heartbeat guide
-                  </a>
-                  <span className="subtle-pill">Shows on Explore profile</span>
-                </div>
-              </div>
-            ) : null}
           </section>
 
           {isRegisteredSession ? (

@@ -79,6 +79,8 @@ pnpm archive:agent -- --env-file .env.santaclawz
 pnpm archive:agent -- --env-file .env.santaclawz --restore
 ```
 
+For V1, enrolled-agent management is intentionally CLI/SDK-first. The web console creates enrollment tickets and shows profiles/proof history; agents use their local `.env.santaclawz` admin key to update pricing, heartbeat, archive/restore, and relay settings.
+
 Production checks:
 
 ```bash

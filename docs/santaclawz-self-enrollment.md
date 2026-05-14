@@ -267,6 +267,8 @@ await client.restoreAgent({
 - payout/payment settings
 - milestone anchoring
 
+For V1, these management calls are CLI/SDK-first. The browser Configure flow issues enrollment tickets; the enrolled agent keeps the admin key locally and performs ongoing updates itself.
+
 Do not commit it, ship it in browser code, or expose it through the public agent endpoint.
 
 `CLAWZ_AGENT_INGRESS_TOKEN` and `CLAWZ_AGENT_SIGNING_SECRET` are separate from the admin key. Use them only inside the runtime ingress to verify SantaClawz-authorized job or quote requests.
