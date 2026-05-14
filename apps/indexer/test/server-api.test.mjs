@@ -2232,14 +2232,18 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       encryptionScheme: "age",
       buyerPublicKey: "age1santaclawztestbuyerpublickey0000000000000000000000000000000000000000",
       acceptedFormats: ["sczenc", "age"],
-      localScanRequired: true
+      localScanRequired: true,
+      digestRequired: true,
+      buyerAcceptanceRequired: true
     });
     assert.deepEqual(ingress.receivedHireRequests.get(freeTestAccepted.payload.requestId).input.artifact_delivery, {
       mode: "buyer_encrypted",
       encryption_scheme: "age",
       buyer_public_key: "age1santaclawztestbuyerpublickey0000000000000000000000000000000000000000",
       accepted_formats: ["sczenc", "age"],
-      local_scan_required: true
+      local_scan_required: true,
+      digest_required: true,
+      buyer_acceptance_required: true
     });
     assert.deepEqual(ingress.receivedHireRequests.get(freeTestAccepted.payload.requestId).input.activity_privacy, {
       visibility: "private",
@@ -2367,6 +2371,79 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(blockedZipUpload.payload.code, "artifact_safety_blocked");
     assert.equal(blockedZipUpload.payload.safety.archive.executableEntries.includes("../evil.sh"), true);
     assert.equal(blockedZipUpload.payload.safety.archive.suspiciousEntries.includes("../evil.sh"), true);
+
+    const directDigest = createHash("sha256").update("direct bilateral bytes").digest("hex");
+    const directReceipt = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifact-receipts`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-clawz-admin-key": adminKey
+        },
+        body: JSON.stringify({
+          deliveryMode: "direct_receipt",
+          transport: "buyer_agent_inbox",
+          scanPolicy: "buyer_required",
+          filename: "direct-answer.md",
+          contentType: "text/markdown",
+          artifactDigestSha256: directDigest,
+          artifactSizeBytes: 23,
+          deliveryChannel: "buyer-agent-inbox://test",
+          sellerDeliveryReceipt: "seller posted artifact package to buyer inbox"
+        })
+      }
+    );
+    assert.equal(directReceipt.status, 200);
+    assert.equal(directReceipt.payload.receipt.deliveryMode, "direct_receipt");
+    assert.equal(directReceipt.payload.receipt.transport, "buyer_agent_inbox");
+    assert.equal(directReceipt.payload.receipt.scanPolicy, "buyer_required");
+    assert.equal(directReceipt.payload.receipt.artifactDigestSha256, directDigest);
+    assert.equal(directReceipt.payload.receipt.buyerAcceptanceStatus, "pending");
+    assert.match(directReceipt.payload.receiptManifestUrl, /\/api\/artifact-receipts\/receipt_[a-f0-9]+\?token=/);
+    assert.match(directReceipt.payload.buyerAcknowledgementUrl, /\/api\/artifact-receipts\/receipt_[a-f0-9]+\/acknowledge\?token=/);
+    assert.deepEqual(directReceipt.payload.verifiedOutputPatch, {
+      artifact_manifest_url: directReceipt.payload.receiptManifestUrl,
+      artifact_bundle_digest_sha256: directDigest
+    });
+
+    const directReceiptManifest = await requestJson(directReceipt.payload.receiptManifestUrl, { method: "GET" });
+    assert.equal(directReceiptManifest.status, 200);
+    assert.equal(directReceiptManifest.payload.receipt.manifestDigestSha256, directReceipt.payload.receipt.manifestDigestSha256);
+
+    const directReceiptAck = await requestJson(directReceipt.payload.buyerAcknowledgementUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accepted: true, note: "digest verified by buyer agent" })
+    });
+    assert.equal(directReceiptAck.status, 200);
+    assert.equal(directReceiptAck.payload.receipt.buyerAcceptanceStatus, "accepted");
+    assert.equal(directReceiptAck.payload.receipt.buyerAcknowledgementNote, "digest verified by buyer agent");
+
+    const externalDigest = createHash("sha256").update("external reference bytes").digest("hex");
+    const externalReceipt = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/artifact-receipts`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-clawz-admin-key": adminKey
+        },
+        body: JSON.stringify({
+          deliveryMode: "external_reference",
+          filename: "large-output.zip",
+          contentType: "application/zip",
+          artifactDigestSha256: externalDigest,
+          artifactSizeBytes: 98765,
+          artifactUrl: "https://storage.example.test/signed/large-output.zip"
+        })
+      }
+    );
+    assert.equal(externalReceipt.status, 200);
+    assert.equal(externalReceipt.payload.receipt.deliveryMode, "external_reference");
+    assert.equal(externalReceipt.payload.receipt.transport, "external_url");
+    assert.equal(externalReceipt.payload.receipt.scanPolicy, "external_unverified");
+    assert.equal(externalReceipt.payload.receipt.artifactUrl, "https://storage.example.test/signed/large-output.zip");
 
     const freeTestLimited = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

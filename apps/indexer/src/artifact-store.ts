@@ -21,12 +21,61 @@ interface ArtifactMetadata {
   tokenHashSha256: string;
 }
 
+type ArtifactReceiptDeliveryMode = "direct_receipt" | "external_reference";
+type ArtifactReceiptTransport = "buyer_agent_inbox" | "external_url" | "out_of_band" | "custom";
+type ArtifactReceiptScanPolicy = "buyer_required" | "external_unverified" | "external_verified" | "none";
+type ArtifactReceiptAcceptanceStatus = "pending" | "accepted" | "rejected" | "not_required";
+
+interface ArtifactReceiptMetadata {
+  receiptId: string;
+  requestId: string;
+  createdAtIso: string;
+  updatedAtIso: string;
+  deliveredAtIso: string;
+  deliveryMode: ArtifactReceiptDeliveryMode;
+  transport: ArtifactReceiptTransport;
+  scanPolicy: ArtifactReceiptScanPolicy;
+  digestRequired: true;
+  buyerAcceptanceRequired: boolean;
+  buyerAcceptanceStatus: ArtifactReceiptAcceptanceStatus;
+  buyerAcknowledgedAtIso?: string;
+  buyerAcknowledgementNote?: string;
+  filename: string;
+  contentType: string;
+  artifactDigestSha256: string;
+  artifactSizeBytes: number;
+  artifactUrl?: string;
+  deliveryChannel?: string;
+  sellerDeliveryReceipt?: string;
+  sellerSignature?: string;
+  manifestDigestSha256: string;
+  tokenHashSha256: string;
+}
+
 interface ArtifactCreateOptions {
   requestId: string;
   filename?: string;
   contentType?: string;
   deliveryMode?: ArtifactDeliveryMode;
   body: Buffer;
+  baseUrl: string;
+}
+
+interface ArtifactReceiptCreateOptions {
+  requestId: string;
+  deliveryMode: ArtifactReceiptDeliveryMode;
+  transport?: ArtifactReceiptTransport;
+  scanPolicy?: ArtifactReceiptScanPolicy;
+  buyerAcceptanceRequired?: boolean;
+  filename: string;
+  contentType?: string;
+  artifactDigestSha256: string;
+  artifactSizeBytes: number;
+  artifactUrl?: string;
+  deliveryChannel?: string;
+  sellerDeliveryReceipt?: string;
+  sellerSignature?: string;
+  deliveredAtIso?: string;
   baseUrl: string;
 }
 
@@ -43,6 +92,41 @@ interface ArtifactCreateResult {
   deliveryMode: ArtifactDeliveryMode;
   requiresBuyerDownloadAcceptance: boolean;
   safety: ArtifactSafetyReport;
+}
+
+interface ArtifactReceiptPublicMetadata {
+  receiptId: string;
+  requestId: string;
+  createdAtIso: string;
+  updatedAtIso: string;
+  deliveredAtIso: string;
+  deliveryMode: ArtifactReceiptDeliveryMode;
+  transport: ArtifactReceiptTransport;
+  scanPolicy: ArtifactReceiptScanPolicy;
+  digestRequired: true;
+  buyerAcceptanceRequired: boolean;
+  buyerAcceptanceStatus: ArtifactReceiptAcceptanceStatus;
+  buyerAcknowledgedAtIso?: string;
+  buyerAcknowledgementNote?: string;
+  filename: string;
+  contentType: string;
+  artifactDigestSha256: string;
+  artifactSizeBytes: number;
+  artifactUrl?: string;
+  deliveryChannel?: string;
+  sellerDeliveryReceipt?: string;
+  sellerSignature?: string;
+  manifestDigestSha256: string;
+}
+
+interface ArtifactReceiptCreateResult {
+  receipt: ArtifactReceiptPublicMetadata;
+  receiptManifestUrl: string;
+  buyerAcknowledgementUrl?: string;
+  verifiedOutputPatch: {
+    artifact_manifest_url: string;
+    artifact_bundle_digest_sha256: string;
+  };
 }
 
 interface ArtifactReadResult {
@@ -402,6 +486,10 @@ function publicArtifactBase(baseUrl: string, artifactId: string) {
   return `${baseUrl.replace(/\/+$/, "")}/api/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
+function publicArtifactReceiptBase(baseUrl: string, receiptId: string) {
+  return `${baseUrl.replace(/\/+$/, "")}/api/artifact-receipts/${encodeURIComponent(receiptId)}`;
+}
+
 function isPrivateEncryptedFilename(filename: string) {
   return PRIVATE_ENCRYPTED_EXTENSIONS.has(extensionFor(filename));
 }
@@ -414,6 +502,43 @@ function normalizeDeliveryMode(value: string | undefined, filename: string): Art
     return "platform_scanned";
   }
   return isPrivateEncryptedFilename(filename) ? "buyer_encrypted" : "platform_scanned";
+}
+
+function normalizeReceiptTransport(
+  value: ArtifactReceiptTransport | undefined,
+  deliveryMode: ArtifactReceiptDeliveryMode
+): ArtifactReceiptTransport {
+  if (value === "buyer_agent_inbox" || value === "external_url" || value === "out_of_band" || value === "custom") {
+    return value;
+  }
+  return deliveryMode === "external_reference" ? "external_url" : "out_of_band";
+}
+
+function normalizeReceiptScanPolicy(
+  value: ArtifactReceiptScanPolicy | undefined,
+  deliveryMode: ArtifactReceiptDeliveryMode
+): ArtifactReceiptScanPolicy {
+  if (value === "buyer_required" || value === "external_unverified" || value === "external_verified" || value === "none") {
+    return value;
+  }
+  return deliveryMode === "external_reference" ? "external_unverified" : "buyer_required";
+}
+
+function normalizeSha256(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) {
+    throw new Error("artifactDigestSha256 must be a 64-character lowercase hex SHA-256 digest.");
+  }
+  return normalized;
+}
+
+function sanitizeOptionalText(value: string | undefined, maxLength: number) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function buildReceiptManifestDigest(input: Omit<ArtifactReceiptMetadata, "manifestDigestSha256" | "tokenHashSha256">) {
+  return sha256Hex(JSON.stringify(input));
 }
 
 function buildPrivateCiphertextSafetyReport(input: {
@@ -668,6 +793,7 @@ async function scanWithClamAv(body: Buffer): Promise<MalwareScanResult> {
 export class ArtifactStore {
   private readonly metadataDir: string;
   private readonly dataDir: string;
+  private readonly receiptDir: string;
   private readonly encryptionKey: Buffer;
   private readonly retentionDays: number;
   private readonly maxBytes: number;
@@ -678,6 +804,7 @@ export class ArtifactStore {
   constructor(private readonly baseDir: string) {
     this.metadataDir = path.join(baseDir, "metadata");
     this.dataDir = path.join(baseDir, "data");
+    this.receiptDir = path.join(baseDir, "receipts");
     this.encryptionKey = resolveEncryptionKey(baseDir);
     this.retentionDays = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_RETENTION_DAYS, 10, 1, 90);
     this.maxBytes = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_MAX_BYTES, 25 * 1024 * 1024, 1024, 250 * 1024 * 1024);
@@ -694,6 +821,7 @@ export class ArtifactStore {
   async ensureDirs() {
     await mkdir(this.metadataDir, { recursive: true, mode: 0o700 });
     await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
+    await mkdir(this.receiptDir, { recursive: true, mode: 0o700 });
   }
 
   async scannerHealth() {
@@ -811,6 +939,91 @@ export class ArtifactStore {
     };
   }
 
+  async createReceipt(options: ArtifactReceiptCreateOptions): Promise<ArtifactReceiptCreateResult> {
+    await this.ensureDirs();
+    const receiptId = `receipt_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+    const token = randomBytes(32).toString("base64url");
+    const createdAtIso = new Date().toISOString();
+    const deliveredAtIso = options.deliveredAtIso?.trim() || createdAtIso;
+    const filename = safeFilename(options.filename);
+    const contentType = sanitizeContentType(options.contentType);
+    const deliveryMode = options.deliveryMode;
+    const transport = normalizeReceiptTransport(options.transport, deliveryMode);
+    const scanPolicy = normalizeReceiptScanPolicy(options.scanPolicy, deliveryMode);
+    const artifactSizeBytes = Math.max(0, Math.floor(options.artifactSizeBytes));
+    if (!Number.isFinite(artifactSizeBytes) || artifactSizeBytes <= 0) {
+      throw new Error("artifactSizeBytes must be a positive integer.");
+    }
+    const artifactUrl = sanitizeOptionalText(options.artifactUrl, 2048);
+    if (deliveryMode === "external_reference" && !artifactUrl) {
+      throw new Error("artifactUrl is required for external_reference receipts.");
+    }
+    const deliveryChannel = sanitizeOptionalText(options.deliveryChannel, 240);
+    const sellerDeliveryReceipt = sanitizeOptionalText(options.sellerDeliveryReceipt, 2048);
+    const sellerSignature = sanitizeOptionalText(options.sellerSignature, 512);
+    const withoutDigest: Omit<ArtifactReceiptMetadata, "manifestDigestSha256" | "tokenHashSha256"> = {
+      receiptId,
+      requestId: options.requestId.trim(),
+      createdAtIso,
+      updatedAtIso: createdAtIso,
+      deliveredAtIso,
+      deliveryMode,
+      transport,
+      scanPolicy,
+      digestRequired: true as const,
+      buyerAcceptanceRequired: options.buyerAcceptanceRequired ?? true,
+      buyerAcceptanceStatus: options.buyerAcceptanceRequired === false ? "not_required" as const : "pending" as const,
+      filename,
+      contentType,
+      artifactDigestSha256: normalizeSha256(options.artifactDigestSha256),
+      artifactSizeBytes,
+      ...(artifactUrl ? { artifactUrl } : {}),
+      ...(deliveryChannel ? { deliveryChannel } : {}),
+      ...(sellerDeliveryReceipt ? { sellerDeliveryReceipt } : {}),
+      ...(sellerSignature ? { sellerSignature } : {})
+    };
+    const metadata: ArtifactReceiptMetadata = {
+      ...withoutDigest,
+      manifestDigestSha256: buildReceiptManifestDigest(withoutDigest),
+      tokenHashSha256: sha256Hex(token)
+    };
+    await writeJsonFile(this.receiptPath(receiptId), metadata);
+    const base = publicArtifactReceiptBase(options.baseUrl, receiptId);
+    const tokenQuery = `token=${encodeURIComponent(token)}`;
+    const receiptManifestUrl = `${base}?${tokenQuery}`;
+    return {
+      receipt: this.publicReceipt(metadata),
+      receiptManifestUrl,
+      ...(metadata.buyerAcceptanceRequired ? { buyerAcknowledgementUrl: `${base}/acknowledge?${tokenQuery}` } : {}),
+      verifiedOutputPatch: {
+        artifact_manifest_url: receiptManifestUrl,
+        artifact_bundle_digest_sha256: metadata.artifactDigestSha256
+      }
+    };
+  }
+
+  async receipt(receiptId: string, token: string) {
+    const metadata = await this.readAuthorizedReceipt(receiptId, token);
+    return this.publicReceipt(metadata);
+  }
+
+  async acknowledgeReceipt(receiptId: string, token: string, input: { accepted: boolean; note?: string }) {
+    const metadata = await this.readAuthorizedReceipt(receiptId, token);
+    if (!metadata.buyerAcceptanceRequired) {
+      return this.publicReceipt(metadata);
+    }
+    const note = sanitizeOptionalText(input.note, 240);
+    const updated: ArtifactReceiptMetadata = {
+      ...metadata,
+      updatedAtIso: new Date().toISOString(),
+      buyerAcceptanceStatus: input.accepted ? "accepted" : "rejected",
+      buyerAcknowledgedAtIso: new Date().toISOString(),
+      ...(note ? { buyerAcknowledgementNote: note } : {})
+    };
+    await writeJsonFile(this.receiptPath(receiptId), updated);
+    return this.publicReceipt(updated);
+  }
+
   async cleanupExpired(now = Date.now()) {
     await this.ensureDirs();
     const names = await readdir(this.metadataDir);
@@ -842,6 +1055,41 @@ export class ArtifactStore {
       throw new Error("Artifact token was rejected.");
     }
     return metadata;
+  }
+
+  private async readAuthorizedReceipt(receiptId: string, token: string) {
+    const metadata = JSON.parse(await readFile(this.receiptPath(receiptId), "utf8")) as ArtifactReceiptMetadata;
+    if (!token.trim() || sha256Hex(token.trim()) !== metadata.tokenHashSha256) {
+      throw new Error("Artifact receipt token was rejected.");
+    }
+    return metadata;
+  }
+
+  private publicReceipt(metadata: ArtifactReceiptMetadata): ArtifactReceiptPublicMetadata {
+    return {
+      receiptId: metadata.receiptId,
+      requestId: metadata.requestId,
+      createdAtIso: metadata.createdAtIso,
+      updatedAtIso: metadata.updatedAtIso,
+      deliveredAtIso: metadata.deliveredAtIso,
+      deliveryMode: metadata.deliveryMode,
+      transport: metadata.transport,
+      scanPolicy: metadata.scanPolicy,
+      digestRequired: metadata.digestRequired,
+      buyerAcceptanceRequired: metadata.buyerAcceptanceRequired,
+      buyerAcceptanceStatus: metadata.buyerAcceptanceStatus,
+      ...(metadata.buyerAcknowledgedAtIso ? { buyerAcknowledgedAtIso: metadata.buyerAcknowledgedAtIso } : {}),
+      ...(metadata.buyerAcknowledgementNote ? { buyerAcknowledgementNote: metadata.buyerAcknowledgementNote } : {}),
+      filename: metadata.filename,
+      contentType: metadata.contentType,
+      artifactDigestSha256: metadata.artifactDigestSha256,
+      artifactSizeBytes: metadata.artifactSizeBytes,
+      ...(metadata.artifactUrl ? { artifactUrl: metadata.artifactUrl } : {}),
+      ...(metadata.deliveryChannel ? { deliveryChannel: metadata.deliveryChannel } : {}),
+      ...(metadata.sellerDeliveryReceipt ? { sellerDeliveryReceipt: metadata.sellerDeliveryReceipt } : {}),
+      ...(metadata.sellerSignature ? { sellerSignature: metadata.sellerSignature } : {}),
+      manifestDigestSha256: metadata.manifestDigestSha256
+    };
   }
 
   private publicMetadata(metadata: ArtifactMetadata) {
@@ -893,6 +1141,10 @@ export class ArtifactStore {
 
   private dataPath(artifactId: string) {
     return path.join(this.dataDir, `${artifactId}.bin`);
+  }
+
+  private receiptPath(receiptId: string) {
+    return path.join(this.receiptDir, `${receiptId}.json`);
   }
 
   private async assertRequestQuota(requestId: string, nextBytes: number) {

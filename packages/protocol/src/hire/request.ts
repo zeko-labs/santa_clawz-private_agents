@@ -6,11 +6,16 @@ export type SantaClawzHireRequestType = "quote_intake" | "paid_execution" | "fre
 export type SantaClawzHirePaymentStatus = "quote_requested" | "authorized" | "settled" | "paid" | "escrowed" | "free_test";
 
 export interface SantaClawzArtifactDeliveryPreference {
-  mode: "platform_scanned" | "buyer_encrypted";
+  mode: "platform_scanned" | "buyer_encrypted" | "direct_receipt" | "external_reference" | "agent_inbox" | "streaming";
+  scanPolicy?: "platform_required" | "buyer_required" | "external_unverified" | "external_verified" | "none";
+  digestRequired?: boolean;
+  buyerAcceptanceRequired?: boolean;
   encryptionScheme?: "age" | "sczenc" | "gpg" | string;
   buyerPublicKey?: string;
   acceptedFormats?: string[];
   localScanRequired?: boolean;
+  transport?: "buyer_agent_inbox" | "external_url" | "out_of_band" | "custom" | string;
+  buyerInboxUrl?: string;
 }
 
 export interface SantaClawzJobPrivacyPreference {

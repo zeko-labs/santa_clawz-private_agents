@@ -226,6 +226,25 @@ type HireRequestBody = {
   artifactDelivery?: unknown;
   paymentPayload?: unknown;
 };
+type ArtifactReceiptBody = {
+  deliveryMode?: unknown;
+  transport?: unknown;
+  scanPolicy?: unknown;
+  buyerAcceptanceRequired?: unknown;
+  filename?: unknown;
+  contentType?: unknown;
+  artifactDigestSha256?: unknown;
+  artifactSizeBytes?: unknown;
+  artifactUrl?: unknown;
+  deliveryChannel?: unknown;
+  sellerDeliveryReceipt?: unknown;
+  sellerSignature?: unknown;
+  deliveredAtIso?: unknown;
+};
+type ArtifactReceiptAcknowledgementBody = {
+  accepted?: unknown;
+  note?: unknown;
+};
 type QuoteAcceptRequestBody = {
   buyerAgentId?: unknown;
   buyerWallet?: unknown;
@@ -400,10 +419,25 @@ function parseArtifactDeliveryPreference(value: unknown): SantaClawzArtifactDeli
   if (!isRecord(value)) {
     return undefined;
   }
-  const mode = value.mode === "buyer_encrypted" ? "buyer_encrypted" : value.mode === "platform_scanned" ? "platform_scanned" : undefined;
+  const allowedModes = new Set([
+    "platform_scanned",
+    "buyer_encrypted",
+    "direct_receipt",
+    "external_reference",
+    "agent_inbox",
+    "streaming"
+  ]);
+  const mode = typeof value.mode === "string" && allowedModes.has(value.mode) ? value.mode as SantaClawzArtifactDeliveryPreference["mode"] : undefined;
   if (!mode) {
-    throw new Error("artifactDelivery.mode must be platform_scanned or buyer_encrypted.");
+    throw new Error("artifactDelivery.mode must be platform_scanned, buyer_encrypted, direct_receipt, external_reference, agent_inbox, or streaming.");
   }
+  const scanPolicies = new Set(["platform_required", "buyer_required", "external_unverified", "external_verified", "none"]);
+  const scanPolicy =
+    typeof value.scanPolicy === "string" && scanPolicies.has(value.scanPolicy)
+      ? value.scanPolicy as NonNullable<SantaClawzArtifactDeliveryPreference["scanPolicy"]>
+      : typeof value.scan_policy === "string" && scanPolicies.has(value.scan_policy)
+        ? value.scan_policy as NonNullable<SantaClawzArtifactDeliveryPreference["scanPolicy"]>
+        : undefined;
   const encryptionScheme = typeof value.encryptionScheme === "string"
     ? value.encryptionScheme.trim().slice(0, 40)
     : typeof value.encryption_scheme === "string"
@@ -429,6 +463,16 @@ function parseArtifactDeliveryPreference(value: unknown): SantaClawzArtifactDeli
       : typeof value.local_scan_required === "boolean"
         ? value.local_scan_required
         : mode === "buyer_encrypted";
+  const transport =
+    typeof value.transport === "string"
+      ? value.transport.trim().slice(0, 80)
+      : undefined;
+  const buyerInboxUrl =
+    typeof value.buyerInboxUrl === "string"
+      ? value.buyerInboxUrl.trim().slice(0, 512)
+      : typeof value.buyer_inbox_url === "string"
+        ? value.buyer_inbox_url.trim().slice(0, 512)
+        : undefined;
 
   if (mode === "buyer_encrypted" && !buyerPublicKey) {
     throw new Error("artifactDelivery.buyerPublicKey is required for buyer_encrypted delivery.");
@@ -436,10 +480,20 @@ function parseArtifactDeliveryPreference(value: unknown): SantaClawzArtifactDeli
 
   return {
     mode,
+    ...(scanPolicy ? { scanPolicy } : {}),
+    digestRequired: typeof value.digestRequired === "boolean" ? value.digestRequired : true,
+    buyerAcceptanceRequired:
+      typeof value.buyerAcceptanceRequired === "boolean"
+        ? value.buyerAcceptanceRequired
+        : typeof value.buyer_acceptance_required === "boolean"
+          ? value.buyer_acceptance_required
+          : mode !== "platform_scanned",
     ...(encryptionScheme ? { encryptionScheme } : {}),
     ...(buyerPublicKey ? { buyerPublicKey } : {}),
     ...(acceptedFormats && acceptedFormats.length > 0 ? { acceptedFormats } : {}),
-    localScanRequired
+    localScanRequired,
+    ...(transport ? { transport } : {}),
+    ...(buyerInboxUrl ? { buyerInboxUrl } : {})
   };
 }
 
@@ -873,6 +927,35 @@ function parseHireRequest(body: unknown): HireRequestBody {
         activityPrivacy: body.activityPrivacy,
         artifactDelivery: body.artifactDelivery,
         paymentPayload: body.paymentPayload
+      }
+    : {};
+}
+
+function parseArtifactReceiptBody(body: unknown): ArtifactReceiptBody {
+  return isRecord(body)
+    ? {
+        deliveryMode: body.deliveryMode,
+        transport: body.transport,
+        scanPolicy: body.scanPolicy,
+        buyerAcceptanceRequired: body.buyerAcceptanceRequired,
+        filename: body.filename,
+        contentType: body.contentType,
+        artifactDigestSha256: body.artifactDigestSha256,
+        artifactSizeBytes: body.artifactSizeBytes,
+        artifactUrl: body.artifactUrl,
+        deliveryChannel: body.deliveryChannel,
+        sellerDeliveryReceipt: body.sellerDeliveryReceipt,
+        sellerSignature: body.sellerSignature,
+        deliveredAtIso: body.deliveredAtIso
+      }
+    : {};
+}
+
+function parseArtifactReceiptAcknowledgementBody(body: unknown): ArtifactReceiptAcknowledgementBody {
+  return isRecord(body)
+    ? {
+        accepted: body.accepted,
+        note: body.note
       }
     : {};
 }
@@ -1707,6 +1790,69 @@ appWithRouteMiddleware.post(
   })
 );
 
+app.post("/api/executions/:requestId/artifact-receipts", route(async (request, response) => {
+  const requestId = request.params.requestId;
+  if (!requestId) {
+    response.status(400).json({ error: "requestId is required." });
+    return;
+  }
+  const hireRequest = await controlPlane.assertHireArtifactUploadAccess(requestId, adminKeyHeader(request));
+  const body = parseArtifactReceiptBody(request.body ?? null);
+  const deliveryMode =
+    body.deliveryMode === "external_reference" ? "external_reference" :
+    body.deliveryMode === "direct_receipt" ? "direct_receipt" :
+    undefined;
+  if (!deliveryMode) {
+    response.status(400).json({ error: "deliveryMode must be direct_receipt or external_reference." });
+    return;
+  }
+  const transport =
+    body.transport === "buyer_agent_inbox" || body.transport === "external_url" || body.transport === "out_of_band" || body.transport === "custom"
+      ? body.transport
+      : undefined;
+  const scanPolicy =
+    body.scanPolicy === "buyer_required" ||
+    body.scanPolicy === "external_unverified" ||
+    body.scanPolicy === "external_verified" ||
+    body.scanPolicy === "none"
+      ? body.scanPolicy
+      : undefined;
+  const filename = typeof body.filename === "string" ? body.filename : "";
+  const artifactDigestSha256 = typeof body.artifactDigestSha256 === "string" ? body.artifactDigestSha256 : "";
+  const artifactSizeBytes =
+    typeof body.artifactSizeBytes === "number"
+      ? body.artifactSizeBytes
+      : typeof body.artifactSizeBytes === "string"
+        ? Number.parseInt(body.artifactSizeBytes, 10)
+        : 0;
+  const receipt = await artifactStore.createReceipt({
+    requestId: hireRequest.requestId,
+    deliveryMode,
+    ...(transport ? { transport } : {}),
+    ...(scanPolicy ? { scanPolicy } : {}),
+    ...(typeof body.buyerAcceptanceRequired === "boolean" ? { buyerAcceptanceRequired: body.buyerAcceptanceRequired } : {}),
+    filename,
+    ...(typeof body.contentType === "string" ? { contentType: body.contentType } : {}),
+    artifactDigestSha256,
+    artifactSizeBytes,
+    ...(typeof body.artifactUrl === "string" ? { artifactUrl: body.artifactUrl } : {}),
+    ...(typeof body.deliveryChannel === "string" ? { deliveryChannel: body.deliveryChannel } : {}),
+    ...(typeof body.sellerDeliveryReceipt === "string" ? { sellerDeliveryReceipt: body.sellerDeliveryReceipt } : {}),
+    ...(typeof body.sellerSignature === "string" ? { sellerSignature: body.sellerSignature } : {}),
+    ...(typeof body.deliveredAtIso === "string" ? { deliveredAtIso: body.deliveredAtIso } : {}),
+    baseUrl: requestBaseUrl(request)
+  });
+  response.json({
+    ok: true,
+    ...receipt,
+    buyerMessage:
+      deliveryMode === "external_reference"
+        ? "SantaClawz recorded an external artifact reference. Verify the digest after download; platform scan status depends on the receipt scan policy."
+        : "SantaClawz recorded bilateral delivery metadata. Verify the digest and acknowledge only after the buyer receives the bytes.",
+    sellerMessage: "Artifact delivery receipt recorded. SantaClawz has not hosted these bytes on the platform lane."
+  });
+}));
+
 app.get("/api/artifacts/:artifactId/manifest", route(async (request, response) => {
   const artifactId = request.params.artifactId;
   const token = tokenQuery(request);
@@ -1747,6 +1893,40 @@ app.get("/api/artifacts/:artifactId/download", route(async (request, response) =
     .set("content-disposition", contentDispositionAttachment(artifact.metadata.filename))
     .set("x-santaclawz-artifact-digest-sha256", artifact.metadata.digestSha256)
     .send(artifact.body);
+}));
+
+app.get("/api/artifact-receipts/:receiptId", route(async (request, response) => {
+  const receiptId = request.params.receiptId;
+  const token = tokenQuery(request);
+  if (!receiptId || !token) {
+    response.status(400).json({ error: "receiptId and token are required." });
+    return;
+  }
+  response.json({
+    ok: true,
+    receipt: await artifactStore.receipt(receiptId, token)
+  });
+}));
+
+app.post("/api/artifact-receipts/:receiptId/acknowledge", route(async (request, response) => {
+  const receiptId = request.params.receiptId;
+  const token = tokenQuery(request);
+  if (!receiptId || !token) {
+    response.status(400).json({ error: "receiptId and token are required." });
+    return;
+  }
+  const body = parseArtifactReceiptAcknowledgementBody(request.body ?? null);
+  if (typeof body.accepted !== "boolean") {
+    response.status(400).json({ error: "accepted must be true or false." });
+    return;
+  }
+  response.json({
+    ok: true,
+    receipt: await artifactStore.acknowledgeReceipt(receiptId, token, {
+      accepted: body.accepted,
+      ...(typeof body.note === "string" ? { note: body.note } : {})
+    })
+  });
 }));
 
 app.post("/api/execution/intents", route(async (request, response) => {

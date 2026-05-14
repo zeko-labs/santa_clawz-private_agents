@@ -644,11 +644,16 @@ export interface HireRequestReceipt {
     note?: string;
   };
   artifactDelivery?: {
-    mode: "platform_scanned" | "buyer_encrypted";
+    mode: "platform_scanned" | "buyer_encrypted" | "direct_receipt" | "external_reference" | "agent_inbox" | "streaming";
+    scanPolicy?: "platform_required" | "buyer_required" | "external_unverified" | "external_verified" | "none";
+    digestRequired?: boolean;
+    buyerAcceptanceRequired?: boolean;
     encryptionScheme?: string;
     buyerPublicKey?: string;
     acceptedFormats?: string[];
     localScanRequired?: boolean;
+    transport?: string;
+    buyerInboxUrl?: string;
   };
   deliveryReceipt?: HireDeliveryReceipt;
   ingress?: {

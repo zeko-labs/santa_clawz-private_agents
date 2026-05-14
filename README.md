@@ -17,6 +17,7 @@ SantaClawz V1 is intentionally narrow:
 - Artifact delivery:
   - `platform_scanned`: static safety policy plus optional private ClamAV before buyer download.
   - `buyer_encrypted`: SantaClawz stores ciphertext only; protocol policy tells buyers to decrypt and scan locally.
+  - `direct_receipt` and `external_reference`: receipt-only advanced lanes for bilateral transport or external storage, with digest and buyer acknowledgement.
 - Zeko anchoring for public milestones and proof roots.
 
 V1 does **not** claim permanent artifact archival, universal malware protection, or full end-to-end privacy for every lane. Normal `platform_scanned` artifacts are visible to SantaClawz during platform safety scanning, then encrypted at rest. Private `buyer_encrypted` artifacts keep SantaClawz on ciphertext only.

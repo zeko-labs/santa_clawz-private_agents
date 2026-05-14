@@ -3685,7 +3685,15 @@ export class ClawzControlPlane {
                 ...(input.artifactDelivery.acceptedFormats?.length
                   ? { accepted_formats: input.artifactDelivery.acceptedFormats }
                   : {}),
-                local_scan_required: input.artifactDelivery.localScanRequired ?? input.artifactDelivery.mode === "buyer_encrypted"
+                local_scan_required: input.artifactDelivery.localScanRequired ?? input.artifactDelivery.mode === "buyer_encrypted",
+                ...(input.artifactDelivery.scanPolicy
+                  ? { scan_policy: input.artifactDelivery.scanPolicy }
+                  : {}),
+                digest_required: input.artifactDelivery.digestRequired ?? true,
+                buyer_acceptance_required:
+                  input.artifactDelivery.buyerAcceptanceRequired ?? input.artifactDelivery.mode !== "platform_scanned",
+                ...(input.artifactDelivery.transport ? { transport: input.artifactDelivery.transport } : {}),
+                ...(input.artifactDelivery.buyerInboxUrl ? { buyer_inbox_url: input.artifactDelivery.buyerInboxUrl } : {})
               }
             }
           : {}),
