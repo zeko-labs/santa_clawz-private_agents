@@ -1547,23 +1547,25 @@ pre,
 
 .profile-score-stack {
   display: grid;
-  justify-items: stretch;
-  gap: 7px;
-  min-width: 152px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
 }
 
 .proof-score-pill {
   display: inline-grid;
   place-items: center;
-  min-width: 152px;
-  padding: 9px 12px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 8px 10px;
   border: 1px solid rgba(71, 151, 84, 0.24);
-  border-radius: 999px;
+  border-radius: 18px;
   background: rgba(94, 186, 111, 0.14);
   color: #2d6e38;
   font-weight: 900;
   text-align: center;
-  white-space: nowrap;
+  line-height: 1.15;
 }
 
 .completion-score-pill {
@@ -1625,6 +1627,7 @@ pre,
   font-size: 0.67rem;
   font-weight: 800;
   text-align: center;
+  white-space: normal;
 }
 
 .proof-signal-row {
@@ -4098,6 +4101,10 @@ button:disabled {
   .action-row-form .action-form-stack {
     width: 100%;
     justify-self: stretch;
+  }
+
+  .profile-score-stack {
+    grid-template-columns: 1fr;
   }
 }
 

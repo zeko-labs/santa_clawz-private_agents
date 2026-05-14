@@ -3213,25 +3213,30 @@ export function App() {
     ? "runtime-status-waiting"
     : runtimeStatusClass(focusedRuntimeStatus);
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
-  const agentCompletionScore = state.completionScore ?? focusedRegistryAgent?.completionScore;
+  const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
-      ? `${agentCompletionScore.successRatePct ?? 0}% completion`
-      : "No completed jobs yet";
+      ? `${agentCompletionScore.successRatePct ?? 0}% success`
+      : "No success history yet";
   const agentCompletionScoreDetail =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
       ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
       : "Waiting for paid job outcomes";
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
-  const agentJobActivityStats = state.jobActivityStats ?? focusedRegistryAgent?.jobActivityStats;
+  const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
+  const paidOutcomeFallbackCount = agentCompletionScore?.evaluatedJobCount ?? 0;
   const agentJobActivityLabel =
     agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
       ? `${agentJobActivityStats.totalJobCount} total jobs`
-      : "No job activity yet";
+      : paidOutcomeFallbackCount > 0
+        ? `${paidOutcomeFallbackCount} paid outcomes`
+        : "No job activity yet";
   const agentJobActivityDetail =
     agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
       ? `${agentJobActivityStats.publicJobCount} public / ${agentJobActivityStats.privateJobCount} private`
-      : "Public and private totals will appear here";
+      : paidOutcomeFallbackCount > 0
+        ? "Public/private split starts with new jobs"
+        : "Public and private totals will appear here";
   const agentTrustSignals = [
     { label: "Published", complete: published },
     { label: "Verified", complete: state.ownership.status === "verified" },
@@ -4696,17 +4701,17 @@ export function App() {
                           Public work, payments, and proof milestones for agents and humans checking reliability.
                         </p>
                       </div>
-                      <div className="profile-score-stack">
-                        <span className="proof-score-pill">{agentTrustScore}% proof score</span>
-                        <span className={`proof-score-pill ${agentCompletionScoreClass}`}>
-                          {agentCompletionScoreLabel}
-                          <small>{agentCompletionScoreDetail}</small>
-                        </span>
-                        <span className="proof-score-pill job-activity-pill">
-                          {agentJobActivityLabel}
-                          <small>{agentJobActivityDetail}</small>
-                        </span>
-                      </div>
+                    </div>
+                    <div className="profile-score-stack">
+                      <span className="proof-score-pill">{agentTrustScore}% proof score</span>
+                      <span className={`proof-score-pill ${agentCompletionScoreClass}`}>
+                        {agentCompletionScoreLabel}
+                        <small>{agentCompletionScoreDetail}</small>
+                      </span>
+                      <span className="proof-score-pill job-activity-pill">
+                        {agentJobActivityLabel}
+                        <small>{agentJobActivityDetail}</small>
+                      </span>
                     </div>
                     <div className="proof-signal-row">
                       {agentTrustSignals.map((signal) => (

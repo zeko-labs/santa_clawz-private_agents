@@ -451,12 +451,7 @@ function parseJobPrivacyPreference(value: unknown): SantaClawzJobPrivacyPreferen
   if (!visibility) {
     throw new Error("jobPrivacy.visibility must be public or private.");
   }
-  const publicAggregateStats =
-    typeof value.publicAggregateStats === "boolean"
-      ? value.publicAggregateStats
-      : typeof value.public_aggregate_stats === "boolean"
-        ? value.public_aggregate_stats
-        : true;
+  const publicAggregateStats = true;
   const publicLifecycleEvents =
     typeof value.publicLifecycleEvents === "boolean"
       ? value.publicLifecycleEvents

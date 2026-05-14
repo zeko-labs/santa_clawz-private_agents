@@ -1725,18 +1725,14 @@ function isPrivateHireRequest(request: Pick<HireRequestRecord, "jobPrivacy">) {
   return request.jobPrivacy?.visibility === "private";
 }
 
-function shouldPublishHireLifecycle(jobPrivacy?: SantaClawzJobPrivacyPreference) {
-  return jobPrivacy?.visibility !== "private" && jobPrivacy?.publicLifecycleEvents !== false;
-}
-
-function shouldIncludeInPublicAggregate(request: Pick<HireRequestRecord, "jobPrivacy">) {
-  return request.jobPrivacy?.visibility !== "private" || request.jobPrivacy.publicAggregateStats !== false;
+function shouldPublishDetailedHireLifecycle(jobPrivacy?: SantaClawzJobPrivacyPreference) {
+  return jobPrivacy?.visibility !== "private";
 }
 
 function toSnakeJobPrivacy(jobPrivacy: SantaClawzJobPrivacyPreference) {
   return {
     visibility: jobPrivacy.visibility,
-    public_aggregate_stats: jobPrivacy.publicAggregateStats ?? true,
+    public_aggregate_stats: true,
     public_lifecycle_events: jobPrivacy.publicLifecycleEvents ?? jobPrivacy.visibility === "public",
     public_artifact_metadata: jobPrivacy.publicArtifactMetadata ?? jobPrivacy.visibility === "public",
     ...(jobPrivacy.note ? { note: jobPrivacy.note } : {})
@@ -1819,15 +1815,10 @@ function buildAgentCompletionScore(
 
 function buildAgentJobActivityStats(
   hireRequests: HireRequestFile,
-  sessionId: string,
-  options: { includeNonPublicAggregate?: boolean } = {}
+  sessionId: string
 ) {
   const requests = hireRequests.requests
-    .filter(
-      (request) =>
-        request.sessionId === sessionId &&
-        (options.includeNonPublicAggregate !== false || shouldIncludeInPublicAggregate(request))
-    )
+    .filter((request) => request.sessionId === sessionId)
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
   const privateRequests = requests.filter(isPrivateHireRequest);
   const paidRequests = requests.filter((request) => request.requestType === "paid_execution");
@@ -7151,9 +7142,7 @@ export class ClawzControlPlane {
       lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId, { includePrivate: !publicProfileView })
     });
     const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId);
-    const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId, {
-      includeNonPublicAggregate: !publicProfileView
-    });
+    const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId);
     const protocolOwnerFeePolicy = buildProtocolOwnerFeePolicyFromEnv();
     const ingressAccess = this.buildIngressAccessState(
       state,
@@ -7431,9 +7420,7 @@ export class ClawzControlPlane {
           lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
         });
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);
-        const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId, {
-          includeNonPublicAggregate: false
-        });
+        const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId);
         return {
           agentId,
           sessionId,
@@ -8329,25 +8316,36 @@ export class ClawzControlPlane {
           : {})
       });
     }
-    if (shouldPublishHireLifecycle(options.jobPrivacy)) {
-      await this.enqueueSocialAnchorCandidate({
-        sessionId,
-        kind: "hire-request-submitted",
-        summary: `${profile.agentName} received a new hire request through SantaClawz.`,
-        occurredAtIso: submittedAtIso,
-        payload: {
-          requestId,
-          agentId: options.agentId,
-          requesterContactDigestSha256: sha256Hex(nextRecord.requesterContact),
-          requestType,
-          pricingMode: profile.paymentProfile.pricingMode,
-          paymentStatus,
-          ...(settledAmountUsd ? { settledAmountUsd } : {}),
-          status: hireStatus
-        }
-      });
-    }
-    if (ingressProtocolReturn && shouldPublishHireLifecycle(options.jobPrivacy)) {
+    const detailedLifecycle = shouldPublishDetailedHireLifecycle(options.jobPrivacy);
+    await this.enqueueSocialAnchorCandidate({
+      sessionId,
+      kind: "hire-request-submitted",
+      summary: detailedLifecycle
+        ? `${profile.agentName} received a new hire request through SantaClawz.`
+        : `${profile.agentName} received a private hire request through SantaClawz.`,
+      occurredAtIso: submittedAtIso,
+      payload: detailedLifecycle
+        ? {
+            requestId,
+            agentId: options.agentId,
+            requesterContactDigestSha256: sha256Hex(nextRecord.requesterContact),
+            requestType,
+            pricingMode: profile.paymentProfile.pricingMode,
+            paymentStatus,
+            ...(settledAmountUsd ? { settledAmountUsd } : {}),
+            status: hireStatus
+          }
+        : {
+            agentId: options.agentId,
+            privateActivity: true,
+            activityDigestSha256: sha256Hex(requestId),
+            requestType,
+            pricingMode: profile.paymentProfile.pricingMode,
+            paymentStatus,
+            status: hireStatus
+          }
+    });
+    if (ingressProtocolReturn) {
       const completionClassification =
         ingressProtocolReturn.status === "completed"
           ? ingressProtocolReturn.execution?.completionClassification
@@ -8361,7 +8359,13 @@ export class ClawzControlPlane {
               : "paid-execution-completed"
             : "hire-request-failed";
       const returnSummary =
-        ingressProtocolReturn.status === "quoted"
+        !detailedLifecycle
+          ? ingressProtocolReturn.status === "quoted"
+            ? `${profile.agentName} returned an anonymized private quote milestone.`
+            : ingressProtocolReturn.status === "completed"
+              ? `${profile.agentName} returned an anonymized private completion milestone.`
+              : `${profile.agentName} returned an anonymized private failure milestone.`
+        : ingressProtocolReturn.status === "quoted"
           ? `${profile.agentName} returned an exact quote for a SantaClawz hire request.`
           : ingressProtocolReturn.status === "completed"
             ? completionClassification === "agent_completed_verified"
@@ -8379,46 +8383,57 @@ export class ClawzControlPlane {
         kind: returnKind,
         summary: returnSummary,
         occurredAtIso: submittedAtIso,
-        payload: {
-          requestId,
-          agentId: options.agentId,
-          protocolReturnDigestSha256: ingressProtocolReturn.digestSha256,
-          status: ingressProtocolReturn.status,
-          ...(ingressProtocolReturn.quote
-            ? {
-                quoteAmountUsd: ingressProtocolReturn.quote.amountUsd,
-                quoteCurrency: ingressProtocolReturn.quote.currency,
-                quoteExpiresAtIso: ingressProtocolReturn.quote.expiresAtIso
-              }
-            : {}),
-          ...(ingressProtocolReturn.verifiedOutput
-            ? {
-                verifiedOutputPackageHash: ingressProtocolReturn.verifiedOutput.packageHash,
-                verifiedOutputDeliverableCount: ingressProtocolReturn.verifiedOutput.deliverableCount,
-                ...(ingressProtocolReturn.verifiedOutput.verificationManifestDigestSha256
-                  ? {
-                      verificationManifestDigestSha256:
-                        ingressProtocolReturn.verifiedOutput.verificationManifestDigestSha256
-                    }
-                  : {}),
-                zekoAttestationIncluded: ingressProtocolReturn.verifiedOutput.zekoAttestationIncluded
-              }
-            : {}),
-          ...(ingressProtocolReturn.execution
-            ? {
-                executionMode: ingressProtocolReturn.execution.executionMode,
-                realWorkExecuted: ingressProtocolReturn.execution.realWorkExecuted,
-                buyerVisible: ingressProtocolReturn.execution.buyerVisible,
-                marketplaceCompletionCredit: ingressProtocolReturn.execution.marketplaceCompletionCredit,
-                completionClassification: ingressProtocolReturn.execution.completionClassification,
-                executionDeliverableCount: ingressProtocolReturn.execution.deliverableCount,
-                executionFilesProducedCount: ingressProtocolReturn.execution.filesProducedCount,
-                executionChecksPerformedCount: ingressProtocolReturn.execution.checksPerformedCount,
-                executionZekoAttestationIncluded: ingressProtocolReturn.execution.zekoAttestationIncluded
-              }
-            : {}),
-          ...(ingressProtocolReturn.incidentId ? { incidentId: ingressProtocolReturn.incidentId } : {})
-        }
+        payload: detailedLifecycle
+          ? {
+              requestId,
+              agentId: options.agentId,
+              protocolReturnDigestSha256: ingressProtocolReturn.digestSha256,
+              status: ingressProtocolReturn.status,
+              ...(ingressProtocolReturn.quote
+                ? {
+                    quoteAmountUsd: ingressProtocolReturn.quote.amountUsd,
+                    quoteCurrency: ingressProtocolReturn.quote.currency,
+                    quoteExpiresAtIso: ingressProtocolReturn.quote.expiresAtIso
+                  }
+                : {}),
+              ...(ingressProtocolReturn.verifiedOutput
+                ? {
+                    verifiedOutputPackageHash: ingressProtocolReturn.verifiedOutput.packageHash,
+                    verifiedOutputDeliverableCount: ingressProtocolReturn.verifiedOutput.deliverableCount,
+                    ...(ingressProtocolReturn.verifiedOutput.verificationManifestDigestSha256
+                      ? {
+                          verificationManifestDigestSha256:
+                            ingressProtocolReturn.verifiedOutput.verificationManifestDigestSha256
+                        }
+                      : {}),
+                    zekoAttestationIncluded: ingressProtocolReturn.verifiedOutput.zekoAttestationIncluded
+                  }
+                : {}),
+              ...(ingressProtocolReturn.execution
+                ? {
+                    executionMode: ingressProtocolReturn.execution.executionMode,
+                    realWorkExecuted: ingressProtocolReturn.execution.realWorkExecuted,
+                    buyerVisible: ingressProtocolReturn.execution.buyerVisible,
+                    marketplaceCompletionCredit: ingressProtocolReturn.execution.marketplaceCompletionCredit,
+                    completionClassification: ingressProtocolReturn.execution.completionClassification,
+                    executionDeliverableCount: ingressProtocolReturn.execution.deliverableCount,
+                    executionFilesProducedCount: ingressProtocolReturn.execution.filesProducedCount,
+                    executionChecksPerformedCount: ingressProtocolReturn.execution.checksPerformedCount,
+                    executionZekoAttestationIncluded: ingressProtocolReturn.execution.zekoAttestationIncluded
+                  }
+                : {}),
+              ...(ingressProtocolReturn.incidentId ? { incidentId: ingressProtocolReturn.incidentId } : {})
+            }
+          : {
+              agentId: options.agentId,
+              privateActivity: true,
+              activityDigestSha256: sha256Hex(`${requestId}:${ingressProtocolReturn.digestSha256}`),
+              status: ingressProtocolReturn.status,
+              requestType,
+              pricingMode: profile.paymentProfile.pricingMode,
+              paymentStatus,
+              ...(completionClassification ? { completionClassification } : {})
+            }
       });
     }
 
