@@ -115,6 +115,7 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
+const DEFAULT_AGENT_HEADLINE = "Private, verifiable agent work on Zeko.";
 const ZEKO_URL = "https://zeko.io/";
 const COPYRIGHT_YEAR = "2026";
 const EXPLORE_REGISTRY_POLL_MS = 8_000;
@@ -2006,7 +2007,7 @@ export function App() {
     const runtimeIngressUrl = profileForSave.runtimeDelivery.runtimeIngressUrl?.trim() ?? "";
     return {
       agentName: profileForSave.agentName,
-      headline: profileForSave.headline,
+      headline: profileForSave.headline.trim() || DEFAULT_AGENT_HEADLINE,
       ...(!usesSelfHostedRuntime ? { urlReservationSalt: nextUrlReservationSalt } : {}),
       runtimeDelivery: profileForSave.runtimeDelivery,
       ...(usesSelfHostedRuntime && runtimeIngressUrl
@@ -2027,12 +2028,12 @@ export function App() {
   async function createEnrollmentTicketAction() {
     if (!connectReady) {
       setError(profile.runtimeDelivery.mode === "self-hosted"
-        ? "Add the agent name, description, and agent-owned URL before creating an enrollment ticket."
-        : "Add the agent name and description before creating an enrollment ticket.");
+        ? "Add the agent name and agent-owned URL before creating an enrollment ticket."
+        : "Add the agent name before creating an enrollment ticket.");
       return;
     }
     if (!paymentEnrollmentReady) {
-      setError("When Open for work is on, add a Base payout wallet and the required pricing field before enrollment.");
+      setError("When Agent payments is on, add a Base payout wallet before enrollment.");
       return;
     }
 
@@ -2346,7 +2347,6 @@ export function App() {
     const sdkAuthReady = !sdkDraft.missionAuthEnabled || sdkDraft.missionAuthUrl.trim().length > 0;
     const sdkEnrollmentReady =
       sdkDraft.agentName.trim().length > 0 &&
-      sdkDraft.headline.trim().length > 0 &&
       sdkRuntimeReady &&
       sdkPaymentReady &&
       sdkAuthReady;
@@ -2377,8 +2377,8 @@ export function App() {
     }
 
     async function createSdkEnrollmentTicketAction() {
-      if (!sdkDraft.agentName.trim() || !sdkDraft.headline.trim()) {
-        setSdkError("Add the public agent name and description before creating a ticket.");
+      if (!sdkDraft.agentName.trim()) {
+        setSdkError("Add the public agent name before creating a ticket.");
         return;
       }
       if (sdkUsesSelfHostedRuntime && !sdkDraft.runtimeIngressUrl.trim()) {
@@ -2405,7 +2405,7 @@ export function App() {
       try {
         const nextTicket = await createEnrollmentTicket({
           agentName: sdkDraft.agentName,
-          headline: sdkDraft.headline,
+          headline: sdkDraft.headline.trim() || DEFAULT_AGENT_HEADLINE,
           ...(!sdkUsesSelfHostedRuntime ? { urlReservationSalt: nextSalt } : {}),
           runtimeDelivery: {
             mode: sdkDraft.runtimeMode,
@@ -2536,7 +2536,7 @@ export function App() {
               </div>
 
               <label className="field">
-                <span>What agent does</span>
+                <span>What agent does (optional)</span>
                 <textarea
                   className="text-area headline-text-area"
                   value={sdkDraft.headline}
@@ -2578,22 +2578,6 @@ export function App() {
                       placeholder="0x..."
                     />
                   </label>
-                  <div className="payment-onboarding-brief field-wide">
-                    <strong>Everything else starts on by default.</strong>
-                    <p className="panel-copy">
-                      The agent can receive quote requests, procurement bids, direct-hire requests, and fixed offers. Pricing is decided at job time so the agent can recommend accept or decline to its human approver.
-                    </p>
-                    <div className="payment-decision-grid">
-                      <div>
-                        <span>Recommend yes</span>
-                        <p>Wallet is agent-controlled and the agent can estimate work before accepting.</p>
-                      </div>
-                      <div>
-                        <span>Recommend no</span>
-                        <p>No payout wallet yet, or a human must manually approve every paid job before the agent responds.</p>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               ) : null}
 
@@ -2856,7 +2840,6 @@ export function App() {
       : !autoPublicUrlReservedByExistingAgent;
   const connectReady =
     profile.agentName.trim().length > 0 &&
-    profile.headline.trim().length > 0 &&
     runtimeConnectionReady;
   const paymentEnrollmentReady = paymentProfileEnrollmentReady(profile);
   const enrollmentReady = connectReady && paymentEnrollmentReady;
@@ -2874,14 +2857,7 @@ export function App() {
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
   const missionAuthVerified = missionAuthOverlay.status === "verified";
-  const paymentProfile = {
-    ...effectivePaymentProfile(profile),
-    enabled: true,
-    supportedRails: ["base-usdc"] as AgentProfileState["paymentProfile"]["supportedRails"],
-    defaultRail: "base-usdc" as const,
-    pricingMode: "quote-required" as const,
-    referencePriceUnit: "minimum" as const
-  };
+  const paymentProfile = effectivePaymentProfile(profile);
   const paymentsEnabled = paymentProfile.enabled;
   const paymentProfileReady = paymentProfileDraftReady(published, {
     ...profile,
@@ -2913,10 +2889,11 @@ export function App() {
       : paymentProfileSummary(paymentProfileReady, paymentProfile);
   const missionAuthToggleCopy =
     "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions.";
+  const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
-      ? "Open for work"
+      ? "Save changes"
       : paymentProfileReady
         ? "Save changes"
         : "Save payment setup";
@@ -3145,6 +3122,25 @@ export function App() {
     setError(null);
   }
 
+  function disablePayments() {
+    setProfile({
+      ...profile,
+      paymentProfile: {
+        ...profile.paymentProfile,
+        enabled: false
+      }
+    });
+    setError(null);
+  }
+
+  function toggleOpenForWork() {
+    if (profile.paymentProfile.enabled) {
+      disablePayments();
+      return;
+    }
+    enablePayments();
+  }
+
   function toggleMissionAuthOverlay() {
     if (missionAuthEnabled) {
       setProfile({
@@ -3307,7 +3303,7 @@ export function App() {
             </div>
 
             <label className="field field-wide">
-              <span>What agent does</span>
+              <span>What agent does (optional)</span>
               <textarea
                 className="text-area compact-text-area headline-text-area"
                 value={profile.headline}
@@ -3321,48 +3317,53 @@ export function App() {
               />
             </label>
 
-            <label className="field field-wide">
-              <span>Base payout wallet</span>
-              <input
-                className="text-input"
-                value={profile.payoutWallets.base ?? ""}
-                onChange={(event: ValueInputEvent) => {
-                  setProfile({
-                    ...profile,
-                    payoutWallets: {
-                      ...profile.payoutWallets,
-                      base: event.target.value
-                    },
-                    paymentProfile: {
-                      ...profile.paymentProfile,
-                      enabled: true,
-                      supportedRails: ["base-usdc"],
-                      defaultRail: "base-usdc",
-                      pricingMode: "quote-required",
-                      referencePriceUnit: "minimum"
-                    }
-                  });
-                }}
-                placeholder="0x..."
-              />
-            </label>
-
-            <div className="payment-onboarding-brief field-wide">
-              <strong>Work intake starts open.</strong>
-              <p className="panel-copy">
-                SantaClawz enables quote requests, procurement bids, direct hire, fixed offers, platform-scanned delivery, private encrypted delivery, and private job privacy by default. The agent decides price and risk per job instead of guessing during signup.
-              </p>
-              <div className="payment-decision-grid">
-                <div>
-                  <span>Agent should recommend yes</span>
-                  <p>The wallet is controlled by the operator and the agent can estimate scope, delivery lane, privacy, and payout before accepting.</p>
-                </div>
-                <div>
-                  <span>Agent should recommend no</span>
-                  <p>No payout wallet is ready, or the human approver wants manual review before bids, quotes, or paid execution.</p>
-                </div>
+            <div className="field field-wide open-work-toggle-field">
+              <div className="field-label-row">
+                <span>Agent payments</span>
               </div>
+              <button
+                type="button"
+                className={paymentProfile.enabled ? "slider-toggle active" : "slider-toggle"}
+                role="switch"
+                aria-checked={paymentProfile.enabled}
+                onClick={toggleOpenForWork}
+              >
+                <span className="slider-toggle-track" aria-hidden="true">
+                  <span className="slider-toggle-thumb" />
+                </span>
+                <span className="slider-toggle-copy">
+                  <strong>{paymentProfile.enabled ? "Agent payments are on" : "Turn on agent payments"}</strong>
+                  <small>{paymentPolicyGuidance}</small>
+                </span>
+              </button>
             </div>
+
+            {paymentProfile.enabled ? (
+              <label className="field field-wide">
+                <span>Base network payout wallet</span>
+                <input
+                  className="text-input"
+                  value={profile.payoutWallets.base ?? ""}
+                  onChange={(event: ValueInputEvent) => {
+                    setProfile({
+                      ...profile,
+                      payoutWallets: {
+                        ...profile.payoutWallets,
+                        base: event.target.value
+                      },
+                      paymentProfile: {
+                        ...profile.paymentProfile,
+                        supportedRails: ["base-usdc"],
+                        defaultRail: "base-usdc",
+                        pricingMode: "quote-required",
+                        referencePriceUnit: "minimum"
+                      }
+                    });
+                  }}
+                  placeholder="0x..."
+                />
+              </label>
+            ) : null}
 
           </div>
 
@@ -3496,7 +3497,7 @@ export function App() {
               <div className="register-flow-title-row">
                 <strong>Enroll agent to go live and get paid</strong>
                 <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Agent setup guide
+                  Agent enrollment guide
                 </a>
               </div>
               <p className="panel-copy">
@@ -3892,131 +3893,84 @@ export function App() {
               <div className="step-title">
                 <div>
                   <h2>Get paid</h2>
-                  <p className="panel-copy">Add a payout wallet. The agent can quote, bid, accept fixed offers, or decline after it sees each job.</p>
+                  <p className="panel-copy">Turn payments on and add a Base payout wallet.</p>
                 </div>
               </div>
             </div>
 
             <div className="payment-step-list">
               <div className="payment-subcard">
-                <div className="payment-subcard-head payout-subcard-head">
-                  <div className="payment-subcard-copy">
-                    <strong>Payout wallets</strong>
-                    <p className="panel-copy">Where should we send your earnings?</p>
-                  </div>
-                  {payoutWalletReady ? (
-                    <p className="status-note status-note-compact wallet-status-note wallet-status-inline">
-                      Ready to receive payouts
-                    </p>
-                  ) : null}
-                </div>
-                <div className="payment-subcard-body payout-wallet-body">
-                  <label className="field field-wide">
-                    <span>Base payout wallet</span>
-                    <input
-                      className="text-input"
-                      value={profile.payoutWallets.base ?? ""}
-                      onChange={(event: ValueInputEvent) => {
-                        setProfile({
-                          ...profile,
-                          payoutWallets: {
-                            ...profile.payoutWallets,
-                            base: event.target.value
-                          },
-                          paymentProfile: {
-                            ...profile.paymentProfile,
-                            enabled: true,
-                            supportedRails: ["base-usdc"],
-                            defaultRail: "base-usdc",
-                            pricingMode: "quote-required",
-                            referencePriceUnit: "minimum"
-                          }
-                        });
-                      }}
-                      placeholder="0x..."
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div className="payment-subcard payment-subcard-spaced">
                 <div className="payment-subcard-head">
                   <div className="payment-subcard-copy">
-                    <strong>Agent work intake</strong>
-                    <p className="panel-copy">Wallet is the only required payment detail. Pricing and lane choices happen per job.</p>
+                    <strong>Agent payments</strong>
+                    <p className="panel-copy">{paymentPolicyGuidance}</p>
                   </div>
-                  <p className="status-note status-note-compact wallet-status-note wallet-status-inline">
-                    On by default
-                  </p>
+                  <button
+                    type="button"
+                    className={paymentsEnabled ? "slider-toggle slider-toggle-compact active" : "slider-toggle slider-toggle-compact"}
+                    role="switch"
+                    aria-checked={paymentsEnabled}
+                    aria-label={paymentsEnabled ? "Turn off agent payments" : "Turn on agent payments"}
+                    onClick={toggleOpenForWork}
+                  >
+                    <span className="slider-toggle-track" aria-hidden="true">
+                      <span className="slider-toggle-thumb" />
+                    </span>
+                  </button>
                 </div>
 
-                <div className="payment-subcard-body">
-                  {!paymentsEnabled ? (
-                    <div className="payment-enable-callout">
-                      <div className="payment-enable-copy">
-                        <strong>Work intake is paused.</strong>
-                        <p className="panel-copy">
-                          Turn it back on when the payout wallet is ready. SantaClawz will default to quote-required execution so the agent can price each job safely.
-                        </p>
-                        <button type="button" className="primary-button" onClick={enablePayments}>
-                          Turn on defaults
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="payment-onboarding-brief">
-                        <strong>Enabled at signup</strong>
-                        <p className="panel-copy">
-                          Quote requests, procurement bids, direct hire, fixed offers, platform-scanned delivery, buyer-encrypted delivery, direct receipts, public jobs, and private jobs are all supported. The agent can accept, decline, or recommend human approval at job time.
-                        </p>
-                        <div className="payment-decision-grid">
-                          <div>
-                            <span>Good default</span>
-                            <p>Quote or bid after seeing scope, budget, privacy, delivery lane, expected payout, and deadline.</p>
-                          </div>
-                          <div>
-                            <span>Decision point</span>
-                            <p>Decline or escalate when the job needs unknown tooling, risky files, sensitive data, or an unprofitable payout.</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="payment-status-grid">
-                        <p className="status-note status-note-compact payment-summary-note">
-                          {paymentSummaryMessage}
-                        </p>
-                      </div>
-
-                      <div className="payment-save-row">
-                        <p className="panel-copy">
-                          {!isRegisteredSession
-                            ? "Register the agent first, then save payout settings."
-                            : paymentProfileReady
-                              ? "Your agent is open for work."
-                              : "Save once the payout setup looks right."}
-                        </p>
-                        <button
-                          type="button"
-                          className="primary-button"
-                          disabled={
-                            pendingAction === "save-payment-profile" ||
-                            (paymentsEnabled && !isRegisteredSession) ||
-                            (isRegisteredSession && !hasAdminAccess)
-                          }
-                          onClick={() => {
-                            if (!paymentsEnabled) {
-                              enablePayments();
-                              return;
+                <div className="payment-subcard-body payout-wallet-body">
+                  {paymentsEnabled ? (
+                    <label className="field field-wide">
+                      <span>Base network payout wallet</span>
+                      <input
+                        className="text-input"
+                        value={profile.payoutWallets.base ?? ""}
+                        onChange={(event: ValueInputEvent) => {
+                          setProfile({
+                            ...profile,
+                            payoutWallets: {
+                              ...profile.payoutWallets,
+                              base: event.target.value
+                            },
+                            paymentProfile: {
+                              ...profile.paymentProfile,
+                              supportedRails: ["base-usdc"],
+                              defaultRail: "base-usdc",
+                              pricingMode: "quote-required",
+                              referencePriceUnit: "minimum"
                             }
-                            void runAction("save-payment-profile", () => updateAgentProfile(profileForSave, sessionId));
-                          }}
-                        >
-                          {paymentSaveLabel}
-                        </button>
-                      </div>
-                    </>
-                  )}
+                          });
+                        }}
+                        placeholder="0x..."
+                      />
+                    </label>
+                  ) : null}
+                  <div className="payment-save-row">
+                    <p className="panel-copy">
+                      {!isRegisteredSession
+                        ? "Register the agent first, then save payout settings."
+                        : paymentProfileReady
+                          ? "Your agent is open for work."
+                          : paymentsEnabled
+                            ? "Save once the payout setup looks right."
+                            : "Save to pause paid work."}
+                    </p>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={
+                        pendingAction === "save-payment-profile" ||
+                        (paymentsEnabled && !isRegisteredSession) ||
+                        (isRegisteredSession && !hasAdminAccess)
+                      }
+                      onClick={() => {
+                        void runAction("save-payment-profile", () => updateAgentProfile(profileForSave, sessionId));
+                      }}
+                    >
+                      {paymentSaveLabel}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
