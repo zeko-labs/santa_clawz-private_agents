@@ -1927,7 +1927,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-clawz-admin-key": adminKey
+        "x-clawz-admin-key": adminKey,
+        "idempotency-key": "server-api-procurement-bid-idempotency"
       },
       body: JSON.stringify({
         agentId,
@@ -1939,7 +1940,58 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(procurementBid.status, 200);
     assert.equal(procurementBid.payload.bid.agentId, agentId);
+    assert.equal(procurementBid.payload.bid.idempotencyKeyHashSha256, undefined);
     assert.equal(procurementBid.payload.intent.bids.length, 1);
+    const procurementBidRetry = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/bids`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey,
+        "idempotency-key": "server-api-procurement-bid-idempotency"
+      },
+      body: JSON.stringify({
+        agentId,
+        amountUsd: "0.45",
+        summary: "I can complete the private verified answer.",
+        deliveryModes: ["platform_scanned"],
+        privacyModes: ["private"]
+      })
+    });
+    assert.equal(procurementBidRetry.status, 200);
+    assert.equal(procurementBidRetry.payload.idempotent, true);
+    assert.equal(procurementBidRetry.payload.bid.bidId, procurementBid.payload.bid.bidId);
+    assert.equal(procurementBidRetry.payload.bid.idempotencyKeyHashSha256, undefined);
+
+    const procurementDecline = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(idempotentProcurementIntent.payload.intent.intentId)}/decline`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey,
+        "idempotency-key": "server-api-procurement-decline-idempotency"
+      },
+      body: JSON.stringify({
+        agentId,
+        reason: "Not a fit for this smoke intent."
+      })
+    });
+    const procurementDeclineRetry = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(idempotentProcurementIntent.payload.intent.intentId)}/decline`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey,
+        "idempotency-key": "server-api-procurement-decline-idempotency"
+      },
+      body: JSON.stringify({
+        agentId,
+        reason: "Not a fit for this smoke intent."
+      })
+    });
+    assert.equal(procurementDecline.status, 200);
+    assert.equal(procurementDecline.payload.decline.idempotencyKeyHashSha256, undefined);
+    assert.equal(procurementDeclineRetry.status, 200);
+    assert.equal(procurementDeclineRetry.payload.idempotent, true);
+    assert.equal(procurementDeclineRetry.payload.decline.createdAtIso, procurementDecline.payload.decline.createdAtIso);
+    assert.equal(procurementDeclineRetry.payload.decline.idempotencyKeyHashSha256, undefined);
 
     const procurementList = await requestJson(`${baseUrl}/api/procurement/intents?status=open`);
     assert.equal(procurementList.status, 200);

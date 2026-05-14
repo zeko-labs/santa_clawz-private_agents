@@ -960,6 +960,7 @@ interface ProcurementBidRecord {
   bidId: string;
   agentId: string;
   sessionId: string;
+  idempotencyKeyHashSha256?: string;
   amountUsd: string;
   pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
   summary: string;
@@ -974,6 +975,7 @@ interface ProcurementBidRecord {
 interface ProcurementDeclineRecord {
   agentId: string;
   sessionId: string;
+  idempotencyKeyHashSha256?: string;
   reason?: string;
   createdAtIso: string;
 }
@@ -1035,6 +1037,7 @@ export interface SubmitProcurementBidOptions {
   intentId: string;
   agentId: string;
   adminKey?: string;
+  idempotencyKey?: string;
   amountUsd: string;
   summary: string;
   estimatedDeliveryIso?: string;
@@ -1046,6 +1049,7 @@ export interface DeclineProcurementIntentOptions {
   intentId: string;
   agentId: string;
   adminKey?: string;
+  idempotencyKey?: string;
   reason?: string;
 }
 
@@ -7821,7 +7825,11 @@ export class ClawzControlPlane {
       createIdempotencyKeyHashSha256: _createIdempotencyKeyHashSha256,
       ...publicIntent
     } = intent;
-    return publicIntent;
+    return {
+      ...publicIntent,
+      bids: publicIntent.bids.map(({ idempotencyKeyHashSha256: _idempotencyKeyHashSha256, ...bid }) => bid),
+      declines: publicIntent.declines.map(({ idempotencyKeyHashSha256: _idempotencyKeyHashSha256, ...decline }) => decline)
+    };
   }
 
   private assertProcurementBuyerAccess(intent: ProcurementIntentRecord, token?: string) {
@@ -7940,12 +7948,31 @@ export class ClawzControlPlane {
     const profile = this.profileForSession(state, sessionId);
     const amountUsd = options.amountUsd.trim();
     assertUsdAmount(amountUsd, "Procurement bid amountUsd");
+    const idempotencyKeyHash = options.idempotencyKey?.trim()
+      ? sha256Hex(`${intent.intentId}:bid:${sessionId}:${options.idempotencyKey.trim().slice(0, 160)}`)
+      : undefined;
+    if (idempotencyKeyHash) {
+      const existingIdempotentBid = intent.bids.find((bid) => bid.idempotencyKeyHashSha256 === idempotencyKeyHash);
+      if (existingIdempotentBid) {
+        return {
+          ok: true,
+          idempotent: true,
+          intent: this.publicProcurementIntent(intent),
+          bid: this.publicProcurementIntent({
+            ...intent,
+            bids: [existingIdempotentBid],
+            declines: []
+          }).bids[0]!
+        };
+      }
+    }
     const nowIso = new Date().toISOString();
     const existingBid = intent.bids.find((bid) => bid.agentId === options.agentId && bid.status === "submitted");
     const bid: ProcurementBidRecord = {
       bidId: existingBid?.bidId ?? `bid_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
       agentId: options.agentId,
       sessionId,
+      ...(idempotencyKeyHash ? { idempotencyKeyHashSha256: idempotencyKeyHash } : existingBid?.idempotencyKeyHashSha256 ? { idempotencyKeyHashSha256: existingBid.idempotencyKeyHashSha256 } : {}),
       amountUsd,
       pricingMode: profile.paymentProfile.pricingMode,
       summary: options.summary.trim().slice(0, 1200),
@@ -7967,10 +7994,11 @@ export class ClawzControlPlane {
     await this.saveProcurementIntentFile({
       intents: file.intents.map((candidate) => candidate.intentId === intent.intentId ? nextIntent : candidate)
     });
+    const publicIntent = this.publicProcurementIntent(nextIntent);
     return {
       ok: true,
-      intent: this.publicProcurementIntent(nextIntent),
-      bid
+      intent: publicIntent,
+      bid: publicIntent.bids.find((candidate) => candidate.bidId === bid.bidId)!
     };
   }
 
@@ -7983,10 +8011,29 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
     this.assertAdminAccess(state, sessionId, options.adminKey);
+    const idempotencyKeyHash = options.idempotencyKey?.trim()
+      ? sha256Hex(`${intent.intentId}:decline:${sessionId}:${options.idempotencyKey.trim().slice(0, 160)}`)
+      : undefined;
+    if (idempotencyKeyHash) {
+      const existingIdempotentDecline = intent.declines.find((decline) => decline.idempotencyKeyHashSha256 === idempotencyKeyHash);
+      if (existingIdempotentDecline) {
+        return {
+          ok: true,
+          idempotent: true,
+          intent: this.publicProcurementIntent(intent),
+          decline: this.publicProcurementIntent({
+            ...intent,
+            bids: [],
+            declines: [existingIdempotentDecline]
+          }).declines[0]!
+        };
+      }
+    }
     const nowIso = new Date().toISOString();
     const decline: ProcurementDeclineRecord = {
       agentId: options.agentId,
       sessionId,
+      ...(idempotencyKeyHash ? { idempotencyKeyHashSha256: idempotencyKeyHash } : {}),
       ...(options.reason?.trim() ? { reason: options.reason.trim().slice(0, 400) } : {}),
       createdAtIso: nowIso
     };
@@ -7998,10 +8045,11 @@ export class ClawzControlPlane {
     await this.saveProcurementIntentFile({
       intents: file.intents.map((candidate) => candidate.intentId === intent.intentId ? nextIntent : candidate)
     });
+    const publicIntent = this.publicProcurementIntent(nextIntent);
     return {
       ok: true,
-      intent: this.publicProcurementIntent(nextIntent),
-      decline
+      intent: publicIntent,
+      decline: publicIntent.declines.find((candidate) => candidate.agentId === decline.agentId)!
     };
   }
 

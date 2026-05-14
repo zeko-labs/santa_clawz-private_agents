@@ -301,6 +301,7 @@ type ProcurementIntentBody = {
   artifactDelivery?: unknown;
 };
 type ProcurementBidBody = {
+  idempotencyKey?: unknown;
   agentId?: unknown;
   amountUsd?: unknown;
   summary?: unknown;
@@ -309,6 +310,7 @@ type ProcurementBidBody = {
   privacyModes?: unknown;
 };
 type ProcurementDeclineBody = {
+  idempotencyKey?: unknown;
   agentId?: unknown;
   reason?: unknown;
 };
@@ -2438,6 +2440,7 @@ app.post("/api/procurement/intents/:intentId/bids", route(async (request, respon
     response.json(await controlPlane.submitProcurementBid({
       intentId,
       agentId: typeof body.agentId === "string" ? body.agentId : "",
+      ...(idempotencyKeyHeader(request) ? { idempotencyKey: idempotencyKeyHeader(request)! } : typeof body.idempotencyKey === "string" ? { idempotencyKey: body.idempotencyKey } : {}),
       amountUsd: typeof body.amountUsd === "string" ? body.amountUsd : "",
       summary: typeof body.summary === "string" ? body.summary : "",
       ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
@@ -2463,6 +2466,7 @@ app.post("/api/procurement/intents/:intentId/decline", route(async (request, res
     response.json(await controlPlane.declineProcurementIntent({
       intentId,
       agentId: typeof body.agentId === "string" ? body.agentId : "",
+      ...(idempotencyKeyHeader(request) ? { idempotencyKey: idempotencyKeyHeader(request)! } : typeof body.idempotencyKey === "string" ? { idempotencyKey: body.idempotencyKey } : {}),
       ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
       ...(typeof body.reason === "string" ? { reason: body.reason } : {})
     }));

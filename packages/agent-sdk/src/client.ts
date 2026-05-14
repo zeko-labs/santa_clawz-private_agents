@@ -153,6 +153,11 @@ export interface ClawzProcurementIntentInput {
   artifactDelivery?: Record<string, unknown>;
 }
 
+export interface ClawzProcurementIntentListQuery {
+  status?: "open" | "awarded" | "closed" | "cancelled";
+  limit?: number;
+}
+
 export interface ClawzProcurementBidInput {
   intentId: string;
   agentId: string;
@@ -162,6 +167,13 @@ export interface ClawzProcurementBidInput {
   estimatedDeliveryIso?: string;
   deliveryModes?: string[];
   privacyModes?: string[];
+}
+
+export interface ClawzProcurementDeclineInput {
+  intentId: string;
+  agentId: string;
+  idempotencyKey?: string;
+  reason?: string;
 }
 
 export interface ClawzProcurementAcceptInput {
@@ -177,10 +189,28 @@ export interface ClawzProcurementIntentResponse extends Record<string, unknown> 
   buyerToken: string;
 }
 
+export interface ClawzProcurementIntentListResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-procurement-intents/1.0";
+  generatedAtIso: string;
+  totalIntentCount: number;
+  intents: Array<Record<string, unknown> & { intentId: string; status: string }>;
+}
+
+export interface ClawzProcurementIntentGetResponse extends Record<string, unknown> {
+  ok: true;
+  intent: Record<string, unknown> & { intentId: string; status: string };
+}
+
 export interface ClawzProcurementBidResponse extends Record<string, unknown> {
   ok: true;
   intent: Record<string, unknown> & { intentId: string; status: string };
   bid: Record<string, unknown> & { bidId: string; agentId: string };
+}
+
+export interface ClawzProcurementDeclineResponse extends Record<string, unknown> {
+  ok: true;
+  intent: Record<string, unknown> & { intentId: string; status: string };
+  decline: Record<string, unknown> & { agentId: string };
 }
 
 export interface ClawzProcurementAcceptResponse extends Record<string, unknown> {
@@ -611,6 +641,25 @@ export class ClawzAgentClient {
     );
   }
 
+  async listProcurementIntents(input: ClawzProcurementIntentListQuery = {}): Promise<ClawzProcurementIntentListResponse> {
+    return this.readJson<ClawzProcurementIntentListResponse>(
+      withQuery(this.baseUrl, "/api/procurement/intents", {
+        ...(input.status ? { status: input.status } : {}),
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      })
+    );
+  }
+
+  async getProcurementIntent(input: { intentId: string }): Promise<ClawzProcurementIntentGetResponse> {
+    const intentId = input.intentId.trim();
+    if (!intentId) {
+      throw new Error("getProcurementIntent requires intentId.");
+    }
+    return this.readJson<ClawzProcurementIntentGetResponse>(
+      withQuery(this.baseUrl, `/api/procurement/intents/${encodeURIComponent(intentId)}`)
+    );
+  }
+
   async submitBid(input: ClawzProcurementBidInput): Promise<ClawzProcurementBidResponse> {
     if (!this.adminKey) {
       throw new Error("submitBid requires an adminKey from the seller agent's private .env.santaclawz file.");
@@ -624,6 +673,20 @@ export class ClawzAgentClient {
         ...(input.estimatedDeliveryIso ? { estimatedDeliveryIso: input.estimatedDeliveryIso } : {}),
         ...(input.deliveryModes ? { deliveryModes: input.deliveryModes } : {}),
         ...(input.privacyModes ? { privacyModes: input.privacyModes } : {})
+      },
+      input.idempotencyKey?.trim() ? { headers: { "idempotency-key": input.idempotencyKey.trim() } } : undefined
+    );
+  }
+
+  async declineProcurementIntent(input: ClawzProcurementDeclineInput): Promise<ClawzProcurementDeclineResponse> {
+    if (!this.adminKey) {
+      throw new Error("declineProcurementIntent requires an adminKey from the seller agent's private .env.santaclawz file.");
+    }
+    return this.postJson<ClawzProcurementDeclineResponse>(
+      `/api/procurement/intents/${encodeURIComponent(input.intentId)}/decline`,
+      {
+        agentId: input.agentId,
+        ...(input.reason ? { reason: input.reason } : {})
       },
       input.idempotencyKey?.trim() ? { headers: { "idempotency-key": input.idempotencyKey.trim() } } : undefined
     );
