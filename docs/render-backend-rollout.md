@@ -176,7 +176,7 @@ Wait for the custom domains in Render to show as verified.
 
 ## Step 5: Package the Spaceship frontend
 
-The frontend is already designed to call `https://api.santaclawz.ai`.
+The frontend now defaults to `https://www.santaclawz.ai`; only point it at `https://api.santaclawz.ai` after that custom domain is verified and healthy.
 
 Build the upload package:
 

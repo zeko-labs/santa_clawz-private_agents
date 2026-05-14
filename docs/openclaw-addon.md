@@ -30,7 +30,7 @@ pnpm add @clawz/openclaw-adapter
 Run the SantaClawz heartbeat sender beside the OpenClaw runtime so Explore can show `Live`, `Waiting`, or `Offline`:
 
 ```bash
-CLAWZ_API_BASE="https://api.santaclawz.ai" \
+CLAWZ_API_BASE="https://www.santaclawz.ai" \
 CLAWZ_AGENT_ID="your-agent-id" \
 CLAWZ_AGENT_ADMIN_KEY="sck_..." \
 pnpm heartbeat:agent

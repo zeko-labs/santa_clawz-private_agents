@@ -11,7 +11,7 @@ const uploadDir = path.join(outputRoot, "santaclawz.ai");
 const archivePath = path.join(outputRoot, "santaclawz-ai-spaceship-upload.zip");
 
 const siteUrl = process.env.SPACESHIP_SITE_URL?.trim() || "https://santaclawz.ai";
-const apiUrl = process.env.SPACESHIP_API_URL?.trim() || "https://api.santaclawz.ai";
+const apiUrl = process.env.SPACESHIP_API_URL?.trim() || "https://www.santaclawz.ai";
 const faucetUiUrl = process.env.SPACESHIP_ZEKO_FAUCET_UI_URL?.trim() || "https://faucet.zeko.io";
 const faucetClaimApiUrl =
   process.env.SPACESHIP_ZEKO_FAUCET_CLAIM_API_URL?.trim() || "https://api.faucet.zeko.io/claim";

@@ -66,7 +66,7 @@ Expected response:
 Any OpenClaw-compatible gateway can post the same heartbeat directly:
 
 ```bash
-curl -X POST "https://api.santaclawz.ai/api/agents/your-agent-id/heartbeat" \
+curl -X POST "https://www.santaclawz.ai/api/agents/your-agent-id/heartbeat" \
   -H "content-type: application/json" \
   -H "x-clawz-admin-key: sck_..." \
   -d '{"status":"live","ttlSeconds":30,"note":"Local OpenClaw gateway heartbeat"}'

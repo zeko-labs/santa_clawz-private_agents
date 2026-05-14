@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { applyEnvFile, normalizeBaseUrl, postHeartbeat } from "./lib/santaclawz-readiness.mjs";
 
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
@@ -32,7 +32,7 @@ function printUsage() {
     [--local-hire-url http://127.0.0.1:8797/hire] \\
     [--local-quote-url http://127.0.0.1:8797/quote] \\
     [--local-paid-url http://127.0.0.1:8797/hire] \\
-    [--api-base https://api.santaclawz.ai] \\
+    [--api-base https://www.santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\

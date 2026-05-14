@@ -14,7 +14,7 @@ function printUsage() {
     --allow-real-money
 
 Options:
-  --api-base https://api.santaclawz.ai
+  --api-base https://www.santaclawz.ai
   --intent-id exec_...
   --quote-manifest path     Manifest produced by quote acceptance/procurement tooling.
   --payment-payload-file path
@@ -96,7 +96,7 @@ if (!args["allow-real-money"]) {
   throw new Error("--allow-real-money is required to submit an x402 quote payment.");
 }
 
-const apiBase = normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim());
+const apiBase = normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://www.santaclawz.ai").trim());
 const quoteManifestPath = typeof args["quote-manifest"] === "string" ? args["quote-manifest"].trim() : "";
 const paymentPayloadPath = typeof args["payment-payload-file"] === "string" ? args["payment-payload-file"].trim() : "";
 if (!quoteManifestPath && typeof args["intent-id"] !== "string") {

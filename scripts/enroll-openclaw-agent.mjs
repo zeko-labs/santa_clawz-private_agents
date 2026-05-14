@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { readinessErrorMessage, runSellerReadiness } from "./lib/santaclawz-readiness.mjs";
 
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
 const DEFAULT_SITE_BASE = process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
@@ -41,7 +41,7 @@ function printUsage() {
     [--write-env .env.santaclawz] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
     [--runtime-ingress-url https://your-agent.example.com/hire] \\
-    [--api-base https://api.santaclawz.ai] \\
+    [--api-base https://www.santaclawz.ai] \\
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\

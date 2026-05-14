@@ -147,7 +147,7 @@ async function main() {
         }
       });
     const unavailableClient = createClawzAgentClient({
-      baseUrl: "https://api.santaclawz.ai",
+      baseUrl: "https://www.santaclawz.ai",
       fetchImpl: retryableHtmlFetch
     });
     await assert.rejects(unavailableClient.getX402Plan(), (error) => {
@@ -189,7 +189,7 @@ async function main() {
     assert.equal(retryAttempts, 3);
 
     const unavailableQuotePayments = createClawzQuotePaymentClient({
-      baseUrl: "https://api.santaclawz.ai",
+      baseUrl: "https://www.santaclawz.ai",
       fetchImpl: retryableHtmlFetch
     });
     await assert.rejects(

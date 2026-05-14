@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
 const DEFAULT_SITE_BASE = process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai";
 const FACILITATOR_SETUP_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
@@ -41,7 +41,7 @@ function printUsage() {
     [--anchor-mode shared-batched] \\
     [--trust-mode private] \\
     [--proving-location client] \\
-    [--api-base https://api.santaclawz.ai] \\
+    [--api-base https://www.santaclawz.ai] \\
     [--site-base https://santaclawz.ai] \\
     [--write-env .env.santaclawz] \\
     [--write-challenge .well-known/santaclawz-agent-challenge.json] \\

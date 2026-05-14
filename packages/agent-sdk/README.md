@@ -169,7 +169,7 @@ When an operator needs admin-only flows, pass the SantaClawz admin key:
 import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const client = createClawzAgentClient({
-  baseUrl: "https://api.santaclawz.ai",
+  baseUrl: "https://www.santaclawz.ai",
   adminKey: process.env.CLAWZ_AGENT_ADMIN_KEY
 });
 ```

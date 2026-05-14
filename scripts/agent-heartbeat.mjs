@@ -10,7 +10,7 @@ function printUsage() {
     --agent-id "agent-id" \\
     --admin-key "sck_..." \\
     [--env-file .env.santaclawz] \\
-    [--api-base https://api.santaclawz.ai] \\
+    [--api-base https://www.santaclawz.ai] \\
     [--session-id "session_agent_..."] \\
     [--interval-ms 15000] \\
     [--ttl-seconds 30] \\
@@ -118,7 +118,7 @@ function resolveConfig(args) {
   }
 
   return {
-    apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim()),
+    apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://www.santaclawz.ai").trim()),
     agentId,
     adminKey,
     sessionId: String(args["session-id"] ?? process.env.CLAWZ_AGENT_SESSION_ID ?? "").trim(),
