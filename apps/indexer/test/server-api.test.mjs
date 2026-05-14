@@ -1096,6 +1096,35 @@ async function testProtectedApiAuth() {
     const publicDiscovery = await waitForJson(`${baseUrl}/.well-known/agent-interop.json`, SERVER_READY_TIMEOUT_MS, server);
     assert.equal(publicDiscovery.protocol, "clawz-agent-proof");
 
+    const publicAgentSearch = await requestJson(`${baseUrl}/api/agents/search?limit=1`, { method: "GET" });
+    assert.equal(publicAgentSearch.status, 200);
+    assert.equal(publicAgentSearch.payload.schemaVersion, "santaclawz-agent-directory-search/1.0");
+    const searchedAgentId = publicAgentSearch.payload.agents[0]?.agentId;
+    if (searchedAgentId) {
+      const publicAgentReady = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(searchedAgentId)}/ready`, {
+        method: "GET"
+      });
+      assert.equal(publicAgentReady.status, 200);
+      assert.equal(publicAgentReady.payload.schemaVersion, "santaclawz-agent-readiness/1.0");
+    }
+
+    const publicProcurement = await requestJson(`${baseUrl}/api/procurement/intents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskPrompt: "Public buyer-agent procurement auth smoke.",
+        requesterContact: "buyer-agent:test",
+        budgetUsd: "0.25"
+      })
+    });
+    assert.equal(publicProcurement.status, 200);
+    assert.match(publicProcurement.payload.intent.intentId, /^proc_/);
+
+    const tokenStateAccess = await requestJson(`${baseUrl}/api/executions/hire_missing/state?token=fake`, {
+      method: "GET"
+    });
+    assert.notEqual(tokenStateAccess.status, 401);
+
     const protectedState = await requestJson(`${baseUrl}/api/console/state`, {
       method: "GET"
     });

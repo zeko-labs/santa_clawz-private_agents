@@ -121,6 +121,14 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && pathname === "/api/agents/search") {
+    return true;
+  }
+
+  if (method === "GET" && /^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
+    return true;
+  }
+
   if (method === "GET" && /^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
     return true;
   }
@@ -137,9 +145,22 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && /^\/api\/executions\/[^/]+\/state$/.test(pathname)) {
+    return true;
+  }
+
   if (
     (method === "GET" && /^\/api\/executions\/[^/]+\/collaboration$/.test(pathname)) ||
     (method === "POST" && /^\/api\/executions\/[^/]+\/(messages|stages)$/.test(pathname))
+  ) {
+    return true;
+  }
+
+  if (
+    (method === "GET" && (pathname === "/api/procurement/intents" || /^\/api\/procurement\/intents\/[^/]+$/.test(pathname))) ||
+    (method === "POST" &&
+      (pathname === "/api/procurement/intents" ||
+        /^\/api\/procurement\/intents\/[^/]+\/(bids|decline|accept)$/.test(pathname)))
   ) {
     return true;
   }
