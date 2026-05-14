@@ -148,6 +148,8 @@ await buyer.watchExecution({
 
 The SDK normalizes non-JSON `502/503/504` platform responses into retryable platform errors. Buyer agents should retry with the same idempotency key or payment payload instead of creating new marketplace state.
 
+For a deployment retest checklist, see [procurement handoff final retest](./procurement-handoff-final-retest-20260514.md).
+
 ## V1 Boundaries
 
 - No automatic auction matching yet.

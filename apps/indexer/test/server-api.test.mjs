@@ -2404,11 +2404,20 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         deliverables: []
       }
     }));
-    const freeTestAccepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+
+    const handoffIntent = await requestJson(`${baseUrl}/api/procurement/intents`, {
       method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "server-api-procurement-handoff-intent"
+      },
       body: JSON.stringify({
-        taskPrompt: "Run a signed free test request.",
-        requesterContact: "buyer@example.com",
+        taskPrompt: "Procure a private free-test handoff into the normal execution workspace.",
+        requesterContact: "buyer-agent:handoff",
+        budgetUsd: "0.25",
+        requiredCapabilities: ["magic-answer"],
+        preferredDeliveryModes: ["buyer_encrypted"],
+        preferredPrivacyModes: ["private"],
         jobPrivacy: {
           visibility: "private",
           publicAggregateStats: true,
@@ -2425,6 +2434,66 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         }
       })
     });
+    assert.equal(handoffIntent.status, 200);
+
+    const handoffBid = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(handoffIntent.payload.intent.intentId)}/bids`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey,
+        "idempotency-key": "server-api-procurement-handoff-bid"
+      },
+      body: JSON.stringify({
+        agentId,
+        amountUsd: "0.25",
+        summary: "I can complete this as a private buyer-encrypted free-test handoff.",
+        deliveryModes: ["buyer_encrypted"],
+        privacyModes: ["private"]
+      })
+    });
+    assert.equal(handoffBid.status, 200);
+
+    const handoffAccept = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(handoffIntent.payload.intent.intentId)}/accept`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "server-api-procurement-handoff-accept"
+      },
+      body: JSON.stringify({
+        bidId: handoffBid.payload.bid.bidId,
+        token: handoffIntent.payload.buyerToken
+      })
+    });
+    assert.equal(handoffAccept.status, 200);
+    assert.equal(handoffAccept.payload.nextAction.type, "submit_hire_request");
+    assert.equal(handoffAccept.payload.nextAction.body.jobPrivacy.visibility, "private");
+    assert.equal(handoffAccept.payload.nextAction.body.artifactDelivery.mode, "buyer_encrypted");
+
+    const handoffHire = await requestJson(`${baseUrl}${handoffAccept.payload.nextAction.hireApiPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(handoffAccept.payload.nextAction.body)
+    });
+    assert.equal(handoffHire.status, 200);
+    assert.equal(handoffHire.payload.requestType, "free_test");
+    assert.equal(handoffHire.payload.status, "completed");
+    assert.equal(handoffHire.payload.jobPrivacy.visibility, "private");
+    assert.equal(handoffHire.payload.artifactDelivery.mode, "buyer_encrypted");
+    assert.match(handoffHire.payload.jobWorkspace.token, /^[A-Za-z0-9_-]+$/);
+
+    const handoffState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(handoffHire.payload.requestId)}/state?token=${encodeURIComponent(handoffHire.payload.jobWorkspace.token)}`,
+      { method: "GET" }
+    );
+    assert.equal(handoffState.status, 200);
+    assert.equal(handoffState.payload.requestId, handoffHire.payload.requestId);
+    assert.equal(handoffState.payload.currentPhase, "return_verified");
+    assert.equal(handoffState.payload.lifecycleChecks.agentCompleted, true);
+    assert.equal(handoffState.payload.lifecycleChecks.proofVerified, true);
+    assert.equal(handoffState.payload.lifecycleChecks.artifactDelivered, false);
+    assert.equal(handoffState.payload.privacy.jobVisibility, "private");
+
+    const freeTestAccepted = handoffHire;
     assert.equal(freeTestAccepted.status, 200);
     assert.equal(freeTestAccepted.payload.requestType, "free_test");
     assert.equal(freeTestAccepted.payload.pricingMode, "free-test");
