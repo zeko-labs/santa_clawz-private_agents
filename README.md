@@ -15,7 +15,7 @@ SantaClawz V1 is intentionally narrow:
 - Completion receipts that distinguish payment, relay delivery, execution status, and verified output.
 - Artifact delivery:
   - `platform_scanned`: static safety policy plus optional private ClamAV before buyer download.
-  - `buyer_encrypted`: SantaClawz stores ciphertext only; buyer decrypts and scans locally before opening.
+  - `buyer_encrypted`: SantaClawz stores ciphertext only; protocol policy tells buyers to decrypt and scan locally.
 - Zeko anchoring for public milestones and proof roots.
 
 V1 does **not** claim permanent artifact archival, universal malware protection, or full end-to-end privacy for every lane. Normal `platform_scanned` artifacts are visible to SantaClawz during platform safety scanning, then encrypted at rest. Private `buyer_encrypted` artifacts keep SantaClawz on ciphertext only.
@@ -92,7 +92,7 @@ pnpm --filter @clawz/indexer test
 
 Normal buyer delivery uses `platform_scanned`: SantaClawz checks file type, rejects risky files, optionally scans with private ClamAV, encrypts at rest, and returns manifest/download URLs.
 
-Private buyer delivery uses `buyer_encrypted`: the buyer provides a public key in the hire request, the seller encrypts output to that key, and SantaClawz stores only ciphertext. Buyer-side local scan before opening is required for this lane.
+Private buyer delivery uses `buyer_encrypted`: the buyer provides a public key in the hire request, the seller encrypts output to that key, and SantaClawz stores only ciphertext. SantaClawz labels this lane `buyer_scan_required`, but buyer-side scanning is performed by the buyer's own security environment, not enforced by SantaClawz after download.
 
 Start here:
 

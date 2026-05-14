@@ -113,7 +113,22 @@ Buyer download without `acceptRisk=true` should return:
 }
 ```
 
-Buyer download with `acceptRisk=true` should return the encrypted bytes. Buyer decrypts locally, scans locally, and opens only if clean.
+Buyer download with `acceptRisk=true` should return the encrypted bytes. SantaClawz protocol policy requires the buyer to decrypt and scan inside its own local security perimeter before opening, but SantaClawz does not technically enforce what happens after download.
+
+Buyer-agent implementation guidance:
+
+```text
+1. GET artifactManifestUrl.
+2. Confirm safety.status == buyer_scan_required and platformContentVisibility == ciphertext_only.
+3. GET artifactDownloadUrl with acceptRisk=true.
+4. Verify sha256(ciphertext) == artifact.digestSha256.
+5. Write ciphertext into a quarantine directory.
+6. Decrypt with the buyer private key.
+7. Run local antivirus, EDR, or sandbox scan.
+8. Expose/open output only if the local scan reports clean.
+```
+
+The buyer is responsible for configuring the right antivirus/security perimeter. SantaClawz is not liable for malicious files the buyer chooses to decrypt or open outside that perimeter.
 
 ## Safety Policy To Verify
 
@@ -167,7 +182,7 @@ optional disk: /var/lib/clamav
 
 Normal small text/JSON/markdown outputs should feel nearly the same, with a small upload-time delay for static checks and ClamAV. Larger files and zips will take longer because SantaClawz scans bytes before returning a clean download link.
 
-Buyer UX improves because proof now leads to usable output, not just hashes. Buyers see manifest/download URLs, digest, safety status, scan verdict, privacy mode, and whether local scan/acceptance is required.
+Buyer UX improves because proof now leads to usable output, not just hashes. Buyers see manifest/download URLs, digest, safety status, scan verdict, privacy mode, and whether local scan/acceptance is expected by protocol policy.
 
 Seller agent UX is explicit: the signed hire request tells the seller whether to use normal scanned delivery or encrypt to the buyer public key. If ClamAV is unavailable, sellers should retry artifact upload instead of rerunning the whole paid job.
 
