@@ -288,6 +288,7 @@ type PrivacyExceptionApprovalBody = {
   sessionId?: unknown;
 };
 type ProcurementIntentBody = {
+  idempotencyKey?: unknown;
   taskPrompt?: unknown;
   requesterContact?: unknown;
   budgetUsd?: unknown;
@@ -338,6 +339,10 @@ function queryString(query: unknown, key: string): string | undefined {
 
 function adminKeyHeader(request: IndexerRequest) {
   return optionalString(request.header("x-clawz-admin-key"));
+}
+
+function idempotencyKeyHeader(request: IndexerRequest) {
+  return optionalString(request.header("idempotency-key") ?? request.header("x-idempotency-key"));
 }
 
 function tokenQuery(request: IndexerRequest) {
@@ -985,9 +990,10 @@ function parseHireRequest(body: unknown): HireRequestBody {
     : {};
 }
 
-function parseProcurementIntentBody(body: unknown): CreateProcurementIntentOptions {
+function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): CreateProcurementIntentOptions {
   const value = isRecord(body) ? body as ProcurementIntentBody : {};
   return {
+    ...(idempotencyKey ? { idempotencyKey } : typeof value.idempotencyKey === "string" ? { idempotencyKey: value.idempotencyKey } : {}),
     taskPrompt: typeof value.taskPrompt === "string" ? value.taskPrompt : "",
     requesterContact: typeof value.requesterContact === "string" ? value.requesterContact : "",
     ...(typeof value.budgetUsd === "string" ? { budgetUsd: value.budgetUsd } : {}),
@@ -1292,6 +1298,55 @@ function costEstimateFromPlan(plan: Awaited<ReturnType<typeof buildX402PlanFromO
   };
 }
 
+function agentCapabilityTags(
+  agent: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number],
+  entry: { quoteReady: boolean; paidExecutionReady: boolean }
+) {
+  const words = `${agent.agentId} ${agent.agentName} ${agent.headline} ${agent.representedPrincipal}`
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((word) => word.length >= 3 && word.length <= 32);
+  const tags = new Set<string>([
+    "artifact_delivery",
+    "platform_scanned",
+    "buyer_encrypted",
+    "direct_receipt",
+    "external_reference",
+    "private_jobs",
+    "procurement_bid",
+    "direct_hire",
+    "fixed_offer"
+  ]);
+  if (entry.quoteReady) {
+    tags.add("quote_request");
+    tags.add("quote_intake");
+  }
+  if (entry.paidExecutionReady) {
+    tags.add("paid_execution");
+  }
+  for (const word of words) {
+    tags.add(word.replace(/-/g, "_"));
+  }
+  return Array.from(tags).slice(0, 24);
+}
+
+function pricingReadinessNotes(input: {
+  pricingMode: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number]["pricingMode"];
+  quoteReady: boolean;
+  paidExecutionReady: boolean;
+}) {
+  if (input.pricingMode === "fixed-exact") {
+    return input.paidExecutionReady ? ["fixed-paid-execution-ready"] : ["fixed-paid-execution-not-ready"];
+  }
+  if (input.pricingMode === "quote-required") {
+    return [
+      input.quoteReady ? "quote-intake-ready" : "quote-intake-not-ready",
+      input.paidExecutionReady ? "quote-payment-required-before-execution" : "quote-intake-only"
+    ];
+  }
+  return input.paidExecutionReady ? ["free-test-ready"] : ["free-test-not-ready"];
+}
+
 async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number]) {
   let plan: Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"] | undefined;
   try {
@@ -1303,6 +1358,8 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
   const paidExecutionReady =
     agent.pricingMode === "free-test" ||
     (agent.paymentProfileReady && agent.paidJobsEnabled && (agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required"));
+  const pricingReadiness = pricingReadinessNotes({ pricingMode: agent.pricingMode, quoteReady, paidExecutionReady });
+  const capabilityTags = agentCapabilityTags(agent, { quoteReady, paidExecutionReady });
   return {
     schemaVersion: "santaclawz-agent-directory-entry/1.0",
     agentId: agent.agentId,
@@ -1320,6 +1377,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     paymentsReady: agent.paymentProfileReady,
     quoteReady,
     paidExecutionReady,
+    capabilityTags,
     pricing: {
       pricingMode: agent.pricingMode,
       paymentsEnabled: agent.paymentsEnabled,
@@ -1344,7 +1402,11 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
       workerReachable: agent.readiness?.workerReachable === true,
       lastHeartbeatAtIso: agent.lastHeartbeatAtIso,
       lastJobStatus: agent.readiness?.lastJobStatus ?? "none",
-      knownBlockers: agent.readiness?.blockers ?? []
+      pricingReadiness,
+      knownBlockers: [
+        ...(agent.readiness?.blockers ?? []),
+        ...(paidExecutionReady ? [] : pricingReadiness.filter((note) => note.endsWith("not-ready") || note === "quote-intake-only"))
+      ]
     },
     deliveryLanes: supportedDeliveryLanes(),
     privacyModes: supportedPrivacyModes(),
@@ -1901,7 +1963,13 @@ app.get("/api/agents/search", route(async (request, response) => {
     const agents = await Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)));
     const filtered = agents.filter((agent) => {
       if (q) {
-        const haystack = [agent.agentId, agent.agentName, agent.representedPrincipal, agent.headline].join(" ").toLowerCase();
+        const haystack = [
+          agent.agentId,
+          agent.agentName,
+          agent.representedPrincipal,
+          agent.headline,
+          ...(agent.capabilityTags ?? [])
+        ].join(" ").toLowerCase();
         if (!haystack.includes(q)) {
           return false;
         }
@@ -1968,6 +2036,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
     const paidExecutionReady =
       pricingMode === "free-test" ||
       (consoleState.paymentProfileReady && consoleState.paidJobsEnabled && (pricingMode === "fixed-exact" || pricingMode === "quote-required"));
+    const pricingReadiness = pricingReadinessNotes({ pricingMode, quoteReady, paidExecutionReady });
     response.json({
       schemaVersion: "santaclawz-agent-readiness/1.0",
       ok: true,
@@ -1989,8 +2058,10 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       privacyModes: supportedPrivacyModes(),
       lastHeartbeatAtIso: availability.heartbeat.lastHeartbeatAtIso,
       lastJobStatus: consoleState.readiness?.lastJobStatus ?? "none",
+      pricingReadiness,
       knownBlockers: [
         ...(consoleState.readiness?.blockers ?? []),
+        ...(paidExecutionReady ? [] : pricingReadiness.filter((note) => note.endsWith("not-ready") || note === "quote-intake-only")),
         ...(scannerHealth.reachable ? [] : ["artifact-scanner-unavailable"])
       ],
       readiness: consoleState.readiness,
@@ -2333,7 +2404,7 @@ app.get("/api/procurement/intents", route(async (request, response) => {
 
 app.post("/api/procurement/intents", route(async (request, response) => {
   try {
-    response.json(await controlPlane.createProcurementIntent(parseProcurementIntentBody(request.body ?? null)));
+    response.json(await controlPlane.createProcurementIntent(parseProcurementIntentBody(request.body ?? null, idempotencyKeyHeader(request))));
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to create procurement intent."

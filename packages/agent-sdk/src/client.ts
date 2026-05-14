@@ -142,6 +142,7 @@ export interface ClawzExecutionStateResponse extends Record<string, unknown> {
 export interface ClawzProcurementIntentInput {
   taskPrompt: string;
   requesterContact: string;
+  idempotencyKey?: string;
   budgetUsd?: string;
   deadlineIso?: string;
   bidWindowClosesAtIso?: string;
@@ -155,6 +156,7 @@ export interface ClawzProcurementIntentInput {
 export interface ClawzProcurementBidInput {
   intentId: string;
   agentId: string;
+  idempotencyKey?: string;
   amountUsd: string;
   summary: string;
   estimatedDeliveryIso?: string;
@@ -166,6 +168,7 @@ export interface ClawzProcurementAcceptInput {
   intentId: string;
   bidId: string;
   token: string;
+  idempotencyKey?: string;
 }
 
 export interface ClawzProcurementIntentResponse extends Record<string, unknown> {
@@ -191,6 +194,11 @@ export interface ClawzProcurementAcceptResponse extends Record<string, unknown> 
     publicHireUrl: string;
     body: Record<string, unknown>;
   };
+}
+
+export interface ClawzProcurementHireHandoffInput {
+  acceptedBid: ClawzProcurementAcceptResponse;
+  paymentPayload?: Record<string, unknown>;
 }
 
 export interface ClawzHireRequestInput {
@@ -455,11 +463,12 @@ export class ClawzAgentClient {
     throw new Error(`Unable to locate a ClawZ discovery document at ${this.baseUrl}.`);
   }
 
-  private async postJson<T>(route: string, body: unknown): Promise<T> {
+  private async postJson<T>(route: string, body: unknown, init?: { headers?: Record<string, string> }): Promise<T> {
     return this.readJson<T>(withQuery(this.baseUrl, route), {
       method: "POST",
       headers: {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        ...(init?.headers ?? {})
       },
       body: JSON.stringify(body)
     });
@@ -595,27 +604,51 @@ export class ClawzAgentClient {
   }
 
   async requestBids(input: ClawzProcurementIntentInput): Promise<ClawzProcurementIntentResponse> {
-    return this.postJson<ClawzProcurementIntentResponse>("/api/procurement/intents", input);
+    return this.postJson<ClawzProcurementIntentResponse>(
+      "/api/procurement/intents",
+      input,
+      input.idempotencyKey?.trim() ? { headers: { "idempotency-key": input.idempotencyKey.trim() } } : undefined
+    );
   }
 
   async submitBid(input: ClawzProcurementBidInput): Promise<ClawzProcurementBidResponse> {
     if (!this.adminKey) {
       throw new Error("submitBid requires an adminKey from the seller agent's private .env.santaclawz file.");
     }
-    return this.postJson<ClawzProcurementBidResponse>(`/api/procurement/intents/${encodeURIComponent(input.intentId)}/bids`, {
-      agentId: input.agentId,
-      amountUsd: input.amountUsd,
-      summary: input.summary,
-      ...(input.estimatedDeliveryIso ? { estimatedDeliveryIso: input.estimatedDeliveryIso } : {}),
-      ...(input.deliveryModes ? { deliveryModes: input.deliveryModes } : {}),
-      ...(input.privacyModes ? { privacyModes: input.privacyModes } : {})
-    });
+    return this.postJson<ClawzProcurementBidResponse>(
+      `/api/procurement/intents/${encodeURIComponent(input.intentId)}/bids`,
+      {
+        agentId: input.agentId,
+        amountUsd: input.amountUsd,
+        summary: input.summary,
+        ...(input.estimatedDeliveryIso ? { estimatedDeliveryIso: input.estimatedDeliveryIso } : {}),
+        ...(input.deliveryModes ? { deliveryModes: input.deliveryModes } : {}),
+        ...(input.privacyModes ? { privacyModes: input.privacyModes } : {})
+      },
+      input.idempotencyKey?.trim() ? { headers: { "idempotency-key": input.idempotencyKey.trim() } } : undefined
+    );
   }
 
   async acceptBid(input: ClawzProcurementAcceptInput): Promise<ClawzProcurementAcceptResponse> {
-    return this.postJson<ClawzProcurementAcceptResponse>(`/api/procurement/intents/${encodeURIComponent(input.intentId)}/accept`, {
-      bidId: input.bidId,
-      token: input.token
+    return this.postJson<ClawzProcurementAcceptResponse>(
+      `/api/procurement/intents/${encodeURIComponent(input.intentId)}/accept`,
+      {
+        bidId: input.bidId,
+        token: input.token
+      },
+      input.idempotencyKey?.trim() ? { headers: { "idempotency-key": input.idempotencyKey.trim() } } : undefined
+    );
+  }
+
+  async submitProcurementHandoff(input: ClawzProcurementHireHandoffInput): Promise<HireRequestReceipt> {
+    const body = input.acceptedBid.nextAction.body;
+    return this.submitHireRequest({
+      agentId: input.acceptedBid.nextAction.agentId,
+      taskPrompt: typeof body.taskPrompt === "string" ? body.taskPrompt : "",
+      requesterContact: typeof body.requesterContact === "string" ? body.requesterContact : "",
+      ...(isRecord(body.jobPrivacy) ? { jobPrivacy: body.jobPrivacy } : {}),
+      ...(isRecord(body.artifactDelivery) ? { artifactDelivery: body.artifactDelivery } : {}),
+      ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {})
     });
   }
 

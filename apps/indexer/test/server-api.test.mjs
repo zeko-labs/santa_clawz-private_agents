@@ -1850,6 +1850,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(directoryAgent.agentId, agentId);
     assert.equal(directoryAgent.deliveryLanes.some((lane) => lane.mode === "buyer_encrypted"), true);
     assert.equal(directoryAgent.privacyModes.some((mode) => mode.mode === "private"), true);
+    assert.equal(directoryAgent.capabilityTags.includes("procurement_bid"), true);
     assert.equal(typeof directoryAgent.reputation.jobActivityStats.totalJobCount, "number");
 
     const agentReady = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/ready`);
@@ -1860,6 +1861,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(agentReady.payload.privacyModes.some((mode) => mode.mode === "buyer_encrypted"), true);
     assert.equal(typeof agentReady.payload.scannerReady, "boolean");
     assert.equal(Array.isArray(agentReady.payload.knownBlockers), true);
+    assert.equal(Array.isArray(agentReady.payload.pricingReadiness), true);
     assert.equal(Array.isArray(agentReady.payload.pricing.costEstimate.rails), true);
 
     const procurementIntent = await requestJson(`${baseUrl}/api/procurement/intents`, {
@@ -1888,7 +1890,38 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.match(procurementIntent.payload.intent.intentId, /^proc_/);
     assert.match(procurementIntent.payload.buyerToken, /^[A-Za-z0-9_-]+$/);
     assert.equal(procurementIntent.payload.intent.buyerTokenHashSha256, undefined);
+    assert.equal(procurementIntent.payload.intent.createIdempotencyKeyHashSha256, undefined);
     assert.equal(procurementIntent.payload.intent.status, "open");
+
+    const idempotentProcurementIntent = await requestJson(`${baseUrl}/api/procurement/intents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "server-api-procurement-idempotency"
+      },
+      body: JSON.stringify({
+        taskPrompt: "Find an agent idempotently.",
+        requesterContact: "buyer-agent:test",
+        budgetUsd: "0.50"
+      })
+    });
+    const idempotentProcurementIntentRetry = await requestJson(`${baseUrl}/api/procurement/intents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "server-api-procurement-idempotency"
+      },
+      body: JSON.stringify({
+        taskPrompt: "Find an agent idempotently.",
+        requesterContact: "buyer-agent:test",
+        budgetUsd: "0.50"
+      })
+    });
+    assert.equal(idempotentProcurementIntent.status, 200);
+    assert.equal(idempotentProcurementIntentRetry.status, 200);
+    assert.equal(idempotentProcurementIntentRetry.payload.idempotent, true);
+    assert.equal(idempotentProcurementIntentRetry.payload.intent.intentId, idempotentProcurementIntent.payload.intent.intentId);
+    assert.equal(idempotentProcurementIntentRetry.payload.buyerToken, idempotentProcurementIntent.payload.buyerToken);
 
     const procurementBid = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/bids`, {
       method: "POST",
@@ -1933,9 +1966,23 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(procurementAccept.status, 200);
     assert.equal(procurementAccept.payload.intent.status, "awarded");
     assert.equal(procurementAccept.payload.intent.selectedAgentId, agentId);
+    assert.equal(procurementAccept.payload.selectedBid.status, "accepted");
     assert.equal(procurementAccept.payload.nextAction.type, "submit_hire_request");
     assert.equal(procurementAccept.payload.nextAction.hireApiPath, `/api/agents/${encodeURIComponent(agentId)}/hire`);
     assert.equal(procurementAccept.payload.nextAction.body.jobPrivacy.visibility, "private");
+
+    const procurementAcceptRetry = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        bidId: procurementBid.payload.bid.bidId,
+        token: procurementIntent.payload.buyerToken
+      })
+    });
+    assert.equal(procurementAcceptRetry.status, 200);
+    assert.equal(procurementAcceptRetry.payload.idempotent, true);
+    assert.equal(procurementAcceptRetry.payload.selectedBid.status, "accepted");
+    assert.equal(procurementAcceptRetry.payload.nextAction.hireApiPath, procurementAccept.payload.nextAction.hireApiPath);
 
     const readinessRefresh = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/readiness/refresh`, {
       method: "POST",

@@ -995,6 +995,7 @@ interface ProcurementIntentRecord {
   createdAtIso: string;
   updatedAtIso: string;
   buyerTokenHashSha256: string;
+  createIdempotencyKeyHashSha256?: string;
   bids: ProcurementBidRecord[];
   declines: ProcurementDeclineRecord[];
   selectedBidId?: string;
@@ -1019,6 +1020,7 @@ interface ProcurementIntentFile {
 export interface CreateProcurementIntentOptions {
   taskPrompt: string;
   requesterContact: string;
+  idempotencyKey?: string;
   budgetUsd?: string;
   deadlineIso?: string;
   bidWindowClosesAtIso?: string;
@@ -7814,7 +7816,11 @@ export class ClawzControlPlane {
   }
 
   private publicProcurementIntent(intent: ProcurementIntentRecord) {
-    const { buyerTokenHashSha256: _buyerTokenHashSha256, ...publicIntent } = intent;
+    const {
+      buyerTokenHashSha256: _buyerTokenHashSha256,
+      createIdempotencyKeyHashSha256: _createIdempotencyKeyHashSha256,
+      ...publicIntent
+    } = intent;
     return publicIntent;
   }
 
@@ -7822,6 +7828,14 @@ export class ClawzControlPlane {
     if (!token?.trim() || sha256Hex(token.trim()) !== intent.buyerTokenHashSha256) {
       throw new Error("Procurement buyer token was rejected.");
     }
+  }
+
+  private procurementIdempotentBuyerToken(idempotencyKey: string) {
+    const secret =
+      process.env.CLAWZ_PROCUREMENT_IDEMPOTENCY_SECRET?.trim() ||
+      process.env.CLAWZ_ADMIN_API_KEY?.trim() ||
+      "santaclawz-local-procurement-idempotency";
+    return `buy_${Buffer.from(createHmac("sha256", secret).update(idempotencyKey.trim()).digest("hex"), "hex").toString("base64url")}`;
   }
 
   async createProcurementIntent(options: CreateProcurementIntentOptions) {
@@ -7834,8 +7848,23 @@ export class ClawzControlPlane {
     if (budgetUsd) {
       assertUsdAmount(budgetUsd, "Procurement budgetUsd");
     }
+    const idempotencyKey = options.idempotencyKey?.trim().slice(0, 160);
+    const idempotencyKeyHash = idempotencyKey ? sha256Hex(idempotencyKey) : undefined;
+    const file = await this.loadProcurementIntentFile();
+    if (idempotencyKey && idempotencyKeyHash) {
+      const existingIntent = file.intents.find((candidate) => candidate.createIdempotencyKeyHashSha256 === idempotencyKeyHash);
+      if (existingIntent) {
+        return {
+          ok: true,
+          idempotent: true,
+          intent: this.publicProcurementIntent(existingIntent),
+          buyerToken: this.procurementIdempotentBuyerToken(idempotencyKey),
+          buyerTokenUsage: "Use this token to accept a bid or close the procurement intent."
+        };
+      }
+    }
     const nowIso = new Date().toISOString();
-    const buyerToken = randomBytes(32).toString("base64url");
+    const buyerToken = idempotencyKey ? this.procurementIdempotentBuyerToken(idempotencyKey) : randomBytes(32).toString("base64url");
     const intent: ProcurementIntentRecord = {
       schemaVersion: "santaclawz-procurement-intent/1.0",
       intentId: `proc_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
@@ -7853,10 +7882,10 @@ export class ClawzControlPlane {
       createdAtIso: nowIso,
       updatedAtIso: nowIso,
       buyerTokenHashSha256: sha256Hex(buyerToken),
+      ...(idempotencyKeyHash ? { createIdempotencyKeyHashSha256: idempotencyKeyHash } : {}),
       bids: [],
       declines: []
     };
-    const file = await this.loadProcurementIntentFile();
     await this.saveProcurementIntentFile({ intents: [intent, ...file.intents].slice(0, 1000) });
     return {
       ok: true,
@@ -7983,6 +8012,25 @@ export class ClawzControlPlane {
       throw new Error(`Unknown procurement intent: ${options.intentId}`);
     }
     this.assertProcurementBuyerAccess(intent, options.token);
+    if (intent.status === "awarded" && intent.selectedBidId === options.bidId.trim() && intent.award) {
+      const selectedBid = intent.bids.find((bid) => bid.bidId === intent.selectedBidId);
+      if (!selectedBid) {
+        throw new Error(`Unknown awarded procurement bid: ${options.bidId}`);
+      }
+      return {
+        ok: true,
+        idempotent: true,
+        intent: this.publicProcurementIntent(intent),
+        selectedBid,
+        nextAction: {
+          type: "submit_hire_request",
+          agentId: selectedBid.agentId,
+          hireApiPath: intent.award.hireApiPath,
+          publicHireUrl: intent.award.publicHireUrl,
+          body: intent.award.suggestedHireBody
+        }
+      };
+    }
     if (intent.status !== "open") {
       throw new Error(`Procurement intent ${intent.intentId} is not open.`);
     }
@@ -8019,15 +8067,16 @@ export class ClawzControlPlane {
       intents: file.intents.map((candidate) => candidate.intentId === intent.intentId ? nextIntent : candidate)
     });
     const award = nextIntent.award!;
+    const acceptedBid = nextIntent.bids.find((bid) => bid.bidId === selectedBid.bidId)!;
     return {
       ok: true,
       intent: this.publicProcurementIntent(nextIntent),
-      selectedBid,
+      selectedBid: acceptedBid,
       nextAction: {
         type: "submit_hire_request",
-        agentId: selectedBid.agentId,
+        agentId: acceptedBid.agentId,
         hireApiPath,
-        publicHireUrl: publicAgentHireUrlFor(selectedBid.agentId),
+        publicHireUrl: publicAgentHireUrlFor(acceptedBid.agentId),
         body: award.suggestedHireBody
       }
     };
