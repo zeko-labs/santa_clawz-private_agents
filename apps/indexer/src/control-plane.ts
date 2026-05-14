@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -735,6 +735,7 @@ interface HireRequestRecord {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  jobAccessTokenHashSha256?: string;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   deliveryTarget: string;
@@ -840,6 +841,80 @@ function buildHireOperationalStatus(input: {
 
 interface HireRequestFile {
   requests: HireRequestRecord[];
+}
+
+type JobStageStatus = "pending" | "active" | "blocked" | "completed" | "accepted" | "revision_requested";
+type JobStageKind =
+  | "procurement"
+  | "intake"
+  | "quote"
+  | "accepted"
+  | "in_progress"
+  | "draft"
+  | "delivery"
+  | "review"
+  | "final"
+  | "closed";
+type JobMessageAuthorRole = "buyer" | "seller" | "system";
+
+interface JobStageRecord {
+  stageId: string;
+  requestId: string;
+  agentId: string;
+  sessionId: string;
+  stage: JobStageKind;
+  status: JobStageStatus;
+  label: string;
+  note?: string;
+  artifactDigestSha256?: string;
+  createdAtIso: string;
+  updatedAtIso: string;
+  authorRole: JobMessageAuthorRole;
+}
+
+interface JobMessageRecord {
+  messageId: string;
+  requestId: string;
+  agentId: string;
+  sessionId: string;
+  authorRole: JobMessageAuthorRole;
+  body: string;
+  createdAtIso: string;
+  messageDigestSha256: string;
+  stage?: JobStageKind;
+  artifactDigestSha256?: string;
+}
+
+interface JobCollaborationFile {
+  stages: JobStageRecord[];
+  messages: JobMessageRecord[];
+}
+
+interface JobWorkspaceInput {
+  requestId: string;
+  token: string;
+}
+
+interface JobMessagePostOptions {
+  requestId: string;
+  token?: string;
+  adminKey?: string;
+  authorRole?: JobMessageAuthorRole;
+  body: string;
+  stage?: JobStageKind;
+  artifactDigestSha256?: string;
+}
+
+interface JobStagePostOptions {
+  requestId: string;
+  token?: string;
+  adminKey?: string;
+  authorRole?: JobMessageAuthorRole;
+  stage: JobStageKind;
+  status: JobStageStatus;
+  label?: string;
+  note?: string;
+  artifactDigestSha256?: string;
 }
 
 interface ExecutionIntentFile {
@@ -1512,6 +1587,13 @@ function buildDefaultHireRequestFile(): HireRequestFile {
   };
 }
 
+function buildDefaultJobCollaborationFile(): JobCollaborationFile {
+  return {
+    stages: [],
+    messages: []
+  };
+}
+
 function buildDefaultPaymentLedgerFile(): PaymentLedgerFile {
   return {
     entries: []
@@ -2057,6 +2139,60 @@ function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
   return value === "question" || value === "reply" || value === "output" ? value : "dispatch";
 }
 
+function sanitizeJobMessageBody(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("message body is required.");
+  }
+  return trimmed.slice(0, 4000);
+}
+
+function sanitizeJobNote(value?: string) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 1200) : undefined;
+}
+
+function sanitizeJobStage(value: unknown): JobStageKind {
+  return value === "procurement" ||
+    value === "intake" ||
+    value === "quote" ||
+    value === "accepted" ||
+    value === "in_progress" ||
+    value === "draft" ||
+    value === "delivery" ||
+    value === "review" ||
+    value === "final" ||
+    value === "closed"
+    ? value
+    : "in_progress";
+}
+
+function sanitizeJobStageStatus(value: unknown): JobStageStatus {
+  return value === "pending" ||
+    value === "active" ||
+    value === "blocked" ||
+    value === "completed" ||
+    value === "accepted" ||
+    value === "revision_requested"
+    ? value
+    : "active";
+}
+
+function sanitizeJobAuthorRole(value: unknown, fallback: JobMessageAuthorRole): JobMessageAuthorRole {
+  return value === "buyer" || value === "seller" || value === "system" ? value : fallback;
+}
+
+function normalizeOptionalSha256(value?: string) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (!/^[a-f0-9]{64}$/.test(normalized)) {
+    throw new Error("artifactDigestSha256 must be a 64-character hex SHA-256 digest.");
+  }
+  return normalized;
+}
+
 function sanitizeOptionalBoardId(value: unknown, prefix: string): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -2419,6 +2555,7 @@ export class ClawzControlPlane {
   private readonly liveFlowStatusPath: string;
   private readonly sponsorQueuePath: string;
   private readonly hireRequestPath: string;
+  private readonly jobCollaborationPath: string;
   private readonly paymentLedgerPath: string;
   private readonly executionIntentPath: string;
   private readonly socialAnchorQueuePath: string;
@@ -2454,6 +2591,7 @@ export class ClawzControlPlane {
     this.liveFlowStatusPath = path.join(baseDir, "state", "live-session-turn-flow.json");
     this.sponsorQueuePath = path.join(baseDir, "state", "wallet-sponsor-queue.json");
     this.hireRequestPath = path.join(baseDir, "state", "hire-requests.json");
+    this.jobCollaborationPath = path.join(baseDir, "state", "job-collaboration.json");
     this.paymentLedgerPath = path.join(baseDir, "state", "payment-ledger.json");
     this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
@@ -2727,6 +2865,26 @@ export class ClawzControlPlane {
   private async saveHireRequestFile(file: HireRequestFile) {
     await this.ensureDirs();
     await writeJsonFile(this.hireRequestPath, file);
+  }
+
+  private async loadJobCollaborationFile(): Promise<JobCollaborationFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<JobCollaborationFile>(this.jobCollaborationPath);
+    if (file?.stages && file?.messages) {
+      return {
+        stages: file.stages.filter((stage) => stage.stageId && stage.requestId && stage.agentId && stage.sessionId),
+        messages: file.messages.filter((message) => message.messageId && message.requestId && message.agentId && message.sessionId)
+      };
+    }
+
+    const fallback = buildDefaultJobCollaborationFile();
+    await this.saveJobCollaborationFile(fallback);
+    return fallback;
+  }
+
+  private async saveJobCollaborationFile(file: JobCollaborationFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.jobCollaborationPath, file);
   }
 
   private async loadPaymentLedgerFile(): Promise<PaymentLedgerFile> {
@@ -8180,6 +8338,7 @@ export class ClawzControlPlane {
 
     const submittedAtIso = new Date().toISOString();
     const requestId = `hire_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const jobAccessToken = randomBytes(32).toString("base64url");
     if (hireRequests.requests.some((request) => request.requestId === requestId)) {
       throw new Error("Duplicate hire request id rejected.");
     }
@@ -8273,6 +8432,7 @@ export class ClawzControlPlane {
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
         : {}),
       requesterContact,
+      jobAccessTokenHashSha256: sha256Hex(jobAccessToken),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       deliveryTarget: publicDeliveryTarget,
@@ -8465,6 +8625,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
+      jobWorkspace: this.buildJobWorkspace({ requestId, token: jobAccessToken }),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(deliveryReceipt ? { deliveryReceipt } : {}),
       ingress: {
@@ -8778,6 +8939,125 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     this.assertAdminAccess(state, request.sessionId, adminKey);
     return request;
+  }
+
+  private async assertJobWorkspaceAccess(options: {
+    requestId: string;
+    token?: string;
+    adminKey?: string;
+  }): Promise<{ request: HireRequestRecord; role: "buyer" | "seller" }> {
+    const request = await this.getHireRequest(options.requestId);
+    if (options.adminKey) {
+      const state = await this.loadState();
+      this.assertAdminAccess(state, request.sessionId, options.adminKey);
+      return { request, role: "seller" };
+    }
+    if (options.token?.trim() && request.jobAccessTokenHashSha256 && sha256Hex(options.token.trim()) === request.jobAccessTokenHashSha256) {
+      return { request, role: "buyer" };
+    }
+    throw new Error("Job workspace access rejected.");
+  }
+
+  private buildJobWorkspace(input: JobWorkspaceInput) {
+    const tokenQuery = `token=${encodeURIComponent(input.token)}`;
+    const base = `/api/executions/${encodeURIComponent(input.requestId)}`;
+    return {
+      token: input.token,
+      messagesPath: `${base}/messages?${tokenQuery}`,
+      stagesPath: `${base}/stages?${tokenQuery}`,
+      collaborationPath: `${base}/collaboration?${tokenQuery}`
+    };
+  }
+
+  private buildJobCollaborationState(file: JobCollaborationFile, request: HireRequestRecord) {
+    const stages = file.stages
+      .filter((stage) => stage.requestId === request.requestId)
+      .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso));
+    const messages = file.messages
+      .filter((message) => message.requestId === request.requestId)
+      .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso));
+    return {
+      requestId: request.requestId,
+      agentId: request.agentId,
+      sessionId: request.sessionId,
+      currentStage: stages.at(-1) ?? null,
+      stages,
+      messages
+    };
+  }
+
+  async getJobCollaboration(options: { requestId: string; token?: string; adminKey?: string }) {
+    const { request } = await this.assertJobWorkspaceAccess(options);
+    return this.buildJobCollaborationState(await this.loadJobCollaborationFile(), request);
+  }
+
+  async postJobMessage(options: JobMessagePostOptions) {
+    const access = await this.assertJobWorkspaceAccess(options);
+    const authorRole = sanitizeJobAuthorRole(options.authorRole, access.role);
+    if (access.role === "buyer" && authorRole !== "buyer") {
+      throw new Error("Buyer job token can only post buyer messages.");
+    }
+    const createdAtIso = new Date().toISOString();
+    const body = sanitizeJobMessageBody(options.body);
+    const artifactDigestSha256 = normalizeOptionalSha256(options.artifactDigestSha256);
+    const message: JobMessageRecord = {
+      messageId: `jobmsg_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      requestId: access.request.requestId,
+      agentId: access.request.agentId,
+      sessionId: access.request.sessionId,
+      authorRole,
+      body,
+      createdAtIso,
+      messageDigestSha256: sha256Hex(JSON.stringify({
+        requestId: access.request.requestId,
+        authorRole,
+        body,
+        createdAtIso
+      })),
+      ...(options.stage ? { stage: sanitizeJobStage(options.stage) } : {}),
+      ...(artifactDigestSha256 ? { artifactDigestSha256 } : {})
+    };
+    const file = await this.loadJobCollaborationFile();
+    const nextFile = {
+      stages: file.stages,
+      messages: [message, ...file.messages].slice(0, 2000)
+    };
+    await this.saveJobCollaborationFile(nextFile);
+    return this.buildJobCollaborationState(nextFile, access.request);
+  }
+
+  async postJobStage(options: JobStagePostOptions) {
+    const access = await this.assertJobWorkspaceAccess(options);
+    const authorRole = sanitizeJobAuthorRole(options.authorRole, access.role);
+    if (access.role === "buyer" && authorRole !== "buyer") {
+      throw new Error("Buyer job token can only post buyer stage updates.");
+    }
+    const nowIso = new Date().toISOString();
+    const stage = sanitizeJobStage(options.stage);
+    const status = sanitizeJobStageStatus(options.status);
+    const note = sanitizeJobNote(options.note);
+    const artifactDigestSha256 = normalizeOptionalSha256(options.artifactDigestSha256);
+    const record: JobStageRecord = {
+      stageId: `jobstage_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      requestId: access.request.requestId,
+      agentId: access.request.agentId,
+      sessionId: access.request.sessionId,
+      stage,
+      status,
+      label: (options.label?.trim() || `${stage.replace(/_/g, " ")}: ${status.replace(/_/g, " ")}`).slice(0, 160),
+      ...(note ? { note } : {}),
+      ...(artifactDigestSha256 ? { artifactDigestSha256 } : {}),
+      createdAtIso: nowIso,
+      updatedAtIso: nowIso,
+      authorRole
+    };
+    const file = await this.loadJobCollaborationFile();
+    const nextFile = {
+      stages: [...file.stages, record].slice(-2000),
+      messages: file.messages
+    };
+    await this.saveJobCollaborationFile(nextFile);
+    return this.buildJobCollaborationState(nextFile, access.request);
   }
 
   private buildExecutionLifecycleSummary(input: {

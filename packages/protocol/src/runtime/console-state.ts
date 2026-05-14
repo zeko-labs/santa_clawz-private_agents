@@ -643,6 +643,12 @@ export interface HireRequestReceipt {
     publicArtifactMetadata?: boolean;
     note?: string;
   };
+  jobWorkspace?: {
+    token: string;
+    messagesPath: string;
+    stagesPath: string;
+    collaborationPath: string;
+  };
   artifactDelivery?: {
     mode: "platform_scanned" | "buyer_encrypted" | "direct_receipt" | "external_reference" | "agent_inbox" | "streaming";
     scanPolicy?: "platform_required" | "buyer_required" | "external_unverified" | "external_verified" | "none";

@@ -137,6 +137,13 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (
+    (method === "GET" && /^\/api\/executions\/[^/]+\/collaboration$/.test(pathname)) ||
+    (method === "POST" && /^\/api\/executions\/[^/]+\/(messages|stages)$/.test(pathname))
+  ) {
+    return true;
+  }
+
   if (config.publicProofSurface !== "disabled" && method === "GET" && pathname.startsWith("/.well-known/")) {
     return true;
   }
@@ -190,6 +197,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         (/^\/api\/agents\/[^/]+\/quotes\/[^/]+\/accept$/.test(pathname)) ||
         (/^\/api\/executions\/[^/]+\/artifacts$/.test(pathname)) ||
         (/^\/api\/executions\/[^/]+\/artifact-receipts$/.test(pathname)) ||
+        (/^\/api\/executions\/[^/]+\/(messages|stages)$/.test(pathname)) ||
         (/^\/api\/artifact-receipts\/[^/]+\/acknowledge$/.test(pathname)) ||
         (/^\/api\/agents\/[^/]+\/heartbeat$/.test(pathname)) ||
         pathname === "/api/social/anchors/settle" ||

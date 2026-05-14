@@ -2227,6 +2227,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.completionClassification, "demo_completion");
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.marketplaceCompletionCredit, false);
     assert.equal(ingress.receivedHireRequestIds.has(freeTestAccepted.payload.requestId), true);
+    assert.match(freeTestAccepted.payload.jobWorkspace.token, /^[A-Za-z0-9_-]+$/);
+    assert.match(freeTestAccepted.payload.jobWorkspace.messagesPath, /\/api\/executions\/hire_[a-f0-9]+\/messages\?token=/);
+    assert.match(freeTestAccepted.payload.jobWorkspace.stagesPath, /\/api\/executions\/hire_[a-f0-9]+\/stages\?token=/);
     assert.deepEqual(freeTestAccepted.payload.artifactDelivery, {
       mode: "buyer_encrypted",
       encryptionScheme: "age",
@@ -2256,6 +2259,55 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(registryAfterPrivateJob.status, 200);
     const registryPrivateJobAgent = registryAfterPrivateJob.payload.find((agent) => agent.agentId === agentId);
     assert.equal(registryPrivateJobAgent.jobActivityStats.privateJobCount >= 1, true);
+
+    const sellerStage = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.stagesPath}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        authorRole: "seller",
+        stage: "in_progress",
+        status: "active",
+        label: "Seller started work",
+        note: "Runtime accepted the job."
+      })
+    });
+    assert.equal(sellerStage.status, 200);
+    assert.equal(sellerStage.payload.collaboration.currentStage.stage, "in_progress");
+    assert.equal(sellerStage.payload.collaboration.currentStage.authorRole, "seller");
+
+    const buyerMessage = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.messagesPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        authorRole: "buyer",
+        body: "Please keep the answer concise.",
+        stage: "in_progress"
+      })
+    });
+    assert.equal(buyerMessage.status, 200);
+    assert.equal(buyerMessage.payload.collaboration.messages.at(-1).authorRole, "buyer");
+    assert.equal(buyerMessage.payload.collaboration.messages.at(-1).body, "Please keep the answer concise.");
+
+    const buyerSpoofSeller = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.messagesPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        authorRole: "seller",
+        body: "spoof"
+      })
+    });
+    assert.equal(buyerSpoofSeller.status, 403);
+
+    const collaborationState = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.collaborationPath}`, {
+      method: "GET"
+    });
+    assert.equal(collaborationState.status, 200);
+    assert.equal(collaborationState.payload.collaboration.requestId, freeTestAccepted.payload.requestId);
+    assert.equal(collaborationState.payload.collaboration.messages.length, 1);
+    assert.equal(collaborationState.payload.collaboration.stages.length, 1);
 
     const artifactBody = Buffer.from("Ask again after one brave sip of coffee.\n", "utf8");
     const artifactUpload = await requestJson(

@@ -245,6 +245,20 @@ type ArtifactReceiptAcknowledgementBody = {
   accepted?: unknown;
   note?: unknown;
 };
+type JobMessageBody = {
+  authorRole?: unknown;
+  body?: unknown;
+  stage?: unknown;
+  artifactDigestSha256?: unknown;
+};
+type JobStageBody = {
+  authorRole?: unknown;
+  stage?: unknown;
+  status?: unknown;
+  label?: unknown;
+  note?: unknown;
+  artifactDigestSha256?: unknown;
+};
 type QuoteAcceptRequestBody = {
   buyerAgentId?: unknown;
   buyerWallet?: unknown;
@@ -956,6 +970,30 @@ function parseArtifactReceiptAcknowledgementBody(body: unknown): ArtifactReceipt
     ? {
         accepted: body.accepted,
         note: body.note
+      }
+    : {};
+}
+
+function parseJobMessageBody(body: unknown): JobMessageBody {
+  return isRecord(body)
+    ? {
+        authorRole: body.authorRole,
+        body: body.body,
+        stage: body.stage,
+        artifactDigestSha256: body.artifactDigestSha256
+      }
+    : {};
+}
+
+function parseJobStageBody(body: unknown): JobStageBody {
+  return isRecord(body)
+    ? {
+        authorRole: body.authorRole,
+        stage: body.stage,
+        status: body.status,
+        label: body.label,
+        note: body.note,
+        artifactDigestSha256: body.artifactDigestSha256
       }
     : {};
 }
@@ -1708,6 +1746,84 @@ app.get("/api/executions/:requestId", route(async (request, response) => {
   } catch (error) {
     response.status(404).json({
       error: error instanceof Error ? error.message : "Unable to get execution request."
+    });
+  }
+}));
+
+app.get("/api/executions/:requestId/collaboration", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    response.json({
+      ok: true,
+      collaboration: await controlPlane.getJobCollaboration({
+        requestId,
+        ...(tokenQuery(request) ? { token: tokenQuery(request)! } : {}),
+        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
+      })
+    });
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load job collaboration."
+    });
+  }
+}));
+
+app.post("/api/executions/:requestId/messages", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    const body = parseJobMessageBody(request.body ?? null);
+    response.json({
+      ok: true,
+      collaboration: await controlPlane.postJobMessage({
+        requestId,
+        ...(tokenQuery(request) ? { token: tokenQuery(request)! } : {}),
+        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+        ...(typeof body.authorRole === "string" ? { authorRole: body.authorRole as never } : {}),
+        body: typeof body.body === "string" ? body.body : "",
+        ...(typeof body.stage === "string" ? { stage: body.stage as never } : {}),
+        ...(typeof body.artifactDigestSha256 === "string" ? { artifactDigestSha256: body.artifactDigestSha256 } : {})
+      })
+    });
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to post job message."
+    });
+  }
+}));
+
+app.post("/api/executions/:requestId/stages", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    const body = parseJobStageBody(request.body ?? null);
+    response.json({
+      ok: true,
+      collaboration: await controlPlane.postJobStage({
+        requestId,
+        ...(tokenQuery(request) ? { token: tokenQuery(request)! } : {}),
+        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+        ...(typeof body.authorRole === "string" ? { authorRole: body.authorRole as never } : {}),
+        stage: typeof body.stage === "string" ? body.stage as never : "in_progress",
+        status: typeof body.status === "string" ? body.status as never : "active",
+        ...(typeof body.label === "string" ? { label: body.label } : {}),
+        ...(typeof body.note === "string" ? { note: body.note } : {}),
+        ...(typeof body.artifactDigestSha256 === "string" ? { artifactDigestSha256: body.artifactDigestSha256 } : {})
+      })
+    });
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to post job stage."
     });
   }
 }));

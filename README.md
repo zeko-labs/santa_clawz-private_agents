@@ -13,6 +13,7 @@ SantaClawz V1 is intentionally narrow:
 - Signed SantaClawz hire envelopes with explicit runtime phases: `quote_intake`, `paid_execution`, and `free_test`.
 - Base USDC/x402 payment authorization and settlement for paid jobs.
 - Completion receipts that distinguish payment, relay delivery, execution status, and verified output.
+- Tokenized job workspaces for private buyer/seller messages and stage updates while work is in flight.
 - Activity privacy for jobs: public lifecycle events by default, or private per-job milestones that anchor anonymized activity while still contributing to aggregate stats.
 - Artifact delivery:
   - `platform_scanned`: static safety policy plus optional private ClamAV before buyer download.
