@@ -953,6 +953,106 @@ interface ExecutionIntentListOptions {
   limit?: number;
 }
 
+type ProcurementIntentStatus = "open" | "awarded" | "closed" | "cancelled";
+type ProcurementBidStatus = "submitted" | "accepted" | "rejected";
+
+interface ProcurementBidRecord {
+  bidId: string;
+  agentId: string;
+  sessionId: string;
+  amountUsd: string;
+  pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
+  summary: string;
+  estimatedDeliveryIso?: string;
+  deliveryModes: string[];
+  privacyModes: string[];
+  createdAtIso: string;
+  updatedAtIso: string;
+  status: ProcurementBidStatus;
+}
+
+interface ProcurementDeclineRecord {
+  agentId: string;
+  sessionId: string;
+  reason?: string;
+  createdAtIso: string;
+}
+
+interface ProcurementIntentRecord {
+  schemaVersion: "santaclawz-procurement-intent/1.0";
+  intentId: string;
+  status: ProcurementIntentStatus;
+  taskPrompt: string;
+  requesterContact: string;
+  budgetUsd?: string;
+  deadlineIso?: string;
+  bidWindowClosesAtIso?: string;
+  requiredCapabilities: string[];
+  preferredDeliveryModes: string[];
+  preferredPrivacyModes: string[];
+  jobPrivacy?: SantaClawzJobPrivacyPreference;
+  artifactDelivery?: SantaClawzArtifactDeliveryPreference;
+  createdAtIso: string;
+  updatedAtIso: string;
+  buyerTokenHashSha256: string;
+  bids: ProcurementBidRecord[];
+  declines: ProcurementDeclineRecord[];
+  selectedBidId?: string;
+  selectedAgentId?: string;
+  award?: {
+    awardedAtIso: string;
+    publicHireUrl: string;
+    hireApiPath: string;
+    suggestedHireBody: {
+      taskPrompt: string;
+      requesterContact: string;
+      jobPrivacy?: SantaClawzJobPrivacyPreference;
+      artifactDelivery?: SantaClawzArtifactDeliveryPreference;
+    };
+  };
+}
+
+interface ProcurementIntentFile {
+  intents: ProcurementIntentRecord[];
+}
+
+export interface CreateProcurementIntentOptions {
+  taskPrompt: string;
+  requesterContact: string;
+  budgetUsd?: string;
+  deadlineIso?: string;
+  bidWindowClosesAtIso?: string;
+  requiredCapabilities?: string[];
+  preferredDeliveryModes?: string[];
+  preferredPrivacyModes?: string[];
+  jobPrivacy?: SantaClawzJobPrivacyPreference;
+  artifactDelivery?: SantaClawzArtifactDeliveryPreference;
+}
+
+export interface SubmitProcurementBidOptions {
+  intentId: string;
+  agentId: string;
+  adminKey?: string;
+  amountUsd: string;
+  summary: string;
+  estimatedDeliveryIso?: string;
+  deliveryModes?: string[];
+  privacyModes?: string[];
+}
+
+export interface DeclineProcurementIntentOptions {
+  intentId: string;
+  agentId: string;
+  adminKey?: string;
+  reason?: string;
+}
+
+export interface AcceptProcurementBidOptions {
+  intentId: string;
+  bidId: string;
+  token?: string;
+}
+
 function isLiveFlowKind(value: string): value is LiveFlowKind {
   return value in LIVE_FLOW_METHODS;
 }
@@ -1601,6 +1701,12 @@ function buildDefaultPaymentLedgerFile(): PaymentLedgerFile {
 }
 
 function buildDefaultExecutionIntentFile(): ExecutionIntentFile {
+  return {
+    intents: []
+  };
+}
+
+function buildDefaultProcurementIntentFile(): ProcurementIntentFile {
   return {
     intents: []
   };
@@ -2572,6 +2678,7 @@ export class ClawzControlPlane {
   private readonly jobCollaborationPath: string;
   private readonly paymentLedgerPath: string;
   private readonly executionIntentPath: string;
+  private readonly procurementIntentPath: string;
   private readonly socialAnchorQueuePath: string;
   private readonly agentBoardPath: string;
   private readonly runtimeHeartbeatPath: string;
@@ -2608,6 +2715,7 @@ export class ClawzControlPlane {
     this.jobCollaborationPath = path.join(baseDir, "state", "job-collaboration.json");
     this.paymentLedgerPath = path.join(baseDir, "state", "payment-ledger.json");
     this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
+    this.procurementIntentPath = path.join(baseDir, "state", "procurement-intents.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
     this.agentBoardPath = path.join(baseDir, "state", "agent-message-board.json");
     this.runtimeHeartbeatPath = path.join(baseDir, "state", "agent-runtime-heartbeats.json");
@@ -2937,6 +3045,25 @@ export class ClawzControlPlane {
   private async saveExecutionIntentFile(file: ExecutionIntentFile) {
     await this.ensureDirs();
     await writeJsonFile(this.executionIntentPath, file);
+  }
+
+  private async loadProcurementIntentFile(): Promise<ProcurementIntentFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<ProcurementIntentFile>(this.procurementIntentPath);
+    if (file?.intents) {
+      return {
+        intents: file.intents.filter((intent) => intent.intentId && intent.taskPrompt && intent.requesterContact)
+      };
+    }
+
+    const fallback = buildDefaultProcurementIntentFile();
+    await this.saveProcurementIntentFile(fallback);
+    return fallback;
+  }
+
+  private async saveProcurementIntentFile(file: ProcurementIntentFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.procurementIntentPath, file);
   }
 
   private async loadSocialAnchorQueueFile(): Promise<SocialAnchorQueueFile> {
@@ -5124,6 +5251,7 @@ export class ClawzControlPlane {
     await this.loadHireRequestFile();
     await this.loadPaymentLedgerFile();
     await this.loadExecutionIntentFile();
+    await this.loadProcurementIntentFile();
     await this.loadAgentBoardFile();
     await this.loadRuntimeHeartbeatFile();
 
@@ -7683,6 +7811,226 @@ export class ClawzControlPlane {
         }
         return left.agentName.localeCompare(right.agentName);
       });
+  }
+
+  private publicProcurementIntent(intent: ProcurementIntentRecord) {
+    const { buyerTokenHashSha256: _buyerTokenHashSha256, ...publicIntent } = intent;
+    return publicIntent;
+  }
+
+  private assertProcurementBuyerAccess(intent: ProcurementIntentRecord, token?: string) {
+    if (!token?.trim() || sha256Hex(token.trim()) !== intent.buyerTokenHashSha256) {
+      throw new Error("Procurement buyer token was rejected.");
+    }
+  }
+
+  async createProcurementIntent(options: CreateProcurementIntentOptions) {
+    const taskPrompt = options.taskPrompt.trim().slice(0, 4000);
+    const requesterContact = options.requesterContact.trim().slice(0, 240);
+    if (!taskPrompt || !requesterContact) {
+      throw new Error("Procurement intent requires taskPrompt and requesterContact.");
+    }
+    const budgetUsd = options.budgetUsd?.trim();
+    if (budgetUsd) {
+      assertUsdAmount(budgetUsd, "Procurement budgetUsd");
+    }
+    const nowIso = new Date().toISOString();
+    const buyerToken = randomBytes(32).toString("base64url");
+    const intent: ProcurementIntentRecord = {
+      schemaVersion: "santaclawz-procurement-intent/1.0",
+      intentId: `proc_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
+      status: "open",
+      taskPrompt,
+      requesterContact,
+      ...(budgetUsd ? { budgetUsd } : {}),
+      ...(options.deadlineIso?.trim() ? { deadlineIso: options.deadlineIso.trim().slice(0, 40) } : {}),
+      ...(options.bidWindowClosesAtIso?.trim() ? { bidWindowClosesAtIso: options.bidWindowClosesAtIso.trim().slice(0, 40) } : {}),
+      requiredCapabilities: (options.requiredCapabilities ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 20),
+      preferredDeliveryModes: (options.preferredDeliveryModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
+      preferredPrivacyModes: (options.preferredPrivacyModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
+      ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
+      ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
+      createdAtIso: nowIso,
+      updatedAtIso: nowIso,
+      buyerTokenHashSha256: sha256Hex(buyerToken),
+      bids: [],
+      declines: []
+    };
+    const file = await this.loadProcurementIntentFile();
+    await this.saveProcurementIntentFile({ intents: [intent, ...file.intents].slice(0, 1000) });
+    return {
+      ok: true,
+      intent: this.publicProcurementIntent(intent),
+      buyerToken,
+      buyerTokenUsage: "Use this token to accept a bid or close the procurement intent."
+    };
+  }
+
+  async listProcurementIntents(options: { status?: ProcurementIntentStatus; limit?: number } = {}) {
+    const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+      ? Math.max(1, Math.min(Math.floor(options.limit), 200))
+      : 100;
+    const file = await this.loadProcurementIntentFile();
+    const intents = file.intents
+      .filter((intent) => !options.status || intent.status === options.status)
+      .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
+      .slice(0, limit)
+      .map((intent) => this.publicProcurementIntent(intent));
+    return {
+      schemaVersion: "santaclawz-procurement-intents/1.0",
+      generatedAtIso: new Date().toISOString(),
+      totalIntentCount: file.intents.length,
+      intents
+    };
+  }
+
+  async getProcurementIntent(intentId: string) {
+    const trimmed = intentId.trim();
+    const intent = (await this.loadProcurementIntentFile()).intents.find((candidate) => candidate.intentId === trimmed);
+    if (!intent) {
+      throw new Error(`Unknown procurement intent: ${trimmed}`);
+    }
+    return {
+      ok: true,
+      intent: this.publicProcurementIntent(intent)
+    };
+  }
+
+  async submitProcurementBid(options: SubmitProcurementBidOptions) {
+    const file = await this.loadProcurementIntentFile();
+    const intent = file.intents.find((candidate) => candidate.intentId === options.intentId.trim());
+    if (!intent) {
+      throw new Error(`Unknown procurement intent: ${options.intentId}`);
+    }
+    if (intent.status !== "open") {
+      throw new Error(`Procurement intent ${intent.intentId} is not open.`);
+    }
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const profile = this.profileForSession(state, sessionId);
+    const amountUsd = options.amountUsd.trim();
+    assertUsdAmount(amountUsd, "Procurement bid amountUsd");
+    const nowIso = new Date().toISOString();
+    const existingBid = intent.bids.find((bid) => bid.agentId === options.agentId && bid.status === "submitted");
+    const bid: ProcurementBidRecord = {
+      bidId: existingBid?.bidId ?? `bid_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
+      agentId: options.agentId,
+      sessionId,
+      amountUsd,
+      pricingMode: profile.paymentProfile.pricingMode,
+      summary: options.summary.trim().slice(0, 1200),
+      ...(options.estimatedDeliveryIso?.trim() ? { estimatedDeliveryIso: options.estimatedDeliveryIso.trim().slice(0, 40) } : {}),
+      deliveryModes: (options.deliveryModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
+      privacyModes: (options.privacyModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
+      createdAtIso: existingBid?.createdAtIso ?? nowIso,
+      updatedAtIso: nowIso,
+      status: "submitted"
+    };
+    const nextIntent: ProcurementIntentRecord = {
+      ...intent,
+      updatedAtIso: nowIso,
+      bids: existingBid
+        ? intent.bids.map((candidate) => candidate.bidId === existingBid.bidId ? bid : candidate)
+        : [bid, ...intent.bids].slice(0, 200),
+      declines: intent.declines.filter((decline) => decline.agentId !== options.agentId)
+    };
+    await this.saveProcurementIntentFile({
+      intents: file.intents.map((candidate) => candidate.intentId === intent.intentId ? nextIntent : candidate)
+    });
+    return {
+      ok: true,
+      intent: this.publicProcurementIntent(nextIntent),
+      bid
+    };
+  }
+
+  async declineProcurementIntent(options: DeclineProcurementIntentOptions) {
+    const file = await this.loadProcurementIntentFile();
+    const intent = file.intents.find((candidate) => candidate.intentId === options.intentId.trim());
+    if (!intent) {
+      throw new Error(`Unknown procurement intent: ${options.intentId}`);
+    }
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
+    this.assertAdminAccess(state, sessionId, options.adminKey);
+    const nowIso = new Date().toISOString();
+    const decline: ProcurementDeclineRecord = {
+      agentId: options.agentId,
+      sessionId,
+      ...(options.reason?.trim() ? { reason: options.reason.trim().slice(0, 400) } : {}),
+      createdAtIso: nowIso
+    };
+    const nextIntent: ProcurementIntentRecord = {
+      ...intent,
+      updatedAtIso: nowIso,
+      declines: [decline, ...intent.declines.filter((item) => item.agentId !== options.agentId)].slice(0, 200)
+    };
+    await this.saveProcurementIntentFile({
+      intents: file.intents.map((candidate) => candidate.intentId === intent.intentId ? nextIntent : candidate)
+    });
+    return {
+      ok: true,
+      intent: this.publicProcurementIntent(nextIntent),
+      decline
+    };
+  }
+
+  async acceptProcurementBid(options: AcceptProcurementBidOptions) {
+    const file = await this.loadProcurementIntentFile();
+    const intent = file.intents.find((candidate) => candidate.intentId === options.intentId.trim());
+    if (!intent) {
+      throw new Error(`Unknown procurement intent: ${options.intentId}`);
+    }
+    this.assertProcurementBuyerAccess(intent, options.token);
+    if (intent.status !== "open") {
+      throw new Error(`Procurement intent ${intent.intentId} is not open.`);
+    }
+    const selectedBid = intent.bids.find((bid) => bid.bidId === options.bidId.trim() && bid.status === "submitted");
+    if (!selectedBid) {
+      throw new Error(`Unknown active procurement bid: ${options.bidId}`);
+    }
+    const nowIso = new Date().toISOString();
+    const hireApiPath = `/api/agents/${encodeURIComponent(selectedBid.agentId)}/hire`;
+    const nextIntent: ProcurementIntentRecord = {
+      ...intent,
+      status: "awarded",
+      updatedAtIso: nowIso,
+      selectedBidId: selectedBid.bidId,
+      selectedAgentId: selectedBid.agentId,
+      bids: intent.bids.map((bid) => ({
+        ...bid,
+        status: bid.bidId === selectedBid.bidId ? "accepted" : "rejected",
+        updatedAtIso: nowIso
+      })),
+      award: {
+        awardedAtIso: nowIso,
+        publicHireUrl: publicAgentHireUrlFor(selectedBid.agentId),
+        hireApiPath,
+        suggestedHireBody: {
+          taskPrompt: intent.taskPrompt,
+          requesterContact: intent.requesterContact,
+          ...(intent.jobPrivacy ? { jobPrivacy: intent.jobPrivacy } : {}),
+          ...(intent.artifactDelivery ? { artifactDelivery: intent.artifactDelivery } : {})
+        }
+      }
+    };
+    await this.saveProcurementIntentFile({
+      intents: file.intents.map((candidate) => candidate.intentId === intent.intentId ? nextIntent : candidate)
+    });
+    const award = nextIntent.award!;
+    return {
+      ok: true,
+      intent: this.publicProcurementIntent(nextIntent),
+      selectedBid,
+      nextAction: {
+        type: "submit_hire_request",
+        agentId: selectedBid.agentId,
+        hireApiPath,
+        publicHireUrl: publicAgentHireUrlFor(selectedBid.agentId),
+        body: award.suggestedHireBody
+      }
+    };
   }
 
   async listEvents(options: EventListOptions = {}): Promise<ClawzEvent[]> {

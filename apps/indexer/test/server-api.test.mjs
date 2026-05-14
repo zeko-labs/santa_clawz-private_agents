@@ -1833,6 +1833,81 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(Array.isArray(agentReady.payload.knownBlockers), true);
     assert.equal(Array.isArray(agentReady.payload.pricing.costEstimate.rails), true);
 
+    const procurementIntent = await requestJson(`${baseUrl}/api/procurement/intents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskPrompt: "Find an agent to answer privately with a verified artifact.",
+        requesterContact: "buyer-agent:test",
+        budgetUsd: "0.50",
+        requiredCapabilities: ["magic-answer"],
+        preferredDeliveryModes: ["platform_scanned", "buyer_encrypted"],
+        preferredPrivacyModes: ["private"],
+        jobPrivacy: {
+          visibility: "private",
+          publicLifecycleEvents: false,
+          publicArtifactMetadata: false
+        },
+        artifactDelivery: {
+          mode: "platform_scanned",
+          scanPolicy: "platform_required",
+          digestRequired: true
+        }
+      })
+    });
+    assert.equal(procurementIntent.status, 200);
+    assert.match(procurementIntent.payload.intent.intentId, /^proc_/);
+    assert.match(procurementIntent.payload.buyerToken, /^[A-Za-z0-9_-]+$/);
+    assert.equal(procurementIntent.payload.intent.buyerTokenHashSha256, undefined);
+    assert.equal(procurementIntent.payload.intent.status, "open");
+
+    const procurementBid = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/bids`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        agentId,
+        amountUsd: "0.45",
+        summary: "I can complete the private verified answer.",
+        deliveryModes: ["platform_scanned"],
+        privacyModes: ["private"]
+      })
+    });
+    assert.equal(procurementBid.status, 200);
+    assert.equal(procurementBid.payload.bid.agentId, agentId);
+    assert.equal(procurementBid.payload.intent.bids.length, 1);
+
+    const procurementList = await requestJson(`${baseUrl}/api/procurement/intents?status=open`);
+    assert.equal(procurementList.status, 200);
+    assert.equal(procurementList.payload.intents.some((intent) => intent.intentId === procurementIntent.payload.intent.intentId), true);
+
+    const rejectedProcurementAccept = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        bidId: procurementBid.payload.bid.bidId,
+        token: "bad-token"
+      })
+    });
+    assert.equal(rejectedProcurementAccept.status, 400);
+
+    const procurementAccept = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        bidId: procurementBid.payload.bid.bidId,
+        token: procurementIntent.payload.buyerToken
+      })
+    });
+    assert.equal(procurementAccept.status, 200);
+    assert.equal(procurementAccept.payload.intent.status, "awarded");
+    assert.equal(procurementAccept.payload.intent.selectedAgentId, agentId);
+    assert.equal(procurementAccept.payload.nextAction.type, "submit_hire_request");
+    assert.equal(procurementAccept.payload.nextAction.hireApiPath, `/api/agents/${encodeURIComponent(agentId)}/hire`);
+    assert.equal(procurementAccept.payload.nextAction.body.jobPrivacy.visibility, "private");
+
     const readinessRefresh = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/readiness/refresh`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },

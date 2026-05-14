@@ -33,6 +33,7 @@ import {
   DuplicatePublicClawzUrlError,
   SelfServeSocialAnchoringDisabledError,
   type CreateExecutionIntentOptions,
+  type CreateProcurementIntentOptions,
   type ExecutionIntentTransitionOptions
 } from "./control-plane.js";
 import { ArtifactSafetyError, ArtifactScanUnavailableError, ArtifactStore } from "./artifact-store.js";
@@ -286,6 +287,34 @@ type PrivacyExceptionApprovalBody = {
   note?: unknown;
   sessionId?: unknown;
 };
+type ProcurementIntentBody = {
+  taskPrompt?: unknown;
+  requesterContact?: unknown;
+  budgetUsd?: unknown;
+  deadlineIso?: unknown;
+  bidWindowClosesAtIso?: unknown;
+  requiredCapabilities?: unknown;
+  preferredDeliveryModes?: unknown;
+  preferredPrivacyModes?: unknown;
+  jobPrivacy?: unknown;
+  artifactDelivery?: unknown;
+};
+type ProcurementBidBody = {
+  agentId?: unknown;
+  amountUsd?: unknown;
+  summary?: unknown;
+  estimatedDeliveryIso?: unknown;
+  deliveryModes?: unknown;
+  privacyModes?: unknown;
+};
+type ProcurementDeclineBody = {
+  agentId?: unknown;
+  reason?: unknown;
+};
+type ProcurementAcceptBody = {
+  bidId?: unknown;
+  token?: unknown;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -318,6 +347,14 @@ function tokenQuery(request: IndexerRequest) {
 function queryFlag(request: IndexerRequest, key: string) {
   const value = queryString(request.query, key);
   return value === "1" || value === "true" || value === "yes";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : typeof value === "string"
+      ? value.split(",").map((item) => item.trim()).filter(Boolean)
+      : [];
 }
 
 function requestBaseUrl(request: IndexerRequest) {
@@ -946,6 +983,24 @@ function parseHireRequest(body: unknown): HireRequestBody {
         paymentPayload: body.paymentPayload
       }
     : {};
+}
+
+function parseProcurementIntentBody(body: unknown): CreateProcurementIntentOptions {
+  const value = isRecord(body) ? body as ProcurementIntentBody : {};
+  return {
+    taskPrompt: typeof value.taskPrompt === "string" ? value.taskPrompt : "",
+    requesterContact: typeof value.requesterContact === "string" ? value.requesterContact : "",
+    ...(typeof value.budgetUsd === "string" ? { budgetUsd: value.budgetUsd } : {}),
+    ...(typeof value.deadlineIso === "string" ? { deadlineIso: value.deadlineIso } : {}),
+    ...(typeof value.bidWindowClosesAtIso === "string" ? { bidWindowClosesAtIso: value.bidWindowClosesAtIso } : {}),
+    requiredCapabilities: stringArray(value.requiredCapabilities),
+    preferredDeliveryModes: stringArray(value.preferredDeliveryModes),
+    preferredPrivacyModes: stringArray(value.preferredPrivacyModes),
+    ...(parseJobPrivacyPreference(value.jobPrivacy) ? { jobPrivacy: parseJobPrivacyPreference(value.jobPrivacy)! } : {}),
+    ...(parseArtifactDeliveryPreference(value.artifactDelivery)
+      ? { artifactDelivery: parseArtifactDeliveryPreference(value.artifactDelivery)! }
+      : {})
+  };
 }
 
 function parseArtifactReceiptBody(body: unknown): ArtifactReceiptBody {
@@ -2257,6 +2312,112 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
   } catch (error) {
     response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load execution state."
+    });
+  }
+}));
+
+app.get("/api/procurement/intents", route(async (request, response) => {
+  try {
+    const status = queryString(request.query, "status");
+    const limit = queryString(request.query, "limit");
+    response.json(await controlPlane.listProcurementIntents({
+      ...(status === "open" || status === "awarded" || status === "closed" || status === "cancelled" ? { status } : {}),
+      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to list procurement intents."
+    });
+  }
+}));
+
+app.post("/api/procurement/intents", route(async (request, response) => {
+  try {
+    response.json(await controlPlane.createProcurementIntent(parseProcurementIntentBody(request.body ?? null)));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create procurement intent."
+    });
+  }
+}));
+
+app.get("/api/procurement/intents/:intentId", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(await controlPlane.getProcurementIntent(intentId));
+  } catch (error) {
+    response.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to load procurement intent."
+    });
+  }
+}));
+
+app.post("/api/procurement/intents/:intentId/bids", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    const body = (isRecord(request.body) ? request.body : {}) as ProcurementBidBody;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(await controlPlane.submitProcurementBid({
+      intentId,
+      agentId: typeof body.agentId === "string" ? body.agentId : "",
+      amountUsd: typeof body.amountUsd === "string" ? body.amountUsd : "",
+      summary: typeof body.summary === "string" ? body.summary : "",
+      ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      ...(typeof body.estimatedDeliveryIso === "string" ? { estimatedDeliveryIso: body.estimatedDeliveryIso } : {}),
+      deliveryModes: stringArray(body.deliveryModes),
+      privacyModes: stringArray(body.privacyModes)
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to submit procurement bid."
+    });
+  }
+}));
+
+app.post("/api/procurement/intents/:intentId/decline", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    const body = (isRecord(request.body) ? request.body : {}) as ProcurementDeclineBody;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(await controlPlane.declineProcurementIntent({
+      intentId,
+      agentId: typeof body.agentId === "string" ? body.agentId : "",
+      ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      ...(typeof body.reason === "string" ? { reason: body.reason } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to decline procurement intent."
+    });
+  }
+}));
+
+app.post("/api/procurement/intents/:intentId/accept", route(async (request, response) => {
+  try {
+    const intentId = request.params.intentId;
+    const body = (isRecord(request.body) ? request.body : {}) as ProcurementAcceptBody;
+    if (!intentId) {
+      response.status(400).json({ error: "intentId is required." });
+      return;
+    }
+    response.json(await controlPlane.acceptProcurementBid({
+      intentId,
+      bidId: typeof body.bidId === "string" ? body.bidId : "",
+      ...(typeof body.token === "string" ? { token: body.token } : tokenQuery(request) ? { token: tokenQuery(request)! } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to accept procurement bid."
     });
   }
 }));

@@ -139,6 +139,60 @@ export interface ClawzExecutionStateResponse extends Record<string, unknown> {
   currentPhase: string;
 }
 
+export interface ClawzProcurementIntentInput {
+  taskPrompt: string;
+  requesterContact: string;
+  budgetUsd?: string;
+  deadlineIso?: string;
+  bidWindowClosesAtIso?: string;
+  requiredCapabilities?: string[];
+  preferredDeliveryModes?: string[];
+  preferredPrivacyModes?: string[];
+  jobPrivacy?: Record<string, unknown>;
+  artifactDelivery?: Record<string, unknown>;
+}
+
+export interface ClawzProcurementBidInput {
+  intentId: string;
+  agentId: string;
+  amountUsd: string;
+  summary: string;
+  estimatedDeliveryIso?: string;
+  deliveryModes?: string[];
+  privacyModes?: string[];
+}
+
+export interface ClawzProcurementAcceptInput {
+  intentId: string;
+  bidId: string;
+  token: string;
+}
+
+export interface ClawzProcurementIntentResponse extends Record<string, unknown> {
+  ok: true;
+  intent: Record<string, unknown> & { intentId: string; status: string };
+  buyerToken: string;
+}
+
+export interface ClawzProcurementBidResponse extends Record<string, unknown> {
+  ok: true;
+  intent: Record<string, unknown> & { intentId: string; status: string };
+  bid: Record<string, unknown> & { bidId: string; agentId: string };
+}
+
+export interface ClawzProcurementAcceptResponse extends Record<string, unknown> {
+  ok: true;
+  intent: Record<string, unknown> & { intentId: string; status: string; selectedAgentId?: string };
+  selectedBid: Record<string, unknown> & { bidId: string; agentId: string };
+  nextAction: {
+    type: "submit_hire_request";
+    agentId: string;
+    hireApiPath: string;
+    publicHireUrl: string;
+    body: Record<string, unknown>;
+  };
+}
+
 export interface ClawzHireRequestInput {
   agentId: string;
   taskPrompt: string;
@@ -538,6 +592,31 @@ export class ClawzAgentClient {
         ...(input.token?.trim() ? { token: input.token.trim() } : {})
       })
     );
+  }
+
+  async requestBids(input: ClawzProcurementIntentInput): Promise<ClawzProcurementIntentResponse> {
+    return this.postJson<ClawzProcurementIntentResponse>("/api/procurement/intents", input);
+  }
+
+  async submitBid(input: ClawzProcurementBidInput): Promise<ClawzProcurementBidResponse> {
+    if (!this.adminKey) {
+      throw new Error("submitBid requires an adminKey from the seller agent's private .env.santaclawz file.");
+    }
+    return this.postJson<ClawzProcurementBidResponse>(`/api/procurement/intents/${encodeURIComponent(input.intentId)}/bids`, {
+      agentId: input.agentId,
+      amountUsd: input.amountUsd,
+      summary: input.summary,
+      ...(input.estimatedDeliveryIso ? { estimatedDeliveryIso: input.estimatedDeliveryIso } : {}),
+      ...(input.deliveryModes ? { deliveryModes: input.deliveryModes } : {}),
+      ...(input.privacyModes ? { privacyModes: input.privacyModes } : {})
+    });
+  }
+
+  async acceptBid(input: ClawzProcurementAcceptInput): Promise<ClawzProcurementAcceptResponse> {
+    return this.postJson<ClawzProcurementAcceptResponse>(`/api/procurement/intents/${encodeURIComponent(input.intentId)}/accept`, {
+      bidId: input.bidId,
+      token: input.token
+    });
   }
 
   async createArtifactReceipt(input: ClawzArtifactReceiptCreateInput): Promise<ClawzArtifactReceiptCreateResponse> {
