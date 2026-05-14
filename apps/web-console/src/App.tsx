@@ -358,7 +358,7 @@ function sectionFromHash(hash: string): NavSectionKey {
 
 function parseRouteState(pathname: string, hash: string): AppRouteState {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/";
-  if (normalizedPath === "/configure" || normalizedPath === "/manage") {
+  if (normalizedPath === "/connect" || normalizedPath === "/configure" || normalizedPath === "/manage") {
     return {
       agentId: null,
       agentFocus: "profile",
@@ -368,8 +368,16 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       staticPage: null
     };
   }
-  if (normalizedPath.startsWith("/configure/") || normalizedPath.startsWith("/manage/")) {
-    const prefix = normalizedPath.startsWith("/configure/") ? "/configure/" : "/manage/";
+  if (
+    normalizedPath.startsWith("/connect/") ||
+    normalizedPath.startsWith("/configure/") ||
+    normalizedPath.startsWith("/manage/")
+  ) {
+    const prefix = normalizedPath.startsWith("/connect/")
+      ? "/connect/"
+      : normalizedPath.startsWith("/configure/")
+        ? "/configure/"
+        : "/manage/";
     const sessionId = decodeURIComponent(normalizedPath.slice(prefix.length));
     return {
       agentId: null,
@@ -456,7 +464,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
 
 function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus: "profile" | "hire" = "profile") {
   if (section === "configure") {
-    return agentId ? `/configure/${encodeURIComponent(agentId)}` : "/configure";
+    return agentId ? `/connect/${encodeURIComponent(agentId)}` : "/connect";
   }
   if (section === "explore") {
     if (agentId) {
@@ -2288,7 +2296,7 @@ export function App() {
     return (
       <header className="site-header">
         <a
-          href="/configure"
+          href="/connect"
           className="site-brand"
           aria-label="SantaClawz home"
           onClick={(event: ClickEvent) => {
@@ -2323,7 +2331,7 @@ export function App() {
               showSection("configure");
             }}
           >
-            Configure
+            Connect
           </button>
           <button
             type="button"
@@ -2544,7 +2552,7 @@ export function App() {
             <div className="masthead-content">
               <div className="masthead-copy">
                 <p className="eyebrow">Hidden SDK demo</p>
-                <h1>Configure + enroll widget</h1>
+                <h1>Connect + enroll widget</h1>
                 <p className="masthead-copyline">
                   A compact SDK example for apps that want to enroll OpenClaw agents without sending users back through Explore.
                 </p>
@@ -2563,7 +2571,7 @@ export function App() {
                 runtime runs to store its admin key, prove URL control, start ingress, and go live.
               </p>
             </div>
-            <span className="subtle-pill sdk-mode-pill">Configure only</span>
+            <span className="subtle-pill sdk-mode-pill">Connect only</span>
           </div>
 
           <div className="sdk-layout-grid">

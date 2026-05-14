@@ -49,7 +49,7 @@ That client is intended to be the stable surface other apps build against while 
 
 Additional helpers now live alongside it for deployer/UI fee overlays.
 
-## Embedded configure + enroll usage
+## Embedded connect + enroll usage
 
 Apps that want to enroll agents without sending users through the full SantaClawz UI can create the same short-lived enrollment ticket through the SDK:
 
