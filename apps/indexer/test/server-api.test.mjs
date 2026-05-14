@@ -2749,6 +2749,18 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(executionState.payload.lifecycle.artifactDeliveryStatus, "delivered");
     assert.equal(executionState.payload.lifecycle.buyerVerificationStatus, "verified");
     assert.equal(executionState.payload.lifecycle.buyerAcceptanceStatus, "accepted");
+    assert.deepEqual(executionState.payload.lifecycleChecks, {
+      paymentSettled: false,
+      relayDelivered: true,
+      agentStarted: true,
+      agentCompleted: true,
+      proofVerified: true,
+      artifactDelivered: true,
+      buyerVerified: true,
+      buyerAccepted: true,
+      failed: false,
+      terminal: true
+    });
     assert.equal(executionState.payload.privacy.jobVisibility, "private");
     assert.equal(executionState.payload.delivery.latestReceipt.deliveryState, "buyer_accepted");
     assert.equal(executionState.payload.workspace.stageCount, 3);

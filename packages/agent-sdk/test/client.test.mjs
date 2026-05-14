@@ -133,7 +133,8 @@ async function main() {
       buildClawzQuoteAcceptanceWalletProof,
       buildSantaClawzBuyerInboxEnvelope,
       buyerInboxEnvelopeDigestSha256,
-      validateClawzFeeCompatibility
+      validateClawzFeeCompatibility,
+      withClawzPlatformRetry
     } = await import(
       pathToFileURL(sdkEntry).href
     );
@@ -157,8 +158,35 @@ async function main() {
       assert.equal(error.failure.settlementStatus, "unknown");
       assert.equal(error.failure.relayDeliveryStatus, "not_confirmed");
       assert.equal(error.failure.agentExecutionStatus, "not_confirmed");
+      assert.equal(error.failure.requestMethod, "GET");
+      assert.match(error.failure.requestUrl, /\/api\/x402\/plan/);
       return true;
     });
+
+    let retryAttempts = 0;
+    const eventuallyHealthyClient = createClawzAgentClient({
+      baseUrl,
+      fetchImpl: async (url, init) => {
+        retryAttempts += 1;
+        if (retryAttempts < 3) {
+          return new Response("<html><body>Bad Gateway</body></html>", {
+            status: 502,
+            headers: {
+              "content-type": "text/html"
+            }
+          });
+        }
+        return fetch(url, init);
+      }
+    });
+    const retriedPlan = await withClawzPlatformRetry(() => eventuallyHealthyClient.getX402Plan(), {
+      attempts: 3,
+      initialDelayMs: 0,
+      maxDelayMs: 0,
+      jitterRatio: 0
+    });
+    assert.ok(Array.isArray(retriedPlan.rails));
+    assert.equal(retryAttempts, 3);
 
     const unavailableQuotePayments = createClawzQuotePaymentClient({
       baseUrl: "https://api.santaclawz.ai",

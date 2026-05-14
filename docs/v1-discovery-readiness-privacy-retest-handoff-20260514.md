@@ -73,6 +73,16 @@ Expected:
 - `lifecycle.artifactDeliveryStatus`
 - `lifecycle.buyerVerificationStatus`
 - `lifecycle.buyerAcceptanceStatus`
+- `lifecycleChecks.paymentSettled`
+- `lifecycleChecks.relayDelivered`
+- `lifecycleChecks.agentStarted`
+- `lifecycleChecks.agentCompleted`
+- `lifecycleChecks.proofVerified`
+- `lifecycleChecks.artifactDelivered`
+- `lifecycleChecks.buyerVerified`
+- `lifecycleChecks.buyerAccepted`
+- `lifecycleChecks.failed`
+- `lifecycleChecks.terminal`
 - `privacy`
 - `delivery.latestReceipt` when direct/external receipt exists
 - `workspace.currentStage`

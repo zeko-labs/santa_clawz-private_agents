@@ -137,6 +137,18 @@ export interface ClawzExecutionStateResponse extends Record<string, unknown> {
   ok: true;
   requestId: string;
   currentPhase: string;
+  lifecycleChecks?: {
+    paymentSettled: boolean;
+    relayDelivered: boolean;
+    agentStarted: boolean;
+    agentCompleted: boolean;
+    proofVerified: boolean;
+    artifactDelivered: boolean;
+    buyerVerified: boolean;
+    buyerAccepted: boolean;
+    failed: boolean;
+    terminal: boolean;
+  };
 }
 
 export interface ClawzProcurementIntentInput {
@@ -460,7 +472,9 @@ export class ClawzAgentClient {
       if (payload === undefined && isRetryablePlatformStatus(response.status)) {
         throwRetryablePlatformFailure({
           status: response.status,
-          responseText
+          responseText,
+          requestMethod: init?.method ?? "GET",
+          requestUrl: url
         });
       }
       const detail = extractErrorMessage(payload) ?? (responseText.trim() || null);

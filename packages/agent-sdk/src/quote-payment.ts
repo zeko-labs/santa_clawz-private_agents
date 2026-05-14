@@ -126,7 +126,9 @@ async function readJson<T>(
     if (payload === undefined && isRetryablePlatformStatus(response.status)) {
       throwRetryablePlatformFailure({
         status: response.status,
-        responseText
+        responseText,
+        requestMethod: init.method ?? "GET",
+        requestUrl: url
       });
     }
     const detail = extractErrorMessage(payload) ?? responseText;

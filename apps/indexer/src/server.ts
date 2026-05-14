@@ -2312,6 +2312,32 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         : operational?.paymentStatus === "authorized" || latestLedger?.paymentStatus === "authorization_verified"
           ? "authorized"
           : operational?.paymentStatus ?? "not_started";
+    const settlementStatus = operational?.settlementStatus ?? "not_attempted";
+    const relayDeliveryStatus = operational?.relayDeliveryStatus ?? "not_attempted";
+    const agentExecutionStatus = operational?.agentExecutionStatus ?? hireRequest.status;
+    const paymentSettled = paymentStatus === "settled";
+    const relayDelivered = relayDeliveryStatus === "forwarded" || relayDeliveryStatus === "recorded";
+    const agentStarted =
+      relayDelivered ||
+      agentExecutionStatus === "submitted" ||
+      agentExecutionStatus === "quoted" ||
+      agentExecutionStatus === "completed" ||
+      agentExecutionStatus === "failed" ||
+      agentExecutionStatus === "worker_completed_return_rejected";
+    const agentCompleted = agentExecutionStatus === "completed" || agentExecutionStatus === "worker_completed_return_rejected";
+    const hasFailure =
+      settlementStatus === "failed" ||
+      relayDeliveryStatus === "failed" ||
+      relayDeliveryStatus === "return_rejected" ||
+      agentExecutionStatus === "failed" ||
+      agentExecutionStatus === "worker_completed_return_rejected" ||
+      proofStatus === "return_rejected" ||
+      Boolean(hireRequest.deliveryError || hireRequest.returnValidationError || latestLedger?.errorMessage);
+    const knownBlockers = [
+      ...(hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
+      ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
+      ...(latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
+    ];
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -2341,13 +2367,25 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
                         : "created",
       lifecycle: {
         paymentStatus,
-        settlementStatus: operational?.settlementStatus ?? "not_attempted",
-        relayDeliveryStatus: operational?.relayDeliveryStatus ?? "not_attempted",
-        agentExecutionStatus: operational?.agentExecutionStatus ?? hireRequest.status,
+        settlementStatus,
+        relayDeliveryStatus,
+        agentExecutionStatus,
         proofStatus,
         artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
         buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
         buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending"
+      },
+      lifecycleChecks: {
+        paymentSettled,
+        relayDelivered,
+        agentStarted,
+        agentCompleted,
+        proofVerified: proofStatus === "return_validated" || proofStatus === "anchored_or_attested",
+        artifactDelivered,
+        buyerVerified,
+        buyerAccepted,
+        failed: hasFailure,
+        terminal: buyerAccepted || hasFailure
       },
       privacy: {
         jobVisibility: hireRequest.jobPrivacy?.visibility ?? "public",
@@ -2376,11 +2414,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         stages: collaboration.stages,
         messages: collaboration.messages
       },
-      knownBlockers: [
-        ...(hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
-        ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
-        ...(latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
-      ]
+      knownBlockers
     });
   } catch (error) {
     response.status(403).json({
