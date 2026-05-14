@@ -1045,6 +1045,30 @@ export class ArtifactStore {
     return this.publicReceipt(metadata);
   }
 
+  async receiptsForRequest(requestId: string) {
+    await this.ensureDirs();
+    const trimmed = requestId.trim();
+    if (!trimmed) {
+      return [];
+    }
+    const names = await readdir(this.receiptDir);
+    const receipts: ArtifactReceiptPublicMetadata[] = [];
+    for (const name of names) {
+      if (!name.endsWith(".json")) {
+        continue;
+      }
+      try {
+        const metadata = JSON.parse(await readFile(path.join(this.receiptDir, name), "utf8")) as ArtifactReceiptMetadata;
+        if (metadata.requestId === trimmed) {
+          receipts.push(this.publicReceipt(metadata));
+        }
+      } catch {
+        // Ignore malformed receipt files so one bad file cannot hide the rest.
+      }
+    }
+    return receipts.sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso));
+  }
+
   async acknowledgeReceipt(
     receiptId: string,
     token: string,

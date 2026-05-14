@@ -94,6 +94,51 @@ export interface ClawzAgentArchiveUpdate {
   archived?: boolean;
 }
 
+export interface ClawzAgentSearchQuery {
+  q?: string;
+  pricingMode?: string;
+  rail?: string;
+  deliveryMode?: string;
+  privacyMode?: string;
+  hireable?: boolean;
+  online?: boolean;
+  paymentsReady?: boolean;
+  quoteReady?: boolean;
+  paidExecutionReady?: boolean;
+  limit?: number;
+}
+
+export interface ClawzExecutionStateQuery {
+  requestId: string;
+  token?: string;
+}
+
+export interface ClawzAgentSearchResponse {
+  schemaVersion: "santaclawz-agent-directory-search/1.0";
+  ok: true;
+  generatedAtIso: string;
+  totalMatchingAgents: number;
+  agents: Array<Record<string, unknown> & { agentId: string }>;
+}
+
+export interface ClawzAgentReadinessResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-agent-readiness/1.0";
+  ok: true;
+  agentId: string;
+  online: boolean;
+  paymentsReady: boolean;
+  quoteReady: boolean;
+  paidExecutionReady: boolean;
+  scannerReady: boolean;
+}
+
+export interface ClawzExecutionStateResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-execution-state/1.0";
+  ok: true;
+  requestId: string;
+  currentPhase: string;
+}
+
 export interface ClawzHireRequestInput {
   agentId: string;
   taskPrompt: string;
@@ -454,6 +499,44 @@ export class ClawzAgentClient {
           ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {})
         })
       }
+    );
+  }
+
+  async discover(input: ClawzAgentSearchQuery = {}): Promise<ClawzAgentSearchResponse> {
+    return this.readJson<ClawzAgentSearchResponse>(
+      withQuery(this.baseUrl, "/api/agents/search", {
+        ...(input.q ? { q: input.q } : {}),
+        ...(input.pricingMode ? { pricingMode: input.pricingMode } : {}),
+        ...(input.rail ? { rail: input.rail } : {}),
+        ...(input.deliveryMode ? { deliveryMode: input.deliveryMode } : {}),
+        ...(input.privacyMode ? { privacyMode: input.privacyMode } : {}),
+        ...(typeof input.hireable === "boolean" ? { hireable: String(input.hireable) } : {}),
+        ...(typeof input.online === "boolean" ? { online: String(input.online) } : {}),
+        ...(typeof input.paymentsReady === "boolean" ? { paymentsReady: String(input.paymentsReady) } : {}),
+        ...(typeof input.quoteReady === "boolean" ? { quoteReady: String(input.quoteReady) } : {}),
+        ...(typeof input.paidExecutionReady === "boolean" ? { paidExecutionReady: String(input.paidExecutionReady) } : {}),
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      })
+    );
+  }
+
+  async getAgentReadiness(input: { agentId: string }): Promise<ClawzAgentReadinessResponse> {
+    const agentId = input.agentId.trim();
+    if (!agentId) {
+      throw new Error("getAgentReadiness requires agentId.");
+    }
+    return this.readJson<ClawzAgentReadinessResponse>(withQuery(this.baseUrl, `/api/agents/${encodeURIComponent(agentId)}/ready`));
+  }
+
+  async watchExecution(input: ClawzExecutionStateQuery): Promise<ClawzExecutionStateResponse> {
+    const requestId = input.requestId.trim();
+    if (!requestId) {
+      throw new Error("watchExecution requires requestId.");
+    }
+    return this.readJson<ClawzExecutionStateResponse>(
+      withQuery(this.baseUrl, `/api/executions/${encodeURIComponent(requestId)}/state`, {
+        ...(input.token?.trim() ? { token: input.token.trim() } : {})
+      })
     );
   }
 

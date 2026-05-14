@@ -1140,6 +1140,171 @@ async function buildX402PlanFromOptions(
   };
 }
 
+function commaSet(value: string | undefined) {
+  return new Set((value ?? "").split(",").map((item) => item.trim()).filter(Boolean));
+}
+
+function queryBoolean(query: unknown, key: string): boolean | undefined {
+  const value = queryString(query, key)?.toLowerCase();
+  if (value === "true" || value === "1" || value === "yes") {
+    return true;
+  }
+  if (value === "false" || value === "0" || value === "no") {
+    return false;
+  }
+  return undefined;
+}
+
+function supportedDeliveryLanes() {
+  return [
+    {
+      mode: "platform_scanned",
+      scanPolicy: "platform_required",
+      digestRequired: true,
+      buyerAcceptanceRequired: false,
+      platformContentVisibility: "plaintext_during_platform_scan"
+    },
+    {
+      mode: "buyer_encrypted",
+      scanPolicy: "buyer_required",
+      digestRequired: true,
+      buyerAcceptanceRequired: true,
+      platformContentVisibility: "ciphertext_only"
+    },
+    {
+      mode: "direct_receipt",
+      scanPolicy: "buyer_required",
+      digestRequired: true,
+      buyerAcceptanceRequired: true,
+      platformContentVisibility: "receipt_only_no_bytes"
+    },
+    {
+      mode: "external_reference",
+      scanPolicy: "external_unverified",
+      digestRequired: true,
+      buyerAcceptanceRequired: true,
+      platformContentVisibility: "receipt_only_no_bytes"
+    }
+  ];
+}
+
+function supportedPrivacyModes() {
+  return [
+    {
+      mode: "public",
+      lifecycleVisibility: "public_job_activity",
+      aggregateStats: true,
+      anonymousAnchoring: false
+    },
+    {
+      mode: "private",
+      lifecycleVisibility: "anonymized_activity_anchor",
+      aggregateStats: true,
+      anonymousAnchoring: true
+    },
+    {
+      mode: "buyer_encrypted",
+      lifecycleVisibility: "anonymized_activity_anchor",
+      aggregateStats: true,
+      platformContentVisibility: "ciphertext_only"
+    }
+  ];
+}
+
+function costEstimateFromPlan(plan: Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"]) {
+  return {
+    pricingMode: plan.pricingMode,
+    ...(plan.defaultRail ? { defaultRail: plan.defaultRail } : {}),
+    ...(plan.referencePriceUsd ? { referencePriceUsd: plan.referencePriceUsd } : {}),
+    ...(plan.referencePriceUnit ? { referencePriceUnit: plan.referencePriceUnit } : {}),
+    feePreviewByRail: (plan.feePreviewByRail ?? []).map((preview) => ({
+      rail: preview.rail,
+      grossAmountUsd: preview.grossAmountUsd,
+      sellerNetAmountUsd: preview.sellerNetAmountUsd,
+      protocolFeeAmountUsd: preview.protocolFeeAmountUsd,
+      protocolFeeRecipient: preview.protocolFeeRecipient,
+      feeBps: preview.feeBps,
+      ...(preview.networkFacilitationFeeAmountUsd
+        ? { networkFacilitationFeeAmountUsd: preview.networkFacilitationFeeAmountUsd }
+        : {})
+    })),
+    rails: plan.rails.map((rail) => ({
+      rail: rail.rail,
+      networkId: rail.networkId,
+      assetSymbol: rail.assetSymbol,
+      ...(rail.amountUsd ? { estimatedTotalCostUsd: rail.amountUsd } : {})
+    }))
+  };
+}
+
+async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number]) {
+  let plan: Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"] | undefined;
+  try {
+    plan = (await buildX402PlanFromOptions(baseUrl, { agentId: agent.agentId })).plan;
+  } catch {
+    plan = undefined;
+  }
+  const quoteReady = agent.paymentProfileReady && agent.pricingMode === "quote-required";
+  const paidExecutionReady =
+    agent.pricingMode === "free-test" ||
+    (agent.paymentProfileReady && agent.paidJobsEnabled && (agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required"));
+  return {
+    schemaVersion: "santaclawz-agent-directory-entry/1.0",
+    agentId: agent.agentId,
+    sessionId: agent.sessionId,
+    agentName: agent.agentName,
+    representedPrincipal: agent.representedPrincipal,
+    headline: agent.headline,
+    publicAgentUrl: agent.publicAgentUrl,
+    publicHireUrl: agent.publicHireUrl,
+    runtimeDeliveryMode: agent.runtimeDeliveryMode,
+    availability: agent.availability,
+    online: agent.runtimeStatus === "live" || agent.readiness?.relayConnected === true || agent.readiness?.heartbeatLive === true,
+    published: agent.published,
+    hireable: agent.readiness?.hireable === true,
+    paymentsReady: agent.paymentProfileReady,
+    quoteReady,
+    paidExecutionReady,
+    pricing: {
+      pricingMode: agent.pricingMode,
+      paymentsEnabled: agent.paymentsEnabled,
+      paidJobsEnabled: agent.paidJobsEnabled,
+      paymentProfileReady: agent.paymentProfileReady,
+      payoutAddressConfigured: agent.payoutAddressConfigured,
+      settlementTrigger: agent.settlementTrigger,
+      ...(agent.paymentRail ? { defaultRail: agent.paymentRail } : {}),
+      ...(agent.fixedAmountUsd ? { fixedAmountUsd: agent.fixedAmountUsd } : {}),
+      ...(agent.referencePriceUsd ? { referencePriceUsd: agent.referencePriceUsd } : {}),
+      ...(agent.referencePriceUnit ? { referencePriceUnit: agent.referencePriceUnit } : {}),
+      ...(plan ? { costEstimate: costEstimateFromPlan(plan) } : {})
+    },
+    readiness: {
+      online: agent.runtimeStatus === "live",
+      paymentsReady: agent.paymentProfileReady,
+      quoteReady,
+      paidExecutionReady,
+      relayConnected: agent.readiness?.relayConnected === true,
+      heartbeatLive: agent.readiness?.heartbeatLive === true,
+      runtimeReachable: agent.readiness?.runtimeReachable === true,
+      workerReachable: agent.readiness?.workerReachable === true,
+      lastHeartbeatAtIso: agent.lastHeartbeatAtIso,
+      lastJobStatus: agent.readiness?.lastJobStatus ?? "none",
+      knownBlockers: agent.readiness?.blockers ?? []
+    },
+    deliveryLanes: supportedDeliveryLanes(),
+    privacyModes: supportedPrivacyModes(),
+    reputation: {
+      proofLevel: agent.proofLevel,
+      proofScorePct: agent.proofLevel === "proof-backed" ? 100 : agent.proofLevel === "rooted" ? 80 : 60,
+      completionScore: agent.completionScore,
+      jobActivityStats: agent.jobActivityStats,
+      anchoredSocialFactCount: agent.anchoredSocialFactCount,
+      pendingSocialAnchorCount: agent.pendingSocialAnchorCount,
+      ...(agent.lastSocialAnchorAtIso ? { lastSocialAnchorAtIso: agent.lastSocialAnchorAtIso } : {})
+    }
+  };
+}
+
 function setHeaders(response: IndexerResponse, headers: Record<string, string>) {
   for (const [name, value] of Object.entries(headers)) {
     response.set(name, value);
@@ -1663,6 +1828,144 @@ app.get("/api/agents", route(async (_request, response) => {
   response.json(await controlPlane.listRegisteredAgents());
 }));
 
+app.get("/api/agents/search", route(async (request, response) => {
+  try {
+    const q = queryString(request.query, "q")?.toLowerCase();
+    const pricingModes = commaSet(queryString(request.query, "pricingMode"));
+    const rails = commaSet(queryString(request.query, "rail"));
+    const deliveryModes = commaSet(queryString(request.query, "deliveryMode"));
+    const privacyModes = commaSet(queryString(request.query, "privacyMode"));
+    const hireable = queryBoolean(request.query, "hireable");
+    const online = queryBoolean(request.query, "online");
+    const paymentsReady = queryBoolean(request.query, "paymentsReady");
+    const quoteReady = queryBoolean(request.query, "quoteReady");
+    const paidExecutionReady = queryBoolean(request.query, "paidExecutionReady");
+    const rawLimit = queryString(request.query, "limit");
+    const limit = rawLimit ? Math.max(1, Math.min(Number.parseInt(rawLimit, 10), 100)) : 50;
+    const baseUrl = getBaseUrl(request);
+    const agents = await Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)));
+    const filtered = agents.filter((agent) => {
+      if (q) {
+        const haystack = [agent.agentId, agent.agentName, agent.representedPrincipal, agent.headline].join(" ").toLowerCase();
+        if (!haystack.includes(q)) {
+          return false;
+        }
+      }
+      if (pricingModes.size > 0 && !pricingModes.has(agent.pricing.pricingMode)) {
+        return false;
+      }
+      if (rails.size > 0 && (!agent.pricing.defaultRail || !rails.has(agent.pricing.defaultRail))) {
+        return false;
+      }
+      if (deliveryModes.size > 0 && !agent.deliveryLanes.some((lane) => deliveryModes.has(lane.mode))) {
+        return false;
+      }
+      if (privacyModes.size > 0 && !agent.privacyModes.some((mode) => privacyModes.has(mode.mode))) {
+        return false;
+      }
+      if (hireable !== undefined && agent.hireable !== hireable) {
+        return false;
+      }
+      if (online !== undefined && agent.online !== online) {
+        return false;
+      }
+      if (paymentsReady !== undefined && agent.paymentsReady !== paymentsReady) {
+        return false;
+      }
+      if (quoteReady !== undefined && agent.quoteReady !== quoteReady) {
+        return false;
+      }
+      if (paidExecutionReady !== undefined && agent.paidExecutionReady !== paidExecutionReady) {
+        return false;
+      }
+      return true;
+    });
+    response.json({
+      schemaVersion: "santaclawz-agent-directory-search/1.0",
+      ok: true,
+      generatedAtIso: new Date().toISOString(),
+      totalMatchingAgents: filtered.length,
+      agents: filtered.slice(0, limit)
+    });
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to search agents."
+    });
+  }
+}));
+
+app.get("/api/agents/:agentId/ready", route(async (request, response) => {
+  try {
+    const agentId = request.params.agentId;
+    if (!agentId) {
+      response.status(400).json({ error: "agentId is required." });
+      return;
+    }
+    const baseUrl = getBaseUrl(request);
+    const [consoleState, availability, scannerHealth] = await Promise.all([
+      controlPlane.getConsoleState({ agentId }),
+      controlPlane.getAgentRuntimeAvailability({ agentId }),
+      artifactStore.scannerHealth()
+    ]);
+    const plan = (await buildX402PlanFromOptions(baseUrl, { agentId })).plan;
+    const pricingMode = consoleState.profile.paymentProfile.pricingMode;
+    const quoteReady = consoleState.paymentProfileReady && pricingMode === "quote-required";
+    const paidExecutionReady =
+      pricingMode === "free-test" ||
+      (consoleState.paymentProfileReady && consoleState.paidJobsEnabled && (pricingMode === "fixed-exact" || pricingMode === "quote-required"));
+    response.json({
+      schemaVersion: "santaclawz-agent-readiness/1.0",
+      ok: true,
+      generatedAtIso: new Date().toISOString(),
+      agentId: consoleState.agentId,
+      sessionId: consoleState.session.sessionId,
+      online: availability.runtimeStatus === "live",
+      paymentsReady: consoleState.paymentProfileReady,
+      quoteReady,
+      paidExecutionReady,
+      deliveryLanes: supportedDeliveryLanes(),
+      scannerReady: scannerHealth.reachable,
+      scanner: {
+        scanner: scannerHealth.scanner,
+        target: scannerHealth.target,
+        reachable: scannerHealth.reachable,
+        ...(scannerHealth.error ? { error: scannerHealth.error } : {})
+      },
+      privacyModes: supportedPrivacyModes(),
+      lastHeartbeatAtIso: availability.heartbeat.lastHeartbeatAtIso,
+      lastJobStatus: consoleState.readiness?.lastJobStatus ?? "none",
+      knownBlockers: [
+        ...(consoleState.readiness?.blockers ?? []),
+        ...(scannerHealth.reachable ? [] : ["artifact-scanner-unavailable"])
+      ],
+      readiness: consoleState.readiness,
+      availability,
+      pricing: {
+        pricingMode,
+        paymentsEnabled: consoleState.paymentsEnabled,
+        paidJobsEnabled: consoleState.paidJobsEnabled,
+        paymentProfileReady: consoleState.paymentProfileReady,
+        payoutAddressConfigured: consoleState.payoutAddressConfigured,
+        settlementTrigger: consoleState.profile.paymentProfile.settlementTrigger,
+        ...(consoleState.profile.paymentProfile.defaultRail ? { defaultRail: consoleState.profile.paymentProfile.defaultRail } : {}),
+        ...(consoleState.profile.paymentProfile.fixedAmountUsd ? { fixedAmountUsd: consoleState.profile.paymentProfile.fixedAmountUsd } : {}),
+        ...(consoleState.profile.paymentProfile.referencePriceUsd ? { referencePriceUsd: consoleState.profile.paymentProfile.referencePriceUsd } : {}),
+        ...(consoleState.profile.paymentProfile.referencePriceUnit ? { referencePriceUnit: consoleState.profile.paymentProfile.referencePriceUnit } : {}),
+        costEstimate: costEstimateFromPlan(plan)
+      },
+      reputation: {
+        completionScore: consoleState.completionScore,
+        jobActivityStats: consoleState.jobActivityStats,
+        anchoredSocialFactCount: (await controlPlane.listRegisteredAgents()).find((agent) => agent.agentId === agentId)?.anchoredSocialFactCount ?? 0
+      }
+    });
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load agent readiness."
+    });
+  }
+}));
+
 app.get("/api/agent-messages", route(async (request, response) => {
   try {
     const rawLimit = queryString(request.query, "limit");
@@ -1830,6 +2133,130 @@ app.post("/api/executions/:requestId/stages", route(async (request, response) =>
   } catch (error) {
     response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to post job stage."
+    });
+  }
+}));
+
+app.get("/api/executions/:requestId/state", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    const token = tokenQuery(request);
+    const adminKey = adminKeyHeader(request);
+    const [hireRequest, collaboration, paymentLedger, artifactReceipts] = await Promise.all([
+      controlPlane.getHireRequest(requestId),
+      controlPlane.getJobCollaboration({
+        requestId,
+        ...(token ? { token } : {}),
+        ...(adminKey ? { adminKey } : {})
+      }),
+      controlPlane.listPaymentLedger({ hireRequestId: requestId, limit: 5 }),
+      artifactStore.receiptsForRequest(requestId)
+    ]);
+    const latestLedger = paymentLedger.entries[0];
+    const latestReceipt = artifactReceipts[0];
+    const operational = hireRequest.operationalStatus;
+    const proofStatus =
+      hireRequest.returnValidationError || latestLedger?.returnStatus === "rejected"
+        ? "return_rejected"
+        : hireRequest.protocolReturn?.verifiedOutput
+          ? hireRequest.protocolReturn.verifiedOutput.zekoAttestationIncluded
+            ? "anchored_or_attested"
+            : "return_validated"
+          : "not_started";
+    const artifactDelivered =
+      Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactManifestUrl) ||
+      Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256) ||
+      artifactReceipts.length > 0;
+    const buyerVerified = latestReceipt?.digestVerified === true || latestReceipt?.buyerScanStatus === "passed";
+    const buyerAccepted =
+      latestReceipt?.buyerAcceptanceStatus === "accepted" ||
+      (collaboration.currentStage?.stage === "review" && collaboration.currentStage.status === "accepted") ||
+      collaboration.currentStage?.stage === "final";
+    const paymentStatus =
+      operational?.paymentStatus === "settled" ||
+      latestLedger?.paymentStatus === "settled" ||
+      latestLedger?.paymentStatus === "already_settled"
+        ? "settled"
+        : operational?.paymentStatus === "authorized" || latestLedger?.paymentStatus === "authorization_verified"
+          ? "authorized"
+          : operational?.paymentStatus ?? "not_started";
+    response.json({
+      schemaVersion: "santaclawz-execution-state/1.0",
+      ok: true,
+      generatedAtIso: new Date().toISOString(),
+      requestId,
+      agentId: hireRequest.agentId,
+      sessionId: hireRequest.sessionId,
+      requestType: hireRequest.requestType,
+      pricingMode: hireRequest.pricingMode,
+      currentPhase:
+        buyerAccepted
+          ? "buyer_accepted"
+          : buyerVerified
+            ? "buyer_verified"
+            : artifactDelivered
+              ? "artifact_delivered"
+              : proofStatus === "return_validated" || proofStatus === "anchored_or_attested"
+                ? "return_verified"
+                : operational?.agentExecutionStatus === "completed"
+                  ? "agent_completed"
+                  : operational?.relayDeliveryStatus === "forwarded" || operational?.relayDeliveryStatus === "recorded"
+                    ? "relay_delivered"
+                    : paymentStatus === "settled"
+                      ? "payment_settled"
+                      : paymentStatus === "authorized"
+                        ? "payment_authorized"
+                        : "created",
+      lifecycle: {
+        paymentStatus,
+        settlementStatus: operational?.settlementStatus ?? "not_attempted",
+        relayDeliveryStatus: operational?.relayDeliveryStatus ?? "not_attempted",
+        agentExecutionStatus: operational?.agentExecutionStatus ?? hireRequest.status,
+        proofStatus,
+        artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
+        buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
+        buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending"
+      },
+      privacy: {
+        jobVisibility: hireRequest.jobPrivacy?.visibility ?? "public",
+        publicAggregateStats: true,
+        publicLifecycleEvents: hireRequest.jobPrivacy?.publicLifecycleEvents ?? hireRequest.jobPrivacy?.visibility !== "private",
+        publicArtifactMetadata: hireRequest.jobPrivacy?.publicArtifactMetadata ?? hireRequest.jobPrivacy?.visibility !== "private",
+        activityAnchorMode: hireRequest.jobPrivacy?.visibility === "private" ? "anonymous" : "public"
+      },
+      delivery: {
+        deliveryTarget: hireRequest.deliveryTarget,
+        deliveryStatus: hireRequest.deliveryStatus ?? "not_attempted",
+        artifactDelivery: hireRequest.artifactDelivery,
+        protocolVerifiedOutput: hireRequest.protocolReturn?.verifiedOutput,
+        artifactReceipts,
+        ...(latestReceipt ? { latestReceipt } : {})
+      },
+      payment: {
+        requestPaymentStatus: hireRequest.paymentStatus,
+        ledgerEntries: paymentLedger.entries,
+        ...(latestLedger ? { latestLedger } : {})
+      },
+      workspace: {
+        currentStage: collaboration.currentStage,
+        stageCount: collaboration.stages.length,
+        messageCount: collaboration.messages.length,
+        stages: collaboration.stages,
+        messages: collaboration.messages
+      },
+      knownBlockers: [
+        ...(hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
+        ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
+        ...(latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
+      ]
+    });
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load execution state."
     });
   }
 }));

@@ -1812,6 +1812,27 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(publishedAgent?.publicAgentUrl, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}`);
     assert.equal(publishedAgent?.publicHireUrl, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
 
+    const directorySearch = await requestJson(
+      `${baseUrl}/api/agents/search?q=${encodeURIComponent(agentId)}&deliveryMode=buyer_encrypted&privacyMode=private&limit=5`
+    );
+    assert.equal(directorySearch.status, 200);
+    assert.equal(directorySearch.payload.schemaVersion, "santaclawz-agent-directory-search/1.0");
+    const directoryAgent = directorySearch.payload.agents.find((agent) => agent.agentId === agentId);
+    assert.equal(directoryAgent.agentId, agentId);
+    assert.equal(directoryAgent.deliveryLanes.some((lane) => lane.mode === "buyer_encrypted"), true);
+    assert.equal(directoryAgent.privacyModes.some((mode) => mode.mode === "private"), true);
+    assert.equal(typeof directoryAgent.reputation.jobActivityStats.totalJobCount, "number");
+
+    const agentReady = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/ready`);
+    assert.equal(agentReady.status, 200);
+    assert.equal(agentReady.payload.schemaVersion, "santaclawz-agent-readiness/1.0");
+    assert.equal(agentReady.payload.agentId, agentId);
+    assert.equal(agentReady.payload.deliveryLanes.some((lane) => lane.mode === "platform_scanned"), true);
+    assert.equal(agentReady.payload.privacyModes.some((mode) => mode.mode === "buyer_encrypted"), true);
+    assert.equal(typeof agentReady.payload.scannerReady, "boolean");
+    assert.equal(Array.isArray(agentReady.payload.knownBlockers), true);
+    assert.equal(Array.isArray(agentReady.payload.pricing.costEstimate.rails), true);
+
     const readinessRefresh = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/readiness/refresh`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
@@ -2514,6 +2535,20 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(directReceiptAck.payload.receipt.digestVerified, true);
     assert.equal(directReceiptAck.payload.receipt.buyerScanStatus, "passed");
     assert.equal(directReceiptAck.payload.receipt.buyerAcknowledgementNote, "digest verified by buyer agent");
+
+    const executionState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(freeTestAccepted.payload.requestId)}/state?token=${encodeURIComponent(freeTestAccepted.payload.jobWorkspace.token)}`,
+      { method: "GET" }
+    );
+    assert.equal(executionState.status, 200);
+    assert.equal(executionState.payload.schemaVersion, "santaclawz-execution-state/1.0");
+    assert.equal(executionState.payload.currentPhase, "buyer_accepted");
+    assert.equal(executionState.payload.lifecycle.artifactDeliveryStatus, "delivered");
+    assert.equal(executionState.payload.lifecycle.buyerVerificationStatus, "verified");
+    assert.equal(executionState.payload.lifecycle.buyerAcceptanceStatus, "accepted");
+    assert.equal(executionState.payload.privacy.jobVisibility, "private");
+    assert.equal(executionState.payload.delivery.latestReceipt.deliveryState, "buyer_accepted");
+    assert.equal(executionState.payload.workspace.stageCount, 3);
 
     const externalDigest = createHash("sha256").update("external reference bytes").digest("hex");
     const externalReceipt = await requestJson(

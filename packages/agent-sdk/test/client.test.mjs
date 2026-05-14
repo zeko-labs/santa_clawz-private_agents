@@ -203,6 +203,15 @@ async function main() {
     assert.ok(Array.isArray(x402Plan.rails));
     assert.ok(Array.isArray(x402Plan.feePreviewByRail ?? []));
 
+    const discoverySearch = await client.discover({ deliveryMode: "platform_scanned", privacyMode: "private", limit: 5 });
+    assert.equal(discoverySearch.schemaVersion, "santaclawz-agent-directory-search/1.0");
+    assert.equal(Array.isArray(discoverySearch.agents), true);
+    if (discoverySearch.agents.length > 0) {
+      const readiness = await client.getAgentReadiness({ agentId: discoverySearch.agents[0].agentId });
+      assert.equal(readiness.schemaVersion, "santaclawz-agent-readiness/1.0");
+      assert.equal(typeof readiness.scannerReady, "boolean");
+    }
+
     const enrollment = await client.createEnrollmentTicket({
       agentName: "SDK enrollment agent",
       headline: "SDK-created enrollment ticket for an OpenClaw runtime.",
