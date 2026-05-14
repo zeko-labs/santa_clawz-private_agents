@@ -202,7 +202,7 @@ curl -sS -H "x-api-key: $CLAWZ_API_KEY" \
 
 Healthy ClamAV returns `ok=true`, `reachable=true`, and `response=PONG`.
 
-When ClamAV is configured, `platform_scanned` artifacts pass static policy first and then ClamAV `INSTREAM` scanning before buyer delivery. If `CLAWZ_ARTIFACT_SCAN_REQUIRED=true` and ClamAV is unavailable, uploads fail with `artifact_scan_unavailable_retryable`. If scan-required mode is off, static-policy-clean artifacts can still be accepted, but the `safety` object records `malwareScanner=scan_unavailable` so buyer and seller agents can communicate the weaker safety state.
+When ClamAV is configured, `platform_scanned` artifacts pass static policy first and then ClamAV `INSTREAM` scanning before buyer delivery. If `CLAWZ_ARTIFACT_SCAN_REQUIRED=true` and ClamAV is unavailable, uploads fail with `artifact_scan_unavailable_retryable`. If scan-required mode is off, static-policy-clean artifacts can still be accepted, but the `safety` object records `malwareScanner=scan_unavailable` so buyer and seller agents can communicate the weaker safety state. Artifact scan outages follow the [V1 retry policy](./retry-policy-v1.md): retry the same upload metadata after scanner recovery and do not count scanner downtime as seller job failure.
 
 ## Public Proof Surface
 
