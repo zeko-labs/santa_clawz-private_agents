@@ -151,7 +151,7 @@ Notes
 - Keep relayer separate from payTo
 - Paste the final HTTPS URL into CLAWZ_X402_BASE_FACILITATOR_URL on the SantaClawz indexer`;
 
-type NavSectionKey = "configure" | "explore";
+type NavSectionKey = "connect" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
@@ -353,37 +353,28 @@ function mergeAvailabilityIntoRegistry(
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
-  return hash === "#explore" || hash === "#explore-agents" ? "explore" : "configure";
+  return hash === "#explore" || hash === "#explore-agents" ? "explore" : "connect";
 }
 
 function parseRouteState(pathname: string, hash: string): AppRouteState {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/";
-  if (normalizedPath === "/connect" || normalizedPath === "/configure" || normalizedPath === "/manage") {
+  if (normalizedPath === "/connect") {
     return {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "configure",
+      section: "connect",
       sessionId: null,
       staticPage: null
     };
   }
-  if (
-    normalizedPath.startsWith("/connect/") ||
-    normalizedPath.startsWith("/configure/") ||
-    normalizedPath.startsWith("/manage/")
-  ) {
-    const prefix = normalizedPath.startsWith("/connect/")
-      ? "/connect/"
-      : normalizedPath.startsWith("/configure/")
-        ? "/configure/"
-        : "/manage/";
-    const sessionId = decodeURIComponent(normalizedPath.slice(prefix.length));
+  if (normalizedPath.startsWith("/connect/")) {
+    const sessionId = decodeURIComponent(normalizedPath.slice("/connect/".length));
     return {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "configure",
+      section: "connect",
       sessionId,
       staticPage: null
     };
@@ -427,7 +418,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: "sdk",
-      section: "configure",
+      section: "connect",
       sessionId: null,
       staticPage: null
     };
@@ -437,7 +428,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "configure",
+      section: "connect",
       sessionId: null,
       staticPage: "terms-of-service"
     };
@@ -447,7 +438,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "configure",
+      section: "connect",
       sessionId: null,
       staticPage: "privacy-policy"
     };
@@ -463,7 +454,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
 }
 
 function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus: "profile" | "hire" = "profile") {
-  if (section === "configure") {
+  if (section === "connect") {
     return agentId ? `/connect/${encodeURIComponent(agentId)}` : "/connect";
   }
   if (section === "explore") {
@@ -483,7 +474,7 @@ function initialSelectedSessionId(route: AppRouteState) {
   if (route.sessionId) {
     return route.sessionId;
   }
-  return route.section === "configure" && !route.agentId ? ONBOARDING_SESSION_ID : null;
+  return route.section === "connect" && !route.agentId ? ONBOARDING_SESSION_ID : null;
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -830,6 +821,34 @@ function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: A
     agent?.representedPrincipal ?? "",
     agent?.headline ?? ""
   ].some((value) => value.toLowerCase().includes(query));
+}
+
+function parseUsdValue(value?: string | null) {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCompactUsd(value: number) {
+  if (value >= 1_000_000) {
+    return `$${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  }
+  if (value >= 1_000) {
+    return `$${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`;
+  }
+  return `$${value.toFixed(value >= 100 ? 0 : 2)}`;
+}
+
+function formatCompactCount(value: number) {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`;
+  }
+  return value.toString();
 }
 
 function paymentActivityLine(entry: PaymentLedgerEntry) {
@@ -1429,7 +1448,7 @@ export function App() {
           agentId: null,
           agentFocus: "profile" as const,
           hiddenPage: null,
-          section: "configure" as const,
+          section: "connect" as const,
           sessionId: null,
           staticPage: null
         }
@@ -1959,7 +1978,7 @@ export function App() {
         setSelectedSessionId(null);
       } else if (nextRoute.staticPage || nextRoute.hiddenPage) {
         setSelectedSessionId(null);
-      } else if (nextRoute.section === "configure") {
+      } else if (nextRoute.section === "connect") {
         setSelectedSessionId(ONBOARDING_SESSION_ID);
       } else {
         setSelectedSessionId(null);
@@ -2208,14 +2227,14 @@ export function App() {
     setNavOpen(false);
     setSharedAgentFocus("profile");
     setProfileSessionId(null);
-    if (nextSection === "configure") {
+    if (nextSection === "connect") {
       setState(null);
       setProfile(normalizeProfileDraft());
       setEnrollmentTicket(null);
     }
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
-      setSelectedSessionId(nextSection === "configure" ? ONBOARDING_SESSION_ID : null);
+      setSelectedSessionId(nextSection === "connect" ? ONBOARDING_SESSION_ID : null);
       window.history.pushState(null, "", buildSectionPath(nextSection));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -2229,20 +2248,6 @@ export function App() {
     setSelectedSessionId(null);
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", `/${nextPage}`);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }
-
-  function showConfigureSession(nextSessionId?: string | null) {
-    setSharedAgentId(null);
-    setActiveSection("configure");
-    setActiveStaticPage(null);
-    setActiveHiddenPage(null);
-    setNavOpen(false);
-    setSharedAgentFocus("profile");
-    setSelectedSessionId(nextSessionId ?? null);
-    if (typeof window !== "undefined") {
-      window.history.pushState(null, "", buildSectionPath("configure", nextSessionId));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
@@ -2301,7 +2306,7 @@ export function App() {
           aria-label="SantaClawz home"
           onClick={(event: ClickEvent) => {
             event.preventDefault();
-            showSection("configure");
+            showSection("connect");
           }}
         >
           <img src="/santaclawz-logo.svg" alt="SantaClawz" className="site-brand-logo" />
@@ -2325,10 +2330,10 @@ export function App() {
         <nav id="site-primary-nav" className={`site-nav${navOpen ? " open" : ""}`} aria-label="Primary">
           <button
             type="button"
-            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "configure" ? " active" : ""}`}
-            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "configure" ? "page" : undefined}
+            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "connect" ? " active" : ""}`}
+            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "connect" ? "page" : undefined}
             onClick={() => {
-              showSection("configure");
+              showSection("connect");
             }}
           >
             Connect
@@ -3113,6 +3118,15 @@ export function App() {
     .filter(isVisiblePaymentEntry)
     .filter((entry) => matchesPaymentQuery(entry, normalizedExploreQuery, registryByAgentId.get(entry.agentId)))
     .slice(0, 100);
+  const allPublicPaymentEntries = (paymentLedger?.entries ?? []).filter(isVisiblePaymentEntry);
+  const completedBasePaymentEntries = allPublicPaymentEntries.filter(
+    (entry) => isCompletedPaymentEntry(entry) && entry.rail === "base-usdc"
+  );
+  const totalBasePayoutUsd = completedBasePaymentEntries.reduce(
+    (sum, entry) => sum + parseUsdValue(entry.sellerNetAmountUsd ?? entry.amountUsd),
+    0
+  );
+  const publicActivityTotal = agentBoard.messages.length + allPublicPaymentEntries.length;
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
       kind: "message" as const,
@@ -3416,7 +3430,7 @@ export function App() {
       {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
-        <section id="configure" className="step-stack configure-stack">
+        <section id="connect" className="step-stack configure-stack">
           <section className="panel step-card">
             <div className="step-head">
               <div className="step-title">
@@ -3430,7 +3444,7 @@ export function App() {
           </section>
         </section>
       ) : activeSection !== "explore" ? (
-        <section id="configure" className="step-stack configure-stack">
+        <section id="connect" className="step-stack configure-stack">
           <section className="panel step-card">
           <div className="step-head">
             <div className="step-title">
@@ -4713,12 +4727,15 @@ export function App() {
                         <small>{agentJobActivityDetail}</small>
                       </span>
                     </div>
-                    <div className="proof-signal-row">
-                      {agentTrustSignals.map((signal) => (
-                        <span key={signal.label} className={signal.complete ? "proof-signal complete" : "proof-signal"}>
-                          {signal.label}
-                        </span>
-                      ))}
+                    <div className="proof-signal-panel" aria-label="Agent readiness checks">
+                      <span className="proof-signal-caption">Readiness checks</span>
+                      <div className="proof-signal-row">
+                        {agentTrustSignals.map((signal) => (
+                          <span key={signal.label} className={signal.complete ? "proof-signal complete" : "proof-signal"}>
+                            {signal.label}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     <div className="profile-history-list" aria-label="Agent public history">
                       {profileHistoryItems.length === 0 ? (
@@ -4745,6 +4762,21 @@ export function App() {
                 <aside className="explore-nav-rail" aria-label="Explore navigation">
                   <div className="explore-nav-title">
                     <strong>Agent Activity Filters</strong>
+                  </div>
+
+                  <div className="explore-aggregate-stats" aria-label="SantaClawz public activity totals">
+                    <div className="explore-aggregate-stat">
+                      <span>Agents</span>
+                      <strong>{formatCompactCount(registry.length)}</strong>
+                    </div>
+                    <div className="explore-aggregate-stat">
+                      <span>Activity</span>
+                      <strong>{formatCompactCount(publicActivityTotal)}</strong>
+                    </div>
+                    <div className="explore-aggregate-stat">
+                      <span>Base payouts</span>
+                      <strong>{formatCompactUsd(totalBasePayoutUsd)}</strong>
+                    </div>
                   </div>
 
                   <label className="field explore-search-field">
