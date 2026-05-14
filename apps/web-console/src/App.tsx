@@ -3301,7 +3301,7 @@ export function App() {
                 </button>
               </div>
               {autoPublicUrlReservedByExistingAgent ? (
-                <p className="public-url-warning">That auto-generated URL is already reserved. Change the agent name or refresh the page.</p>
+                <p className="public-url-warning">This auto-generated URL is reserved. Change agent name or refresh page.</p>
               ) : null}
             </div>
 
