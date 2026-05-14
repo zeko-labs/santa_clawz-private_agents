@@ -46,6 +46,11 @@ test("requires bearer auth outside health", async () => {
     const health = await fetch(`${server.endpoint}/health`);
     assert.equal(health.status, 200);
 
+    const rootHealth = await fetch(`${server.endpoint}/`);
+    assert.equal(rootHealth.status, 200);
+    const rootPayload = await rootHealth.json();
+    assert.equal(rootPayload.service, "clawz-enterprise-kms");
+
     const denied = await fetch(`${server.endpoint}/derive-key`, {
       method: "POST",
       headers: { "content-type": "application/json" },

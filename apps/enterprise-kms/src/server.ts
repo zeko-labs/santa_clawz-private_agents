@@ -306,7 +306,7 @@ export async function createEnterpriseKmsApp(options: EnterpriseKmsOptions = {})
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
 
-    if (request.path === "/health") {
+    if (request.path === "/" || request.path === "/health") {
       next();
       return;
     }
@@ -321,7 +321,7 @@ export async function createEnterpriseKmsApp(options: EnterpriseKmsOptions = {})
     });
   });
 
-  app.get("/health", async (_request, response) => {
+  async function healthPayload() {
     let auditLogConfigured = false;
     try {
       await access(path.dirname(auditFile));
@@ -330,7 +330,7 @@ export async function createEnterpriseKmsApp(options: EnterpriseKmsOptions = {})
       auditLogConfigured = false;
     }
 
-    response.json({
+    return {
       ok: true,
       service: "clawz-enterprise-kms",
       derivation: DERIVATION_NAMESPACE,
@@ -339,7 +339,15 @@ export async function createEnterpriseKmsApp(options: EnterpriseKmsOptions = {})
       commandConfigured: Boolean(provider.descriptor.commandConfigured),
       upstreamConfigured: Boolean(provider.descriptor.upstreamConfigured),
       auditLogConfigured
-    });
+    };
+  }
+
+  app.get("/", async (_request, response) => {
+    response.json(await healthPayload());
+  });
+
+  app.get("/health", async (_request, response) => {
+    response.json(await healthPayload());
   });
 
   app.post("/derive-key", async (request, response) => {
