@@ -21,6 +21,7 @@ import {
   type ExecutionIntentStatus,
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
+  type SantaClawzJobPrivacyPreference,
   type SantaClawzQuoteAcceptanceWalletProof,
   type TrustModeId,
   type WitnessPlanLike,
@@ -220,6 +221,8 @@ type HireRequestBody = {
   taskPrompt?: unknown;
   budgetMina?: unknown;
   requesterContact?: unknown;
+  jobPrivacy?: unknown;
+  activityPrivacy?: unknown;
   artifactDelivery?: unknown;
   paymentPayload?: unknown;
 };
@@ -437,6 +440,43 @@ function parseArtifactDeliveryPreference(value: unknown): SantaClawzArtifactDeli
     ...(buyerPublicKey ? { buyerPublicKey } : {}),
     ...(acceptedFormats && acceptedFormats.length > 0 ? { acceptedFormats } : {}),
     localScanRequired
+  };
+}
+
+function parseJobPrivacyPreference(value: unknown): SantaClawzJobPrivacyPreference | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const visibility = value.visibility === "private" ? "private" : value.visibility === "public" ? "public" : undefined;
+  if (!visibility) {
+    throw new Error("jobPrivacy.visibility must be public or private.");
+  }
+  const publicAggregateStats =
+    typeof value.publicAggregateStats === "boolean"
+      ? value.publicAggregateStats
+      : typeof value.public_aggregate_stats === "boolean"
+        ? value.public_aggregate_stats
+        : true;
+  const publicLifecycleEvents =
+    typeof value.publicLifecycleEvents === "boolean"
+      ? value.publicLifecycleEvents
+      : typeof value.public_lifecycle_events === "boolean"
+        ? value.public_lifecycle_events
+        : visibility === "public";
+  const publicArtifactMetadata =
+    typeof value.publicArtifactMetadata === "boolean"
+      ? value.publicArtifactMetadata
+      : typeof value.public_artifact_metadata === "boolean"
+        ? value.public_artifact_metadata
+        : visibility === "public";
+  const note = typeof value.note === "string" ? value.note.trim().slice(0, 240) : undefined;
+
+  return {
+    visibility,
+    publicAggregateStats,
+    publicLifecycleEvents,
+    publicArtifactMetadata,
+    ...(note ? { note } : {})
   };
 }
 
@@ -834,6 +874,8 @@ function parseHireRequest(body: unknown): HireRequestBody {
         taskPrompt: body.taskPrompt,
         budgetMina: body.budgetMina,
         requesterContact: body.requesterContact,
+        jobPrivacy: body.jobPrivacy,
+        activityPrivacy: body.activityPrivacy,
         artifactDelivery: body.artifactDelivery,
         paymentPayload: body.paymentPayload
       }
@@ -2315,6 +2357,7 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         taskPrompt: context.quoteRequest.taskPrompt,
         requesterContact: context.quoteRequest.requesterContact,
         ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
+        ...(context.quoteRequest.jobPrivacy ? { jobPrivacy: context.quoteRequest.jobPrivacy } : {}),
         ...(context.quoteRequest.artifactDelivery ? { artifactDelivery: context.quoteRequest.artifactDelivery } : {}),
         paymentAuthorization: {
           status: "authorized",
@@ -3107,6 +3150,7 @@ const handleAgentHireRequest = route(async (request, response) => {
     }
     const taskPrompt = typeof body.taskPrompt === "string" ? body.taskPrompt.trim() : "";
     const requesterContact = typeof body.requesterContact === "string" ? body.requesterContact.trim() : "";
+    const jobPrivacy = parseJobPrivacyPreference(body.jobPrivacy ?? body.activityPrivacy);
     const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
     if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
       response.status(400).json({ error: `taskPrompt must be ${HIRE_TASK_PROMPT_MAX_LENGTH} characters or less.` });
@@ -3240,6 +3284,7 @@ const handleAgentHireRequest = route(async (request, response) => {
         taskPrompt,
         requesterContact,
         ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {}),
+        ...(jobPrivacy ? { jobPrivacy } : {}),
         ...(artifactDelivery ? { artifactDelivery } : {}),
         ...(paymentAuthorization ? { paymentAuthorization } : {})
       });

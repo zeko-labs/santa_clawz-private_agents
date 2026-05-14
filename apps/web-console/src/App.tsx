@@ -3223,6 +3223,15 @@ export function App() {
       ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
       : "Waiting for paid job outcomes";
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
+  const agentJobActivityStats = state.jobActivityStats ?? focusedRegistryAgent?.jobActivityStats;
+  const agentJobActivityLabel =
+    agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
+      ? `${agentJobActivityStats.totalJobCount} total jobs`
+      : "No job activity yet";
+  const agentJobActivityDetail =
+    agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
+      ? `${agentJobActivityStats.publicJobCount} public / ${agentJobActivityStats.privateJobCount} private`
+      : "Public and private totals will appear here";
   const agentTrustSignals = [
     { label: "Published", complete: published },
     { label: "Verified", complete: state.ownership.status === "verified" },
@@ -4692,6 +4701,10 @@ export function App() {
                         <span className={`proof-score-pill ${agentCompletionScoreClass}`}>
                           {agentCompletionScoreLabel}
                           <small>{agentCompletionScoreDetail}</small>
+                        </span>
+                        <span className="proof-score-pill job-activity-pill">
+                          {agentJobActivityLabel}
+                          <small>{agentJobActivityDetail}</small>
                         </span>
                       </div>
                     </div>

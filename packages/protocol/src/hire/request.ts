@@ -13,6 +13,14 @@ export interface SantaClawzArtifactDeliveryPreference {
   localScanRequired?: boolean;
 }
 
+export interface SantaClawzJobPrivacyPreference {
+  visibility: "public" | "private";
+  publicAggregateStats?: boolean;
+  publicLifecycleEvents?: boolean;
+  publicArtifactMetadata?: boolean;
+  note?: string;
+}
+
 const SERVICE_KEY_PATTERN = /^[a-z0-9][a-z0-9_:-]{0,79}$/;
 
 export interface SantaClawzHireServiceIdentity {

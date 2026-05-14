@@ -69,6 +69,7 @@ import {
   type SocialAnchorQueueState,
   type SantaClawzQuoteAcceptanceWalletProof,
   type SantaClawzArtifactDeliveryPreference,
+  type SantaClawzJobPrivacyPreference,
   type ShadowWalletState,
   type TrustModeId,
   type ZekoContractDeployment,
@@ -601,6 +602,7 @@ interface SubmitHireRequestOptions {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   paymentAuthorization?: HirePaymentAuthorization;
 }
@@ -733,6 +735,7 @@ interface HireRequestRecord {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   deliveryTarget: string;
   deliveryStatus?: "forwarded" | "recorded" | "return_rejected";
@@ -1718,12 +1721,35 @@ function requireQuoteBuyerWalletProof(): boolean {
   return envFlagEnabled("CLAWZ_REQUIRE_QUOTE_BUYER_WALLET_PROOF");
 }
 
+function isPrivateHireRequest(request: Pick<HireRequestRecord, "jobPrivacy">) {
+  return request.jobPrivacy?.visibility === "private";
+}
+
+function shouldPublishHireLifecycle(jobPrivacy?: SantaClawzJobPrivacyPreference) {
+  return jobPrivacy?.visibility !== "private" && jobPrivacy?.publicLifecycleEvents !== false;
+}
+
+function shouldIncludeInPublicAggregate(request: Pick<HireRequestRecord, "jobPrivacy">) {
+  return request.jobPrivacy?.visibility !== "private" || request.jobPrivacy.publicAggregateStats !== false;
+}
+
+function toSnakeJobPrivacy(jobPrivacy: SantaClawzJobPrivacyPreference) {
+  return {
+    visibility: jobPrivacy.visibility,
+    public_aggregate_stats: jobPrivacy.publicAggregateStats ?? true,
+    public_lifecycle_events: jobPrivacy.publicLifecycleEvents ?? jobPrivacy.visibility === "public",
+    public_artifact_metadata: jobPrivacy.publicArtifactMetadata ?? jobPrivacy.visibility === "public",
+    ...(jobPrivacy.note ? { note: jobPrivacy.note } : {})
+  };
+}
+
 function lastHireStatusForSession(
   hireRequests: HireRequestFile,
-  sessionId: string
+  sessionId: string,
+  options: { includePrivate?: boolean } = {}
 ): AgentReadinessState["lastJobStatus"] {
   const latest = hireRequests.requests
-    .filter((request) => request.sessionId === sessionId)
+    .filter((request) => request.sessionId === sessionId && (options.includePrivate !== false || !isPrivateHireRequest(request)))
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))[0];
   return latest?.status ?? "none";
 }
@@ -1788,6 +1814,40 @@ function buildAgentCompletionScore(
       successRatePct === undefined
         ? "No paid jobs yet"
         : `${completedJobCount}/${evaluatedJobCount} completed`
+  };
+}
+
+function buildAgentJobActivityStats(
+  hireRequests: HireRequestFile,
+  sessionId: string,
+  options: { includeNonPublicAggregate?: boolean } = {}
+) {
+  const requests = hireRequests.requests
+    .filter(
+      (request) =>
+        request.sessionId === sessionId &&
+        (options.includeNonPublicAggregate !== false || shouldIncludeInPublicAggregate(request))
+    )
+    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
+  const privateRequests = requests.filter(isPrivateHireRequest);
+  const paidRequests = requests.filter((request) => request.requestType === "paid_execution");
+  const completedRequests = requests.filter((request) => request.status === "completed");
+  const failedRequests = requests.filter((request) => request.status === "failed");
+  return {
+    totalJobCount: requests.length,
+    publicJobCount: requests.length - privateRequests.length,
+    privateJobCount: privateRequests.length,
+    paidExecutionCount: paidRequests.length,
+    privatePaidExecutionCount: paidRequests.filter(isPrivateHireRequest).length,
+    completedJobCount: completedRequests.length,
+    privateCompletedJobCount: privateRequests.filter((request) => request.status === "completed").length,
+    failedJobCount: failedRequests.length,
+    privateFailedJobCount: privateRequests.filter((request) => request.status === "failed").length,
+    ...(requests[0]?.submittedAtIso ? { lastJobAtIso: requests[0].submittedAtIso } : {}),
+    label:
+      requests.length === 0
+        ? "No SantaClawz jobs yet"
+        : `${completedRequests.length}/${requests.length} jobs completed${privateRequests.length > 0 ? `, ${privateRequests.length} private` : ""}`
   };
 }
 
@@ -3527,6 +3587,7 @@ export class ClawzControlPlane {
     taskPrompt: string;
     requesterContact: string;
     budgetMina?: string;
+    jobPrivacy?: SantaClawzJobPrivacyPreference;
     artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     paymentAuthorization: HirePaymentAuthorization;
   }): SignedHireIngressRequest {
@@ -3619,6 +3680,7 @@ export class ClawzControlPlane {
         title: input.taskPrompt.split(/\r?\n/)[0]?.trim().slice(0, 120) || "SantaClawz hire request",
         client_request: input.taskPrompt,
         requester_contact: input.requesterContact,
+        ...(input.jobPrivacy ? { activity_privacy: toSnakeJobPrivacy(input.jobPrivacy) } : {}),
         ...(input.artifactDelivery
           ? {
               artifact_delivery: {
@@ -3908,6 +3970,8 @@ export class ClawzControlPlane {
     taskPrompt: string;
     requesterContact: string;
     budgetMina?: string;
+    jobPrivacy?: SantaClawzJobPrivacyPreference;
+    artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     paymentAuthorization: HirePaymentAuthorization;
   }) {
     const signedRequest = this.buildSignedHireIngressRequest(input);
@@ -7069,6 +7133,13 @@ export class ClawzControlPlane {
       trustModeId: focus.trustModeId
     });
     const runtimeReachable = relayProfile ? relayConnected : availability.reachable;
+    const adminAccess = this.buildAdminAccessState(
+      state,
+      focus.sessionId,
+      options.adminKey,
+      options.exposeIssuedAdminKey
+    );
+    const publicProfileView = Boolean(options.agentId || options.sessionId) && !adminAccess.hasAdminAccess;
     const readiness = buildAgentReadinessState({
       profile,
       ownership,
@@ -7077,16 +7148,13 @@ export class ClawzControlPlane {
       runtimeReachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
-      lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId)
+      lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId, { includePrivate: !publicProfileView })
     });
     const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId);
+    const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId, {
+      includeNonPublicAggregate: !publicProfileView
+    });
     const protocolOwnerFeePolicy = buildProtocolOwnerFeePolicyFromEnv();
-    const adminAccess = this.buildAdminAccessState(
-      state,
-      focus.sessionId,
-      options.adminKey,
-      options.exposeIssuedAdminKey
-    );
     const ingressAccess = this.buildIngressAccessState(
       state,
       focus.sessionId,
@@ -7127,6 +7195,7 @@ export class ClawzControlPlane {
       paidJobsEnabled,
       readiness,
       completionScore,
+      jobActivityStats,
       protocolOwnerFeePolicy,
       adminAccess,
       ingressAccess,
@@ -7211,7 +7280,7 @@ export class ClawzControlPlane {
       runtimeReachable: relayProfile ? relayConnected : reachability.reachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
-      lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId)
+      lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
     });
     const availabilityReason = relayProfile
       ? relayConnected
@@ -7359,9 +7428,12 @@ export class ClawzControlPlane {
           runtimeReachable: relayProfile ? relayConnected : runtimeHeartbeat.status === "live",
           heartbeat: runtimeHeartbeat,
           paymentReady,
-          lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId)
+          lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
         });
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);
+        const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId, {
+          includeNonPublicAggregate: false
+        });
         return {
           agentId,
           sessionId,
@@ -7414,6 +7486,7 @@ export class ClawzControlPlane {
           ...(runtimeStatusReason ? { runtimeStatusReason } : {}),
           readiness,
           completionScore,
+          jobActivityStats,
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "confirmed").length,
@@ -8125,6 +8198,7 @@ export class ClawzControlPlane {
       submittedAtIso,
       taskPrompt,
       requesterContact,
+      ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
@@ -8204,6 +8278,7 @@ export class ClawzControlPlane {
         ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
         : {}),
       requesterContact,
+      ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       deliveryTarget: publicDeliveryTarget,
       ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
@@ -8254,23 +8329,25 @@ export class ClawzControlPlane {
           : {})
       });
     }
-    await this.enqueueSocialAnchorCandidate({
-      sessionId,
-      kind: "hire-request-submitted",
-      summary: `${profile.agentName} received a new hire request through SantaClawz.`,
-      occurredAtIso: submittedAtIso,
-      payload: {
-        requestId,
-        agentId: options.agentId,
-        requesterContactDigestSha256: sha256Hex(nextRecord.requesterContact),
-        requestType,
-        pricingMode: profile.paymentProfile.pricingMode,
-        paymentStatus,
-        ...(settledAmountUsd ? { settledAmountUsd } : {}),
-        status: hireStatus
-      }
-    });
-    if (ingressProtocolReturn) {
+    if (shouldPublishHireLifecycle(options.jobPrivacy)) {
+      await this.enqueueSocialAnchorCandidate({
+        sessionId,
+        kind: "hire-request-submitted",
+        summary: `${profile.agentName} received a new hire request through SantaClawz.`,
+        occurredAtIso: submittedAtIso,
+        payload: {
+          requestId,
+          agentId: options.agentId,
+          requesterContactDigestSha256: sha256Hex(nextRecord.requesterContact),
+          requestType,
+          pricingMode: profile.paymentProfile.pricingMode,
+          paymentStatus,
+          ...(settledAmountUsd ? { settledAmountUsd } : {}),
+          status: hireStatus
+        }
+      });
+    }
+    if (ingressProtocolReturn && shouldPublishHireLifecycle(options.jobPrivacy)) {
       const completionClassification =
         ingressProtocolReturn.status === "completed"
           ? ingressProtocolReturn.execution?.completionClassification
@@ -8364,6 +8441,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
+      ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(deliveryReceipt ? { deliveryReceipt } : {}),
       ingress: {

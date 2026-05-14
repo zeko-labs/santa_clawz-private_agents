@@ -1573,6 +1573,15 @@ pre,
   text-align: center;
 }
 
+.job-activity-pill {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  border-color: rgba(59, 108, 179, 0.24);
+  background: rgba(91, 142, 212, 0.13);
+  color: #275282;
+}
+
 .completion-score-green {
   border-color: rgba(71, 151, 84, 0.24);
   background: rgba(94, 186, 111, 0.14);

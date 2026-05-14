@@ -535,6 +535,20 @@ export interface AgentCompletionScore {
   label: string;
 }
 
+export interface AgentJobActivityStats {
+  totalJobCount: number;
+  publicJobCount: number;
+  privateJobCount: number;
+  paidExecutionCount: number;
+  privatePaidExecutionCount: number;
+  completedJobCount: number;
+  privateCompletedJobCount: number;
+  failedJobCount: number;
+  privateFailedJobCount: number;
+  lastJobAtIso?: string;
+  label: string;
+}
+
 export interface AgentProfileState {
   agentName: string;
   representedPrincipal: string;
@@ -595,6 +609,7 @@ export interface AgentRegistryEntry {
   runtimeStatusReason?: string;
   readiness?: AgentReadinessState;
   completionScore?: AgentCompletionScore;
+  jobActivityStats?: AgentJobActivityStats;
   published: boolean;
   pendingSocialAnchorCount: number;
   anchoredSocialFactCount: number;
@@ -621,6 +636,13 @@ export interface HireRequestReceipt {
   localResponseStatusCode?: number;
   localResponseBytes?: number;
   operationalStatus?: HireOperationalStatus;
+  jobPrivacy?: {
+    visibility: "public" | "private";
+    publicAggregateStats?: boolean;
+    publicLifecycleEvents?: boolean;
+    publicArtifactMetadata?: boolean;
+    note?: string;
+  };
   artifactDelivery?: {
     mode: "platform_scanned" | "buyer_encrypted";
     encryptionScheme?: string;
@@ -989,6 +1011,7 @@ export interface ConsoleStateResponse {
   paidJobsEnabled: boolean;
   readiness?: AgentReadinessState;
   completionScore?: AgentCompletionScore;
+  jobActivityStats?: AgentJobActivityStats;
   protocolOwnerFeePolicy: ProtocolOwnerFeePolicy;
   adminAccess: AdminAccessState;
   ingressAccess?: IngressAccessState;

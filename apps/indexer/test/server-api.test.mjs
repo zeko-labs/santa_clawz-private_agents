@@ -2185,6 +2185,13 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       body: JSON.stringify({
         taskPrompt: "Run a signed free test request.",
         requesterContact: "buyer@example.com",
+        jobPrivacy: {
+          visibility: "private",
+          publicAggregateStats: true,
+          publicLifecycleEvents: false,
+          publicArtifactMetadata: false,
+          note: "buyer requested confidential test"
+        },
         artifactDelivery: {
           mode: "buyer_encrypted",
           encryptionScheme: "age",
@@ -2207,6 +2214,13 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(freeTestAccepted.payload.payment.status, "free_test");
     assert.equal(freeTestAccepted.payload.payment.rail, undefined);
+    assert.deepEqual(freeTestAccepted.payload.jobPrivacy, {
+      visibility: "private",
+      publicAggregateStats: true,
+      publicLifecycleEvents: false,
+      publicArtifactMetadata: false,
+      note: "buyer requested confidential test"
+    });
     assert.equal(freeTestAccepted.payload.protocolReturn.status, "completed");
     assert.equal(freeTestAccepted.payload.protocolReturn.verifiedOutput.deliverableCount, 0);
     assert.equal(freeTestAccepted.payload.protocolReturn.execution.executionMode, "demo-complete");
@@ -2227,6 +2241,17 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       accepted_formats: ["sczenc", "age"],
       local_scan_required: true
     });
+    assert.deepEqual(ingress.receivedHireRequests.get(freeTestAccepted.payload.requestId).input.activity_privacy, {
+      visibility: "private",
+      public_aggregate_stats: true,
+      public_lifecycle_events: false,
+      public_artifact_metadata: false,
+      note: "buyer requested confidential test"
+    });
+    const registryAfterPrivateJob = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(registryAfterPrivateJob.status, 200);
+    const registryPrivateJobAgent = registryAfterPrivateJob.payload.find((agent) => agent.agentId === agentId);
+    assert.equal(registryPrivateJobAgent.jobActivityStats.privateJobCount >= 1, true);
 
     const artifactBody = Buffer.from("Ask again after one brave sip of coffee.\n", "utf8");
     const artifactUpload = await requestJson(
