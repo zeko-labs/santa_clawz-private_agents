@@ -36,7 +36,6 @@ import {
 } from "./api.js";
 
 type AgentProfileDraft = AgentProfileState;
-type PayoutWalletKey = "base" | "ethereum";
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
 type EnrollmentTicket = EnrollmentTicketResponse;
 type DuplicateClaimTarget = {
@@ -103,15 +102,12 @@ const ticket = await clawz.createEnrollmentTicket({
     defaultRail: "base-usdc",
     supportedRails: ["base-usdc"],
     pricingMode: "quote-required",
-    referencePriceUsd: "0.50",
     referencePriceUnit: "minimum"
   },
   payoutWallets: { base: basePayoutWallet }
 });
 
 console.log(ticket.enrollmentCommand);`;
-const FACILITATOR_SETUP_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
 const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const SHOW_MISSION_AUTH_CONFIGURE_STEP = false;
@@ -125,32 +121,6 @@ const EXPLORE_REGISTRY_POLL_MS = 8_000;
 const EXPLORE_AGENT_BOARD_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
-const FACILITATOR_RENDER_CHECKLIST = `Render web service
-Repo: https://github.com/Evan-k-global/x402-zeko
-Build: pnpm install --frozen-lockfile
-Start: pnpm start
-Health check: /health
-
-Required Base env vars
-X402_EVM_FACILITATOR_HOST=0.0.0.0
-X402_EVM_FACILITATOR_PORT=10000
-X402_EVM_NETWORK=base
-X402_BASE_RPC_URL=...
-X402_BASE_RELAYER_PRIVATE_KEY=0x...
-
-Optional smoke/default env
-X402_BASE_PAY_TO=0x...
-
-Optional Ethereum env vars
-X402_ETHEREUM_RPC_URL=...
-X402_ETHEREUM_RELAYER_PRIVATE_KEY=0x...
-X402_ETHEREUM_PAY_TO=0x...
-
-Notes
-- No persistent disk needed
-- Keep relayer separate from payTo
-- Paste the final HTTPS URL into CLAWZ_X402_BASE_FACILITATOR_URL on the SantaClawz indexer`;
-
 type NavSectionKey = "connect" | "explore";
 
 interface AppRouteState {
@@ -522,32 +492,8 @@ function isLikelyEvmAddress(value: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 }
 
-function payoutWalletLabel(walletKey: PayoutWalletKey) {
-  if (walletKey === "base") {
-    return "Base";
-  }
-  return "Ethereum";
-}
-
-function payoutWalletPlaceholder(_walletKey: PayoutWalletKey) {
-  return "0x...";
-}
-
 function hasAdvancedEthereumPayout(profile: Pick<AgentProfileState, "payoutWallets" | "paymentProfile">) {
   return Boolean(profile.paymentProfile.ethereumFacilitatorUrl?.trim() || profile.payoutWallets.ethereum?.trim());
-}
-
-function nextPayoutWalletKey(
-  wallets: AgentProfileState["payoutWallets"],
-  allowEthereum: boolean
-): PayoutWalletKey {
-  if (!wallets.base?.trim().length) {
-    return "base";
-  }
-  if (allowEthereum && !wallets.ethereum?.trim().length) {
-    return "ethereum";
-  }
-  return "base";
 }
 
 function shellQuote(value: string) {
@@ -1106,16 +1052,6 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
   return "Request quote";
 }
 
-function pricingModeHelp(mode: AgentProfileState["paymentProfile"]["pricingMode"]) {
-  if (mode === "fixed-exact") {
-    return "Fixed payment is settled before SantaClawz sends work to your agent.";
-  }
-  if (mode === "free-test") {
-    return "Free-test requests are signed by SantaClawz, quota-limited, and do not request payment.";
-  }
-  return "Your agent reviews quote requests and returns an exact price before paid execution.";
-}
-
 function referencePriceLine(input: {
   fixedAmountUsd?: string;
   referencePriceUsd?: string;
@@ -1140,11 +1076,6 @@ function referencePriceLine(input: {
     return `$${amount} / compute unit`;
   }
   return `Quotes from $${amount}`;
-}
-
-function formatBpsPercent(feeBps: number) {
-  const percent = feeBps / 100;
-  return Number.isInteger(percent) ? `${percent}` : percent.toFixed(2).replace(/\.?0+$/, "");
 }
 
 function missionAuthProviderLabel(provider: NonNullable<AgentProfileState["missionAuthOverlay"]["providerHint"]>) {
@@ -1381,7 +1312,7 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
         : {})
     },
     paymentProfile: {
-      enabled: typeof input?.paymentProfile?.enabled === "boolean" ? input.paymentProfile.enabled : false,
+      enabled: typeof input?.paymentProfile?.enabled === "boolean" ? input.paymentProfile.enabled : true,
       supportedRails:
         Array.isArray(input?.paymentProfile?.supportedRails) && input.paymentProfile.supportedRails.length > 0
           ? input.paymentProfile.supportedRails.filter(
@@ -1480,8 +1411,6 @@ export function App() {
   const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
   const [exploreAgentSort, setExploreAgentSort] = useState<ExploreAgentSortKey>("online");
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
-  const [selectedPayoutWalletKey, setSelectedPayoutWalletKey] = useState<PayoutWalletKey>("base");
-  const [draftPayoutWalletValue, setDraftPayoutWalletValue] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [urlReservationSalt, setUrlReservationSalt] = useState<string>(createUrlReservationSalt());
@@ -1494,7 +1423,7 @@ export function App() {
     paymentsEnabled: true,
     basePayoutWallet: "",
     pricingMode: "quote-required",
-    referencePriceUsd: "0.50",
+    referencePriceUsd: "",
     referencePriceUnit: "minimum",
     fixedAmountUsd: "1.00",
     missionAuthEnabled: false,
@@ -1512,7 +1441,6 @@ export function App() {
     paymentLedger: null,
     initialized: false
   });
-  const ethereumPayoutAllowed = hasAdvancedEthereumPayout(profile);
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
   const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
     ? registry
@@ -1936,20 +1864,6 @@ export function App() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [activeSection, sharedAgentId, state?.profile.openClawUrl]);
-
-  useEffect(() => {
-    setDraftPayoutWalletValue(profile.payoutWallets[selectedPayoutWalletKey] ?? "");
-  }, [
-    profile.payoutWallets.base,
-    profile.payoutWallets.ethereum,
-    selectedPayoutWalletKey
-  ]);
-
-  useEffect(() => {
-    if (!ethereumPayoutAllowed && selectedPayoutWalletKey === "ethereum") {
-      setSelectedPayoutWalletKey("base");
-    }
-  }, [ethereumPayoutAllowed, selectedPayoutWalletKey]);
 
   useEffect(() => {
     setIssuedOwnershipChallenge(null);
@@ -2428,8 +2342,7 @@ export function App() {
     const sdkRuntimeReady = sdkUsesSelfHostedRuntime ? sdkDraft.runtimeIngressUrl.trim().length > 0 : true;
     const sdkPaymentReady =
       !sdkDraft.paymentsEnabled ||
-      (isLikelyEvmAddress(sdkDraft.basePayoutWallet) &&
-        (sdkDraft.pricingMode === "quote-required" || sdkDraft.fixedAmountUsd.trim().length > 0));
+      isLikelyEvmAddress(sdkDraft.basePayoutWallet);
     const sdkAuthReady = !sdkDraft.missionAuthEnabled || sdkDraft.missionAuthUrl.trim().length > 0;
     const sdkEnrollmentReady =
       sdkDraft.agentName.trim().length > 0 &&
@@ -2476,10 +2389,6 @@ export function App() {
         setSdkError("Add a valid Base payout wallet before enabling payments.");
         return;
       }
-      if (sdkDraft.paymentsEnabled && sdkDraft.pricingMode === "fixed-exact" && !sdkDraft.fixedAmountUsd.trim()) {
-        setSdkError("Add the fixed job price before creating a ticket.");
-        return;
-      }
       if (sdkDraft.missionAuthEnabled && !sdkDraft.missionAuthUrl.trim()) {
         setSdkError("Add the Agent Mission Auth URL or turn enterprise auth off.");
         return;
@@ -2518,13 +2427,8 @@ export function App() {
             enabled: sdkDraft.paymentsEnabled,
             supportedRails: ["base-usdc"],
             defaultRail: "base-usdc",
-            pricingMode: sdkDraft.pricingMode,
-            ...(sdkDraft.pricingMode === "fixed-exact"
-              ? { fixedAmountUsd: sdkDraft.fixedAmountUsd.trim() }
-              : {
-                  referencePriceUsd: sdkDraft.referencePriceUsd.trim(),
-                  referencePriceUnit: sdkDraft.referencePriceUnit
-                }),
+            pricingMode: "quote-required",
+            referencePriceUnit: "minimum",
             settlementTrigger: "upfront"
           },
           missionAuthOverlay: {
@@ -2674,67 +2578,22 @@ export function App() {
                       placeholder="0x..."
                     />
                   </label>
-                  <label className="field">
-                    <span>Pricing method</span>
-                    <select
-                      className="text-input"
-                      value={sdkDraft.pricingMode}
-                      onChange={(event: ValueInputEvent) => {
-                        updateSdkDraft({
-                          pricingMode: event.target.value === "fixed-exact" ? "fixed-exact" : "quote-required"
-                        });
-                      }}
-                    >
-                      <option value="quote-required">Request quote</option>
-                      <option value="fixed-exact">Fixed price</option>
-                    </select>
-                  </label>
-                  {sdkDraft.pricingMode === "fixed-exact" ? (
-                    <label className="field">
-                      <span>Price per job (USD)</span>
-                      <input
-                        className="text-input"
-                        value={sdkDraft.fixedAmountUsd}
-                        onChange={(event: ValueInputEvent) => {
-                          updateSdkDraft({ fixedAmountUsd: event.target.value });
-                        }}
-                        placeholder="1.00"
-                      />
-                    </label>
-                  ) : (
-                    <>
-                      <label className="field">
-                        <span>Reference price (USD)</span>
-                        <input
-                          className="text-input"
-                          value={sdkDraft.referencePriceUsd}
-                          onChange={(event: ValueInputEvent) => {
-                            updateSdkDraft({ referencePriceUsd: event.target.value });
-                          }}
-                          placeholder="0.50"
-                        />
-                      </label>
-                      <label className="field">
-                        <span>Reference unit</span>
-                        <select
-                          className="text-input"
-                          value={sdkDraft.referencePriceUnit ?? "minimum"}
-                          onChange={(event: ValueInputEvent) => {
-                            updateSdkDraft({
-                              referencePriceUnit:
-                                event.target.value === "agent-minute" || event.target.value === "compute-unit"
-                                  ? event.target.value
-                                  : "minimum"
-                            });
-                          }}
-                        >
-                          <option value="minimum">Minimum</option>
-                          <option value="agent-minute">Agent-minute</option>
-                          <option value="compute-unit">Compute unit</option>
-                        </select>
-                      </label>
-                    </>
-                  )}
+                  <div className="payment-onboarding-brief field-wide">
+                    <strong>Everything else starts on by default.</strong>
+                    <p className="panel-copy">
+                      The agent can receive quote requests, procurement bids, direct-hire requests, and fixed offers. Pricing is decided at job time so the agent can recommend accept or decline to its human approver.
+                    </p>
+                    <div className="payment-decision-grid">
+                      <div>
+                        <span>Recommend yes</span>
+                        <p>Wallet is agent-controlled and the agent can estimate work before accepting.</p>
+                      </div>
+                      <div>
+                        <span>Recommend no</span>
+                        <p>No payout wallet yet, or a human must manually approve every paid job before the agent responds.</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : null}
 
@@ -3015,14 +2874,20 @@ export function App() {
   const missionAuthOverlay = profile.missionAuthOverlay;
   const missionAuthEnabled = missionAuthOverlay.enabled;
   const missionAuthVerified = missionAuthOverlay.status === "verified";
-  const paymentProfile = effectivePaymentProfile(profile);
+  const paymentProfile = {
+    ...effectivePaymentProfile(profile),
+    enabled: true,
+    supportedRails: ["base-usdc"] as AgentProfileState["paymentProfile"]["supportedRails"],
+    defaultRail: "base-usdc" as const,
+    pricingMode: "quote-required" as const,
+    referencePriceUnit: "minimum" as const
+  };
   const paymentsEnabled = paymentProfile.enabled;
-  const paymentProfileReady = paymentProfileDraftReady(published, profile);
-  const configuredPayoutWallets = ([
-    ["base", profile.payoutWallets.base],
-    ...(ethereumPayoutAllowed ? [["ethereum", profile.payoutWallets.ethereum] as const] : [])
-  ] as Array<[PayoutWalletKey, string | undefined]>).filter(([, value]) => value?.trim().length);
-  const walletsReady = configuredPayoutWallets.length > 0;
+  const paymentProfileReady = paymentProfileDraftReady(published, {
+    ...profile,
+    paymentProfile
+  });
+  const payoutWalletReady = Boolean(profile.payoutWallets.base?.trim());
   const profileForSave = {
     ...profile,
     paymentProfile
@@ -3041,44 +2906,13 @@ export function App() {
           : savedPaymentProfileReady
             ? referencePriceLine(state.profile.paymentProfile)
             : "Finish work setup";
-  const paymentSectionLead = agentArchived
-    ? "This agent is archived on SantaClawz."
-    : freeTestMode
-      ? "Free-test requests are signed by SantaClawz and quota-limited."
-      : !paymentsEnabled
-        ? "Open this agent for paid work when it is ready."
-        : paymentProfileReady
-          ? `${referencePriceLine(paymentProfile)}.`
-          : "Add a Base payout wallet so the agent can receive paid work.";
   const paymentSummaryMessage = agentArchived
     ? "Archived agents stay on their public URL for proof history, but SantaClawz hides them from Explore and disables new hire requests until restored."
     : !published
       ? "Publish on Zeko first to let buyers discover and pay this agent."
       : paymentProfileSummary(paymentProfileReady, paymentProfile);
-  const protocolFeeAppliesToDefaultRail = Boolean(
-    state.protocolOwnerFeePolicy.enabled &&
-      defaultPaymentRail &&
-      state.protocolOwnerFeePolicy.recipientByRail[defaultPaymentRail]
-  );
-  const protocolFeePercentLabel = formatBpsPercent(state.protocolOwnerFeePolicy.feeBps);
-  const sellerNetPercentLabel = formatBpsPercent(10_000 - state.protocolOwnerFeePolicy.feeBps);
-  const paymentFeeDisclosure =
-    protocolFeeAppliesToDefaultRail && paymentProfile.enabled && paymentProfile.pricingMode === "fixed-exact"
-      ? paymentProfile.settlementTrigger === "upfront"
-        ? `Buyers pay the listed price up front. SantaClawz calculates agent net using the higher of ${protocolFeePercentLabel}% or the current network facilitation cost, so price small jobs with that minimum in mind.`
-        : `Buyers pay the listed price up front. SantaClawz keeps ${protocolFeePercentLabel}% and sellers receive ${sellerNetPercentLabel}% of the listed price.`
-      : null;
-  const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
-  const pricingMethodHelpText = pricingModeHelp(paymentProfile.pricingMode);
   const missionAuthToggleCopy =
     "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions.";
-  const showMainPricingField =
-    paymentProfile.enabled &&
-    paymentProfile.pricingMode === "fixed-exact";
-  const showReferencePricingFields = paymentProfile.enabled && paymentProfile.pricingMode === "quote-required";
-  const mainPricingLabel = "Price per job (USD)";
-  const mainPricingValue = paymentProfile.fixedAmountUsd ?? "";
-  const mainPricingPlaceholder = "0.20";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
@@ -3296,50 +3130,6 @@ export function App() {
       ? `${missionAuthOverlay.authorityName ?? "Mission auth overlay"} verified${missionAuthOverlay.lastVerifiedAtIso ? ` on ${new Date(missionAuthOverlay.lastVerifiedAtIso).toLocaleString()}` : ""}.`
       : null;
 
-  function savePayoutWallet() {
-    const trimmedValue = draftPayoutWalletValue.trim();
-    if (!trimmedValue) {
-      setError("Paste a payout wallet address before adding it.");
-      return;
-    }
-
-    if (!isLikelyEvmAddress(trimmedValue)) {
-      setError(`${payoutWalletLabel(selectedPayoutWalletKey)} payout wallet must be a valid EVM address.`);
-      return;
-    }
-
-    const nextWallets = {
-      ...profile.payoutWallets,
-      [selectedPayoutWalletKey]: trimmedValue
-    };
-
-    const nextProfile = {
-      ...profile,
-      payoutWallets: nextWallets
-    };
-    const nextWalletKey = nextPayoutWalletKey(nextWallets, hasAdvancedEthereumPayout(nextProfile));
-    setProfile({
-      ...profile,
-      payoutWallets: nextWallets
-    });
-    setSelectedPayoutWalletKey(nextWalletKey);
-    setDraftPayoutWalletValue(nextWallets[nextWalletKey] ?? "");
-    setError(null);
-  }
-
-  function removePayoutWallet(walletKey: PayoutWalletKey) {
-    const nextWallets = {
-      ...profile.payoutWallets
-    };
-    delete nextWallets[walletKey];
-    setProfile({
-      ...profile,
-      payoutWallets: nextWallets
-    });
-    setSelectedPayoutWalletKey(walletKey);
-    setDraftPayoutWalletValue("");
-  }
-
   function enablePayments() {
     setProfile({
       ...profile,
@@ -3353,25 +3143,6 @@ export function App() {
       }
     });
     setError(null);
-  }
-
-  function disablePayments() {
-    setProfile({
-      ...profile,
-      paymentProfile: {
-        ...profile.paymentProfile,
-        enabled: false
-      }
-    });
-    setError(null);
-  }
-
-  function toggleOpenForWork() {
-    if (profile.paymentProfile.enabled) {
-      disablePayments();
-      return;
-    }
-    enablePayments();
   }
 
   function toggleMissionAuthOverlay() {
@@ -3550,163 +3321,48 @@ export function App() {
               />
             </label>
 
-            <div className="field field-wide open-work-toggle-field">
-              <div className="field-label-row">
-                <span>Agent payments</span>
+            <label className="field field-wide">
+              <span>Base payout wallet</span>
+              <input
+                className="text-input"
+                value={profile.payoutWallets.base ?? ""}
+                onChange={(event: ValueInputEvent) => {
+                  setProfile({
+                    ...profile,
+                    payoutWallets: {
+                      ...profile.payoutWallets,
+                      base: event.target.value
+                    },
+                    paymentProfile: {
+                      ...profile.paymentProfile,
+                      enabled: true,
+                      supportedRails: ["base-usdc"],
+                      defaultRail: "base-usdc",
+                      pricingMode: "quote-required",
+                      referencePriceUnit: "minimum"
+                    }
+                  });
+                }}
+                placeholder="0x..."
+              />
+            </label>
+
+            <div className="payment-onboarding-brief field-wide">
+              <strong>Work intake starts open.</strong>
+              <p className="panel-copy">
+                SantaClawz enables quote requests, procurement bids, direct hire, fixed offers, platform-scanned delivery, private encrypted delivery, and private job privacy by default. The agent decides price and risk per job instead of guessing during signup.
+              </p>
+              <div className="payment-decision-grid">
+                <div>
+                  <span>Agent should recommend yes</span>
+                  <p>The wallet is controlled by the operator and the agent can estimate scope, delivery lane, privacy, and payout before accepting.</p>
+                </div>
+                <div>
+                  <span>Agent should recommend no</span>
+                  <p>No payout wallet is ready, or the human approver wants manual review before bids, quotes, or paid execution.</p>
+                </div>
               </div>
-              <button
-                type="button"
-                className={paymentProfile.enabled ? "slider-toggle active" : "slider-toggle"}
-                role="switch"
-                aria-checked={paymentProfile.enabled}
-                onClick={toggleOpenForWork}
-              >
-                <span className="slider-toggle-track" aria-hidden="true">
-                  <span className="slider-toggle-thumb" />
-                </span>
-                <span className="slider-toggle-copy">
-                  <strong>{paymentProfile.enabled ? "Agent payments are on" : "Turn on agent payments"}</strong>
-                  <small>{paymentPolicyGuidance}</small>
-                </span>
-              </button>
             </div>
-
-            {paymentProfile.enabled ? (
-              <label className="field field-wide">
-                <span>Base Network Payout Wallet</span>
-                <input
-                  className="text-input"
-                  value={profile.payoutWallets.base ?? ""}
-                  onChange={(event: ValueInputEvent) => {
-                    setProfile({
-                      ...profile,
-                      payoutWallets: {
-                        ...profile.payoutWallets,
-                        base: event.target.value
-                      }
-                    });
-                  }}
-                  placeholder="0x..."
-                />
-              </label>
-            ) : null}
-
-            {paymentProfile.enabled ? (
-              <div className={
-                showReferencePricingFields
-                  ? "field-grid field-wide pricing-fields-row"
-                  : "field-grid field-wide fixed-pricing-row"
-              }>
-                <label className="field">
-                  <span className="field-label-with-info">
-                    <span>Pricing method</span>
-                    <span
-                      className="pricing-info-tooltip"
-                      aria-label={pricingMethodHelpText}
-                      data-tooltip={pricingMethodHelpText}
-                      tabIndex={0}
-                      title={pricingMethodHelpText}
-                    >
-                      i
-                    </span>
-                  </span>
-                  <select
-                    className="text-input"
-                    value={paymentProfile.pricingMode}
-                    onChange={(event: ValueInputEvent) => {
-                      const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
-                      const nextPaymentProfile = {
-                        ...profile.paymentProfile,
-                        pricingMode: nextPricingMode,
-                        referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
-                      };
-                      if (nextPricingMode === "fixed-exact") {
-                        delete nextPaymentProfile.quoteUrl;
-                        delete nextPaymentProfile.maxAmountUsd;
-                        delete nextPaymentProfile.referencePriceUsd;
-                      }
-                      if (nextPricingMode === "quote-required") {
-                        delete nextPaymentProfile.fixedAmountUsd;
-                        delete nextPaymentProfile.maxAmountUsd;
-                      }
-                      setProfile({
-                        ...profile,
-                        paymentProfile: nextPaymentProfile
-                      });
-                    }}
-                  >
-                    <option value="quote-required">Request quote</option>
-                    <option value="fixed-exact">Fixed price</option>
-                    {paymentProfile.pricingMode === "free-test" ? (
-                      <option value="free-test">Free test</option>
-                    ) : null}
-                  </select>
-                </label>
-
-                {showReferencePricingFields ? (
-                  <label className="field">
-                    <span>Reference price (optional)</span>
-                    <input
-                      className="text-input"
-                      value={paymentProfile.referencePriceUsd ?? ""}
-                      onChange={(event: ValueInputEvent) => {
-                        setProfile({
-                          ...profile,
-                          paymentProfile: {
-                            ...profile.paymentProfile,
-                            referencePriceUsd: event.target.value
-                          }
-                        });
-                      }}
-                      placeholder="0.20"
-                    />
-                  </label>
-                ) : null}
-
-                {showReferencePricingFields ? (
-                  <label className="field">
-                    <span>Reference unit (optional)</span>
-                    <select
-                      className="text-input"
-                      value={paymentProfile.referencePriceUnit ?? "minimum"}
-                      onChange={(event: ValueInputEvent) => {
-                        setProfile({
-                          ...profile,
-                          paymentProfile: {
-                            ...profile.paymentProfile,
-                            referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
-                          }
-                        });
-                      }}
-                    >
-                      <option value="minimum">Minimum quote</option>
-                      <option value="agent-minute">Estimated agent-minute</option>
-                      <option value="compute-unit">Compute unit</option>
-                    </select>
-                  </label>
-                ) : null}
-
-                {showMainPricingField ? (
-                  <label className="field">
-                    <span>{mainPricingLabel}</span>
-                    <input
-                      className="text-input"
-                      value={mainPricingValue}
-                      onChange={(event: ValueInputEvent) => {
-                        setProfile({
-                          ...profile,
-                          paymentProfile: {
-                            ...profile.paymentProfile,
-                            fixedAmountUsd: event.target.value
-                          }
-                        });
-                      }}
-                      placeholder={mainPricingPlaceholder}
-                    />
-                  </label>
-                ) : null}
-              </div>
-            ) : null}
 
           </div>
 
@@ -4236,7 +3892,7 @@ export function App() {
               <div className="step-title">
                 <div>
                   <h2>Get paid</h2>
-                  <p className="panel-copy">Publish a reference rate, let the agent quote the job, then collect exact payment before execution.</p>
+                  <p className="panel-copy">Add a payout wallet. The agent can quote, bid, accept fixed offers, or decline after it sees each job.</p>
                 </div>
               </div>
             </div>
@@ -4248,340 +3904,88 @@ export function App() {
                     <strong>Payout wallets</strong>
                     <p className="panel-copy">Where should we send your earnings?</p>
                   </div>
-                  {configuredPayoutWallets.length > 0 ? (
+                  {payoutWalletReady ? (
                     <p className="status-note status-note-compact wallet-status-note wallet-status-inline">
                       Ready to receive payouts
                     </p>
                   ) : null}
                 </div>
                 <div className="payment-subcard-body payout-wallet-body">
-                  {configuredPayoutWallets.length > 0 ? (
-                    <div className="wallet-chip-list">
-                      {configuredPayoutWallets.map(([walletKey, walletValue]) => (
-                        <div key={walletKey} className="wallet-chip">
-                          <div>
-                            <span className="metric">{payoutWalletLabel(walletKey)}</span>
-                            <strong>{walletValue}</strong>
-                          </div>
-                          <button
-                            type="button"
-                            className="mini-button"
-                            onClick={() => {
-                              removePayoutWallet(walletKey);
-                            }}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="field-grid compact-field-grid wallet-builder-grid">
-                    <label className="field">
-                      <span>Chain</span>
-                      <select
-                        className="text-input"
-                        value={selectedPayoutWalletKey}
-                        onChange={(event: ValueInputEvent) => {
-                          setSelectedPayoutWalletKey(event.target.value as PayoutWalletKey);
-                        }}
-                      >
-                        <option value="base">Base</option>
-                        {ethereumPayoutAllowed ? <option value="ethereum">Ethereum self-hosted</option> : null}
-                      </select>
-                    </label>
-                    <label className="field wallet-builder-field">
-                      <span>Wallet address</span>
-                      <div className="wallet-builder-inline">
-                        <input
-                          className="text-input"
-                          value={draftPayoutWalletValue}
-                          onChange={(event: ValueInputEvent) => {
-                            setDraftPayoutWalletValue(event.target.value);
-                          }}
-                          placeholder={payoutWalletPlaceholder(selectedPayoutWalletKey)}
-                        />
-                        <button
-                          type="button"
-                          className="round-add-button"
-                          aria-label={`Add ${payoutWalletLabel(selectedPayoutWalletKey)} payout wallet`}
-                          onClick={() => {
-                            savePayoutWallet();
-                          }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </label>
-                  </div>
+                  <label className="field field-wide">
+                    <span>Base payout wallet</span>
+                    <input
+                      className="text-input"
+                      value={profile.payoutWallets.base ?? ""}
+                      onChange={(event: ValueInputEvent) => {
+                        setProfile({
+                          ...profile,
+                          payoutWallets: {
+                            ...profile.payoutWallets,
+                            base: event.target.value
+                          },
+                          paymentProfile: {
+                            ...profile.paymentProfile,
+                            enabled: true,
+                            supportedRails: ["base-usdc"],
+                            defaultRail: "base-usdc",
+                            pricingMode: "quote-required",
+                            referencePriceUnit: "minimum"
+                          }
+                        });
+                      }}
+                      placeholder="0x..."
+                    />
+                  </label>
                 </div>
               </div>
 
               <div className="payment-subcard payment-subcard-spaced">
                 <div className="payment-subcard-head">
                   <div className="payment-subcard-copy">
-                    <strong>Agent payments</strong>
-                    <p className="panel-copy">{paymentSectionLead}</p>
+                    <strong>Agent work intake</strong>
+                    <p className="panel-copy">Wallet is the only required payment detail. Pricing and lane choices happen per job.</p>
                   </div>
-                  <button
-                    type="button"
-                    className={paymentsEnabled ? "slider-toggle slider-toggle-compact active" : "slider-toggle slider-toggle-compact"}
-                    role="switch"
-                    aria-checked={paymentsEnabled}
-                    aria-label={paymentsEnabled ? "Turn off agent payments" : "Turn on agent payments"}
-                    onClick={toggleOpenForWork}
-                  >
-                    <span className="slider-toggle-track" aria-hidden="true">
-                      <span className="slider-toggle-thumb" />
-                    </span>
-                  </button>
+                  <p className="status-note status-note-compact wallet-status-note wallet-status-inline">
+                    On by default
+                  </p>
                 </div>
 
                 <div className="payment-subcard-body">
                   {!paymentsEnabled ? (
                     <div className="payment-enable-callout">
                       <div className="payment-enable-copy">
-                        <strong>Your agent isn&apos;t earning yet.</strong>
+                        <strong>Work intake is paused.</strong>
                         <p className="panel-copy">
-                          Turn on agent payments when your agent is ready to accept paid work. You can complete this information now or later via agent CLI.
+                          Turn it back on when the payout wallet is ready. SantaClawz will default to quote-required execution so the agent can price each job safely.
                         </p>
-                        <p className="panel-copy payment-enable-meta">
-                          Default is Request quote: the agent reads the ask, estimates compute and API credits, then returns an exact price before paid execution.
-                        </p>
+                        <button type="button" className="primary-button" onClick={enablePayments}>
+                          Turn on defaults
+                        </button>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <div className="facilitator-inline">
-                        <p className="panel-copy facilitator-inline-copy">
-                          SantaClawz uses its hosted x402 payment processor for upfront payments. Use advanced settings only if this agent runs its own processor.
+                      <div className="payment-onboarding-brief">
+                        <strong>Enabled at signup</strong>
+                        <p className="panel-copy">
+                          Quote requests, procurement bids, direct hire, fixed offers, platform-scanned delivery, buyer-encrypted delivery, direct receipts, public jobs, and private jobs are all supported. The agent can accept, decline, or recommend human approval at job time.
                         </p>
-                        <div className="facilitator-actions">
-                          <a
-                            className="secondary-button"
-                            href={FACILITATOR_SETUP_GUIDE_URL}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            Open setup guide
-                          </a>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => {
-                              void copyValue("facilitator-render-checklist", FACILITATOR_RENDER_CHECKLIST);
-                            }}
-                          >
-                            {copiedKey === "facilitator-render-checklist" ? "Copied checklist" : "Copy Render checklist"}
-                          </button>
+                        <div className="payment-decision-grid">
+                          <div>
+                            <span>Good default</span>
+                            <p>Quote or bid after seeing scope, budget, privacy, delivery lane, expected payout, and deadline.</p>
+                          </div>
+                          <div>
+                            <span>Decision point</span>
+                            <p>Decline or escalate when the job needs unknown tooling, risky files, sensitive data, or an unprofitable payout.</p>
+                          </div>
                         </div>
                       </div>
-
-                      <div className={
-                        showReferencePricingFields
-                          ? "field-grid compact-field-grid payment-main-grid pricing-fields-row"
-                          : "field-grid compact-field-grid payment-main-grid"
-                      }>
-                        <label className="field">
-                          <span className="field-label-with-info">
-                            <span>Pricing method</span>
-                            <span
-                              className="pricing-info-tooltip"
-                              aria-label={pricingMethodHelpText}
-                              data-tooltip={pricingMethodHelpText}
-                              tabIndex={0}
-                              title={pricingMethodHelpText}
-                            >
-                              i
-                            </span>
-                          </span>
-                          <select
-                            className="text-input payment-compact-input"
-                            value={paymentProfile.pricingMode}
-                            onChange={(event: ValueInputEvent) => {
-                              const nextPricingMode = event.target.value as AgentProfileState["paymentProfile"]["pricingMode"];
-                              const nextPaymentProfile = {
-                                ...profile.paymentProfile,
-                                pricingMode: nextPricingMode,
-                                referencePriceUnit: profile.paymentProfile.referencePriceUnit ?? "minimum"
-                              };
-                              if (nextPricingMode === "fixed-exact") {
-                                delete nextPaymentProfile.quoteUrl;
-                                delete nextPaymentProfile.maxAmountUsd;
-                                delete nextPaymentProfile.referencePriceUsd;
-                              }
-                              if (nextPricingMode === "quote-required") {
-                                delete nextPaymentProfile.fixedAmountUsd;
-                                delete nextPaymentProfile.maxAmountUsd;
-                              }
-                              setProfile({
-                                ...profile,
-                                paymentProfile: nextPaymentProfile
-                              });
-                            }}
-                          >
-                            <option value="quote-required">Request quote</option>
-                            <option value="fixed-exact">Fixed price</option>
-                            {paymentProfile.pricingMode === "free-test" ? (
-                              <option value="free-test">Free test</option>
-                            ) : null}
-                          </select>
-                        </label>
-                        {showReferencePricingFields ? (
-                          <>
-                            <label className="field">
-                              <span>Reference price (optional)</span>
-                              <input
-                                className="text-input payment-compact-input"
-                                value={paymentProfile.referencePriceUsd ?? ""}
-                                onChange={(event: ValueInputEvent) => {
-                                  setProfile({
-                                    ...profile,
-                                    paymentProfile: {
-                                      ...profile.paymentProfile,
-                                      referencePriceUsd: event.target.value
-                                    }
-                                  });
-                                }}
-                                placeholder="0.20"
-                              />
-                            </label>
-                            <label className="field">
-                              <span>Reference unit (optional)</span>
-                              <select
-                                className="text-input payment-compact-input"
-                                value={paymentProfile.referencePriceUnit ?? "minimum"}
-                                onChange={(event: ValueInputEvent) => {
-                                  setProfile({
-                                    ...profile,
-                                    paymentProfile: {
-                                      ...profile.paymentProfile,
-                                      referencePriceUnit: event.target.value as NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>
-                                    }
-                                  });
-                                }}
-                              >
-                                <option value="minimum">Minimum quote</option>
-                                <option value="agent-minute">Estimated agent-minute</option>
-                                <option value="compute-unit">Compute unit</option>
-                              </select>
-                            </label>
-                          </>
-                        ) : null}
-                        {showMainPricingField ? (
-                          <label className="field">
-                            <span>{mainPricingLabel}</span>
-                            <input
-                              className="text-input payment-compact-input"
-                              value={mainPricingValue}
-                              onChange={(event: ValueInputEvent) => {
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: {
-                                    ...profile.paymentProfile,
-                                    fixedAmountUsd: event.target.value
-                                  }
-                                });
-                              }}
-                              placeholder={mainPricingPlaceholder}
-                            />
-                          </label>
-                        ) : (
-                          <p className="status-note status-note-compact payment-summary-note">
-                            Final price is quoted by the agent after it estimates the ask. Buyers pay the accepted exact quote before execution.
-                          </p>
-                        )}
-                      </div>
-
-                      <details className="advanced-panel compact-advanced-panel">
-                        <summary>Advanced settings</summary>
-                        <div className="field-grid compact-field-grid payment-advanced-grid">
-                          <label className="field">
-                            <span>Payout method</span>
-                            <select
-                              className="text-input payment-compact-input"
-                              value={defaultPaymentRail}
-                              onChange={(event: ValueInputEvent) => {
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: {
-                                    ...profile.paymentProfile,
-                                    defaultRail: event.target.value as AgentProfileState["paymentProfile"]["supportedRails"][number]
-                                  }
-                                });
-                              }}
-                            >
-                              {paymentProfile.supportedRails.map((rail) => (
-                                <option key={rail} value={rail}>
-                                  {railLabel(rail)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-
-                          <label className="field">
-                            <span>Base processor URL</span>
-                            <input
-                              className="text-input payment-compact-input"
-                              value={paymentProfile.baseFacilitatorUrl ?? ""}
-                              onChange={(event: ValueInputEvent) => {
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: {
-                                    ...profile.paymentProfile,
-                                    baseFacilitatorUrl: event.target.value
-                                  }
-                                });
-                              }}
-                              placeholder="Optional self-hosted URL"
-                            />
-                          </label>
-                          <label className="field">
-                            <span>Ethereum processor URL</span>
-                            <input
-                              className="text-input payment-compact-input"
-                              value={paymentProfile.ethereumFacilitatorUrl ?? ""}
-                              onChange={(event: ValueInputEvent) => {
-                                setProfile({
-                                  ...profile,
-                                  paymentProfile: {
-                                    ...profile.paymentProfile,
-                                    ethereumFacilitatorUrl: event.target.value
-                                  }
-                                });
-                              }}
-                              placeholder="Optional self-hosted URL"
-                            />
-                          </label>
-                        </div>
-
-                        <label className="field advanced-actions">
-                          <span>Notes for users</span>
-                          <textarea
-                            className="text-area compact-text-area payment-notes-area"
-                            value={paymentProfile.paymentNotes ?? ""}
-                            onChange={(event: ValueInputEvent) => {
-                              setProfile({
-                                ...profile,
-                                paymentProfile: {
-                                  ...profile.paymentProfile,
-                                  paymentNotes: event.target.value
-                                }
-                              });
-                            }}
-                            placeholder="Share fulfillment notes, expectations, or what users should know."
-                          />
-                        </label>
-                      </details>
 
                       <div className="payment-status-grid">
                         <p className="status-note status-note-compact payment-summary-note">
                           {paymentSummaryMessage}
                         </p>
-                        {paymentFeeDisclosure ? (
-                          <p className="panel-copy payment-fee-disclosure">{paymentFeeDisclosure}</p>
-                        ) : null}
                       </div>
 
                       <div className="payment-save-row">

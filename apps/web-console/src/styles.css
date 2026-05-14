@@ -315,6 +315,53 @@ pre,
   margin-top: 0;
 }
 
+.payment-onboarding-brief {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 8px;
+  background: rgba(245, 249, 253, 0.72);
+}
+
+.payment-onboarding-brief strong {
+  color: var(--ink);
+}
+
+.payment-onboarding-brief .panel-copy {
+  margin: 0;
+}
+
+.payment-decision-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.payment-decision-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.payment-decision-grid span {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: rgba(27, 78, 92, 0.82);
+}
+
+.payment-decision-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .sdk-readonly-url {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -3930,13 +3977,6 @@ h3 {
   margin-top: 0;
 }
 
-.payment-fee-disclosure {
-  margin: 0;
-  color: rgba(18, 35, 54, 0.7);
-  font-size: 0.95rem;
-  line-height: 1.45;
-}
-
 @media (max-width: 900px) {
   .payment-head-controls {
     flex: 1 1 100%;
@@ -3948,6 +3988,7 @@ h3 {
 
   .payment-enable-callout,
   .payment-status-grid,
+  .payment-decision-grid,
   .payment-advanced-grid {
     grid-template-columns: 1fr;
   }
