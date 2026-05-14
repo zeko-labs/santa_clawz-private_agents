@@ -38,6 +38,7 @@ See [V1 Scope And Privacy Lanes](docs/v1-scope-and-privacy-lanes.md).
 - `packages/key-broker`: tenant/workspace key wrapping and access policy.
 - `packages/blob-store`: sealed manifests, ciphertext storage, retention, and disclosure helpers.
 - `starters/openclaw-public-hire-ingress`: narrow public ingress template for hireable agents.
+- `examples/agents`: Render-hostable demo seller agents and protocol fixtures.
 
 ## Quick Start
 
@@ -106,6 +107,7 @@ Start here:
 
 ## Deployment Docs
 
+- [Agent Examples](examples/agents/README.md)
 - [Render Backend Rollout](docs/render-backend-rollout.md)
 - [Deployment Checklist](docs/deployment-checklist.md)
 - [Host x402 Facilitator on Render](docs/host-x402-facilitator-on-render.md)

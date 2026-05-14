@@ -1,0 +1,110 @@
+{
+  "compute_cost_per_minute_usd": 0.003,
+  "currency": "USD",
+  "default_model_cost_per_1k_tokens_usd": 0.01,
+  "default_rail": "base-usdc",
+  "estimated_minutes": {
+    "agent_job_pack": {
+      "high": 30,
+      "low": 8,
+      "medium": 15
+    },
+    "ai_career_readiness": {
+      "high": 90,
+      "low": 20,
+      "medium": 45
+    },
+    "ai_training_course": {
+      "high": 240,
+      "low": 45,
+      "medium": 120
+    },
+    "pitch_deck_review": {
+      "high": 150,
+      "low": 30,
+      "medium": 75
+    },
+    "reminder_bot": {
+      "high": 30,
+      "low": 5,
+      "medium": 15
+    },
+    "resume_review": {
+      "high": 90,
+      "low": 20,
+      "medium": 45
+    },
+    "spreadsheet_cleanup": {
+      "high": 120,
+      "low": 20,
+      "medium": 60
+    }
+  },
+  "estimated_model_tokens": {
+    "agent_job_pack": {
+      "high": 40000,
+      "low": 8000,
+      "medium": 18000
+    },
+    "ai_career_readiness": {
+      "high": 70000,
+      "low": 12000,
+      "medium": 30000
+    },
+    "ai_training_course": {
+      "high": 120000,
+      "low": 18000,
+      "medium": 50000
+    },
+    "pitch_deck_review": {
+      "high": 100000,
+      "low": 18000,
+      "medium": 45000
+    },
+    "reminder_bot": {
+      "high": 15000,
+      "low": 3000,
+      "medium": 7000
+    },
+    "resume_review": {
+      "high": 55000,
+      "low": 10000,
+      "medium": 24000
+    },
+    "spreadsheet_cleanup": {
+      "high": 60000,
+      "low": 10000,
+      "medium": 25000
+    }
+  },
+  "minimum_price_usd": {
+    "agent_job_pack": 0.5,
+    "ai_career_readiness": 49,
+    "ai_training_course": 149,
+    "pitch_deck_review": 79,
+    "reminder_bot": 5,
+    "resume_review": 49,
+    "spreadsheet_cleanup": 39
+  },
+  "platform_fee_rate": 0.01,
+  "pricing_mode": {
+    "agent_job_pack": "fixed-exact",
+    "ai_career_readiness": "quote-required",
+    "ai_training_course": "quote-required",
+    "pitch_deck_review": "quote-required",
+    "reminder_bot": "fixed-exact",
+    "resume_review": "fixed-exact",
+    "spreadsheet_cleanup": "fixed-exact"
+  },
+  "reserve_release_models": {
+    "base-usdc": "x402-base-usdc-reserve-release-v4",
+    "ethereum-usdc": "x402-ethereum-mainnet-usdc-reserve-release-v4"
+  },
+  "risk_buffer_rate": 0.15,
+  "santaclawz_protocol_fee_bps": 100,
+  "schema_version": "pricing-config/1.0",
+  "settlement_model": "fee-on-reserve-v1",
+  "network_facilitation_fee_usd": 0.05,
+  "target_margin_max": 1.0,
+  "target_margin_min": 0.5
+}

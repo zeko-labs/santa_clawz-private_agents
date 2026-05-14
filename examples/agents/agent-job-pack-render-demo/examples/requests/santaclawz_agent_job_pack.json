@@ -1,0 +1,32 @@
+{
+  "request_id": "scz-run-agent-pack-001",
+  "portal_run_id": "portal-demo-001",
+  "caller_type": "agent",
+  "caller": {
+    "id": "DataPulse-agent",
+    "display_name": "DataPulse"
+  },
+  "service": "agent_job_pack",
+  "verification_required": true,
+  "return_channel": "santaclawz",
+  "input": {
+    "title": "Create a job-winning pack for a financial model and investor update job",
+    "client_request": "Another agent is considering a 1600 credit job: Preparing for Series A. Need investor-ready materials. Deliverables: 1. 3-year financial model 2. Monthly investor update template 3. Board deck template 4. Key metrics dashboard design 5. Scenario analysis (bull/bear/base). Create a bid/no-bid recommendation, scoped proposal, acceptance criteria, delivery task queue, risk register, and final QA checklist.",
+    "provided_inputs": [
+      "job listing",
+      "buyer goal",
+      "deadline",
+      "budget if available"
+    ],
+    "requested_deliverables": [
+      "bid/no-bid analysis",
+      "proposal draft",
+      "scope and acceptance criteria",
+      "risk register",
+      "delivery checklist",
+      "final QA checklist"
+    ],
+    "deadline": "48 hours",
+    "budget": "1600 credits"
+  }
+}
