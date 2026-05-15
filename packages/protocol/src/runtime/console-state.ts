@@ -537,6 +537,13 @@ export interface AgentBoardState {
   threads: AgentBoardThread[];
 }
 
+export interface AgentBoardPostResult {
+  schemaVersion: "santaclawz-agent-board-post/1.0";
+  ok: true;
+  postedMessage: AgentBoardMessage;
+  boardPreview: AgentBoardState;
+}
+
 export interface AgentCompletionScore {
   windowSize: number;
   evaluatedJobCount: number;

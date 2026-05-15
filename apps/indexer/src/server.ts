@@ -2948,25 +2948,24 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
     }
 
     const body = isRecord(request.body) ? request.body : {};
-    response.json(
-      await controlPlane.postAgentBoardMessage({
-        agentId,
-        ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
-        ...(typeof body.messageType === "string" ? { messageType: body.messageType as AgentBoardMessageType } : {}),
-        ...(typeof body.body === "string" ? { body: body.body } : { body: "" }),
-        ...(Array.isArray(body.topicTags) ? { topicTags: body.topicTags.filter((value): value is string => typeof value === "string") } : {}),
-        ...(Array.isArray(body.capabilityTags)
-          ? { capabilityTags: body.capabilityTags.filter((value): value is string => typeof value === "string") }
-          : {}),
-        ...(typeof body.threadId === "string" ? { threadId: body.threadId } : {}),
-        ...(typeof body.parentMessageId === "string" ? { parentMessageId: body.parentMessageId } : {}),
-        ...(typeof body.proofIntent === "string"
-          ? { proofIntent: body.proofIntent as "per_message" | "aggregate" | "agent_chatter" | "display_only" }
-          : {}),
-        ...(typeof body.swarmId === "string" ? { swarmId: body.swarmId } : {}),
-        ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {})
-      })
-    );
+    const result = await controlPlane.postAgentBoardMessage({
+      agentId,
+      ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      ...(typeof body.messageType === "string" ? { messageType: body.messageType as AgentBoardMessageType } : {}),
+      ...(typeof body.body === "string" ? { body: body.body } : { body: "" }),
+      ...(Array.isArray(body.topicTags) ? { topicTags: body.topicTags.filter((value): value is string => typeof value === "string") } : {}),
+      ...(Array.isArray(body.capabilityTags)
+        ? { capabilityTags: body.capabilityTags.filter((value): value is string => typeof value === "string") }
+        : {}),
+      ...(typeof body.threadId === "string" ? { threadId: body.threadId } : {}),
+      ...(typeof body.parentMessageId === "string" ? { parentMessageId: body.parentMessageId } : {}),
+      ...(typeof body.proofIntent === "string"
+        ? { proofIntent: body.proofIntent as "per_message" | "aggregate" | "agent_chatter" | "display_only" }
+        : {}),
+      ...(typeof body.swarmId === "string" ? { swarmId: body.swarmId } : {}),
+      ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {})
+    });
+    response.json(result);
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to post public agent message."
@@ -5331,7 +5330,7 @@ class AgentRelayHub {
           operatorKey: connection.adminKey,
           ...(swarmId ? { swarmId } : {})
         });
-        const board = await this.plane.postAgentBoardMessage({
+        const postResult = await this.plane.postAgentBoardMessage({
           agentId: connection.agentId,
           authenticatedRelaySessionId: connection.sessionId,
           ...(typeof message.messageType === "string" ? { messageType: message.messageType as AgentBoardMessageType } : {}),
@@ -5355,7 +5354,8 @@ class AgentRelayHub {
           ok: true,
           ...(messageId ? { messageId } : {}),
           agentId: connection.agentId,
-          postedMessage: board.messages[0] ?? null
+          postedMessage: postResult.postedMessage,
+          boardPreview: postResult.boardPreview
         });
       } catch (error) {
         connection.sendJson({

@@ -1481,19 +1481,22 @@ async function testProofBackedAgentMessageBoard() {
       })
     });
     assert.equal(posted.status, 200);
-    assert.equal(posted.payload.totalVisibleMessages, 1);
-    assert.equal(posted.payload.messages[0].agentId, agentId);
-    assert.equal(posted.payload.messages[0].messageType, "dispatch");
-    assert.deepEqual(posted.payload.messages[0].capabilityTags, ["research.summary", "quote-builder"]);
-    assert.equal(posted.payload.messages[0].outputDigestSha256, "a".repeat(64));
-    assert.equal(posted.payload.messages[0].anchorStatus, "pending");
-    assert.match(posted.payload.messages[0].anchorCandidateId, /^anchor_/);
-    assert.equal(posted.payload.messages[0].requestedProofIntent, "per_message");
-    assert.equal(posted.payload.messages[0].proofIntent, "per_message");
-    assert.equal(posted.payload.messages[0].proofAdmissionReason, "requested");
-    assert.match(posted.payload.messages[0].messageDigestSha256, /^[a-f0-9]{64}$/);
-    assert.deepEqual(posted.payload.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
-    assert.equal(posted.payload.threads[0].messageCount, 1);
+    assert.equal(posted.payload.schemaVersion, "santaclawz-agent-board-post/1.0");
+    assert.equal(posted.payload.ok, true);
+    const postedMessage = posted.payload.postedMessage;
+    assert.equal(postedMessage.agentId, agentId);
+    assert.equal(postedMessage.messageType, "dispatch");
+    assert.deepEqual(postedMessage.capabilityTags, ["research.summary", "quote-builder"]);
+    assert.equal(postedMessage.outputDigestSha256, "a".repeat(64));
+    assert.equal(postedMessage.anchorStatus, "pending");
+    assert.match(postedMessage.anchorCandidateId, /^anchor_/);
+    assert.equal(postedMessage.requestedProofIntent, "per_message");
+    assert.equal(postedMessage.proofIntent, "per_message");
+    assert.equal(postedMessage.proofAdmissionReason, "requested");
+    assert.match(postedMessage.messageDigestSha256, /^[a-f0-9]{64}$/);
+    assert.equal(posted.payload.boardPreview.totalVisibleMessages, 1);
+    assert.deepEqual(posted.payload.boardPreview.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
+    assert.equal(posted.payload.boardPreview.threads[0].messageCount, 1);
 
     const agentChatterPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
@@ -1508,12 +1511,12 @@ async function testProofBackedAgentMessageBoard() {
       })
     });
     assert.equal(agentChatterPost.status, 200);
-    assert.equal(agentChatterPost.payload.totalVisibleMessages, 2);
-    assert.equal(agentChatterPost.payload.messages[0].requestedProofIntent, "agent_chatter");
-    assert.equal(agentChatterPost.payload.messages[0].proofIntent, "agent_chatter");
-    assert.equal(agentChatterPost.payload.messages[0].proofAdmissionReason, "requested");
-    assert.equal(agentChatterPost.payload.messages[0].swarmId, "busy-run-agent-chatter");
-    assert.equal(agentChatterPost.payload.messages[0].anchorStatus, "not_proof_requested");
+    assert.equal(agentChatterPost.payload.boardPreview.totalVisibleMessages, 2);
+    assert.equal(agentChatterPost.payload.postedMessage.requestedProofIntent, "agent_chatter");
+    assert.equal(agentChatterPost.payload.postedMessage.proofIntent, "agent_chatter");
+    assert.equal(agentChatterPost.payload.postedMessage.proofAdmissionReason, "requested");
+    assert.equal(agentChatterPost.payload.postedMessage.swarmId, "busy-run-agent-chatter");
+    assert.equal(agentChatterPost.payload.postedMessage.anchorStatus, "not_proof_requested");
 
     const legacyDisplayOnlyPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
@@ -1527,9 +1530,9 @@ async function testProofBackedAgentMessageBoard() {
       })
     });
     assert.equal(legacyDisplayOnlyPost.status, 200);
-    assert.equal(legacyDisplayOnlyPost.payload.totalVisibleMessages, 3);
-    assert.equal(legacyDisplayOnlyPost.payload.messages[0].requestedProofIntent, "agent_chatter");
-    assert.equal(legacyDisplayOnlyPost.payload.messages[0].proofIntent, "agent_chatter");
+    assert.equal(legacyDisplayOnlyPost.payload.boardPreview.totalVisibleMessages, 3);
+    assert.equal(legacyDisplayOnlyPost.payload.postedMessage.requestedProofIntent, "agent_chatter");
+    assert.equal(legacyDisplayOnlyPost.payload.postedMessage.proofIntent, "agent_chatter");
 
     const staleParentAppend = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
@@ -1538,14 +1541,14 @@ async function testProofBackedAgentMessageBoard() {
       },
       body: JSON.stringify({
         messageType: "reply",
-        threadId: posted.payload.messages[0].threadId,
+        threadId: postedMessage.threadId,
         parentMessageId: "msg_ffffffffffffffffff",
         body: "Appending to the thread should not fail when an old parent is outside the visible window."
       })
     });
     assert.equal(staleParentAppend.status, 200);
-    assert.equal(staleParentAppend.payload.totalVisibleMessages, 4);
-    assert.equal(staleParentAppend.payload.messages[0].threadId, posted.payload.messages[0].threadId);
+    assert.equal(staleParentAppend.payload.boardPreview.totalVisibleMessages, 4);
+    assert.equal(staleParentAppend.payload.postedMessage.threadId, postedMessage.threadId);
 
     let swarmBudgetPost;
     for (let index = 0; index < 9; index += 1) {
@@ -1563,10 +1566,48 @@ async function testProofBackedAgentMessageBoard() {
       });
       assert.equal(swarmBudgetPost.status, 200);
     }
-    assert.equal(swarmBudgetPost.payload.messages[0].requestedProofIntent, "per_message");
-    assert.equal(swarmBudgetPost.payload.messages[0].proofIntent, "aggregate");
-    assert.equal(swarmBudgetPost.payload.messages[0].proofAdmissionReason, "swarm_proof_budget_exceeded");
-    assert.equal(swarmBudgetPost.payload.messages[0].anchorStatus, "aggregate_anchored");
+    assert.equal(swarmBudgetPost.payload.postedMessage.requestedProofIntent, "per_message");
+    assert.equal(swarmBudgetPost.payload.postedMessage.proofIntent, "aggregate");
+    assert.equal(swarmBudgetPost.payload.postedMessage.proofAdmissionReason, "swarm_proof_budget_exceeded");
+    assert.equal(swarmBudgetPost.payload.postedMessage.anchorStatus, "aggregate_anchored");
+
+    const concurrentRegistered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Concurrent Board Smoke",
+        headline: "Publishes concurrent public proof requests.",
+        openClawUrl: "http://127.0.0.1:49996/agent"
+      })
+    });
+    assert.equal(concurrentRegistered.status, 200);
+    const concurrentAgentId = concurrentRegistered.payload.agentId;
+    const concurrentAdminKey = concurrentRegistered.payload.adminAccess.issuedAdminKey;
+    const concurrentPosts = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        requestJson(`${baseUrl}/api/agents/${encodeURIComponent(concurrentAgentId)}/messages`, {
+          method: "POST",
+          headers: {
+            "x-clawz-admin-key": concurrentAdminKey
+          },
+          body: JSON.stringify({
+            messageType: "dispatch",
+            body: `Concurrent proof pressure message ${index + 1}`,
+            proofIntent: "per_message",
+            swarmId: "busy-run-concurrent-proof-budget"
+          })
+        })
+      )
+    );
+    assert.equal(concurrentPosts.every((post) => post.status === 200), true);
+    const concurrentPostedMessages = concurrentPosts.map((post) => post.payload.postedMessage);
+    assert.equal(concurrentPostedMessages.filter((message) => message.proofIntent === "per_message").length, 8);
+    assert.equal(concurrentPostedMessages.filter((message) => message.proofAdmissionReason === "swarm_proof_budget_exceeded").length, 4);
+    assert.equal(
+      concurrentPostedMessages.every((message) =>
+        message.proofIntent === "per_message" ? Boolean(message.anchorCandidateId) && message.anchorStatus === "pending" : true
+      ),
+      true
+    );
 
     const publicBoard = await requestJson(
       `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&topic=quotes&capability=research.summary&outputDigest=${"a".repeat(64)}`
@@ -1633,7 +1674,7 @@ async function testProofBackedAgentMessageBoard() {
 
     const queuePath = path.join(workspaceDir, ".clawz-data", "state", "social-anchor-queue.json");
     const queueFile = JSON.parse(await readFile(queuePath, "utf8"));
-    queueFile.items = queueFile.items.filter((item) => item.candidateId !== posted.payload.messages[0].anchorCandidateId);
+    queueFile.items = queueFile.items.filter((item) => item.candidateId !== postedMessage.anchorCandidateId);
     await writeFile(queuePath, JSON.stringify(queueFile, null, 2));
     const reconciledBoard = await requestJson(
       `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&outputDigest=${"a".repeat(64)}`

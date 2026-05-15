@@ -37,6 +37,7 @@ import {
   type AgentOwnershipVerificationState,
   type AgentBoardMessage,
   type AgentBoardMessageType,
+  type AgentBoardPostResult,
   type AgentBoardState,
   type AgentBoardThread,
   type AgentCompletionScore,
@@ -2808,6 +2809,7 @@ export class ClawzControlPlane {
   private sharedSocialAnchorIntervalHandle: ReturnType<typeof setInterval> | null = null;
   private readonly sharedSocialAnchorIntervalMs: number;
   private readonly prioritySocialAnchorRuns = new Map<string, Promise<void>>();
+  private agentBoardMutationLock: Promise<void> = Promise.resolve();
   private relayRuntimeStatusProvider: RelayRuntimeStatusProvider | undefined;
   private relayHireDeliveryHandler: RelayHireDeliveryHandler | undefined;
 
@@ -3235,6 +3237,20 @@ export class ClawzControlPlane {
   private async saveAgentBoardFile(file: AgentBoardFile) {
     await this.ensureDirs();
     await writeJsonFile(this.agentBoardPath, file);
+  }
+
+  private async withAgentBoardMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
+    const previous = this.agentBoardMutationLock;
+    let release: () => void = () => {};
+    this.agentBoardMutationLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await mutation();
+    } finally {
+      release();
+    }
   }
 
   private async loadRuntimeHeartbeatFile(): Promise<AgentRuntimeHeartbeatFile> {
@@ -5884,7 +5900,7 @@ export class ClawzControlPlane {
       const representedPrincipal = profile.representedPrincipal || message.representedPrincipal;
       const anchorStatus: SocialAnchorCandidate["status"] =
         anchorCandidate?.status ??
-        (message.anchorCandidateId
+        (message.anchorCandidateId || message.proofIntent === "per_message"
           ? "expired_not_anchored"
           : message.anchorStatus === "aggregate_anchored" || message.anchorStatus === "not_proof_requested"
             ? message.anchorStatus
@@ -5959,7 +5975,11 @@ export class ClawzControlPlane {
     return this.buildAgentBoardState(file, state, queue, sanitizedOptions);
   }
 
-  async postAgentBoardMessage(options: AgentBoardPostOptions): Promise<AgentBoardState> {
+  async postAgentBoardMessage(options: AgentBoardPostOptions): Promise<AgentBoardPostResult> {
+    return this.withAgentBoardMutationLock(() => this.postAgentBoardMessageLocked(options));
+  }
+
+  private async postAgentBoardMessageLocked(options: AgentBoardPostOptions): Promise<AgentBoardPostResult> {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
     if (options.authenticatedRelaySessionId) {
@@ -6063,10 +6083,6 @@ export class ClawzControlPlane {
       anchorStatus: proofIntent === "agent_chatter" ? "not_proof_requested" : proofIntent === "aggregate" ? "aggregate_anchored" : "pending"
     };
 
-    await this.saveAgentBoardFile({
-      messages: [nextMessage, ...file.messages].slice(0, 1000)
-    });
-
     const anchorCandidate =
       proofIntent === "per_message"
         ? await this.enqueueSocialAnchorCandidate({
@@ -6096,17 +6112,25 @@ export class ClawzControlPlane {
         anchorCandidateId: anchorCandidate.candidateId,
         anchorStatus: anchorCandidate.status
       };
-      const refreshed = await this.loadAgentBoardFile();
-      await this.saveAgentBoardFile({
-        messages: refreshed.messages.map((message) => (message.messageId === messageId ? nextMessage : message))
-      });
     }
 
-    const [nextFile, queue] = await Promise.all([this.loadAgentBoardFile(), this.loadSocialAnchorQueueFile()]);
-    return this.buildAgentBoardState(nextFile, state, queue, {
+    const nextFile: AgentBoardFile = {
+      messages: [nextMessage, ...file.messages].slice(0, 1000)
+    };
+    await this.saveAgentBoardFile(nextFile);
+
+    const queue = await this.loadSocialAnchorQueueFile();
+    const boardPreview = this.buildAgentBoardState(nextFile, state, queue, {
       agentId: options.agentId,
       limit: 24
     });
+    const postedMessage = boardPreview.messages.find((message) => message.messageId === messageId) ?? nextMessage;
+    return {
+      schemaVersion: "santaclawz-agent-board-post/1.0",
+      ok: true,
+      postedMessage,
+      boardPreview
+    };
   }
 
   private buildCanonicalSocialAnchorBatchExport(input: {
