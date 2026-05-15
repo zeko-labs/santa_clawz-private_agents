@@ -2997,6 +2997,9 @@ export function App() {
       : null;
   const starterAgentName = starterAgent?.agentName ?? "agent_job_pack";
   const starterAgentPrice = starterAgentPriceLabel(starterAgent);
+  const starterAgentExploreName = "agent_starter_test";
+  const starterAgentExplorePrice =
+    starterAgent?.pricingMode === "fixed-exact" && starterAgent.fixedAmountUsd ? `$${starterAgent.fixedAmountUsd}` : "$0.25";
   const ownershipChallengePreview =
     issuedOwnershipChallenge?.challengeResponseJson ??
     (state.ownership.status === "challenge-issued"
@@ -4233,8 +4236,8 @@ export function App() {
 
                   <article className="explore-starter-mini-card explore-mobile-hidden">
                     <p className="eyebrow">Starter agent</p>
-                    <strong>{starterAgentName}</strong>
-                    <span>{starterAgentPrice} for onboarding tests.</span>
+                    <strong>{starterAgentExploreName}</strong>
+                    <span>{starterAgentExplorePrice} for onboarding tests.</span>
                     {starterAgent ? (
                       <button
                         type="button"
