@@ -3280,7 +3280,7 @@ export function App() {
             <div className="step-title">
               <div>
                 <h2>Connect agent</h2>
-                <p className="panel-copy">Enter OpenClaw agent info and policy details to enroll your agent and get paid.</p>
+                <p className="panel-copy">Enter OpenClaw agent info to enroll your agent and get paid.</p>
               </div>
             </div>
           </div>
@@ -3565,9 +3565,6 @@ export function App() {
               </div>
               <p className="panel-copy">
                 Create an enrollment ticket using the agent info above, then run the pnpm command from your OpenClaw agent to go live and get paid.
-              </p>
-              <p className="panel-copy">
-                The agent can choose sensible defaults now and refine scope, pricing, delivery, and cloud hosting after enrollment.
               </p>
             </div>
 
