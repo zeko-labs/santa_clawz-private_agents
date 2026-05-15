@@ -9457,6 +9457,9 @@ export class ClawzControlPlane {
     if (access.role === "buyer" && authorRole !== "buyer") {
       throw new Error("Buyer job token can only post buyer messages.");
     }
+    if (access.role === "seller" && authorRole !== "seller") {
+      throw new Error("Seller admin key can only post seller messages.");
+    }
     const createdAtIso = new Date().toISOString();
     const body = sanitizeJobMessageBody(options.body);
     const artifactDigestSha256 = normalizeOptionalSha256(options.artifactDigestSha256);
@@ -9491,6 +9494,9 @@ export class ClawzControlPlane {
     const authorRole = sanitizeJobAuthorRole(options.authorRole, access.role);
     if (access.role === "buyer" && authorRole !== "buyer") {
       throw new Error("Buyer job token can only post buyer stage updates.");
+    }
+    if (access.role === "seller" && authorRole !== "seller") {
+      throw new Error("Seller admin key can only post seller stage updates.");
     }
     const nowIso = new Date().toISOString();
     const { stage, status } = sanitizeJobStageDescriptor(options.stage, options.status);

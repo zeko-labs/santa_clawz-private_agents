@@ -158,6 +158,12 @@ export interface ClawzExecutionStateResponse extends Record<string, unknown> {
   ok: true;
   requestId: string;
   currentPhase: string;
+  lifecycleNarrative?: {
+    execution: string;
+    artifactDelivery: string;
+    buyerAcceptance: string;
+    summary: string;
+  };
   lifecycleChecks?: {
     paymentSettled: boolean;
     relayDelivered: boolean;
@@ -170,6 +176,17 @@ export interface ClawzExecutionStateResponse extends Record<string, unknown> {
     failed: boolean;
     terminal: boolean;
   };
+}
+
+export interface ClawzArtifactScannerReadinessResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-artifact-scanner-readiness/1.0";
+  ok: boolean;
+  code: string;
+  retryable: boolean;
+  scannerReady: boolean;
+  scanner: string;
+  configured: boolean;
+  checkedAtIso: string;
 }
 
 export interface ClawzProcurementIntentInput {
@@ -669,6 +686,10 @@ export class ClawzAgentClient {
       throw new Error("getAgentReadiness requires agentId.");
     }
     return this.readJson<ClawzAgentReadinessResponse>(withQuery(this.baseUrl, `/api/agents/${encodeURIComponent(agentId)}/ready`));
+  }
+
+  async getArtifactScannerReadiness(): Promise<ClawzArtifactScannerReadinessResponse> {
+    return this.readJson<ClawzArtifactScannerReadinessResponse>("/api/artifacts/scanner-readiness");
   }
 
   async watchExecution(input: ClawzExecutionStateQuery): Promise<ClawzExecutionStateResponse> {

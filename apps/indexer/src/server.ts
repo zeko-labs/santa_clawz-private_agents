@@ -2338,6 +2338,37 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
       ...(latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
     ];
+    const lifecycleNarrative = {
+      execution:
+        agentCompleted && !hasFailure
+          ? "completed"
+          : agentStarted
+            ? "in_progress"
+            : paymentSettled || paymentStatus === "authorized"
+              ? "waiting_for_agent"
+              : "waiting_for_payment",
+      artifactDelivery: artifactDelivered
+        ? "delivered_or_receipt_recorded"
+        : "not_delivered",
+      buyerAcceptance: buyerAccepted
+        ? "accepted"
+        : latestReceipt?.buyerAcceptanceStatus === "rejected"
+          ? "rejected"
+          : latestReceipt?.buyerAcceptanceStatus === "not_required"
+            ? "not_required"
+            : "pending",
+      summary: buyerAccepted
+        ? "Execution completed, artifact delivery is recorded, and buyer accepted the work."
+        : buyerVerified
+          ? "Execution completed, artifact delivery is recorded, and buyer verification passed; buyer acceptance is still pending."
+          : artifactDelivered
+            ? "Execution completed and artifact delivery is recorded; buyer verification and acceptance are still pending."
+            : agentCompleted && !hasFailure
+              ? "Execution completed and proof/return state is recorded; no artifact delivery receipt has been recorded yet."
+              : hasFailure
+                ? "Execution has a failure or rejected return that needs attention."
+                : "Execution is still in progress."
+    };
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -2373,8 +2404,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         proofStatus,
         artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
         buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
-        buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending"
+        buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending",
+        narrative: lifecycleNarrative
       },
+      lifecycleNarrative,
       lifecycleChecks: {
         paymentSettled,
         relayDelivered,
@@ -3152,6 +3185,23 @@ app.get("/api/admin/artifacts/scanner-health", route(async (_request, response) 
     code: health.reachable ? "artifact_scanner_reachable" : "artifact_scanner_unavailable",
     retryable: !health.reachable,
     ...health
+  });
+}));
+
+app.get("/api/artifacts/scanner-readiness", route(async (_request, response) => {
+  const health = await artifactStore.scannerHealth();
+  response.status(health.reachable ? 200 : 503).json({
+    schemaVersion: "santaclawz-artifact-scanner-readiness/1.0",
+    ok: health.reachable,
+    code: health.reachable ? "artifact_scanner_reachable" : "artifact_scanner_unavailable",
+    retryable: !health.reachable,
+    scannerReady: health.reachable,
+    scanner: health.scanner,
+    target: health.target,
+    configured: health.configured,
+    checkedAtIso: new Date().toISOString(),
+    durationMs: health.durationMs,
+    ...(health.error ? { reason: health.error } : {})
   });
 }));
 

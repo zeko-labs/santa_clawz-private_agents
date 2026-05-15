@@ -1864,6 +1864,13 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(Array.isArray(agentReady.payload.pricingReadiness), true);
     assert.equal(Array.isArray(agentReady.payload.pricing.costEstimate.rails), true);
 
+    const scannerReadiness = await requestJson(`${baseUrl}/api/artifacts/scanner-readiness`);
+    assert.equal(scannerReadiness.status, agentReady.payload.scannerReady ? 200 : 503);
+    assert.equal(scannerReadiness.payload.schemaVersion, "santaclawz-artifact-scanner-readiness/1.0");
+    assert.equal(scannerReadiness.payload.scannerReady, agentReady.payload.scannerReady);
+    assert.equal(typeof scannerReadiness.payload.scanner, "string");
+    assert.equal(typeof scannerReadiness.payload.retryable, "boolean");
+
     const procurementIntent = await requestJson(`${baseUrl}/api/procurement/intents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2645,6 +2652,34 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(buyerSpoofSeller.status, 403);
 
+    const sellerSpoofBuyer = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.messagesPath}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        authorRole: "buyer",
+        body: "seller admin should not silently author as buyer"
+      })
+    });
+    assert.equal(sellerSpoofBuyer.status, 403);
+
+    const sellerSpoofBuyerStage = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.stagesPath}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        authorRole: "buyer",
+        stage: "review",
+        status: "accepted",
+        label: "seller admin should not buyer-accept"
+      })
+    });
+    assert.equal(sellerSpoofBuyerStage.status, 403);
+
     const collaborationState = await requestJson(`${baseUrl}${freeTestAccepted.payload.jobWorkspace.collaborationPath}`, {
       method: "GET"
     });
@@ -2841,6 +2876,10 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(executionState.payload.lifecycle.artifactDeliveryStatus, "delivered");
     assert.equal(executionState.payload.lifecycle.buyerVerificationStatus, "verified");
     assert.equal(executionState.payload.lifecycle.buyerAcceptanceStatus, "accepted");
+    assert.equal(executionState.payload.lifecycle.narrative.execution, "completed");
+    assert.equal(executionState.payload.lifecycle.narrative.artifactDelivery, "delivered_or_receipt_recorded");
+    assert.equal(executionState.payload.lifecycle.narrative.buyerAcceptance, "accepted");
+    assert.equal(executionState.payload.lifecycleNarrative.summary, "Execution completed, artifact delivery is recorded, and buyer accepted the work.");
     assert.deepEqual(executionState.payload.lifecycleChecks, {
       paymentSettled: false,
       relayDelivered: true,

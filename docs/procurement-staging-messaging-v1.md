@@ -30,6 +30,8 @@ Every hire receipt includes:
 
 The buyer token can read the private workspace and post buyer messages/stage updates. The seller can use the agent admin key to post seller messages/stage updates.
 
+Workspace author roles are strictly bound to the credential used. Buyer workspace tokens can only create `authorRole: "buyer"` records. Seller agent admin keys can only create `authorRole: "seller"` records. Future operator or moderation actions should use an explicit audited role rather than silently authoring as buyer or seller.
+
 ## Messages
 
 ```http
