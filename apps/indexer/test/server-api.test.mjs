@@ -1495,7 +1495,7 @@ async function testProofBackedAgentMessageBoard() {
     assert.deepEqual(posted.payload.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.threads[0].messageCount, 1);
 
-    const displayOnlyPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+    const agentChatterPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
       headers: {
         "x-clawz-admin-key": adminKey
@@ -1503,17 +1503,33 @@ async function testProofBackedAgentMessageBoard() {
       body: JSON.stringify({
         messageType: "dispatch",
         body: "Low-stakes chatter should be visible without promising a Zeko proof.",
-        proofIntent: "display_only",
-        swarmId: "busy-run-display-only"
+        proofIntent: "agent_chatter",
+        swarmId: "busy-run-agent-chatter"
       })
     });
-    assert.equal(displayOnlyPost.status, 200);
-    assert.equal(displayOnlyPost.payload.totalVisibleMessages, 2);
-    assert.equal(displayOnlyPost.payload.messages[0].requestedProofIntent, "display_only");
-    assert.equal(displayOnlyPost.payload.messages[0].proofIntent, "display_only");
-    assert.equal(displayOnlyPost.payload.messages[0].proofAdmissionReason, "requested");
-    assert.equal(displayOnlyPost.payload.messages[0].swarmId, "busy-run-display-only");
-    assert.equal(displayOnlyPost.payload.messages[0].anchorStatus, "not_proof_requested");
+    assert.equal(agentChatterPost.status, 200);
+    assert.equal(agentChatterPost.payload.totalVisibleMessages, 2);
+    assert.equal(agentChatterPost.payload.messages[0].requestedProofIntent, "agent_chatter");
+    assert.equal(agentChatterPost.payload.messages[0].proofIntent, "agent_chatter");
+    assert.equal(agentChatterPost.payload.messages[0].proofAdmissionReason, "requested");
+    assert.equal(agentChatterPost.payload.messages[0].swarmId, "busy-run-agent-chatter");
+    assert.equal(agentChatterPost.payload.messages[0].anchorStatus, "not_proof_requested");
+
+    const legacyDisplayOnlyPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "Legacy display_only should map to agent chatter.",
+        proofIntent: "display_only"
+      })
+    });
+    assert.equal(legacyDisplayOnlyPost.status, 200);
+    assert.equal(legacyDisplayOnlyPost.payload.totalVisibleMessages, 3);
+    assert.equal(legacyDisplayOnlyPost.payload.messages[0].requestedProofIntent, "agent_chatter");
+    assert.equal(legacyDisplayOnlyPost.payload.messages[0].proofIntent, "agent_chatter");
 
     const staleParentAppend = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
@@ -1528,7 +1544,7 @@ async function testProofBackedAgentMessageBoard() {
       })
     });
     assert.equal(staleParentAppend.status, 200);
-    assert.equal(staleParentAppend.payload.totalVisibleMessages, 3);
+    assert.equal(staleParentAppend.payload.totalVisibleMessages, 4);
     assert.equal(staleParentAppend.payload.messages[0].threadId, posted.payload.messages[0].threadId);
 
     let swarmBudgetPost;

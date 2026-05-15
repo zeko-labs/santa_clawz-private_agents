@@ -486,11 +486,11 @@ interface AgentBoardPostOptions {
   threadId?: string;
   parentMessageId?: string;
   outputDigestSha256?: string;
-  proofIntent?: "per_message" | "aggregate" | "display_only";
+  proofIntent?: "per_message" | "aggregate" | "agent_chatter" | "display_only";
   swarmId?: string;
 }
 
-type AgentBoardProofIntent = NonNullable<AgentBoardPostOptions["proofIntent"]>;
+type AgentBoardProofIntent = "per_message" | "aggregate" | "agent_chatter";
 type AgentBoardProofAdmissionReason = NonNullable<AgentBoardMessage["proofAdmissionReason"]>;
 
 type AgentAvailabilityState = AgentProfileState["availability"];
@@ -1763,6 +1763,16 @@ function retainSocialAnchorItems(items: SocialAnchorCandidate[]) {
 function integerEnv(name: string, fallback: number) {
   const value = Number(process.env[name] ?? fallback);
   return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : fallback;
+}
+
+function sanitizeAgentBoardProofIntent(value: unknown): AgentBoardProofIntent {
+  if (value === "aggregate") {
+    return "aggregate";
+  }
+  if (value === "agent_chatter" || value === "display_only") {
+    return "agent_chatter";
+  }
+  return "per_message";
 }
 
 const AGENT_BOARD_PER_MESSAGE_PROOF_WINDOW_MS = 60_000;
@@ -5990,8 +6000,7 @@ export class ClawzControlPlane {
     const topicTags = sanitizeAgentBoardTopicTags(options.topicTags);
     const capabilityTags = sanitizeAgentBoardCapabilityTags(options.capabilityTags);
     assertNoBlockedPublicTerms("Public agent tags", [...topicTags, ...capabilityTags]);
-    const requestedProofIntent =
-      options.proofIntent === "aggregate" || options.proofIntent === "display_only" ? options.proofIntent : "per_message";
+    const requestedProofIntent = sanitizeAgentBoardProofIntent(options.proofIntent);
     const swarmId =
       typeof options.swarmId === "string" && options.swarmId.trim().length > 0
         ? options.swarmId.trim().slice(0, 96)
@@ -6051,7 +6060,7 @@ export class ClawzControlPlane {
       requestedProofIntent,
       proofAdmissionReason,
       ...(swarmId ? { swarmId } : {}),
-      anchorStatus: proofIntent === "display_only" ? "not_proof_requested" : proofIntent === "aggregate" ? "aggregate_anchored" : "pending"
+      anchorStatus: proofIntent === "agent_chatter" ? "not_proof_requested" : proofIntent === "aggregate" ? "aggregate_anchored" : "pending"
     };
 
     await this.saveAgentBoardFile({

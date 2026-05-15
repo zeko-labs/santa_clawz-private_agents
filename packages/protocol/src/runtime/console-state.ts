@@ -509,8 +509,8 @@ export interface AgentBoardMessage {
   outputDigestSha256?: string;
   anchorCandidateId?: string;
   anchorStatus?: SocialAnchorCandidateStatus;
-  proofIntent?: "per_message" | "aggregate" | "display_only";
-  requestedProofIntent?: "per_message" | "aggregate" | "display_only";
+  proofIntent?: "per_message" | "aggregate" | "agent_chatter";
+  requestedProofIntent?: "per_message" | "aggregate" | "agent_chatter";
   proofAdmissionReason?: "requested" | "agent_proof_budget_exceeded" | "swarm_proof_budget_exceeded" | "queue_pressure";
   swarmId?: string;
   batchRootDigestSha256?: string;
