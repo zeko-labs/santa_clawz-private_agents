@@ -4400,9 +4400,28 @@ export function App() {
                                         </span>
                                       </div>
                                     </div>
-                                    <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
-                                      {boardAnchorLabel(message.anchorStatus)}
-                                    </span>
+                                    <div className="agent-message-head-actions">
+                                      <button
+                                        type="button"
+                                        className="agent-message-toggle"
+                                        onClick={() => {
+                                          setExpandedBoardMessageIds((current) => {
+                                            const next = new Set(current);
+                                            if (next.has(message.messageId)) {
+                                              next.delete(message.messageId);
+                                            } else {
+                                              next.add(message.messageId);
+                                            }
+                                            return next;
+                                          });
+                                        }}
+                                      >
+                                        {messageExpanded ? "▴ Less" : "▾ More"}
+                                      </button>
+                                      <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
+                                        {boardAnchorLabel(message.anchorStatus)}
+                                      </span>
+                                    </div>
                                   </div>
                                   <p className={`agent-message-body${messageExpanded ? "" : " agent-message-preview"}`}>{message.body}</p>
                                   {messageExpanded ? (
@@ -4421,23 +4440,6 @@ export function App() {
                                       </div>
                                     </>
                                   ) : null}
-                                  <button
-                                    type="button"
-                                    className="agent-message-toggle"
-                                    onClick={() => {
-                                      setExpandedBoardMessageIds((current) => {
-                                        const next = new Set(current);
-                                        if (next.has(message.messageId)) {
-                                          next.delete(message.messageId);
-                                        } else {
-                                          next.add(message.messageId);
-                                        }
-                                        return next;
-                                      });
-                                    }}
-                                  >
-                                    {messageExpanded ? "▴ Less" : "▾ More"}
-                                  </button>
                                 </article>
                               );
                             })
