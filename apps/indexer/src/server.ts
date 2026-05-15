@@ -64,8 +64,17 @@ const securityConfig = resolveSecurityConfig();
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
+  0,
+  Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_TTL_MS ?? "0"))
+);
 const startedAtIso = new Date().toISOString();
 const startedAtMs = Date.now();
+
+const consoleStateCache = new Map<string, {
+  expiresAtMs: number;
+  payload: unknown;
+}>();
 
 function deploymentVersion() {
   return {
@@ -341,6 +350,10 @@ function queryString(query: unknown, key: string): string | undefined {
 
 function adminKeyHeader(request: IndexerRequest) {
   return optionalString(request.header("x-clawz-admin-key"));
+}
+
+function cacheKeyDigest(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function idempotencyKeyHeader(request: IndexerRequest) {
@@ -1927,15 +1940,41 @@ app.get("/api/console/state", route(async (request, response) => {
     const sessionId = queryString(request.query, "sessionId");
     const agentId = queryString(request.query, "agentId");
     const adminKey = adminKeyHeader(request);
-    response.json(
-      await controlPlane.getConsoleState(
-        sessionId
-          ? { sessionId, ...(adminKey ? { adminKey } : {}) }
-          : agentId
-            ? { agentId, ...(adminKey ? { adminKey } : {}) }
-            : { ...(adminKey ? { adminKey } : {}) }
-      )
+    const cacheKey = [
+      "console-state",
+      sessionId ? `session:${sessionId}` : "",
+      agentId ? `agent:${agentId}` : "",
+      adminKey ? `admin:${cacheKeyDigest(adminKey)}` : "public"
+    ].join("|");
+    const cached = CONSOLE_STATE_CACHE_TTL_MS > 0 ? consoleStateCache.get(cacheKey) : undefined;
+    if (cached && cached.expiresAtMs > Date.now()) {
+      response.set("x-santaclawz-cache", "hit");
+      response.json(cached.payload);
+      return;
+    }
+    const payload = await controlPlane.getConsoleState(
+      sessionId
+        ? { sessionId, ...(adminKey ? { adminKey } : {}) }
+        : agentId
+          ? { agentId, ...(adminKey ? { adminKey } : {}) }
+          : { ...(adminKey ? { adminKey } : {}) }
     );
+    if (CONSOLE_STATE_CACHE_TTL_MS > 0) {
+      consoleStateCache.set(cacheKey, {
+        expiresAtMs: Date.now() + CONSOLE_STATE_CACHE_TTL_MS,
+        payload
+      });
+      if (consoleStateCache.size > 80) {
+        const nowMs = Date.now();
+        for (const [key, entry] of consoleStateCache.entries()) {
+          if (entry.expiresAtMs <= nowMs || consoleStateCache.size > 80) {
+            consoleStateCache.delete(key);
+          }
+        }
+      }
+    }
+    response.set("x-santaclawz-cache", "miss");
+    response.json(payload);
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load console state."

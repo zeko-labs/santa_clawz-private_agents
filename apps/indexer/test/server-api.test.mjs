@@ -3511,6 +3511,21 @@ async function testMissionAuthVerificationPersists() {
     assert.equal(heartbeat.status, 200);
     assert.equal(heartbeat.payload.status, "live");
     assert.equal(heartbeat.payload.lastHeartbeatAtIso, heartbeat.payload.checkedAtIso);
+    const coalescedHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        sessionId,
+        status: "live",
+        ttlSeconds: 20,
+        note: "Local smoke heartbeat."
+      })
+    });
+    assert.equal(coalescedHeartbeat.status, 200);
+    assert.equal(coalescedHeartbeat.payload.status, "live");
+    assert.equal(coalescedHeartbeat.payload.lastHeartbeatAtIso, heartbeat.payload.lastHeartbeatAtIso);
 
     const availability = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/availability`);
     assert.equal(availability.status, 200);

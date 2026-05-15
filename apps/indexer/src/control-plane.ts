@@ -92,6 +92,7 @@ const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
 const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
 const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
 const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
+const AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS = integerEnv("CLAWZ_AGENT_HEARTBEAT_WRITE_MIN_INTERVAL_MS", 5000);
 const HIRE_REQUEST_SCHEMA_VERSION = SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION;
 const HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0";
 const HIRE_INGRESS_TIMEOUT_MS = 10_000;
@@ -7796,6 +7797,25 @@ export class ClawzControlPlane {
       ...(note ? { note } : {})
     };
     const file = await this.loadRuntimeHeartbeatFile();
+    const existingRecord = file.heartbeats.find((record) => record.sessionId === sessionId);
+    const existingReceivedAtMs = existingRecord ? Date.parse(existingRecord.receivedAtIso) : Number.NaN;
+    const heartbeatCanCoalesce =
+      existingRecord &&
+      status === "live" &&
+      existingRecord.status === "live" &&
+      existingRecord.ttlSeconds === ttlSeconds &&
+      (existingRecord.note ?? "") === (nextRecord.note ?? "") &&
+      Number.isFinite(existingReceivedAtMs) &&
+      Date.parse(receivedAtIso) - existingReceivedAtMs < AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS;
+    if (heartbeatCanCoalesce) {
+      return this.buildAgentRuntimeHeartbeatState({
+        state,
+        sessionId,
+        trustModeId,
+        record: existingRecord
+      }, receivedAtIso);
+    }
+
     await this.saveRuntimeHeartbeatFile({
       heartbeats: [nextRecord, ...file.heartbeats.filter((record) => record.sessionId !== sessionId)].slice(0, 500)
     });
