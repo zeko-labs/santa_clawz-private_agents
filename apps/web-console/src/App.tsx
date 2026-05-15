@@ -825,6 +825,31 @@ function paymentActivityLine(entry: PaymentLedgerEntry) {
   return `$${amount} paid on ${rail}, not completed`;
 }
 
+function paymentActivityHeadline(entry: PaymentLedgerEntry) {
+  const amount = entry.sellerNetAmountUsd?.trim() || entry.amountUsd;
+  const asset = entry.assetSymbol || "USDC";
+  const network = entry.rail === "base-usdc" ? "Base" : railLabel(entry.rail);
+  if (isCompletedPaymentEntry(entry)) {
+    return `$${amount} ${asset} payment settled on ${network}`;
+  }
+  if (entry.settlementRecovery?.canRetrySettlement) {
+    return `$${amount} ${asset} payment needs settlement retry on ${network}`;
+  }
+  if (entry.lifecycleStatus?.label) {
+    return `$${amount} ${asset} ${entry.lifecycleStatus.label.toLowerCase()} on ${network}`;
+  }
+  if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
+    return `$${amount} ${asset} payment return rejected on ${network}`;
+  }
+  if (entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") {
+    return `$${amount} ${asset} payment execution failed on ${network}`;
+  }
+  if (entry.paymentStatus === "authorization_verified") {
+    return `$${amount} ${asset} payment authorized on ${network}`;
+  }
+  return `$${amount} ${asset} payment pending completion on ${network}`;
+}
+
 function paymentActivityBadge(entry: PaymentLedgerEntry) {
   if (entry.lifecycleStatus?.label) {
     return entry.lifecycleStatus.label;
@@ -4346,17 +4371,12 @@ export function App() {
                                           ) : (
                                             <strong>{payment.agentId}</strong>
                                           )}
-                                          <span>Payment • {formatRelativeTime(payment.updatedAtIso)}</span>
+                                          <span>{paymentActivityHeadline(payment)} • {formatRelativeTime(payment.updatedAtIso)}</span>
                                         </div>
                                       </div>
                                       <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
                                         {paymentActivityBadge(payment)}
                                       </span>
-                                    </div>
-                                    <div className="payment-activity-summary">
-                                      <p className="agent-message-body">
-                                        {paymentActivityLine(payment)}.
-                                      </p>
                                     </div>
                                   </article>
                                 );
@@ -4385,28 +4405,9 @@ export function App() {
                                         </span>
                                       </div>
                                     </div>
-                                    <div className="agent-message-head-actions">
-                                      <button
-                                        type="button"
-                                        className="agent-message-toggle"
-                                        onClick={() => {
-                                          setExpandedBoardMessageIds((current) => {
-                                            const next = new Set(current);
-                                            if (next.has(message.messageId)) {
-                                              next.delete(message.messageId);
-                                            } else {
-                                              next.add(message.messageId);
-                                            }
-                                            return next;
-                                          });
-                                        }}
-                                      >
-                                        {messageExpanded ? "▴ Less" : "▾ More"}
-                                      </button>
-                                      <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
-                                        {boardAnchorLabel(message.anchorStatus)}
-                                      </span>
-                                    </div>
+                                    <span className={`board-proof-pill ${boardAnchorClass(message.anchorStatus)}`}>
+                                      {boardAnchorLabel(message.anchorStatus)}
+                                    </span>
                                   </div>
                                   <p className={`agent-message-body${messageExpanded ? "" : " agent-message-preview"}`}>{message.body}</p>
                                   {messageExpanded ? (
@@ -4425,6 +4426,23 @@ export function App() {
                                       </div>
                                     </>
                                   ) : null}
+                                  <button
+                                    type="button"
+                                    className="agent-message-toggle agent-message-toggle-bottom"
+                                    onClick={() => {
+                                      setExpandedBoardMessageIds((current) => {
+                                        const next = new Set(current);
+                                        if (next.has(message.messageId)) {
+                                          next.delete(message.messageId);
+                                        } else {
+                                          next.add(message.messageId);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    {messageExpanded ? "▴ Less" : "▾ More"}
+                                  </button>
                                 </article>
                               );
                             })
