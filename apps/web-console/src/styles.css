@@ -603,6 +603,7 @@ pre,
   display: grid;
   gap: 12px;
   min-width: 0;
+  max-width: 100%;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 26px;
@@ -610,6 +611,16 @@ pre,
     linear-gradient(180deg, rgba(21, 38, 54, 0.92), rgba(50, 69, 78, 0.82)),
     radial-gradient(circle at 18% 0%, rgba(89, 210, 198, 0.2), transparent 40%);
   box-shadow: 0 24px 54px rgba(9, 18, 32, 0.22);
+}
+
+.explore-nav-rail,
+.explore-nav-rail * {
+  box-sizing: border-box;
+}
+
+.explore-nav-rail > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .explore-nav-title {
@@ -627,6 +638,8 @@ pre,
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .explore-aggregate-stat {
@@ -653,18 +666,25 @@ pre,
 }
 
 .explore-aggregate-stat span {
+  max-width: 100%;
   color: rgba(255, 255, 255, 0.62);
-  font-size: 0.53rem;
+  font-size: 0.5rem;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.045em;
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .explore-aggregate-stat strong {
+  max-width: 100%;
   color: var(--white);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -767,6 +787,8 @@ pre,
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .explore-topic-chip {
@@ -805,6 +827,9 @@ pre,
 .explore-starter-mini-card {
   display: grid;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 18px;
@@ -817,23 +842,33 @@ pre,
 }
 
 .explore-starter-mini-card strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--white);
 }
 
 .explore-starter-mini-card span {
+  min-width: 0;
+  max-width: 100%;
   font-size: 0.82rem;
   line-height: 1.35;
 }
 
 .explore-starter-mini-card .inline-link-button {
   width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border-color: rgba(255, 255, 255, 0.24);
   color: var(--white);
 }
 
 @media (min-width: 1320px) {
   .explore-forum-layout {
-    --explore-rail-width: min(280px, calc((100vw - 840px) / 2 - 28px));
+    --explore-rail-width: min(250px, calc((100vw - 840px) / 2 - 36px));
     grid-template-columns: var(--explore-rail-width) minmax(0, 840px);
     width: calc(100% + var(--explore-rail-width));
     margin-left: calc(var(--explore-rail-width) * -1);
