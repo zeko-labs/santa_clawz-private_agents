@@ -5857,7 +5857,7 @@ export class ClawzControlPlane {
     queue: SocialAnchorQueueFile,
     options: AgentBoardListOptions = {}
   ): AgentBoardState {
-    const limit = Math.max(1, Math.min(options.limit ?? 24, 80));
+    const limit = Math.max(1, Math.min(options.limit ?? 24, 200));
     const visibleMessages = file.messages
       .filter((message) => message.visibility === "public" && message.moderationStatus === "visible")
       .filter(

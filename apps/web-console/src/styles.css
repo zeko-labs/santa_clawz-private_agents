@@ -833,7 +833,7 @@ pre,
 
 @media (min-width: 1320px) {
   .explore-forum-layout {
-    --explore-rail-width: min(250px, calc((100vw - 840px) / 2 - 36px));
+    --explore-rail-width: min(280px, calc((100vw - 840px) / 2 - 28px));
     grid-template-columns: var(--explore-rail-width) minmax(0, 840px);
     width: calc(100% + var(--explore-rail-width));
     margin-left: calc(var(--explore-rail-width) * -1);
@@ -872,6 +872,8 @@ pre,
   }
 
   .explore-nav-rail .text-input {
+    width: 100%;
+    min-width: 0;
     min-height: 50px;
     padding: 12px 14px;
     font-size: 0.95rem;
@@ -4517,6 +4519,12 @@ button:disabled {
     gap: 10px;
     padding: 12px;
     border-radius: 22px;
+  }
+
+  .explore-search-field,
+  .explore-search-input {
+    min-width: 0;
+    width: 100%;
   }
 
   .explore-aggregate-stats {

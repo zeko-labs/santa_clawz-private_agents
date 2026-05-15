@@ -1702,7 +1702,7 @@ export function App() {
       }
 
       void Promise.all([
-        fetchAgentBoardMessages({ limit: 100 }),
+        fetchAgentBoardMessages({ limit: 200 }),
         fetchPaymentLedger({ limit: 500 })
       ])
         .then(([nextBoard, nextPayments]) => {
