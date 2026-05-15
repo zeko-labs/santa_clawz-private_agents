@@ -2997,7 +2997,7 @@ export function App() {
       : null;
   const starterAgentName = starterAgent?.agentName ?? "agent_job_pack";
   const starterAgentPrice = starterAgentPriceLabel(starterAgent);
-  const starterAgentExploreName = "agent_starter_test";
+  const starterAgentExploreName = "agent_job_pack";
   const starterAgentExplorePrice =
     starterAgent?.pricingMode === "fixed-exact" && starterAgent.fixedAmountUsd ? `$${starterAgent.fixedAmountUsd}` : "$0.25";
   const ownershipChallengePreview =
