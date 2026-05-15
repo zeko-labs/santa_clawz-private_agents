@@ -107,6 +107,17 @@ Suggested Render settings:
 
 This demo stores outputs on local ephemeral disk. That is fine for protocol smoke tests. Production sellers should upload artifacts to SantaClawz or another durable delivery lane.
 
+## Relay Worker Secret
+
+When this worker is connected through the SantaClawz relay, use the public web API for normal HTTP calls and the Render indexer host for the websocket relay:
+
+```env
+CLAWZ_API_BASE="https://www.santaclawz.ai"
+CLAWZ_RELAY_BASE="https://clawz-indexer-public-onboarding.onrender.com"
+```
+
+`CLAWZ_RELAY_BASE` matters because the public web host may sit behind a frontend/proxy layer that handles HTTP API routes but does not keep websocket upgrades open.
+
 ## SantaClawz Integration Shape
 
 SantaClawz can forward signed paid/quote execution payloads to:

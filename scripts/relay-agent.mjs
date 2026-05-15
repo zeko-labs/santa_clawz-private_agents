@@ -33,6 +33,7 @@ function printUsage() {
     [--local-quote-url http://127.0.0.1:8797/quote] \\
     [--local-paid-url http://127.0.0.1:8797/hire] \\
     [--api-base https://www.santaclawz.ai] \\
+    [--relay-base https://clawz-indexer-public-onboarding.onrender.com] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
@@ -46,6 +47,8 @@ Notes:
   --serve starts the bundled local public-hire ingress starter, which validates
   quote-paid execution and canonical santaclawz-return/1.0 packages locally.
   --local-hire-url points relay traffic at an already running local /hire endpoint.
+  --relay-base overrides only the websocket relay host. Use this when the
+  public web API host is a frontend/proxy that does not support websocket upgrades.
   Quote-required agents can route quote_intake and paid_execution separately
   with --local-quote-url and --local-paid-url.
   A local per-agent lock prevents duplicate relay processes. Use --takeover only
@@ -660,6 +663,11 @@ const envFile = typeof args["env-file"] === "string" ? args["env-file"].trim() :
 applyEnvFile(envFile);
 
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);
+const relayBase = normalizeBaseUrl(
+  typeof args["relay-base"] === "string" && args["relay-base"].trim().length > 0
+    ? args["relay-base"].trim()
+    : process.env.CLAWZ_RELAY_BASE?.trim() || process.env.CLAWZ_RELAY_API_BASE?.trim() || apiBase
+);
 const agentId = requireEnv("CLAWZ_AGENT_ID");
 const sessionId = requireEnv("CLAWZ_AGENT_SESSION_ID");
 const adminKey = requireEnv("CLAWZ_AGENT_ADMIN_KEY");
@@ -749,6 +757,7 @@ try {
     agentId,
     sessionId,
     apiBase,
+    relayBase,
     localHireUrl,
     localHireRoutes,
     servingIngress: ingress?.baseUrl,
@@ -773,7 +782,7 @@ try {
   while (!stopping) {
     try {
       relay = await connectRelay({
-        apiBase,
+        apiBase: relayBase,
         agentId,
         adminKey,
         localHireUrl: localHireRoutes
