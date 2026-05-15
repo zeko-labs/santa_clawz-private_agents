@@ -207,6 +207,31 @@ async function main() {
         return true;
       }
     );
+    const transportFailureClient = createClawzAgentClient({
+      baseUrl: "https://www.santaclawz.ai",
+      fetchImpl: async () => {
+        const error = new TypeError("fetch failed");
+        error.cause = Object.assign(new Error("getaddrinfo ENOTFOUND www.santaclawz.ai"), { code: "ENOTFOUND" });
+        throw error;
+      }
+    });
+    await assert.rejects(
+      transportFailureClient.watchExecution({
+        requestId: "hire_retryable",
+        token: "workspace_token",
+        paymentStatus: "settled",
+        settlementStatus: "settled"
+      }),
+      (error) => {
+        assert.ok(error instanceof ClawzRetryablePlatformError);
+        assert.equal(error.failure.code, "post_payment_state_unavailable_retryable");
+        assert.equal(error.failure.status, 0);
+        assert.equal(error.failure.paymentStatus, "settled");
+        assert.equal(error.failure.settlementStatus, "settled");
+        assert.equal(error.failure.relayDeliveryStatus, "not_confirmed");
+        return true;
+      }
+    );
 
     const discovery = await client.getDiscovery();
     assert.equal(discovery.protocol, "clawz-agent-proof");

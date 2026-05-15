@@ -20,7 +20,16 @@ import {
   verifyAgentProofBundle
 } from "@clawz/protocol";
 
-import { isRetryablePlatformStatus, throwRetryablePlatformFailure } from "./platform-errors.js";
+import {
+  isRetryablePlatformStatus,
+  isRetryablePlatformTransportError,
+  throwRetryablePlatformFailure,
+  type ClawzPlatformAgentExecutionStatus,
+  type ClawzPlatformPaymentStatus,
+  type ClawzPlatformRelayDeliveryStatus,
+  type ClawzPlatformSettlementStatus,
+  type ClawzRetryablePlatformFailure
+} from "./platform-errors.js";
 
 interface JsonRpcSuccess<T> {
   jsonrpc: "2.0";
@@ -111,6 +120,18 @@ export interface ClawzAgentSearchQuery {
 export interface ClawzExecutionStateQuery {
   requestId: string;
   token?: string;
+  paymentStatus?: ClawzPlatformPaymentStatus;
+  settlementStatus?: ClawzPlatformSettlementStatus;
+  relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
+  agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
+}
+
+interface RetryablePlatformContext {
+  code?: ClawzRetryablePlatformFailure["code"];
+  paymentStatus?: ClawzPlatformPaymentStatus;
+  settlementStatus?: ClawzPlatformSettlementStatus;
+  relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
+  agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
 }
 
 export interface ClawzAgentSearchResponse {
@@ -451,15 +472,29 @@ export class ClawzAgentClient {
     this.adminKey = options.adminKey?.trim() ? options.adminKey.trim() : undefined;
   }
 
-  private async readJson<T>(url: string, init?: RequestInit): Promise<T> {
+  private async readJson<T>(url: string, init?: RequestInit, retryContext: RetryablePlatformContext = {}): Promise<T> {
     const headers = new Headers(init?.headers ?? {});
     if (this.adminKey && !headers.has("x-clawz-admin-key")) {
       headers.set("x-clawz-admin-key", this.adminKey);
     }
-    const response = await this.fetchImpl(url, {
-      ...init,
-      headers
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        ...init,
+        headers
+      });
+    } catch (error) {
+      if (isRetryablePlatformTransportError(error)) {
+        throwRetryablePlatformFailure({
+          status: 0,
+          requestMethod: init?.method ?? "GET",
+          requestUrl: url,
+          responseText: error instanceof Error ? error.message : String(error),
+          ...retryContext
+        });
+      }
+      throw error;
+    }
     const responseText = await response.text();
     let payload: unknown;
     try {
@@ -474,7 +509,8 @@ export class ClawzAgentClient {
           status: response.status,
           responseText,
           requestMethod: init?.method ?? "GET",
-          requestUrl: url
+          requestUrl: url,
+          ...retryContext
         });
       }
       const detail = extractErrorMessage(payload) ?? (responseText.trim() || null);
@@ -643,7 +679,15 @@ export class ClawzAgentClient {
     return this.readJson<ClawzExecutionStateResponse>(
       withQuery(this.baseUrl, `/api/executions/${encodeURIComponent(requestId)}/state`, {
         ...(input.token?.trim() ? { token: input.token.trim() } : {})
-      })
+      }),
+      undefined,
+      {
+        code: "post_payment_state_unavailable_retryable",
+        paymentStatus: input.paymentStatus ?? "unknown",
+        settlementStatus: input.settlementStatus ?? "unknown",
+        relayDeliveryStatus: input.relayDeliveryStatus ?? "not_confirmed",
+        agentExecutionStatus: input.agentExecutionStatus ?? "not_confirmed"
+      }
     );
   }
 

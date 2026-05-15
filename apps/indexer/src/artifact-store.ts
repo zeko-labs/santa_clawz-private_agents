@@ -155,6 +155,8 @@ type ArtifactSafetyStatus = "clean" | "blocked" | "buyer_scan_required" | "scan_
 
 interface ArtifactSafetyReport {
   status: ArtifactSafetyStatus;
+  code?: string;
+  codes?: string[];
   scanner: "santaclawz-static-policy-v1" | "santaclawz-private-ciphertext-v1";
   malwareScanner: "not_configured" | "clamav" | "buyer_scan_required" | "scan_unavailable";
   malwareScannerVerdict?: "clean" | "infected" | "unavailable" | "not_scanned";
@@ -420,62 +422,82 @@ function buildSafetyReport(input: {
 }): ArtifactSafetyReport {
   const extension = extensionFor(input.filename);
   const reasons: string[] = [];
+  const codes = new Set<string>();
   let archive: ArtifactSafetyReport["archive"];
 
   if (!SAFE_EXTENSIONS.has(extension)) {
     reasons.push(`File extension ${extension || "(none)"} is not allowed for default artifact delivery.`);
+    codes.add("blocked_extension_not_allowed");
   }
   if (EXECUTABLE_EXTENSIONS.has(extension)) {
     reasons.push(`Executable or script file extension ${extension} is blocked by default.`);
+    codes.add("blocked_executable_extension");
   }
   if ([".txt", ".md", ".json", ".csv"].includes(extension) && hasNullByte(input.body)) {
     reasons.push("Text-like artifact contains null bytes and was treated as binary content.");
+    codes.add("blocked_binary_content");
   }
   if (extension === ".json") {
     try {
       JSON.parse(input.body.toString("utf8"));
     } catch {
       reasons.push("JSON artifact is not valid JSON.");
+      codes.add("blocked_invalid_json");
     }
   }
   if (extension === ".pdf") {
     const pdfText = input.body.toString("latin1").toLowerCase();
     if (!input.detectedContentType.includes("pdf")) {
       reasons.push("PDF artifact did not match PDF magic bytes.");
+      codes.add("blocked_magic_mismatch");
     }
     if (pdfText.includes("/javascript") || pdfText.includes("/launch") || pdfText.includes("/embeddedfile")) {
       reasons.push("PDF contains active or embedded content markers.");
+      codes.add("blocked_active_content");
     }
   }
   if (extension === ".png" && input.detectedContentType !== "image/png") {
     reasons.push("PNG artifact did not match PNG magic bytes.");
+    codes.add("blocked_magic_mismatch");
   }
   if ((extension === ".jpg" || extension === ".jpeg") && input.detectedContentType !== "image/jpeg") {
     reasons.push("JPEG artifact did not match JPEG magic bytes.");
+    codes.add("blocked_magic_mismatch");
   }
   if ([".zip", ".docx", ".xlsx", ".pptx"].includes(extension)) {
     if (!input.detectedContentType.includes("zip") && !input.detectedContentType.includes("openxmlformats")) {
       reasons.push("Archive artifact did not match ZIP/OpenXML magic bytes.");
+      codes.add("blocked_magic_mismatch");
     } else {
       archive = inspectZip(input.body);
       if (archive.entries === 0) {
         reasons.push("Archive has no inspectable file entries.");
+        codes.add("blocked_empty_archive");
       }
       if (archive.executableEntries.length > 0) {
         reasons.push(`Archive contains executable/script entries: ${archive.executableEntries.slice(0, 5).join(", ")}.`);
+        codes.add("blocked_archive_executable_entry");
       }
       if (archive.nestedArchiveEntries.length > 0) {
         reasons.push(`Archive contains nested archives: ${archive.nestedArchiveEntries.slice(0, 5).join(", ")}.`);
+        codes.add("blocked_nested_archive");
       }
       if (archive.suspiciousEntries.length > 0) {
         reasons.push(`Archive contains suspicious entries: ${archive.suspiciousEntries.slice(0, 5).join(", ")}.`);
+        const hasPathTraversal = archive.suspiciousEntries.some((entry) => {
+          const normalized = entry.replace(/\\/g, "/");
+          return normalized.startsWith("/") || normalized.includes("../") || normalized.includes("/..");
+        });
+        codes.add(hasPathTraversal ? "blocked_archive_path_traversal" : "blocked_suspicious_archive");
       }
     }
   }
 
   const status: ArtifactSafetyStatus = reasons.length === 0 ? "clean" : "blocked";
+  const safetyCodes = Array.from(codes);
   return {
     status,
+    ...(safetyCodes[0] ? { code: safetyCodes[0], codes: safetyCodes } : {}),
     scanner: "santaclawz-static-policy-v1",
     malwareScanner: "not_configured",
     malwareScannerVerdict: "not_scanned",

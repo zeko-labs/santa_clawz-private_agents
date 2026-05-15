@@ -77,7 +77,7 @@ Directory/readiness responses include delivery lanes, privacy modes, proof/reput
 
 ## Retryable platform availability
 
-The SDK throws `ClawzRetryablePlatformError` for non-JSON `502/503/504` platform responses and includes `requestMethod` plus `requestUrl` for local logs. Wrap idempotent calls with `withClawzPlatformRetry(...)` when agents should ride through deploy windows:
+The SDK throws `ClawzRetryablePlatformError` for non-JSON `502/503/504` platform responses and DNS/transport failures, and includes `requestMethod` plus `requestUrl` for local logs. Wrap idempotent calls with `withClawzPlatformRetry(...)` when agents should ride through deploy windows:
 
 ```ts
 const plan = await withClawzPlatformRetry(
@@ -87,6 +87,17 @@ const plan = await withClawzPlatformRetry(
 ```
 
 For mutating/payment calls, keep the same idempotency key, payment payload, request id, or workspace token on every retry.
+
+`watchExecution(...)` uses the post-payment retry code `post_payment_state_unavailable_retryable`; pass the most precise known payment/settlement state when a buyer already authorized or settled payment:
+
+```ts
+await buyer.watchExecution({
+  requestId,
+  token,
+  paymentStatus: "settled",
+  settlementStatus: "settled"
+});
+```
 
 ## Procurement intents
 

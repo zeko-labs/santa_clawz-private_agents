@@ -2244,6 +2244,25 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(typeof quoted.payload.protocolReturn.digestSha256, "string");
     assert.equal(quoted.payload.ingress.responseStatusCode, 200);
 
+    const wrongQuotePaymentEndpoint = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire?intentId=exec_wrongendpoint`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          taskPrompt: "Do not create another quote when payment is being attempted.",
+          requesterContact: "buyer@example.com",
+          paymentPayload: {
+            protocol: "x402",
+            paymentId: "pay_wrong_endpoint"
+          }
+        })
+      }
+    );
+    assert.equal(wrongQuotePaymentEndpoint.status, 400);
+    assert.equal(wrongQuotePaymentEndpoint.payload.code, "quote_payment_requires_quote_intent_endpoint");
+    assert.equal(wrongQuotePaymentEndpoint.payload.nextAction, "pay_accepted_quote_intent");
+    assert.match(wrongQuotePaymentEndpoint.payload.quoteIntentEndpoint, /\/api\/x402\/quote-intent\?intentId=exec_wrongendpoint/);
+
     const invalidBuyerProof = await requestJson(
       `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/quotes/${encodeURIComponent(quoted.payload.requestId)}/accept`,
       {
@@ -2730,6 +2749,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     );
     assert.equal(blockedScriptUpload.status, 400);
     assert.equal(blockedScriptUpload.payload.code, "artifact_safety_blocked");
+    assert.equal(blockedScriptUpload.payload.safetyCode, "blocked_extension_not_allowed");
+    assert.equal(blockedScriptUpload.payload.safety.codes.includes("blocked_executable_extension"), true);
     assert.equal(blockedScriptUpload.payload.safety.status, "blocked");
     assert.match(blockedScriptUpload.payload.sellerMessage, /non-executable/i);
 
@@ -2746,6 +2767,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     );
     assert.equal(blockedZipUpload.status, 400);
     assert.equal(blockedZipUpload.payload.code, "artifact_safety_blocked");
+    assert.equal(blockedZipUpload.payload.safetyCodes.includes("blocked_archive_path_traversal"), true);
+    assert.equal(blockedZipUpload.payload.safetyCodes.includes("blocked_archive_executable_entry"), true);
     assert.equal(blockedZipUpload.payload.safety.archive.executableEntries.includes("../evil.sh"), true);
     assert.equal(blockedZipUpload.payload.safety.archive.suspiciousEntries.includes("../evil.sh"), true);
 

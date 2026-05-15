@@ -8,7 +8,7 @@ import {
   type SantaClawzQuoteAcceptanceWalletProof
 } from "@clawz/protocol";
 
-import { isRetryablePlatformStatus, throwRetryablePlatformFailure } from "./platform-errors.js";
+import { isRetryablePlatformStatus, isRetryablePlatformTransportError, throwRetryablePlatformFailure } from "./platform-errors.js";
 
 export interface ClawzQuotePaymentClientOptions {
   baseUrl: string;
@@ -113,7 +113,20 @@ async function readJson<T>(
   init: RequestInit,
   acceptedStatuses: number[] = []
 ): Promise<T> {
-  const response = await fetchImpl(url, init);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, init);
+  } catch (error) {
+    if (isRetryablePlatformTransportError(error)) {
+      throwRetryablePlatformFailure({
+        status: 0,
+        responseText: error instanceof Error ? error.message : String(error),
+        requestMethod: init.method ?? "GET",
+        requestUrl: url
+      });
+    }
+    throw error;
+  }
   const responseText = await response.text();
   let payload: unknown;
   try {

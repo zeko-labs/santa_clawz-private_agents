@@ -17,7 +17,7 @@ export type ClawzPlatformAgentExecutionStatus =
 
 export interface ClawzRetryablePlatformFailure {
   ok: false;
-  code: "relay_unavailable_retryable";
+  code: "relay_unavailable_retryable" | "post_payment_state_unavailable_retryable";
   retryable: true;
   status: number;
   requestMethod?: string;
@@ -49,15 +49,18 @@ export function createRetryablePlatformFailure(input: {
   responseText?: string | null;
   requestMethod?: string;
   requestUrl?: string;
+  code?: ClawzRetryablePlatformFailure["code"];
   paymentStatus?: ClawzPlatformPaymentStatus;
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
   agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
+  error?: string;
 }): ClawzRetryablePlatformFailure {
   const responsePreview = input.responseText?.trim().slice(0, 1000);
+  const code = input.code ?? "relay_unavailable_retryable";
   return {
     ok: false,
-    code: "relay_unavailable_retryable",
+    code,
     retryable: true,
     status: input.status,
     ...(input.requestMethod ? { requestMethod: input.requestMethod } : {}),
@@ -67,7 +70,10 @@ export function createRetryablePlatformFailure(input: {
     relayDeliveryStatus: input.relayDeliveryStatus ?? "not_confirmed",
     agentExecutionStatus: input.agentExecutionStatus ?? "not_confirmed",
     error:
-      "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment.",
+      input.error ??
+      (code === "post_payment_state_unavailable_retryable"
+        ? "SantaClawz could not confirm post-payment execution state yet. Retry the same state lookup after service recovery; do not create a new payment or hire request."
+        : "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment."),
     ...(responsePreview ? { responsePreview } : {})
   };
 }
@@ -77,12 +83,29 @@ export function throwRetryablePlatformFailure(input: {
   responseText?: string | null;
   requestMethod?: string;
   requestUrl?: string;
+  code?: ClawzRetryablePlatformFailure["code"];
   paymentStatus?: ClawzPlatformPaymentStatus;
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
   agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
+  error?: string;
 }): never {
   throw new ClawzRetryablePlatformError(createRetryablePlatformFailure(input));
+}
+
+export function isRetryablePlatformTransportError(error: unknown): boolean {
+  const maybeError = error as { code?: unknown; name?: unknown; message?: unknown; cause?: unknown } | undefined;
+  const code = typeof maybeError?.code === "string" ? maybeError.code : "";
+  const cause = maybeError?.cause as { code?: unknown; message?: unknown } | undefined;
+  const causeCode = typeof cause?.code === "string" ? cause.code : "";
+  const text = [
+    typeof maybeError?.name === "string" ? maybeError.name : "",
+    typeof maybeError?.message === "string" ? maybeError.message : "",
+    typeof cause?.message === "string" ? cause.message : "",
+    code,
+    causeCode
+  ].join(" ").toLowerCase();
+  return /fetch failed|networkerror|enotfound|eai_again|econnreset|econnrefused|etimedout|socket hang up|temporarily unavailable|dns/.test(text);
 }
 
 export function isClawzRetryablePlatformError(error: unknown): error is ClawzRetryablePlatformError {

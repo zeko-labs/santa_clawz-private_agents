@@ -2575,6 +2575,8 @@ appWithRouteMiddleware.post(
         response.status(400).json({
           ok: false,
           code: "artifact_safety_blocked",
+          safetyCode: error.report.code ?? "blocked_by_static_policy",
+          safetyCodes: error.report.codes ?? (error.report.code ? [error.report.code] : ["blocked_by_static_policy"]),
           retryable: false,
           safety: error.report,
           buyerMessage: error.report.buyerMessage,
@@ -3498,14 +3500,38 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
             ...(settlementLedgerEntry.sellerSettlementTxHash ? { sellerSettlementTxHash: settlementLedgerEntry.sellerSettlementTxHash } : {}),
             ...(settlementLedgerEntry.protocolFeeTxHash ? { protocolFeeTxHash: settlementLedgerEntry.protocolFeeTxHash } : {}),
             transactionHashes: settlementLedgerEntry.transactionHashes
-          }
+      }
         }
       : paidExecution;
+    if (responsePaidExecution.requestType !== "paid_execution") {
+      response.status(409).json({
+        ok: false,
+        code: "quote_paid_execution_routing_failed",
+        retryable: false,
+        error:
+          "Accepted quote payment did not produce a paid_execution request. Retry using /api/x402/quote-intent with the accepted quote intent id.",
+        intent: finalIntent,
+        paidExecution: responsePaidExecution,
+        operationalStatus: {
+          paymentStatus: responsePaidExecution.paymentStatus,
+          settlementStatus: responsePaidExecution.operationalStatus?.settlementStatus ?? "unknown",
+          relayDeliveryStatus: responsePaidExecution.operationalStatus?.relayDeliveryStatus ?? "not_confirmed",
+          agentExecutionStatus: responsePaidExecution.operationalStatus?.agentExecutionStatus ?? "not_confirmed"
+        }
+      });
+      return;
+    }
     response.status(responseStatus).json({
       ok: true,
       idempotent: context.intent.status !== "pending",
       nextAction: finalIntent.status === "settled" || finalIntent.status === "executed" ? "result_lookup" : "poll_execution",
       intent: finalIntent,
+      requestId: responsePaidExecution.requestId,
+      requestType: responsePaidExecution.requestType,
+      paymentStatus: responsePaidExecution.paymentStatus,
+      settlementStatus: responsePaidExecution.operationalStatus?.settlementStatus ?? (settlement ? "settled" : "authorized"),
+      relayDeliveryStatus: responsePaidExecution.operationalStatus?.relayDeliveryStatus ?? "not_confirmed",
+      agentExecutionStatus: responsePaidExecution.operationalStatus?.agentExecutionStatus ?? "not_confirmed",
       payment: {
         ...(settlement?.paymentResponse ?? {}),
         status: settlement ? "settled" : "authorized",
@@ -4214,6 +4240,38 @@ const handleAgentHireRequest = route(async (request, response) => {
     const quoteRequestMode =
       consoleState.paymentsEnabled &&
       consoleState.profile.paymentProfile.pricingMode === "quote-required";
+    if (quoteRequestMode) {
+      const bodyRecord = body as Record<string, unknown>;
+      const quotePaymentIntentId =
+        queryString(request.query, "intentId") ||
+        (typeof bodyRecord.intentId === "string" ? bodyRecord.intentId.trim() : "") ||
+        (typeof bodyRecord.quoteIntentId === "string" ? bodyRecord.quoteIntentId.trim() : "");
+      const paymentHeaderValue = request.header("payment-signature");
+      const quotePaymentPayload = parseAgentX402PaymentPayload({
+        ...(paymentHeaderValue ? { headerValue: paymentHeaderValue } : {}),
+        body: request.body ?? null
+      });
+      if (quotePaymentIntentId || quotePaymentPayload) {
+        response.status(400).json({
+          ok: false,
+          code: "quote_payment_requires_quote_intent_endpoint",
+          retryable: false,
+          error:
+            "Quote-required agents use /hire for quote intake only. Submit accepted quote payments to /api/x402/quote-intent?intentId=exec_... so SantaClawz can run paid_execution.",
+          nextAction: "pay_accepted_quote_intent",
+          quoteIntentEndpoint: quotePaymentIntentId
+            ? `/api/x402/quote-intent?intentId=${encodeURIComponent(quotePaymentIntentId)}`
+            : "/api/x402/quote-intent?intentId=exec_...",
+          operationalStatus: {
+            paymentStatus: "unknown",
+            settlementStatus: "not_attempted",
+            relayDeliveryStatus: "not_attempted",
+            agentExecutionStatus: "not_started"
+          }
+        });
+        return;
+      }
+    }
 
     if (consoleState.paymentsEnabled && !quoteRequestMode) {
       const runtime = buildAgentX402RuntimeContext({

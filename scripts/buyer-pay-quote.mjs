@@ -2,7 +2,11 @@
 import { readFileSync } from "node:fs";
 
 import { normalizeBaseUrl } from "./lib/santaclawz-readiness.mjs";
-import { createRetryablePlatformFailure, isRetryablePlatformStatus } from "./lib/platform-failures.mjs";
+import {
+  createRetryablePlatformFailure,
+  isRetryablePlatformStatus,
+  isRetryablePlatformTransportError
+} from "./lib/platform-failures.mjs";
 
 const BOOLEAN_FLAGS = new Set(["help", "allow-real-money", "json"]);
 
@@ -122,20 +126,43 @@ const paymentPayload =
     ? paymentPayloadFile.paymentPayload
     : paymentPayloadFile;
 
-const response = await fetch(`${apiBase}/api/x402/quote-intent?${new URLSearchParams({ intentId }).toString()}`, {
-  method: "POST",
-  headers: {
-    "content-type": "application/json"
-  },
-  body: JSON.stringify({ paymentPayload })
-});
+let response;
+try {
+  response = await fetch(`${apiBase}/api/x402/quote-intent?${new URLSearchParams({ intentId }).toString()}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ paymentPayload })
+  });
+} catch (error) {
+  if (!isRetryablePlatformTransportError(error)) {
+    throw error;
+  }
+  const payload = createRetryablePlatformFailure(0, error instanceof Error ? error.message : String(error), {
+    code: "post_payment_state_unavailable_retryable",
+    paymentStatus: "authorized",
+    settlementStatus: "unknown",
+    relayDeliveryStatus: "not_confirmed",
+    agentExecutionStatus: "not_confirmed"
+  });
+  console.log(JSON.stringify(args.json ? { ...payload, intentId } : payload, null, 2));
+  process.exitCode = 1;
+  process.exit();
+}
 const responseText = await response.text();
 let payload;
 try {
   payload = JSON.parse(responseText);
 } catch {
   payload = isRetryablePlatformStatus(response.status)
-    ? createRetryablePlatformFailure(response.status, responseText)
+    ? createRetryablePlatformFailure(response.status, responseText, {
+        code: "post_payment_state_unavailable_retryable",
+        paymentStatus: "authorized",
+        settlementStatus: "unknown",
+        relayDeliveryStatus: "not_confirmed",
+        agentExecutionStatus: "not_confirmed"
+      })
     : { error: responseText.slice(0, 1000) };
 }
 
