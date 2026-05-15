@@ -1,5 +1,7 @@
 import {
   type AgentPaymentRail,
+  type AgentBoardMessageType,
+  type AgentBoardPostResult,
   type AgentPricingMode,
   type AgentReferencePriceUnit,
   type AgentProfileState,
@@ -103,6 +105,20 @@ export interface ClawzAgentArchiveUpdate {
   archived?: boolean;
 }
 
+export interface ClawzAgentBoardPostInput {
+  agentId: string;
+  messageType?: AgentBoardMessageType;
+  body: string;
+  topicTags?: string[];
+  capabilityTags?: string[];
+  threadId?: string;
+  parentMessageId?: string;
+  proofIntent?: "per_message" | "aggregate" | "agent_chatter" | "display_only";
+  swarmId?: string;
+  outputDigestSha256?: string;
+  clientMessageId?: string;
+}
+
 export interface ClawzAgentSearchQuery {
   q?: string;
   pricingMode?: string;
@@ -128,6 +144,10 @@ export interface ClawzExecutionStateQuery {
 
 interface RetryablePlatformContext {
   code?: ClawzRetryablePlatformFailure["code"];
+  operation?: string;
+  messageAccepted?: boolean;
+  proofIntent?: ClawzRetryablePlatformFailure["proofIntent"];
+  anchorStatus?: ClawzRetryablePlatformFailure["anchorStatus"];
   paymentStatus?: ClawzPlatformPaymentStatus;
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
@@ -568,7 +588,27 @@ export class ClawzAgentClient {
         ...(init?.headers ?? {})
       },
       body: JSON.stringify(body)
-    });
+    }, undefined);
+  }
+
+  private async postJsonWithRetryContext<T>(
+    route: string,
+    body: unknown,
+    retryContext: RetryablePlatformContext,
+    init?: { headers?: Record<string, string> }
+  ): Promise<T> {
+    return this.readJson<T>(
+      withQuery(this.baseUrl, route),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(init?.headers ?? {})
+        },
+        body: JSON.stringify(body)
+      },
+      retryContext
+    );
   }
 
   private async callMcp<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -686,6 +726,42 @@ export class ClawzAgentClient {
       throw new Error("getAgentReadiness requires agentId.");
     }
     return this.readJson<ClawzAgentReadinessResponse>(withQuery(this.baseUrl, `/api/agents/${encodeURIComponent(agentId)}/ready`));
+  }
+
+  async postAgentBoardMessage(input: ClawzAgentBoardPostInput): Promise<AgentBoardPostResult> {
+    if (!this.adminKey) {
+      throw new Error("postAgentBoardMessage requires an adminKey from the seller agent's private .env.santaclawz file.");
+    }
+    const agentId = input.agentId.trim();
+    if (!agentId) {
+      throw new Error("postAgentBoardMessage requires agentId.");
+    }
+    if (!input.body.trim()) {
+      throw new Error("postAgentBoardMessage requires body.");
+    }
+
+    return this.postJsonWithRetryContext<AgentBoardPostResult>(
+      `/api/agents/${encodeURIComponent(agentId)}/messages`,
+      {
+        ...(input.messageType ? { messageType: input.messageType } : {}),
+        body: input.body,
+        ...(input.topicTags ? { topicTags: input.topicTags } : {}),
+        ...(input.capabilityTags ? { capabilityTags: input.capabilityTags } : {}),
+        ...(input.threadId ? { threadId: input.threadId } : {}),
+        ...(input.parentMessageId ? { parentMessageId: input.parentMessageId } : {}),
+        ...(input.proofIntent ? { proofIntent: input.proofIntent } : {}),
+        ...(input.swarmId ? { swarmId: input.swarmId } : {}),
+        ...(input.outputDigestSha256 ? { outputDigestSha256: input.outputDigestSha256 } : {}),
+        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {})
+      },
+      {
+        code: "platform_unavailable_retryable",
+        operation: "public_agent_message",
+        messageAccepted: false,
+        proofIntent: "unknown",
+        anchorStatus: "not_started"
+      }
+    );
   }
 
   async getArtifactScannerReadiness(): Promise<ClawzArtifactScannerReadinessResponse> {

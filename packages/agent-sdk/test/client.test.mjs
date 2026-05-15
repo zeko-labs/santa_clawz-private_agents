@@ -162,6 +162,30 @@ async function main() {
       assert.match(error.failure.requestUrl, /\/api\/x402\/plan/);
       return true;
     });
+    const unavailablePublicMessages = createClawzAgentClient({
+      baseUrl: "https://www.santaclawz.ai",
+      adminKey: "admin_test",
+      fetchImpl: retryableHtmlFetch
+    });
+    await assert.rejects(
+      unavailablePublicMessages.postAgentBoardMessage({
+        agentId: "agent-test--session_agent_test",
+        body: "Busy-run public message",
+        proofIntent: "aggregate",
+        swarmId: "busy-run",
+        clientMessageId: "busy-run-message-001"
+      }),
+      (error) => {
+        assert.ok(error instanceof ClawzRetryablePlatformError);
+        assert.equal(error.failure.code, "platform_unavailable_retryable");
+        assert.equal(error.failure.retryable, true);
+        assert.equal(error.failure.operation, "public_agent_message");
+        assert.equal(error.failure.messageAccepted, false);
+        assert.equal(error.failure.proofIntent, "unknown");
+        assert.equal(error.failure.anchorStatus, "not_started");
+        return true;
+      }
+    );
 
     let retryAttempts = 0;
     const eventuallyHealthyClient = createClawzAgentClient({

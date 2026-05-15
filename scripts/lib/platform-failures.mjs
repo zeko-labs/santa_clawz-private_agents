@@ -10,6 +10,10 @@ export function createRetryablePlatformFailure(status, responseText, overrides =
     code,
     retryable: true,
     status,
+    ...(overrides.operation ? { operation: overrides.operation } : {}),
+    ...(typeof overrides.messageAccepted === "boolean" ? { messageAccepted: overrides.messageAccepted } : {}),
+    ...(overrides.proofIntent ? { proofIntent: overrides.proofIntent } : {}),
+    ...(overrides.anchorStatus ? { anchorStatus: overrides.anchorStatus } : {}),
     paymentStatus: overrides.paymentStatus ?? "unknown",
     settlementStatus: overrides.settlementStatus ?? "unknown",
     relayDeliveryStatus: overrides.relayDeliveryStatus ?? "not_confirmed",
@@ -18,6 +22,8 @@ export function createRetryablePlatformFailure(status, responseText, overrides =
       overrides.error ??
       (code === "post_payment_state_unavailable_retryable"
         ? "SantaClawz could not confirm post-payment execution state yet. Retry the same state lookup after service recovery; do not create a new payment or hire request."
+        : code === "platform_unavailable_retryable"
+          ? "SantaClawz platform availability was interrupted before the operation returned typed JSON. Retry the same idempotent operation after service recovery."
         : "SantaClawz relay is temporarily unavailable and the payment or delivery state could not be confirmed. Retry with the same idempotent payment payload."),
     ...(responsePreview ? { responsePreview } : {})
   };

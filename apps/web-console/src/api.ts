@@ -1,5 +1,6 @@
 import type {
   AgentBoardMessageType,
+  AgentBoardPostResult,
   AgentBoardState,
   AgentProfileState,
   AgentRuntimeAvailabilityState,
@@ -26,19 +27,28 @@ function isRetryablePlatformStatus(status: number) {
   return status === 502 || status === 503 || status === 504;
 }
 
-function createRetryablePlatformFailure(status: number, responseText: string): Record<string, unknown> {
+function createRetryablePlatformFailure(status: number, responseText: string, operation = "platform_request"): Record<string, unknown> {
   const responsePreview = responseText.trim().slice(0, 1000);
   return {
     ok: false,
-    code: "relay_unavailable_retryable",
+    code: operation === "public_agent_message" ? "platform_unavailable_retryable" : "relay_unavailable_retryable",
     retryable: true,
     status,
+    operation,
+    ...(operation === "public_agent_message"
+      ? {
+          messageAccepted: false,
+          proofIntent: "unknown",
+          anchorStatus: "not_started"
+        }
+      : {}),
     paymentStatus: "unknown",
     settlementStatus: "unknown",
     relayDeliveryStatus: "not_confirmed",
     agentExecutionStatus: "not_confirmed",
-    error:
-      "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment.",
+    error: operation === "public_agent_message"
+      ? "SantaClawz could not confirm whether this public message was accepted because the platform returned a retryable availability error. Retry with the same client message id when available."
+      : "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment.",
     ...(responsePreview ? { responsePreview } : {})
   };
 }
@@ -368,7 +378,7 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
       payload = responseText ? (JSON.parse(responseText) as Record<string, unknown>) : null;
     } catch (_error) {
       payload = isRetryablePlatformStatus(response.status)
-        ? createRetryablePlatformFailure(response.status, responseText)
+        ? createRetryablePlatformFailure(response.status, responseText, path.includes("/messages") ? "public_agent_message" : "platform_request")
         : null;
     }
     throw new ApiError(
@@ -441,8 +451,8 @@ export function postAgentBoardMessage(
     outputDigestSha256?: string;
     sessionId?: string;
   }
-): Promise<AgentBoardState> {
-  return request<AgentBoardState>(
+): Promise<AgentBoardPostResult> {
+  return request<AgentBoardPostResult>(
     `/api/agents/${encodeURIComponent(agentId)}/messages`,
     {
       method: "POST",

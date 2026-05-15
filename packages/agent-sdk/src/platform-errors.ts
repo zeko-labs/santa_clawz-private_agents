@@ -17,11 +17,15 @@ export type ClawzPlatformAgentExecutionStatus =
 
 export interface ClawzRetryablePlatformFailure {
   ok: false;
-  code: "relay_unavailable_retryable" | "post_payment_state_unavailable_retryable";
+  code: "relay_unavailable_retryable" | "post_payment_state_unavailable_retryable" | "platform_unavailable_retryable";
   retryable: true;
   status: number;
   requestMethod?: string;
   requestUrl?: string;
+  operation?: string;
+  messageAccepted?: boolean;
+  proofIntent?: "unknown" | "per_message" | "aggregate" | "agent_chatter";
+  anchorStatus?: "not_started" | "unknown" | "pending" | "submitted" | "retrying" | "confirmed" | "failed" | "expired_not_anchored" | "aggregate_anchored" | "not_proof_requested";
   paymentStatus: ClawzPlatformPaymentStatus;
   settlementStatus: ClawzPlatformSettlementStatus;
   relayDeliveryStatus: ClawzPlatformRelayDeliveryStatus;
@@ -50,6 +54,10 @@ export function createRetryablePlatformFailure(input: {
   requestMethod?: string;
   requestUrl?: string;
   code?: ClawzRetryablePlatformFailure["code"];
+  operation?: string;
+  messageAccepted?: boolean;
+  proofIntent?: ClawzRetryablePlatformFailure["proofIntent"];
+  anchorStatus?: ClawzRetryablePlatformFailure["anchorStatus"];
   paymentStatus?: ClawzPlatformPaymentStatus;
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
@@ -65,6 +73,10 @@ export function createRetryablePlatformFailure(input: {
     status: input.status,
     ...(input.requestMethod ? { requestMethod: input.requestMethod } : {}),
     ...(input.requestUrl ? { requestUrl: input.requestUrl } : {}),
+    ...(input.operation ? { operation: input.operation } : {}),
+    ...(typeof input.messageAccepted === "boolean" ? { messageAccepted: input.messageAccepted } : {}),
+    ...(input.proofIntent ? { proofIntent: input.proofIntent } : {}),
+    ...(input.anchorStatus ? { anchorStatus: input.anchorStatus } : {}),
     paymentStatus: input.paymentStatus ?? "unknown",
     settlementStatus: input.settlementStatus ?? "unknown",
     relayDeliveryStatus: input.relayDeliveryStatus ?? "not_confirmed",
@@ -73,6 +85,8 @@ export function createRetryablePlatformFailure(input: {
       input.error ??
       (code === "post_payment_state_unavailable_retryable"
         ? "SantaClawz could not confirm post-payment execution state yet. Retry the same state lookup after service recovery; do not create a new payment or hire request."
+        : code === "platform_unavailable_retryable"
+          ? "SantaClawz platform availability was interrupted before the operation returned typed JSON. Retry the same idempotent operation after service recovery."
         : "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment."),
     ...(responsePreview ? { responsePreview } : {})
   };
@@ -84,6 +98,10 @@ export function throwRetryablePlatformFailure(input: {
   requestMethod?: string;
   requestUrl?: string;
   code?: ClawzRetryablePlatformFailure["code"];
+  operation?: string;
+  messageAccepted?: boolean;
+  proofIntent?: ClawzRetryablePlatformFailure["proofIntent"];
+  anchorStatus?: ClawzRetryablePlatformFailure["anchorStatus"];
   paymentStatus?: ClawzPlatformPaymentStatus;
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
