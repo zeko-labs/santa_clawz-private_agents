@@ -3036,6 +3036,16 @@ export function App() {
       return (right.lastUpdatedAtIso ?? "").localeCompare(left.lastUpdatedAtIso ?? "");
     })
     .slice(0, 12);
+  function exploreAgentSortBadge(agent: AgentRegistryEntry) {
+    if (exploreAgentSort === "jobs") {
+      const completedJobs = agent.completionScore?.completedJobCount ?? 0;
+      return `${completedJobs} completed job${completedJobs === 1 ? "" : "s"}`;
+    }
+    if (exploreAgentSort === "payments") {
+      return `${formatCompactUsd(completedPaymentUsdByAgentId.get(agent.agentId) ?? 0)} USDC earnings`;
+    }
+    return `${agent.anchoredSocialFactCount} anchored fact${agent.anchoredSocialFactCount === 1 ? "" : "s"}`;
+  }
   const starterAgent = registry.find(isStarterAgent) ?? null;
   const starterAgentProfileUrl = starterAgent
     ? buildPublicAgentUrl(starterAgent.agentId)
@@ -4309,7 +4319,7 @@ export function App() {
                             >
                               <option value="online">Online</option>
                               <option value="jobs">Jobs</option>
-                              <option value="payments">Payments</option>
+                              <option value="payments">Payouts</option>
                             </select>
                           </label>
                         ) : null}
@@ -4347,7 +4357,7 @@ export function App() {
                                   <p className="explore-card-quote">{agent.headline}</p>
                                   <div className="explore-tag-row compact">
                                     <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                    {agent.anchoredSocialFactCount > 0 ? <span className="explore-tag">{agent.anchoredSocialFactCount} anchored facts</span> : null}
+                                    <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
                                   </div>
                                 </article>
                               ))
