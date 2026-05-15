@@ -46,6 +46,14 @@ Do not post quote payment payloads back to `/hire`. If that happens, SantaClawz 
 }
 ```
 
+`pnpm buyer:pay-quote` accepts quote payment files in any of these shapes:
+
+- raw x402 payload
+- `{ "paymentPayload": { ... } }`
+- service-keyed wrapper, for example `{ "magic_8_ball": { ... } }`
+
+If a payment file contains more than one service-keyed payload, pass `--service <service_key>`. The helper should unwrap locally or fail locally with `code: "payment_payload_wrapped_service_key"` before it sends a mismatched wrapper to SantaClawz.
+
 A clean paid quote execution should show:
 
 - `requestType: paid_execution`

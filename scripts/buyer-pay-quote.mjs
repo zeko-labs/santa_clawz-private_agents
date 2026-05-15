@@ -22,6 +22,7 @@ Options:
   --intent-id exec_...
   --quote-manifest path     Manifest produced by quote acceptance/procurement tooling.
   --payment-payload-file path
+  --service magic_8_ball    Optional service key when the payload file contains multiple service-keyed payloads.
   --allow-real-money        Required. Prevents accidental live payment submission.
   --json
 
@@ -90,6 +91,84 @@ function findFirstStringByKey(value, keys) {
   return undefined;
 }
 
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isX402PaymentPayload(value) {
+  return (
+    isRecord(value) &&
+    value.protocol === "x402" &&
+    typeof value.networkId === "string" &&
+    typeof value.settlementRail === "string" &&
+    typeof value.payTo === "string"
+  );
+}
+
+function paymentPayloadShapeFailure(message, extra = {}) {
+  return {
+    ok: false,
+    code: "payment_payload_wrapped_service_key",
+    retryable: false,
+    message,
+    ...extra
+  };
+}
+
+function failPaymentPayloadShape(message, extra = {}) {
+  const payload = paymentPayloadShapeFailure(message, extra);
+  console.error(JSON.stringify(args.json ? payload : payload, null, 2));
+  process.exit(1);
+}
+
+function normalizePaymentPayloadFromFile(paymentPayloadFile, options = {}) {
+  const service = typeof options.service === "string" ? options.service.trim() : "";
+  if (isX402PaymentPayload(paymentPayloadFile)) {
+    return paymentPayloadFile;
+  }
+  if (isRecord(paymentPayloadFile) && isX402PaymentPayload(paymentPayloadFile.paymentPayload)) {
+    return paymentPayloadFile.paymentPayload;
+  }
+
+  if (!isRecord(paymentPayloadFile)) {
+    failPaymentPayloadShape("Payment payload file must contain a raw x402 payload, { paymentPayload }, or a service-keyed payload object.");
+  }
+
+  if (service) {
+    const selected = paymentPayloadFile[service];
+    if (!selected) {
+      failPaymentPayloadShape(`Payment payload file does not contain service key '${service}'.`, {
+        service,
+        availableServices: Object.keys(paymentPayloadFile).filter((key) => isRecord(paymentPayloadFile[key]))
+      });
+    }
+    if (isX402PaymentPayload(selected)) {
+      return selected;
+    }
+    if (isRecord(selected) && isX402PaymentPayload(selected.paymentPayload)) {
+      return selected.paymentPayload;
+    }
+    failPaymentPayloadShape(`Service key '${service}' does not contain a valid x402 payment payload.`, { service });
+  }
+
+  const candidates = Object.entries(paymentPayloadFile).filter(([, value]) => {
+    return isX402PaymentPayload(value) || (isRecord(value) && isX402PaymentPayload(value.paymentPayload));
+  });
+
+  if (candidates.length === 1) {
+    const [, value] = candidates[0];
+    return isX402PaymentPayload(value) ? value : value.paymentPayload;
+  }
+
+  if (candidates.length > 1) {
+    failPaymentPayloadShape("Payment payload file contains multiple service-keyed x402 payloads. Pass --service so buyer:pay-quote can unwrap the correct one locally.", {
+      availableServices: candidates.map(([key]) => key)
+    });
+  }
+
+  failPaymentPayloadShape("Payment payload file does not contain a valid x402 payload. Pass a raw x402 payload, { paymentPayload }, or a service-keyed wrapper such as { \"magic_8_ball\": { ... } }.");
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
@@ -121,10 +200,9 @@ if (!intentId || !/^exec_[a-zA-Z0-9]+$/.test(intentId)) {
   throw new Error("Unable to find an accepted quote intentId. Pass --intent-id exec_... or a quote manifest containing intentId.");
 }
 
-const paymentPayload =
-  paymentPayloadFile && typeof paymentPayloadFile === "object" && !Array.isArray(paymentPayloadFile) && paymentPayloadFile.paymentPayload
-    ? paymentPayloadFile.paymentPayload
-    : paymentPayloadFile;
+const paymentPayload = normalizePaymentPayloadFromFile(paymentPayloadFile, {
+  service: typeof args.service === "string" ? args.service : ""
+});
 
 let response;
 try {
