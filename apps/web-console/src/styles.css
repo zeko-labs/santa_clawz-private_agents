@@ -1809,6 +1809,12 @@ pre,
   color: #9a3129;
 }
 
+.board-proof-pill.muted {
+  border-color: rgba(91, 110, 130, 0.12);
+  background: rgba(91, 110, 130, 0.08);
+  color: var(--muted);
+}
+
 .agent-board-empty-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

@@ -1487,9 +1487,28 @@ async function testProofBackedAgentMessageBoard() {
     assert.deepEqual(posted.payload.messages[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.messages[0].outputDigestSha256, "a".repeat(64));
     assert.equal(posted.payload.messages[0].anchorStatus, "pending");
+    assert.match(posted.payload.messages[0].anchorCandidateId, /^anchor_/);
     assert.match(posted.payload.messages[0].messageDigestSha256, /^[a-f0-9]{64}$/);
     assert.deepEqual(posted.payload.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.threads[0].messageCount, 1);
+
+    const displayOnlyPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "Low-stakes chatter should be visible without promising a Zeko proof.",
+        proofIntent: "display_only",
+        swarmId: "busy-run-display-only"
+      })
+    });
+    assert.equal(displayOnlyPost.status, 200);
+    assert.equal(displayOnlyPost.payload.totalVisibleMessages, 2);
+    assert.equal(displayOnlyPost.payload.messages[0].proofIntent, "display_only");
+    assert.equal(displayOnlyPost.payload.messages[0].swarmId, "busy-run-display-only");
+    assert.equal(displayOnlyPost.payload.messages[0].anchorStatus, "not_proof_requested");
 
     const staleParentAppend = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
@@ -1504,7 +1523,7 @@ async function testProofBackedAgentMessageBoard() {
       })
     });
     assert.equal(staleParentAppend.status, 200);
-    assert.equal(staleParentAppend.payload.totalVisibleMessages, 2);
+    assert.equal(staleParentAppend.payload.totalVisibleMessages, 3);
     assert.equal(staleParentAppend.payload.messages[0].threadId, posted.payload.messages[0].threadId);
 
     const publicBoard = await requestJson(
@@ -1535,6 +1554,7 @@ async function testProofBackedAgentMessageBoard() {
       body: "Looking for collaborators on proof-backed output packaging.",
       topicTags: ["collaboration"],
       capabilityTags: ["output.package"],
+      proofIntent: "aggregate",
       swarmId: "swarm_research_ops",
       outputDigestSha256: "b".repeat(64)
     });
@@ -1547,6 +1567,9 @@ async function testProofBackedAgentMessageBoard() {
     assert.equal(relayPostResult.postedMessage.agentId, relayAgentId);
     assert.equal(relayPostResult.postedMessage.messageType, "question");
     assert.deepEqual(relayPostResult.postedMessage.capabilityTags, ["output.package"]);
+    assert.equal(relayPostResult.postedMessage.proofIntent, "aggregate");
+    assert.equal(relayPostResult.postedMessage.swarmId, "swarm_research_ops");
+    assert.equal(relayPostResult.postedMessage.anchorStatus, "aggregate_anchored");
 
     const relayFilteredBoard = await requestJson(
       `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(relayAgentId)}&topic=collaboration&capability=output.package&outputDigestSha256=${"b".repeat(64)}`
@@ -1563,6 +1586,16 @@ async function testProofBackedAgentMessageBoard() {
     });
     assert.equal(anchorQueue.status, 200);
     assert.equal(anchorQueue.payload.items.some((item) => item.kind === "agent-message-posted"), true);
+
+    const queuePath = path.join(workspaceDir, ".clawz-data", "state", "social-anchor-queue.json");
+    const queueFile = JSON.parse(await readFile(queuePath, "utf8"));
+    queueFile.items = queueFile.items.filter((item) => item.candidateId !== posted.payload.messages[0].anchorCandidateId);
+    await writeFile(queuePath, JSON.stringify(queueFile, null, 2));
+    const reconciledBoard = await requestJson(
+      `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&outputDigest=${"a".repeat(64)}`
+    );
+    assert.equal(reconciledBoard.status, 200);
+    assert.equal(reconciledBoard.payload.messages[0].anchorStatus, "expired_not_anchored");
 
     console.log("ok - proof-backed agent message board supports admin and relay-authenticated posting with Zeko anchors");
   } finally {

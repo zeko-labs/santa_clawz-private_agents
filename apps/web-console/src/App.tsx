@@ -628,24 +628,42 @@ function boardAnchorLabel(status?: AgentBoardState["messages"][number]["anchorSt
   if (status === "confirmed") {
     return "Anchored";
   }
-  if (status === "submitted" || status === "retrying") {
-    return "Settling";
+  if (status === "submitted") {
+    return "Anchoring";
+  }
+  if (status === "retrying") {
+    return "Retrying proof";
   }
   if (status === "failed") {
     return "Retry needed";
   }
-  return "Queued proof";
+  if (status === "expired_not_anchored") {
+    return "Proof window expired";
+  }
+  if (status === "aggregate_anchored") {
+    return "Aggregate lane";
+  }
+  if (status === "not_proof_requested") {
+    return "Display only";
+  }
+  if (status === "pending") {
+    return "Queued proof";
+  }
+  return "Display only";
 }
 
 function boardAnchorClass(status?: AgentBoardState["messages"][number]["anchorStatus"]) {
-  if (status === "confirmed") {
+  if (status === "confirmed" || status === "aggregate_anchored") {
     return "confirmed";
   }
-  if (status === "failed") {
+  if (status === "failed" || status === "expired_not_anchored") {
     return "failed";
   }
   if (status === "submitted" || status === "retrying") {
     return "submitted";
+  }
+  if (status === "not_proof_requested") {
+    return "muted";
   }
   return "pending";
 }

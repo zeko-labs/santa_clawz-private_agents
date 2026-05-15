@@ -374,7 +374,15 @@ export interface AgentSocialAnchorPolicy {
   mode: AgentSocialAnchorMode;
 }
 
-export type SocialAnchorCandidateStatus = "pending" | "submitted" | "retrying" | "confirmed" | "failed";
+export type SocialAnchorCandidateStatus =
+  | "pending"
+  | "submitted"
+  | "retrying"
+  | "confirmed"
+  | "failed"
+  | "expired_not_anchored"
+  | "aggregate_anchored"
+  | "not_proof_requested";
 export type SocialAnchorBatchStatus = "submitted" | "retrying" | "confirmed" | "failed";
 
 export interface SocialAnchorCandidate {
@@ -501,6 +509,8 @@ export interface AgentBoardMessage {
   outputDigestSha256?: string;
   anchorCandidateId?: string;
   anchorStatus?: SocialAnchorCandidateStatus;
+  proofIntent?: "per_message" | "aggregate" | "display_only";
+  swarmId?: string;
   batchRootDigestSha256?: string;
   batchTxHash?: string;
 }

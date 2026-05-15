@@ -486,6 +486,8 @@ interface AgentBoardPostOptions {
   threadId?: string;
   parentMessageId?: string;
   outputDigestSha256?: string;
+  proofIntent?: "per_message" | "aggregate" | "display_only";
+  swarmId?: string;
 }
 
 type AgentAvailabilityState = AgentProfileState["availability"];
@@ -1732,7 +1734,27 @@ function buildDefaultAgentBoardFile(): AgentBoardFile {
 }
 
 function isSocialAnchorCandidateStatus(value: unknown): value is SocialAnchorCandidate["status"] {
-  return value === "pending" || value === "submitted" || value === "retrying" || value === "confirmed" || value === "failed";
+  return (
+    value === "pending" ||
+    value === "submitted" ||
+    value === "retrying" ||
+    value === "confirmed" ||
+    value === "failed" ||
+    value === "expired_not_anchored" ||
+    value === "aggregate_anchored" ||
+    value === "not_proof_requested"
+  );
+}
+
+function activeSocialAnchorStatus(status: SocialAnchorCandidate["status"]) {
+  return status === "pending" || status === "submitted" || status === "retrying";
+}
+
+function retainSocialAnchorItems(items: SocialAnchorCandidate[]) {
+  const sorted = [...items].sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso));
+  const active = sorted.filter((item) => activeSocialAnchorStatus(item.status));
+  const terminal = sorted.filter((item) => !activeSocialAnchorStatus(item.status)).slice(0, 2000);
+  return [...active, ...terminal];
 }
 
 function isSocialAnchorBatchStatus(value: unknown): value is SocialAnchorBatch["status"] {
@@ -5771,11 +5793,18 @@ export class ClawzControlPlane {
         ? queue.batches.find((batch) => batch.batchId === anchorCandidate.batchId)
         : undefined;
       const representedPrincipal = profile.representedPrincipal || message.representedPrincipal;
+      const anchorStatus: SocialAnchorCandidate["status"] =
+        anchorCandidate?.status ??
+        (message.anchorCandidateId
+          ? "expired_not_anchored"
+          : message.anchorStatus === "aggregate_anchored" || message.anchorStatus === "not_proof_requested"
+            ? message.anchorStatus
+            : "not_proof_requested");
       return {
         ...message,
         agentName: profile.agentName || message.agentName,
         ...(representedPrincipal ? { representedPrincipal } : {}),
-        ...(anchorCandidate ? { anchorStatus: anchorCandidate.status } : {}),
+        anchorStatus,
         ...(anchorCandidate?.batchRootDigestSha256 ? { batchRootDigestSha256: anchorCandidate.batchRootDigestSha256 } : {}),
         ...(anchorBatch?.txHash ? { batchTxHash: anchorBatch.txHash } : {})
       };
@@ -5882,6 +5911,12 @@ export class ClawzControlPlane {
     const topicTags = sanitizeAgentBoardTopicTags(options.topicTags);
     const capabilityTags = sanitizeAgentBoardCapabilityTags(options.capabilityTags);
     assertNoBlockedPublicTerms("Public agent tags", [...topicTags, ...capabilityTags]);
+    const proofIntent =
+      options.proofIntent === "aggregate" || options.proofIntent === "display_only" ? options.proofIntent : "per_message";
+    const swarmId =
+      typeof options.swarmId === "string" && options.swarmId.trim().length > 0
+        ? options.swarmId.trim().slice(0, 96)
+        : undefined;
     const outputDigestSha256 =
       typeof options.outputDigestSha256 === "string" && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)
         ? options.outputDigestSha256
@@ -5923,32 +5958,37 @@ export class ClawzControlPlane {
       bodyDigestSha256,
       messageDigestSha256,
       ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
-      anchorStatus: "pending"
+      proofIntent,
+      ...(swarmId ? { swarmId } : {}),
+      anchorStatus: proofIntent === "display_only" ? "not_proof_requested" : proofIntent === "aggregate" ? "aggregate_anchored" : "pending"
     };
 
     await this.saveAgentBoardFile({
       messages: [nextMessage, ...file.messages].slice(0, 1000)
     });
 
-    const anchorCandidate = await this.enqueueSocialAnchorCandidate({
-      sessionId,
-      kind: "agent-message-posted",
-      summary: `${profile.agentName} posted a public agent board ${messageType}.`,
-      occurredAtIso: createdAtIso,
-      payload: {
-        schemaVersion: "santaclawz-agent-message-anchor/1.0",
-        messageId,
-        threadId,
-        ...(parentMessage ? { parentMessageId: parentMessage.messageId } : {}),
-        agentId: options.agentId,
-        messageType,
-        bodyDigestSha256,
-        messageDigestSha256,
-        topicTags,
-        ...(capabilityTags.length > 0 ? { capabilityTags } : {}),
-        ...(outputDigestSha256 ? { outputDigestSha256 } : {})
-      }
-    });
+    const anchorCandidate =
+      proofIntent === "per_message"
+        ? await this.enqueueSocialAnchorCandidate({
+            sessionId,
+            kind: "agent-message-posted",
+            summary: `${profile.agentName} posted a public agent board ${messageType}.`,
+            occurredAtIso: createdAtIso,
+            payload: {
+              schemaVersion: "santaclawz-agent-message-anchor/1.0",
+              messageId,
+              threadId,
+              ...(parentMessage ? { parentMessageId: parentMessage.messageId } : {}),
+              agentId: options.agentId,
+              messageType,
+              bodyDigestSha256,
+              messageDigestSha256,
+              topicTags,
+              ...(capabilityTags.length > 0 ? { capabilityTags } : {}),
+              ...(outputDigestSha256 ? { outputDigestSha256 } : {})
+            }
+          })
+        : undefined;
 
     if (anchorCandidate) {
       nextMessage = {
@@ -6569,7 +6609,7 @@ export class ClawzControlPlane {
 
     await this.saveSocialAnchorQueueFile({
       ...queue,
-      items: [nextItem, ...queue.items].slice(0, 500)
+      items: retainSocialAnchorItems([nextItem, ...queue.items])
     });
 
     if (anchorMode === "priority-self-funded") {

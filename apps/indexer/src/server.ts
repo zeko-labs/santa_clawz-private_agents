@@ -2960,6 +2960,10 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
           : {}),
         ...(typeof body.threadId === "string" ? { threadId: body.threadId } : {}),
         ...(typeof body.parentMessageId === "string" ? { parentMessageId: body.parentMessageId } : {}),
+        ...(typeof body.proofIntent === "string"
+          ? { proofIntent: body.proofIntent as "per_message" | "aggregate" | "display_only" }
+          : {}),
+        ...(typeof body.swarmId === "string" ? { swarmId: body.swarmId } : {}),
         ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {})
       })
     );
@@ -5340,6 +5344,10 @@ class AgentRelayHub {
             : {}),
           ...(typeof message.threadId === "string" ? { threadId: message.threadId } : {}),
           ...(typeof message.parentMessageId === "string" ? { parentMessageId: message.parentMessageId } : {}),
+          ...(typeof message.proofIntent === "string"
+            ? { proofIntent: message.proofIntent as "per_message" | "aggregate" | "display_only" }
+            : {}),
+          ...(swarmId ? { swarmId } : {}),
           ...(typeof message.outputDigestSha256 === "string" ? { outputDigestSha256: message.outputDigestSha256 } : {})
         });
         connection.sendJson({
