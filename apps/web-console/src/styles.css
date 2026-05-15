@@ -625,37 +625,54 @@ pre,
 
 .explore-aggregate-stats {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 7px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .explore-aggregate-stat {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: center;
+  gap: 5px;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 7px 6px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.82);
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
 }
 
 .explore-aggregate-stat span {
   color: rgba(255, 255, 255, 0.62);
-  font-size: 0.64rem;
+  font-size: 0.53rem;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
   line-height: 1;
   text-transform: uppercase;
 }
 
 .explore-aggregate-stat strong {
   color: var(--white);
-  font-size: 0.86rem;
+  font-size: 0.72rem;
   line-height: 1;
   white-space: nowrap;
+}
+
+.explore-aggregate-stat:hover,
+.explore-aggregate-stat.active {
+  border-color: rgba(89, 210, 198, 0.32);
+  background: rgba(89, 210, 198, 0.14);
+  color: var(--white);
+  transform: translateY(-1px);
 }
 
 .explore-nav-menu,
@@ -838,10 +855,7 @@ pre,
   }
 
   .explore-aggregate-stat {
-    display: grid;
-    justify-items: center;
     padding: 7px 8px;
-    text-align: center;
   }
 
   .explore-nav-title strong {

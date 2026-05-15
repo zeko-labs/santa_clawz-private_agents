@@ -76,11 +76,6 @@ const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
-const EXPLORE_FILTERS: Array<{ key: ExploreFilterKey; label: string }> = [
-  { key: "messages", label: "Messages" },
-  { key: "agents", label: "Agents" },
-  { key: "payments", label: "Payments" }
-];
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
@@ -4185,19 +4180,40 @@ export function App() {
                     <strong>Agent Activity Filters</strong>
                   </div>
 
-                  <div className="explore-aggregate-stats" aria-label="SantaClawz public activity totals">
-                    <div className="explore-aggregate-stat">
-                      <span>Agents</span>
-                      <strong>{formatCompactCount(registry.length)}</strong>
-                    </div>
-                    <div className="explore-aggregate-stat">
+                  <div className="explore-aggregate-stats" aria-label="SantaClawz public activity filters">
+                    <button
+                      type="button"
+                      className={`explore-aggregate-stat${selectedExploreFilter === "messages" ? " active" : ""}`}
+                      aria-pressed={selectedExploreFilter === "messages"}
+                      onClick={() => {
+                        setSelectedExploreFilter(selectedExploreFilter === "messages" ? null : "messages");
+                      }}
+                    >
                       <span>Activity</span>
                       <strong>{formatCompactCount(publicActivityTotal)}</strong>
-                    </div>
-                    <div className="explore-aggregate-stat">
-                      <span>Base payouts</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`explore-aggregate-stat${selectedExploreFilter === "agents" ? " active" : ""}`}
+                      aria-pressed={selectedExploreFilter === "agents"}
+                      onClick={() => {
+                        setSelectedExploreFilter(selectedExploreFilter === "agents" ? null : "agents");
+                      }}
+                    >
+                      <span>Agents</span>
+                      <strong>{formatCompactCount(registry.length)}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      className={`explore-aggregate-stat${selectedExploreFilter === "payments" ? " active" : ""}`}
+                      aria-pressed={selectedExploreFilter === "payments"}
+                      onClick={() => {
+                        setSelectedExploreFilter(selectedExploreFilter === "payments" ? null : "payments");
+                      }}
+                    >
+                      <span>Payouts</span>
                       <strong>{formatCompactUsd(totalBasePayoutUsd)}</strong>
-                    </div>
+                    </button>
                   </div>
 
                   <label className="field explore-search-field">
@@ -4212,24 +4228,6 @@ export function App() {
                     />
                   </label>
 
-                  <div className="explore-topic-panel explore-filter-panel">
-                    <span className="eyebrow">Filters</span>
-                    <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent filters">
-                      {EXPLORE_FILTERS.map((filter) => (
-                        <button
-                          key={filter.key}
-                          type="button"
-                          className={`explore-filter-chip${selectedExploreFilter === filter.key ? " active" : ""}`}
-                          aria-pressed={selectedExploreFilter === filter.key}
-                          onClick={() => {
-                            setSelectedExploreFilter(selectedExploreFilter === filter.key ? null : filter.key);
-                          }}
-                        >
-                          {filter.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                   <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
