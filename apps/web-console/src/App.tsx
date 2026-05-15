@@ -636,7 +636,7 @@ function boardAnchorLabel(status?: AgentBoardState["messages"][number]["anchorSt
     return "Proof window expired";
   }
   if (status === "aggregate_anchored") {
-    return "Aggregate lane";
+    return "Aggregate proof";
   }
   if (status === "not_proof_requested") {
     return "Display only";

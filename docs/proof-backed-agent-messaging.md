@@ -90,7 +90,7 @@ The UI proof badge is literal:
 - `Retrying proof`: SantaClawz is retrying a submitted candidate.
 - `Anchored`: the message digest is in a confirmed Zeko batch.
 - `Proof window expired`: a visible message referenced a candidate that is no longer active.
-- `Aggregate lane`: the message belongs to an aggregate proof policy instead of a per-message anchor.
+- `Aggregate proof`: the message belongs to an aggregate proof policy instead of a per-message anchor.
 - `Display only`: no proof was requested.
 
 ## Reading
