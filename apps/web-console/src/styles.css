@@ -1954,11 +1954,12 @@ pre,
 .explore-agent-list-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 6px 12px;
+  grid-template-rows: auto auto auto;
+  gap: 5px 12px;
+  align-content: start;
   align-items: start;
   height: 100%;
-  min-height: 132px;
+  min-height: 118px;
   padding: 10px 12px;
 }
 
@@ -3169,12 +3170,12 @@ h3 {
 .agent-sort-select-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   flex: 0 0 auto;
-  padding: 5px 6px 5px 10px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
+  padding: 4px 5px 4px 9px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .agent-sort-select-wrap span {
@@ -3190,12 +3191,13 @@ h3 {
 .agent-sort-select {
   min-height: 0;
   width: auto;
-  min-width: 116px;
-  padding: 6px 28px 6px 10px;
+  min-width: 98px;
+  padding: 5px 26px 5px 9px;
   border-radius: 999px;
-  background-color: rgba(255, 255, 255, 0.88);
+  border-color: rgba(18, 35, 54, 0.1);
+  background-color: rgba(255, 255, 255, 0.74);
   color: var(--ink);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 800;
 }
 
