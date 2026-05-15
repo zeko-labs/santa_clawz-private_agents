@@ -1435,6 +1435,11 @@ pre,
   scrollbar-color: rgba(18, 35, 54, 0.28) rgba(18, 35, 54, 0.06);
 }
 
+.agent-board-feed-agents {
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  align-items: start;
+}
+
 .agent-message-card {
   display: grid;
   gap: 12px;
@@ -1445,8 +1450,8 @@ pre,
 }
 
 .agent-message-card.compact {
-  gap: 6px;
-  padding: 12px 16px;
+  gap: 5px;
+  padding: 10px 16px;
 }
 
 .agent-message-head {
@@ -1520,7 +1525,7 @@ pre,
 
 .payment-activity-summary .agent-message-body {
   font-size: 0.92rem;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .payment-activity-card .agent-message-proof-row {
@@ -1939,9 +1944,9 @@ pre,
 .explore-agent-list-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 8px 14px;
+  gap: 7px 12px;
   align-items: center;
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 
 .explore-agent-list-card .explore-card-head {
@@ -1949,18 +1954,18 @@ pre,
 }
 
 .explore-agent-list-card .explore-card-avatar {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-  border-radius: 13px;
-  font-size: 0.78rem;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 12px;
+  font-size: 0.72rem;
 }
 
 .explore-agent-list-card .explore-card-quote {
   grid-column: 1;
   margin: 0;
-  font-size: 0.94rem;
-  line-height: 1.42;
+  font-size: 0.9rem;
+  line-height: 1.34;
 }
 
 .explore-agent-list-card .explore-tag-row {
@@ -1969,8 +1974,8 @@ pre,
 }
 
 .explore-agent-list-card .explore-tag {
-  padding: 5px 8px;
-  font-size: 0.68rem;
+  padding: 4px 7px;
+  font-size: 0.64rem;
 }
 
 .explore-rail-card {
@@ -4427,6 +4432,7 @@ button:disabled {
   .explore-featured-grid,
   .explore-feed-grid,
   .agent-board-grid,
+  .agent-board-feed-agents,
   .dispatch-grid,
   .explore-toolbar-inline,
   .explore-agent-list-card {

@@ -4286,7 +4286,7 @@ export function App() {
                         ) : null}
                       </div>
                       <div className="agent-board-grid">
-                        <div className="agent-board-feed">
+                        <div className={selectedExploreFilter === "agents" ? "agent-board-feed agent-board-feed-agents" : "agent-board-feed"}>
                           {selectedExploreFilter === "agents" ? (
                             visibleExploreAgents.length === 0 ? (
                               <article className="explore-card agent-board-empty-card">
@@ -4372,14 +4372,6 @@ export function App() {
                                       <p className="agent-message-body">
                                         {paymentActivityLine(payment)}.
                                       </p>
-                                    </div>
-                                    <div className="agent-message-proof-row">
-                                      <span>ledger {shorten(payment.ledgerId, 8, 6)}</span>
-                                      {payment.deliveryReceipt ? <span>{payment.deliveryReceipt.stage.replace(/_/g, " ")}</span> : null}
-                                      {payment.settlementRecovery?.nextSettlementAction === "retry_settlement" ? <span>retry settlement</span> : null}
-                                      {payment.sellerNetAmountUsd ? <span>seller net ${payment.sellerNetAmountUsd}</span> : null}
-                                      {payment.protocolFeeAmountUsd ? <span>protocol fee ${payment.protocolFeeAmountUsd}</span> : null}
-                                      <span>tx {shortPaymentReference(payment)}</span>
                                     </div>
                                   </article>
                                 );
