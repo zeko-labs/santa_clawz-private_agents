@@ -43,7 +43,7 @@ type DuplicateClaimTarget = {
   canReclaim: boolean;
 };
 type ExploreFilterKey = "messages" | "agents" | "payments";
-type ExploreAgentSortKey = "online" | "jobs" | "success";
+type ExploreAgentSortKey = "online" | "jobs" | "payments";
 type ExploreActivityItem =
   | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry };
@@ -2936,6 +2936,13 @@ export function App() {
   const completedBasePaymentEntries = allPublicPaymentEntries.filter(
     (entry) => isCompletedPaymentEntry(entry) && entry.rail === "base-usdc"
   );
+  const completedPaymentUsdByAgentId = new Map<string, number>();
+  for (const entry of allPublicPaymentEntries.filter(isCompletedPaymentEntry)) {
+    completedPaymentUsdByAgentId.set(
+      entry.agentId,
+      (completedPaymentUsdByAgentId.get(entry.agentId) ?? 0) + parseUsdValue(entry.sellerNetAmountUsd ?? entry.amountUsd)
+    );
+  }
   const totalBasePayoutUsd = completedBasePaymentEntries.reduce(
     (sum, entry) => sum + parseUsdValue(entry.sellerNetAmountUsd ?? entry.amountUsd),
     0
@@ -2962,29 +2969,30 @@ export function App() {
   ).slice(0, 8);
   const visibleExploreAgents = [...filteredRegistry]
     .sort((left, right) => {
-      if (exploreAgentSort === "success") {
-        const rightCompletion = right.completionScore?.successRatePct ?? -1;
-        const leftCompletion = left.completionScore?.successRatePct ?? -1;
-        if (rightCompletion !== leftCompletion) {
-          return rightCompletion - leftCompletion;
+      const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
+      const leftCompletedJobs = left.completionScore?.completedJobCount ?? -1;
+      if (exploreAgentSort === "payments") {
+        const rightPaymentsUsd = completedPaymentUsdByAgentId.get(right.agentId) ?? 0;
+        const leftPaymentsUsd = completedPaymentUsdByAgentId.get(left.agentId) ?? 0;
+        if (rightPaymentsUsd !== leftPaymentsUsd) {
+          return rightPaymentsUsd - leftPaymentsUsd;
         }
-        const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
-        const leftCompletedJobs = left.completionScore?.completedJobCount ?? -1;
         if (rightCompletedJobs !== leftCompletedJobs) {
           return rightCompletedJobs - leftCompletedJobs;
         }
-      }
-      if (exploreAgentSort === "jobs") {
-        const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
-        const leftCompletedJobs = left.completionScore?.completedJobCount ?? -1;
+      } else if (exploreAgentSort === "jobs") {
         if (rightCompletedJobs !== leftCompletedJobs) {
           return rightCompletedJobs - leftCompletedJobs;
         }
-      }
-      const rightOnline = Number(right.runtimeStatus === "live" && right.paidJobsEnabled);
-      const leftOnline = Number(left.runtimeStatus === "live" && left.paidJobsEnabled);
-      if (rightOnline !== leftOnline) {
-        return rightOnline - leftOnline;
+      } else {
+        const rightOnline = Number(right.runtimeStatus === "live");
+        const leftOnline = Number(left.runtimeStatus === "live");
+        if (rightOnline !== leftOnline) {
+          return rightOnline - leftOnline;
+        }
+        if (rightCompletedJobs !== leftCompletedJobs) {
+          return rightCompletedJobs - leftCompletedJobs;
+        }
       }
       return (right.lastUpdatedAtIso ?? "").localeCompare(left.lastUpdatedAtIso ?? "");
     })
@@ -4176,44 +4184,6 @@ export function App() {
                       ))}
                     </div>
                   </div>
-                  {selectedExploreFilter === "agents" ? (
-                    <div className="explore-topic-panel explore-filter-panel explore-sort-panel">
-                      <span className="eyebrow">Sort</span>
-                      <div className="explore-chip-row explore-nav-filter-row" role="group" aria-label="Agent sort">
-                        <button
-                          type="button"
-                          className={`explore-filter-chip${exploreAgentSort === "online" ? " active" : ""}`}
-                          aria-pressed={exploreAgentSort === "online"}
-                          onClick={() => {
-                            setExploreAgentSort("online");
-                          }}
-                        >
-                          Online
-                        </button>
-                        <button
-                          type="button"
-                          className={`explore-filter-chip${exploreAgentSort === "jobs" ? " active" : ""}`}
-                          aria-pressed={exploreAgentSort === "jobs"}
-                          onClick={() => {
-                            setExploreAgentSort("jobs");
-                          }}
-                        >
-                          Jobs
-                        </button>
-                        <button
-                          type="button"
-                          className={`explore-filter-chip${exploreAgentSort === "success" ? " active" : ""}`}
-                          aria-pressed={exploreAgentSort === "success"}
-                          onClick={() => {
-                            setExploreAgentSort("success");
-                          }}
-                        >
-                          Success
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
                   <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
@@ -4283,6 +4253,21 @@ export function App() {
                           >
                             {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
                           </button>
+                        ) : selectedExploreFilter === "agents" ? (
+                          <label className="agent-sort-select-wrap">
+                            <span>Sort</span>
+                            <select
+                              className="select-input agent-sort-select"
+                              value={exploreAgentSort}
+                              onChange={(event: ValueInputEvent) => {
+                                setExploreAgentSort(event.target.value as ExploreAgentSortKey);
+                              }}
+                            >
+                              <option value="online">Online</option>
+                              <option value="jobs">Jobs</option>
+                              <option value="payments">Payments</option>
+                            </select>
+                          </label>
                         ) : null}
                       </div>
                       <div className="agent-board-grid">
