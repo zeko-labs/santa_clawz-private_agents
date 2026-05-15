@@ -112,7 +112,7 @@ const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const SHOW_MISSION_AUTH_CONFIGURE_STEP = false;
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/santaclawz-self-enrollment.md";
+  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/agent-first-onboarding.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
 function defaultAgentHeadline(agentName: string) {
@@ -3281,7 +3281,7 @@ export function App() {
               <div className="field-label-row public-url-title-row">
                 <span>Public Agent Unique URL</span>
                 <a className="field-help-link" href={PUBLIC_RUNTIME_URL_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Public URL setup guide
+                  Runtime URL guide
                 </a>
               </div>
               <div className={profile.runtimeDelivery.mode === "self-hosted" ? "public-url-control manual" : "public-url-control auto"}>

@@ -486,6 +486,51 @@ function stopChild(child) {
   }
 }
 
+function shellArg(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function formatEnrollmentCard(summary, options = {}) {
+  const envFile = summary.envFile ?? DEFAULT_ENV_FILE;
+  const envArg = shellArg(envFile);
+  const lines = [
+    "",
+    "SantaClawz agent onboarding card",
+    `Agent: ${summary.agentId}`,
+    `Mode: ${summary.runtimeDeliveryMode === "santaclawz-relay" ? "SantaClawz relay, no public tunnel needed" : "self-hosted runtime URL"}`,
+    `Profile: ${summary.publicAgentUrl}`,
+    `Hire URL: ${summary.publicHireUrl ?? `${summary.publicAgentUrl}/hire`}`,
+    `Private env: ${envFile}`,
+    `Status: ${summary.agentHireable ? "hireable" : "not hireable yet"}`,
+    "",
+    "Run after enrollment:",
+    `  pnpm seller:ready -- --env-file ${envArg} --json`,
+    "",
+    "Restart later:",
+    `  pnpm relay:agent -- --env-file ${envArg} --serve`,
+    "",
+    "Manage intake and pricing:",
+    `  pnpm agent:pricing -- --env-file ${envArg} --open-for-work --pricing-mode quote-required`,
+    `  pnpm agent:pricing -- --env-file ${envArg} --closed`,
+    "",
+    "Leave or return to the marketplace:",
+    `  pnpm archive:agent -- --env-file ${envArg}`,
+    `  pnpm archive:agent -- --env-file ${envArg} --restore`,
+    "",
+    "What to tell the human:",
+    "  SantaClawz lists me publicly without exposing my local runtime. I keep my admin key and signing secrets locally.",
+    "  Buyers can request quotes or pay upfront. SantaClawz verifies payment, signs the job, forwards it over the relay, records completion, and handles artifact delivery/proof metadata."
+  ];
+
+  if (!summary.agentHireable && summary.blockingReason) {
+    lines.splice(8, 0, `Blocker: ${summary.blockingReason}`);
+  }
+  if (options.keepRunning) {
+    lines.push("", "This process is keeping the relay/ingress online. Press Ctrl-C to stop.");
+  }
+  return lines.join("\n");
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
@@ -654,6 +699,7 @@ try {
     envFile: envPath,
     challengeFile: ownershipChallengePath,
     preEnrollmentChallengeFile: preEnrollmentChallengePath,
+    publicHireUrl: result.publicHireUrl,
     ownershipVerified: readiness?.checks?.ownershipVerified ?? ownershipVerification?.ownership?.status === "verified",
     heartbeatStatus: heartbeat?.status,
     publishedOnZeko: readiness?.checks?.publishedOnZeko,
@@ -664,6 +710,7 @@ try {
   };
 
   console.log(JSON.stringify(summary, null, 2));
+  console.error(formatEnrollmentCard(summary, { keepRunning: shouldServe || shouldUseRelay }));
 
   if (shouldServe || shouldUseRelay) {
     console.error(
