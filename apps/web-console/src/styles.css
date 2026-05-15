@@ -1474,6 +1474,17 @@ pre,
   overflow-wrap: anywhere;
 }
 
+.agent-message-body-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.agent-message-body-line .agent-message-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .agent-message-preview {
   display: -webkit-box;
   overflow: hidden;
@@ -1493,11 +1504,6 @@ pre,
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
-}
-
-.agent-message-toggle-bottom {
-  justify-self: end;
-  margin-top: -4px;
 }
 
 .agent-message-toggle:hover {
