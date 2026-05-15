@@ -4488,6 +4488,27 @@ button:disabled {
     border-radius: 22px;
   }
 
+  .explore-aggregate-stats {
+    gap: 6px;
+  }
+
+  .explore-aggregate-stat {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 6px;
+    text-align: left;
+  }
+
+  .explore-aggregate-stat span {
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
+  }
+
+  .explore-aggregate-stat strong {
+    font-size: 0.72rem;
+  }
+
   .explore-nav-title strong {
     font-size: 0.92rem;
   }
