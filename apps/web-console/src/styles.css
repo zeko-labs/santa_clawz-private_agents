@@ -1458,8 +1458,12 @@ pre,
 
 .agent-board-feed-agents {
   grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
-  align-items: stretch;
+  align-content: start;
+  align-items: start;
   gap: 8px 12px;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
 }
 
 .agent-message-card {
@@ -1976,12 +1980,12 @@ pre,
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto auto;
-  gap: 5px 12px;
+  gap: 4px 12px;
   align-content: start;
   align-items: start;
-  height: 100%;
-  min-height: 118px;
-  padding: 10px 12px;
+  height: auto;
+  min-height: 0;
+  padding: 9px 12px;
 }
 
 .explore-agent-list-card .explore-card-head {
@@ -2002,7 +2006,7 @@ pre,
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   font-size: 0.86rem;
   line-height: 1.3;
 }
@@ -3200,14 +3204,20 @@ h3 {
 .agent-sort-select {
   min-height: 0;
   width: auto;
-  min-width: 108px;
-  padding: 7px 28px 7px 11px;
+  min-width: 92px;
+  padding: 5px 24px 5px 10px;
   border-radius: 999px;
-  border-color: rgba(18, 35, 54, 0.12);
-  background-color: rgba(255, 255, 255, 0.68);
-  color: var(--ink);
-  font-size: 0.76rem;
+  border-color: rgba(18, 35, 54, 0.09);
+  background-color: rgba(18, 35, 54, 0.06);
+  color: rgba(18, 35, 54, 0.72);
+  font-size: 0.72rem;
   font-weight: 800;
+}
+
+.agent-sort-select:focus {
+  outline: none;
+  border-color: rgba(89, 210, 198, 0.32);
+  box-shadow: 0 0 0 2px rgba(89, 210, 198, 0.14);
 }
 
 .section-block {
