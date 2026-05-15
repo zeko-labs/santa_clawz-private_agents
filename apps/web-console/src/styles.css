@@ -630,10 +630,11 @@ pre,
 }
 
 .explore-aggregate-stat {
-  display: flex;
+  display: grid;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  justify-items: center;
+  gap: 3px;
   min-width: 0;
   padding: 7px 6px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -643,7 +644,7 @@ pre,
   appearance: none;
   cursor: pointer;
   font: inherit;
-  text-align: left;
+  text-align: center;
   transition:
     background 180ms ease,
     border-color 180ms ease,
@@ -769,7 +770,8 @@ pre,
 }
 
 .explore-topic-chip {
-  max-width: 100%;
+  display: block;
+  max-width: min(100%, 190px);
   padding: 6px 8px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
@@ -778,7 +780,10 @@ pre,
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.7rem;
   cursor: pointer;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .explore-empty-note {
@@ -3184,34 +3189,22 @@ h3 {
 .agent-sort-select-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
   flex: 0 0 auto;
-  padding: 4px 5px 4px 9px;
-  border: 1px solid rgba(18, 35, 54, 0.1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
-}
-
-.agent-sort-select-wrap span {
-  color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.66rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  line-height: 1;
-  text-transform: uppercase;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .agent-sort-select {
   min-height: 0;
   width: auto;
-  min-width: 98px;
-  padding: 5px 26px 5px 9px;
+  min-width: 108px;
+  padding: 7px 28px 7px 11px;
   border-radius: 999px;
-  border-color: rgba(18, 35, 54, 0.1);
-  background-color: rgba(255, 255, 255, 0.74);
+  border-color: rgba(18, 35, 54, 0.12);
+  background-color: rgba(255, 255, 255, 0.68);
   color: var(--ink);
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   font-weight: 800;
 }
 
@@ -4350,6 +4343,16 @@ button:disabled {
     flex-direction: column;
   }
 
+  .compact-head {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .compact-head > div {
+    min-width: 0;
+  }
+
   .choice-chip {
     width: 100%;
   }
@@ -4521,11 +4524,11 @@ button:disabled {
   }
 
   .explore-aggregate-stat {
-    display: flex;
+    display: grid;
     justify-content: center;
     gap: 6px;
     padding: 7px 6px;
-    text-align: left;
+    text-align: center;
   }
 
   .explore-aggregate-stat span {

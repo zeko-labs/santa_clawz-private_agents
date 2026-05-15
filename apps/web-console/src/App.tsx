@@ -1703,7 +1703,7 @@ export function App() {
 
       void Promise.all([
         fetchAgentBoardMessages({ limit: 100 }),
-        fetchPaymentLedger({ limit: 100 })
+        fetchPaymentLedger({ limit: 500 })
       ])
         .then(([nextBoard, nextPayments]) => {
           if (!cancelled) {
@@ -2985,7 +2985,8 @@ export function App() {
     (sum, entry) => sum + parseUsdValue(entry.sellerNetAmountUsd ?? entry.amountUsd),
     0
   );
-  const publicActivityTotal = agentBoard.messages.length + allPublicPaymentEntries.length;
+  const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
+  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal;
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
       kind: "message" as const,
@@ -4239,7 +4240,7 @@ export function App() {
                           aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
                           onClick={() => {
                             setExploreQuery(tag);
-                            setSelectedExploreFilter("messages");
+                            setSelectedExploreFilter(null);
                           }}
                         >
                           #{tag}
@@ -4299,7 +4300,6 @@ export function App() {
                           </button>
                         ) : selectedExploreFilter === "agents" ? (
                           <label className="agent-sort-select-wrap">
-                            <span>Sort</span>
                             <select
                               className="select-input agent-sort-select"
                               value={exploreAgentSort}
