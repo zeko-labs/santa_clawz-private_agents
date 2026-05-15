@@ -1488,6 +1488,9 @@ async function testProofBackedAgentMessageBoard() {
     assert.equal(posted.payload.messages[0].outputDigestSha256, "a".repeat(64));
     assert.equal(posted.payload.messages[0].anchorStatus, "pending");
     assert.match(posted.payload.messages[0].anchorCandidateId, /^anchor_/);
+    assert.equal(posted.payload.messages[0].requestedProofIntent, "per_message");
+    assert.equal(posted.payload.messages[0].proofIntent, "per_message");
+    assert.equal(posted.payload.messages[0].proofAdmissionReason, "requested");
     assert.match(posted.payload.messages[0].messageDigestSha256, /^[a-f0-9]{64}$/);
     assert.deepEqual(posted.payload.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.threads[0].messageCount, 1);
@@ -1506,7 +1509,9 @@ async function testProofBackedAgentMessageBoard() {
     });
     assert.equal(displayOnlyPost.status, 200);
     assert.equal(displayOnlyPost.payload.totalVisibleMessages, 2);
+    assert.equal(displayOnlyPost.payload.messages[0].requestedProofIntent, "display_only");
     assert.equal(displayOnlyPost.payload.messages[0].proofIntent, "display_only");
+    assert.equal(displayOnlyPost.payload.messages[0].proofAdmissionReason, "requested");
     assert.equal(displayOnlyPost.payload.messages[0].swarmId, "busy-run-display-only");
     assert.equal(displayOnlyPost.payload.messages[0].anchorStatus, "not_proof_requested");
 
@@ -1525,6 +1530,27 @@ async function testProofBackedAgentMessageBoard() {
     assert.equal(staleParentAppend.status, 200);
     assert.equal(staleParentAppend.payload.totalVisibleMessages, 3);
     assert.equal(staleParentAppend.payload.messages[0].threadId, posted.payload.messages[0].threadId);
+
+    let swarmBudgetPost;
+    for (let index = 0; index < 9; index += 1) {
+      swarmBudgetPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
+        method: "POST",
+        headers: {
+          "x-clawz-admin-key": adminKey
+        },
+        body: JSON.stringify({
+          messageType: "dispatch",
+          body: `Busy swarm proof pressure message ${index + 1}`,
+          proofIntent: "per_message",
+          swarmId: "busy-run-proof-budget"
+        })
+      });
+      assert.equal(swarmBudgetPost.status, 200);
+    }
+    assert.equal(swarmBudgetPost.payload.messages[0].requestedProofIntent, "per_message");
+    assert.equal(swarmBudgetPost.payload.messages[0].proofIntent, "aggregate");
+    assert.equal(swarmBudgetPost.payload.messages[0].proofAdmissionReason, "swarm_proof_budget_exceeded");
+    assert.equal(swarmBudgetPost.payload.messages[0].anchorStatus, "aggregate_anchored");
 
     const publicBoard = await requestJson(
       `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&topic=quotes&capability=research.summary&outputDigest=${"a".repeat(64)}`
@@ -1567,7 +1593,9 @@ async function testProofBackedAgentMessageBoard() {
     assert.equal(relayPostResult.postedMessage.agentId, relayAgentId);
     assert.equal(relayPostResult.postedMessage.messageType, "question");
     assert.deepEqual(relayPostResult.postedMessage.capabilityTags, ["output.package"]);
+    assert.equal(relayPostResult.postedMessage.requestedProofIntent, "aggregate");
     assert.equal(relayPostResult.postedMessage.proofIntent, "aggregate");
+    assert.equal(relayPostResult.postedMessage.proofAdmissionReason, "requested");
     assert.equal(relayPostResult.postedMessage.swarmId, "swarm_research_ops");
     assert.equal(relayPostResult.postedMessage.anchorStatus, "aggregate_anchored");
 

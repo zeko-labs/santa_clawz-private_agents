@@ -490,6 +490,9 @@ interface AgentBoardPostOptions {
   swarmId?: string;
 }
 
+type AgentBoardProofIntent = NonNullable<AgentBoardPostOptions["proofIntent"]>;
+type AgentBoardProofAdmissionReason = NonNullable<AgentBoardMessage["proofAdmissionReason"]>;
+
 type AgentAvailabilityState = AgentProfileState["availability"];
 
 interface AdminAgentModerationOptions {
@@ -1755,6 +1758,82 @@ function retainSocialAnchorItems(items: SocialAnchorCandidate[]) {
   const active = sorted.filter((item) => activeSocialAnchorStatus(item.status));
   const terminal = sorted.filter((item) => !activeSocialAnchorStatus(item.status)).slice(0, 2000);
   return [...active, ...terminal];
+}
+
+function integerEnv(name: string, fallback: number) {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : fallback;
+}
+
+const AGENT_BOARD_PER_MESSAGE_PROOF_WINDOW_MS = 60_000;
+const AGENT_BOARD_PER_AGENT_PROOF_BUDGET = integerEnv("CLAWZ_AGENT_BOARD_PER_AGENT_PROOF_BUDGET", 20);
+const AGENT_BOARD_PER_SWARM_PROOF_BUDGET = integerEnv("CLAWZ_AGENT_BOARD_PER_SWARM_PROOF_BUDGET", 8);
+const AGENT_BOARD_PROOF_QUEUE_SOFT_LIMIT = integerEnv("CLAWZ_AGENT_BOARD_PROOF_QUEUE_SOFT_LIMIT", 450);
+
+function resolveAgentBoardProofAdmission(input: {
+  requestedProofIntent: AgentBoardProofIntent;
+  agentId: string;
+  messageType: AgentBoardMessageType;
+  swarmId?: string;
+  outputDigestSha256?: string;
+  createdAtIso: string;
+  board: AgentBoardFile;
+  queue: SocialAnchorQueueFile;
+}): {
+  proofIntent: AgentBoardProofIntent;
+  proofAdmissionReason: AgentBoardProofAdmissionReason;
+} {
+  if (input.requestedProofIntent !== "per_message") {
+    return {
+      proofIntent: input.requestedProofIntent,
+      proofAdmissionReason: "requested"
+    };
+  }
+
+  const importantMessage = input.messageType === "output" || Boolean(input.outputDigestSha256);
+  if (importantMessage) {
+    return {
+      proofIntent: "per_message",
+      proofAdmissionReason: "requested"
+    };
+  }
+
+  const activeQueueDepth = input.queue.items.filter((item) => activeSocialAnchorStatus(item.status)).length;
+  if (activeQueueDepth >= AGENT_BOARD_PROOF_QUEUE_SOFT_LIMIT) {
+    return {
+      proofIntent: "aggregate",
+      proofAdmissionReason: "queue_pressure"
+    };
+  }
+
+  const cutoffMs = Date.parse(input.createdAtIso) - AGENT_BOARD_PER_MESSAGE_PROOF_WINDOW_MS;
+  const recentPerMessagePosts = input.board.messages.filter((message) => {
+    if (message.agentId !== input.agentId || message.proofIntent !== "per_message") {
+      return false;
+    }
+    return Date.parse(message.createdAtIso) >= cutoffMs;
+  });
+  if (recentPerMessagePosts.length >= AGENT_BOARD_PER_AGENT_PROOF_BUDGET) {
+    return {
+      proofIntent: "aggregate",
+      proofAdmissionReason: "agent_proof_budget_exceeded"
+    };
+  }
+
+  if (input.swarmId) {
+    const recentSwarmPosts = recentPerMessagePosts.filter((message) => message.swarmId === input.swarmId);
+    if (recentSwarmPosts.length >= AGENT_BOARD_PER_SWARM_PROOF_BUDGET) {
+      return {
+        proofIntent: "aggregate",
+        proofAdmissionReason: "swarm_proof_budget_exceeded"
+      };
+    }
+  }
+
+  return {
+    proofIntent: "per_message",
+    proofAdmissionReason: "requested"
+  };
 }
 
 function isSocialAnchorBatchStatus(value: unknown): value is SocialAnchorBatch["status"] {
@@ -5891,7 +5970,7 @@ export class ClawzControlPlane {
     }
     assertNoBlockedPublicTerms("Public agent message", [body]);
 
-    const file = await this.loadAgentBoardFile();
+    const [file, socialAnchorQueue] = await Promise.all([this.loadAgentBoardFile(), this.loadSocialAnchorQueueFile()]);
     const parentMessageId = sanitizeOptionalBoardId(options.parentMessageId, "msg_");
     const parentMessage = parentMessageId
       ? file.messages.find((message) => message.messageId === parentMessageId && message.moderationStatus === "visible")
@@ -5911,7 +5990,7 @@ export class ClawzControlPlane {
     const topicTags = sanitizeAgentBoardTopicTags(options.topicTags);
     const capabilityTags = sanitizeAgentBoardCapabilityTags(options.capabilityTags);
     assertNoBlockedPublicTerms("Public agent tags", [...topicTags, ...capabilityTags]);
-    const proofIntent =
+    const requestedProofIntent =
       options.proofIntent === "aggregate" || options.proofIntent === "display_only" ? options.proofIntent : "per_message";
     const swarmId =
       typeof options.swarmId === "string" && options.swarmId.trim().length > 0
@@ -5921,6 +6000,16 @@ export class ClawzControlPlane {
       typeof options.outputDigestSha256 === "string" && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)
         ? options.outputDigestSha256
         : undefined;
+    const { proofIntent, proofAdmissionReason } = resolveAgentBoardProofAdmission({
+      requestedProofIntent,
+      agentId: options.agentId,
+      messageType,
+      ...(swarmId ? { swarmId } : {}),
+      ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
+      createdAtIso,
+      board: file,
+      queue: socialAnchorQueue
+    });
     const bodyDigestSha256 = sha256Hex(body);
     const messageDigestSha256 = canonicalDigest({
       schemaVersion: "santaclawz-agent-message/1.0",
@@ -5959,6 +6048,8 @@ export class ClawzControlPlane {
       messageDigestSha256,
       ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
       proofIntent,
+      requestedProofIntent,
+      proofAdmissionReason,
       ...(swarmId ? { swarmId } : {}),
       anchorStatus: proofIntent === "display_only" ? "not_proof_requested" : proofIntent === "aggregate" ? "aggregate_anchored" : "pending"
     };
