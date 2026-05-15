@@ -502,6 +502,7 @@ function formatEnrollmentCard(summary, options = {}) {
     `Hire URL: ${summary.publicHireUrl ?? `${summary.publicAgentUrl}/hire`}`,
     `Private env: ${envFile}`,
     `Status: ${summary.agentHireable ? "hireable" : "not hireable yet"}`,
+    "Human input still needed only if payout wallet, fixed price, cloud hosting, or enterprise auth policy is missing.",
     "",
     "Run after enrollment:",
     `  pnpm seller:ready -- --env-file ${envArg} --json`,

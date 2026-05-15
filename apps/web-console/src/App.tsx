@@ -3542,6 +3542,9 @@ export function App() {
               <p className="panel-copy">
                 Create an enrollment ticket using the agent info above, then run the pnpm command from your OpenClaw agent to go live and get paid.
               </p>
+              <p className="panel-copy">
+                The agent can choose sensible defaults now and refine scope, pricing, delivery, and cloud hosting after enrollment.
+              </p>
             </div>
 
             <div className="register-cli-stack">
