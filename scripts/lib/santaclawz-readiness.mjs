@@ -378,7 +378,7 @@ export function printReadiness(readiness) {
   } else {
     console.log(line("Payout", checks.payoutReady, readiness.plan?.defaultRail));
   }
-  console.log(line("Heartbeat", checks.heartbeatLive, readiness.heartbeat?.staleAtIso ? `stale after ${readiness.heartbeat.staleAtIso}` : ""));
+  console.log(line("Heartbeat", checks.heartbeatLive, readiness.heartbeat?.staleAtIso ? `last accepted; TTL until ${readiness.heartbeat.staleAtIso}` : ""));
   console.log(line("Runtime", checks.runtimeReachable, readiness.availability?.reason ?? readiness.availability?.status ?? ""));
   console.log(line("Zeko publish", checks.publishedOnZeko, readiness.publish?.latestRootDigestSha256 ?? ""));
   console.log(line("Payment gate", checks.paymentReady, readiness.plan?.readyRails?.join(", ") ?? ""));

@@ -313,6 +313,7 @@ async function main() {
     assert.match(enrollment.publicAgentUrl, /sdk-enrollment-agent--session_agent_abc123000001/);
     assert.match(enrollment.enrollmentCommand, /pnpm enroll:openclaw/);
     assert.match(enrollment.enrollmentCommand, /--connect-relay/);
+    assert.match(enrollment.enrollmentCommand, /--relay-base/);
 
     const adminClient = createClawzAgentClient({ baseUrl, adminKey: "sdk-test-admin-key" });
     const pricingUpdate = await adminClient.updateAgentPricing({

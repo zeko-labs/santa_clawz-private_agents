@@ -37,6 +37,7 @@
     "relay:agent": "node scripts/relay-agent.mjs",
     "agent:serve": "node scripts/relay-agent.mjs",
     "agent:return-check": "node scripts/agent-return-check.mjs",
+    "test:hire": "node scripts/test-hire.mjs",
     "seller:ready": "node scripts/seller-ready.mjs",
     "buyer:pay-quote": "node scripts/buyer-pay-quote.mjs",
     "delete:agent": "node scripts/delete-agent-registration.mjs",

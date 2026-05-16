@@ -1657,6 +1657,34 @@ function resultError(result: JsonRecord | undefined): string | undefined {
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
+function assertHostedFacilitatorPayloadShape(paymentPayload: JsonRecord, rail: AgentX402RailPlan): void {
+  if (!rail.facilitatorUrl || rail.settlementRail !== "evm") {
+    return;
+  }
+  const missing: string[] = [];
+  if (paymentPayload.protocol !== "x402") missing.push("protocol='x402'");
+  if (typeof paymentPayload.networkId !== "string") missing.push("networkId");
+  if (typeof paymentPayload.settlementRail !== "string") missing.push("settlementRail");
+  if (typeof paymentPayload.payTo !== "string") missing.push("payTo");
+  const accepted = isRecord(paymentPayload.accepted) ? paymentPayload.accepted : undefined;
+  if (!accepted) {
+    missing.push("accepted");
+  } else {
+    if (typeof accepted.asset !== "string") missing.push("accepted.asset as token address string");
+    if (typeof accepted.amount !== "string") missing.push("accepted.amount");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      [
+        "Invalid x402 payment payload for the hosted EVM facilitator.",
+        `Missing or malformed: ${missing.join(", ")}.`,
+        "Pass the raw signed x402 payload emitted by the x402 client, a body shaped as { paymentPayload }, or a service-keyed wrapper unwrapped by pnpm buyer:pay-quote.",
+        "Do not post the payment requirements object itself as the payment payload."
+      ].join(" ")
+    );
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1837,6 +1865,8 @@ export async function verifyAgentX402Payment(input: {
     };
   }
 
+  assertHostedFacilitatorPayloadShape(input.paymentPayload, verification.rail);
+
   const remoteVerification = (await facilitator.verify({
     paymentPayload: input.paymentPayload,
     paymentRequirements: input.runtime.paymentRequired
@@ -1869,6 +1899,7 @@ export async function settleAgentX402Payment(input: {
   if (!facilitator) {
     throw new Error(`No live facilitator is configured for ${verification.rail.rail}.`);
   }
+  assertHostedFacilitatorPayloadShape(input.paymentPayload, verification.rail);
 
   const remoteSettlement = await settleWithFacilitatorRetry({
     facilitator,

@@ -1,0 +1,16 @@
+{
+  "apps": [
+    {
+      "name": "santaclawz-agent",
+      "cwd": "/opt/santaclawz-agent",
+      "script": "pnpm",
+      "args": "relay:agent -- --env-file .env.santaclawz --relay-base https://clawz-indexer-public-onboarding.onrender.com --serve --takeover",
+      "interpreter": "none",
+      "autorestart": true,
+      "restart_delay": 5000,
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  ]
+}

@@ -467,18 +467,24 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function defaultRelayBase(): string {
+  return process.env.CLAWZ_RELAY_BASE?.trim() || "https://clawz-indexer-public-onboarding.onrender.com";
+}
+
 function buildOpenClawEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {
   const runtimeIngressUrl = input.runtimeDelivery?.runtimeIngressUrl?.trim();
+  const selfHosted = input.runtimeDelivery?.mode === "self-hosted" && runtimeIngressUrl;
   return [
     "pnpm enroll:openclaw --",
     `--ticket ${shellQuote(ticket.ticket)}`,
     "--serve",
-    input.runtimeDelivery?.mode === "self-hosted" && runtimeIngressUrl
+    selfHosted
       ? `--runtime-ingress-url ${shellQuote(runtimeIngressUrl)}`
       : "--connect-relay",
+    !selfHosted ? `--relay-base ${shellQuote(defaultRelayBase())}` : "",
     "--write-env .env.santaclawz",
     "--challenge-file .well-known/santaclawz-agent-challenge.json"
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 }
 
 function parseJsonRpcStructuredContent<T>(payload: JsonRpcResponse<T>): T {

@@ -271,6 +271,14 @@ function safePublicHireError(statusCode) {
   return "hire request rejected";
 }
 
+function safePublicHireErrorFor(statusCode, error) {
+  const message = error instanceof Error ? error.message : "";
+  if ((statusCode === 400 || statusCode === 402) && message) {
+    return message;
+  }
+  return safePublicHireError(statusCode);
+}
+
 function readRequestBody(request, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -750,7 +758,7 @@ async function handleHire(request, response, args) {
       statusCode,
       message: error instanceof Error ? error.message : String(error)
     });
-    publicError(response, statusCode, safePublicHireError(statusCode));
+    publicError(response, statusCode, safePublicHireErrorFor(statusCode, error));
   }
 }
 

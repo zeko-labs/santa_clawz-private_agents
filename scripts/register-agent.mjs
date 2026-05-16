@@ -145,6 +145,7 @@ function buildAgentEnvFile(result, issuedAdminKey) {
     `CLAWZ_AGENT_SIGNING_SECRET=${envQuote(result.signingSecret ?? "")}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(result.publicAgentUrl)}`,
     `CLAWZ_AGENT_PUBLIC_HIRE_URL=${envQuote(result.publicHireUrl ?? "")}`,
+    `CLAWZ_AGENT_PROGRAMMATIC_HIRE_API_URL=${envQuote(result.programmaticHireApiUrl ?? "")}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(result.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(result.verifyUrl)}`
   ];
@@ -375,6 +376,7 @@ const result = {
   serviceKey: serviceKeyForResult({ agentId, profile: state.profile }),
   publicAgentUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}`,
   publicHireUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}/hire`,
+  programmaticHireApiUrl: `${apiBase}/api/agents/${encodeURIComponent(agentId)}/hire`,
   discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
   verifyUrl: `${apiBase}/api/interop/verify?sessionId=${encodeURIComponent(sessionId)}`,
   ...(ownershipChallenge ? { ownershipChallenge } : {}),

@@ -10,6 +10,10 @@ import { readinessErrorMessage, runSellerReadiness } from "./lib/santaclawz-read
 
 const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
 const DEFAULT_SITE_BASE = process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai";
+const DEFAULT_RELAY_BASE =
+  process.env.CLAWZ_RELAY_BASE?.trim() ||
+  process.env.CLAWZ_RELAY_API_BASE?.trim() ||
+  "";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
@@ -42,6 +46,7 @@ function printUsage() {
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
     [--runtime-ingress-url https://your-agent.example.com/hire] \\
     [--api-base https://www.santaclawz.ai] \\
+    [--relay-base https://clawz-indexer-public-onboarding.onrender.com] \\
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
@@ -53,6 +58,8 @@ function printUsage() {
 Notes:
   Default mode is the SantaClawz outbound relay: no public tunnel is required.
   --serve starts the starter local ingress and --connect-relay keeps an outbound relay open.
+  --relay-base overrides only the websocket relay host. Use it when the public website/API
+  host is a frontend proxy that does not support websocket upgrades.
   Advanced self-hosting can pass --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
   By default the command sends heartbeat, anchors pending agent milestones, checks x402 published=true,
   and exits non-zero if the agent is not hireable yet. Use --allow-incomplete for diagnostics only.
@@ -197,6 +204,7 @@ function buildAgentEnvFile(input) {
     "# Keep this file private. It contains the SantaClawz agent admin and ingress secrets.",
     "# SantaClawz cannot recover these values if this file is lost.",
     `CLAWZ_API_BASE=${envQuote(input.apiBase)}`,
+    `CLAWZ_RELAY_BASE=${envQuote(input.relayBase)}`,
     `CLAWZ_SITE_BASE=${envQuote(input.siteBase)}`,
     `CLAWZ_AGENT_ID=${envQuote(input.agentId)}`,
     `CLAWZ_AGENT_SESSION_ID=${envQuote(input.sessionId)}`,
@@ -207,6 +215,7 @@ function buildAgentEnvFile(input) {
     `CLAWZ_AGENT_RUNTIME_DELIVERY_MODE=${envQuote(input.runtimeDeliveryMode ?? "santaclawz-relay")}`,
     `CLAWZ_AGENT_PUBLIC_URL=${envQuote(input.publicAgentUrl)}`,
     `CLAWZ_AGENT_PUBLIC_HIRE_URL=${envQuote(input.publicHireUrl)}`,
+    `CLAWZ_AGENT_PROGRAMMATIC_HIRE_API_URL=${envQuote(input.programmaticHireApiUrl)}`,
     `CLAWZ_AGENT_RUNTIME_INGRESS_URL=${envQuote(input.runtimeIngressUrl)}`,
     `CLAWZ_AGENT_DISCOVERY_URL=${envQuote(input.discoveryUrl)}`,
     `CLAWZ_AGENT_VERIFY_URL=${envQuote(input.verifyUrl)}`
@@ -310,7 +319,8 @@ async function connectRelay(options) {
       socket.off("data", onData);
       const header = handshakeBuffer.subarray(0, end).toString("utf8");
       if (!header.startsWith("HTTP/1.1 101")) {
-        reject(new Error(`Relay websocket handshake failed: ${header.split("\r\n")[0] ?? "unknown"}`));
+        const statusLine = header.split("\r\n")[0] ?? "unknown";
+        reject(new Error(relayHandshakeErrorMessage(statusLine, options.apiBase)));
         return;
       }
       const rest = handshakeBuffer.subarray(end + 4);
@@ -366,6 +376,20 @@ async function connectRelay(options) {
   });
   sendJson({ type: "heartbeat", status: "live", ttlSeconds: 30 });
   return { socket, closed, relayUrl: relayUrl.toString() };
+}
+
+function relayHandshakeErrorMessage(statusLine, relayBase) {
+  const base = `Relay websocket handshake failed: ${statusLine}`;
+  if (/401|403|404|405/.test(statusLine)) {
+    return [
+      base,
+      `Relay base attempted: ${relayBase}`,
+      "This usually means the relay host is wrong, the host does not support WebSocket upgrades, or the agent admin key is invalid.",
+      "For current hosted V1 relay, pass --relay-base https://clawz-indexer-public-onboarding.onrender.com or set CLAWZ_RELAY_BASE.",
+      "After relay.santaclawz.ai DNS is configured, use --relay-base https://relay.santaclawz.ai."
+    ].join(" ");
+  }
+  return base;
 }
 
 async function handleRelayMessage(message, localHireUrl, sendJson) {
@@ -499,8 +523,10 @@ function formatEnrollmentCard(summary, options = {}) {
     `Agent: ${summary.agentId}`,
     `Mode: ${summary.runtimeDeliveryMode === "santaclawz-relay" ? "SantaClawz relay, no public tunnel needed" : "self-hosted runtime URL"}`,
     `Profile: ${summary.publicAgentUrl}`,
-    `Hire URL: ${summary.publicHireUrl ?? `${summary.publicAgentUrl}/hire`}`,
+    `Human hire page: ${summary.publicHireUrl ?? `${summary.publicAgentUrl}/hire`}`,
+    `Programmatic hire API: ${summary.programmaticHireApiUrl ?? "not reported"}`,
     `Private env: ${envFile}`,
+    `Relay base: ${summary.relayBase ?? "same as API base"}`,
     `Status: ${summary.agentHireable ? "hireable" : "not hireable yet"}`,
     "Human input still needed only if payout wallet, fixed price, cloud hosting, or enterprise auth policy is missing.",
     "",
@@ -545,6 +571,11 @@ if (!ticket) {
 }
 
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);
+const relayBase = normalizeBaseUrl(
+  typeof args["relay-base"] === "string" && args["relay-base"].trim().length > 0
+    ? args["relay-base"].trim()
+    : DEFAULT_RELAY_BASE || apiBase
+);
 const siteBase = normalizeBaseUrl(typeof args["site-base"] === "string" ? args["site-base"].trim() : DEFAULT_SITE_BASE);
 const envFile =
   typeof args["write-env"] === "string"
@@ -617,6 +648,7 @@ try {
 
   const result = {
     apiBase,
+    relayBase,
     siteBase,
     agentId,
     sessionId,
@@ -629,6 +661,7 @@ try {
     runtimeIngressUrl: runtimeIngressUrl || "santaclawz-relay",
     publicAgentUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}`,
     publicHireUrl: `${siteBase}/agent/${encodeURIComponent(agentId)}/hire`,
+    programmaticHireApiUrl: `${apiBase}/api/agents/${encodeURIComponent(agentId)}/hire`,
     discoveryUrl: `${apiBase}/.well-known/agent-interop.json?sessionId=${encodeURIComponent(sessionId)}`,
     verifyUrl: `${apiBase}/api/interop/verify?sessionId=${encodeURIComponent(sessionId)}`,
     ownershipChallenge
@@ -652,7 +685,7 @@ try {
 
   if (shouldUseRelay) {
     relay = await connectRelay({
-      apiBase,
+      apiBase: relayBase,
       agentId,
       adminKey,
       localHireUrl: relayLocalHireUrl
@@ -695,12 +728,14 @@ try {
     agentId,
     sessionId,
     publicAgentUrl: result.publicAgentUrl,
+    relayBase,
     runtimeIngressUrl,
     runtimeDeliveryMode: result.runtimeDeliveryMode,
     envFile: envPath,
     challengeFile: ownershipChallengePath,
     preEnrollmentChallengeFile: preEnrollmentChallengePath,
     publicHireUrl: result.publicHireUrl,
+    programmaticHireApiUrl: result.programmaticHireApiUrl,
     ownershipVerified: readiness?.checks?.ownershipVerified ?? ownershipVerification?.ownership?.status === "verified",
     heartbeatStatus: heartbeat?.status,
     publishedOnZeko: readiness?.checks?.publishedOnZeko,

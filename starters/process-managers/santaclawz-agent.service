@@ -1,0 +1,24 @@
+[Unit]
+Description=SantaClawz enrolled agent relay and local ingress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/santaclawz-agent
+Environment=NODE_ENV=production
+Environment=CLAWZ_RELAY_BASE=https://clawz-indexer-public-onboarding.onrender.com
+ExecStart=/usr/bin/env pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://clawz-indexer-public-onboarding.onrender.com --serve --takeover
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/santaclawz-agent
+
+[Install]
+WantedBy=multi-user.target

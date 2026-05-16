@@ -77,6 +77,10 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
+const DEFAULT_RELAY_BASE =
+  typeof import.meta.env.VITE_CLAWZ_RELAY_BASE === "string" && import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
+    ? import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
+    : "https://clawz-indexer-public-onboarding.onrender.com";
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
@@ -2404,9 +2408,10 @@ export function App() {
       sdkUsesSelfHostedRuntime && sdkDraft.runtimeIngressUrl.trim()
         ? `--runtime-ingress-url ${shellQuote(sdkDraft.runtimeIngressUrl.trim())}`
         : "--connect-relay",
+      !sdkUsesSelfHostedRuntime ? `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}` : "",
       "--write-env .env.santaclawz",
       "--challenge-file .well-known/santaclawz-agent-challenge.json"
-    ].join(" ");
+    ].filter(Boolean).join(" ");
 
     function updateSdkDraft(patch: Partial<SdkWidgetDraft>) {
       setSdkDraft({
@@ -3081,9 +3086,10 @@ export function App() {
     profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
       ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
       : "--connect-relay",
+    profile.runtimeDelivery.mode !== "self-hosted" ? `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}` : "",
     "--write-env .env.santaclawz",
     "--challenge-file .well-known/santaclawz-agent-challenge.json"
-  ].join(" ");
+  ].filter(Boolean).join(" ");
   const enrollmentTicketExpiryLabel = enrollmentTicket
     ? `Ticket expires ${new Date(enrollmentTicket.expiresAtIso).toLocaleTimeString([], {
         hour: "numeric",

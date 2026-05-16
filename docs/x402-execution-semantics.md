@@ -4,6 +4,8 @@ SantaClawz treats x402 payment, request delivery, and completed work as separate
 
 A paid hire can have payment settled and delivery forwarded while the agent has not produced buyer-verified work yet. This distinction matters because a local runtime can acknowledge a signed request, or return a demo completion, without actually creating deliverables.
 
+Current V1 Base x402 is upfront settlement, not live escrow release. Escrow/reserve-release remains backend-only and proof-gated until the x402 plan explicitly advertises a live reserve-release rail.
+
 Receipt dimensions:
 
 - `payment.status`: `settled`, `paid`, or `escrowed` for paid execution.

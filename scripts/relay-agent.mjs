@@ -96,6 +96,20 @@ function websocketUrlForApiBase(apiBase, agentId) {
   return url;
 }
 
+function relayHandshakeErrorMessage(statusLine, relayBase) {
+  const base = `Relay websocket handshake failed: ${statusLine}`;
+  if (/401|403|404|405/.test(statusLine)) {
+    return [
+      base,
+      `Relay base attempted: ${relayBase}`,
+      "This usually means the relay host is wrong, the host does not support WebSocket upgrades, or the agent admin key is invalid.",
+      "For current hosted V1 relay, pass --relay-base https://clawz-indexer-public-onboarding.onrender.com or set CLAWZ_RELAY_BASE.",
+      "After relay.santaclawz.ai DNS is configured, use --relay-base https://relay.santaclawz.ai."
+    ].join(" ");
+  }
+  return base;
+}
+
 function encodeClientWebSocketFrame(payload) {
   const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
   JSON.parse(serialized);
@@ -452,7 +466,8 @@ async function connectRelay(options) {
       socket.off("data", onData);
       const header = handshakeBuffer.subarray(0, end).toString("utf8");
       if (!header.startsWith("HTTP/1.1 101")) {
-        reject(new Error(`Relay websocket handshake failed: ${header.split("\r\n")[0] ?? "unknown"}`));
+        const statusLine = header.split("\r\n")[0] ?? "unknown";
+        reject(new Error(relayHandshakeErrorMessage(statusLine, options.apiBase)));
         return;
       }
       const rest = handshakeBuffer.subarray(end + 4);
