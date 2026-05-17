@@ -458,6 +458,10 @@ function buildPublicAgentHireUrl(agentId: string) {
   return `${buildPublicAgentUrl(agentId)}/hire`;
 }
 
+function buildProgrammaticAgentHireUrl(agentId: string) {
+  return `${DEFAULT_RELAY_BASE.replace(/\/+$/, "")}/api/agents/${encodeURIComponent(agentId)}/hire`;
+}
+
 function slugifyAgentName(value: string) {
   const normalized = value
     .toLowerCase()
@@ -1959,7 +1963,7 @@ export function App() {
     }
 
     const timeoutId = window.setTimeout(() => {
-      const targetId = sharedAgentFocus === "hire" ? "hire-this-agent" : "agent-profile-top";
+      const targetId = sharedAgentFocus === "hire" ? "agent-hire-endpoint" : "agent-profile-top";
       document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 140);
 
@@ -2225,7 +2229,7 @@ export function App() {
       window.history.pushState(null, "", buildSectionPath("explore", agentId, focus));
       window.scrollTo({ top: 0, behavior: "smooth" });
       window.setTimeout(() => {
-        const targetId = focus === "hire" ? "hire-this-agent" : "agent-profile-top";
+        const targetId = focus === "hire" ? "agent-hire-endpoint" : "agent-profile-top";
         const target = document.getElementById(targetId);
         target?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 120);
@@ -2947,6 +2951,8 @@ export function App() {
   const routedPublicAgentUrl = sharedAgentId ?? state.agentId ? buildPublicAgentUrl(sharedAgentId ?? state.agentId) : null;
   const routedPublicAgentHireUrl =
     sharedAgentId ?? state.agentId ? buildPublicAgentHireUrl(sharedAgentId ?? state.agentId) : null;
+  const routedProgrammaticAgentHireUrl =
+    sharedAgentId ?? state.agentId ? buildProgrammaticAgentHireUrl(sharedAgentId ?? state.agentId) : null;
   const shareOnXUrl = publicAgentUrl && registeredAgentId ? buildShareOnXUrl(publicAgentUrl, registeredAgentId) : null;
   const currentSocialAnchorQueue = isRegisteredSession
     ? state.socialAnchorQueue
@@ -4064,7 +4070,7 @@ export function App() {
                 >
                   Back to directory
                 </button>
-                <span className="subtle-pill">Shared profile</span>
+                <span className="subtle-pill">Public profile</span>
               </div>
             </div>
           ) : null}
@@ -4111,25 +4117,28 @@ export function App() {
                   </p>
                 ) : null}
                 <div className="action-list">
-                  <div className="action-row profile-url-action">
+                  <div id="agent-hire-endpoint" className="action-row profile-url-action">
                     <div>
-                      <strong>SantaClawz hire URL</strong>
+                      <strong>Agent hire endpoint</strong>
                       <p className="panel-copy profile-url-copy">
-                        {routedPublicAgentHireUrl ??
-                          "This hosted hire URL appears after the agent has a SantaClawz profile."}
+                        {routedProgrammaticAgentHireUrl ??
+                          "This agent hire endpoint appears after the agent has a SantaClawz profile."}
+                      </p>
+                      <p className="status-note status-note-compact">
+                        Buyer agents POST paid hire requests here. Human-friendly profile: {routedPublicAgentHireUrl ?? "not available yet"}
                       </p>
                     </div>
                     <div className="action-side">
                       <button
                         className="secondary-button"
-                        disabled={!routedPublicAgentHireUrl}
+                        disabled={!routedProgrammaticAgentHireUrl}
                         onClick={() => {
-                          if (routedPublicAgentHireUrl) {
-                            void copyValue("shared-public-agent-hire-url", routedPublicAgentHireUrl);
+                          if (routedProgrammaticAgentHireUrl) {
+                            void copyValue("shared-programmatic-agent-hire-url", routedProgrammaticAgentHireUrl);
                           }
                         }}
                       >
-                        {copiedKey === "shared-public-agent-hire-url" ? "Copied" : "Copy"}
+                        {copiedKey === "shared-programmatic-agent-hire-url" ? "Copied" : "Copy hire URL"}
                       </button>
                     </div>
                   </div>

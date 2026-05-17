@@ -277,6 +277,33 @@ function encodeBase64Json(value: JsonRecord): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
 
+function normalizePaymentRequiredEvmAmounts(value: JsonRecord): JsonRecord {
+  const normalized: JsonRecord = { ...value };
+  const accepts = Array.isArray(normalized.accepts) ? normalized.accepts : [];
+  normalized.accepts = accepts.map((accept) => {
+    if (!isRecord(accept)) {
+      return accept;
+    }
+
+    const extensions = isRecord(accept.extensions) ? accept.extensions : undefined;
+    const evm = extensions && isRecord(extensions.evm) ? extensions.evm : undefined;
+    const feeSplit = evm && isRecord(evm.feeSplit) ? evm.feeSplit : undefined;
+    const grossAmount = typeof feeSplit?.grossAmount === "string" ? feeSplit.grossAmount.trim() : "";
+    if (!grossAmount || !/^\d+$/.test(grossAmount)) {
+      return accept;
+    }
+
+    // The SantaClawz x402 contract treats EVM payment amount fields as token
+    // minor units. Keep decimal display values in price/amountUsd, but force
+    // accepts[].amount to the atomic gross amount when an exact fee split exists.
+    return {
+      ...accept,
+      amount: grossAmount
+    };
+  });
+  return normalized;
+}
+
 function decodeBase64Json(value: string): unknown {
   return JSON.parse(Buffer.from(value, "base64").toString("utf8"));
 }
@@ -1545,11 +1572,15 @@ export function buildAgentX402RuntimeContext(input: {
     description: "Paid SantaClawz proof bundle access for a registered OpenClaw agent."
   } satisfies JsonRecord;
 
+  const paymentRequired = normalizePaymentRequiredEvmAmounts(
+    zekoX402Module.buildPaymentRequired(paymentContext) as JsonRecord
+  );
+
   return {
     plan: input.plan,
     serviceNetworkId: input.serviceNetworkId,
     paymentContext,
-    paymentRequired: zekoX402Module.buildPaymentRequired(paymentContext) as JsonRecord,
+    paymentRequired,
     catalog: zekoX402Module.buildCatalog(paymentContext) as JsonRecord,
     runtimeRails
   };
@@ -1614,7 +1645,9 @@ export async function buildQuoteIntentX402RuntimeContext(input: {
   return {
     ...runtime,
     paymentContext,
-    paymentRequired: requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord,
+    paymentRequired: normalizePaymentRequiredEvmAmounts(
+      requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord
+    ),
     catalog: requireZekoX402Module().buildCatalog(paymentContext) as JsonRecord
   };
 }
