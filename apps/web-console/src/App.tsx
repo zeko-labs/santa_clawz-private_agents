@@ -80,7 +80,7 @@ const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const DEFAULT_RELAY_BASE =
   typeof import.meta.env.VITE_CLAWZ_RELAY_BASE === "string" && import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
     ? import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
-    : "https://clawz-indexer-public-onboarding.onrender.com";
+    : "https://relay.santaclawz.ai";
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"

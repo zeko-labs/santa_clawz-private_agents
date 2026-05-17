@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/santaclawz-agent
 Environment=NODE_ENV=production
-Environment=CLAWZ_RELAY_BASE=https://clawz-indexer-public-onboarding.onrender.com
-ExecStart=/usr/bin/env pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://clawz-indexer-public-onboarding.onrender.com --serve --takeover
+Environment=CLAWZ_RELAY_BASE=https://relay.santaclawz.ai
+ExecStart=/usr/bin/env pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://relay.santaclawz.ai --serve --takeover
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
