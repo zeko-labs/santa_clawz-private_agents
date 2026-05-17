@@ -413,6 +413,22 @@ function buildReadinessSummary(input) {
         ? ["quote_intake"]
         : ["paid_execution"]
       : [];
+  const statusCoaching = buildAgentStatusCoaching({
+    hireable,
+    paidHireable,
+    freeTestHireable,
+    allowedRequestTypes,
+    blockers,
+    checks: {
+      ownershipVerified,
+      publishedOnZeko,
+      heartbeatLive,
+      runtimeReachable,
+      paymentReady,
+      paidExecutionReturnPackage: paidExecutionProbeRequired ? paidExecutionProbeOk : undefined
+    },
+    pricingMode: plan.pricingMode
+  });
   return {
     agentId: configValue(input.config, "agentId"),
     sessionId: configValue(input.config, "sessionId"),
@@ -424,6 +440,7 @@ function buildReadinessSummary(input) {
       (requestType) => !allowedRequestTypes.includes(requestType)
     ),
     blockingReason: blockers[0]?.message,
+    statusCoaching,
     blockers,
     checks: {
       enrolled: Boolean(configValue(input.config, "agentId") && configValue(input.config, "sessionId")),
@@ -500,6 +517,70 @@ function buildReadinessSummary(input) {
 
 function configValue(config, key) {
   return typeof config?.[key] === "string" ? config[key] : undefined;
+}
+
+function buildAgentStatusCoaching(input) {
+  const firstBlocker = input.blockers[0];
+  const stage = firstBlocker?.stage;
+  if (input.hireable) {
+    const allowed = input.allowedRequestTypes.includes("quote_intake")
+      ? "You can receive quote requests. Quote carefully, execute only after accepted payment, and keep building completion history."
+      : input.allowedRequestTypes.includes("paid_execution")
+        ? "You can receive fixed-price paid execution. Keep the task scope narrow and return verified packages every time."
+        : "You can receive free-test requests. Use this to practice the loop before paid work.";
+    return {
+      headline: "You are visible and hireable.",
+      message: allowed,
+      nextAction: "Keep the relay running, complete small jobs cleanly, and ask agent_job_pack for current first-work guidance.",
+      stage: "hireable"
+    };
+  }
+  if (stage === "heartbeat" || stage === "runtime") {
+    return {
+      headline: "You are visible but not hireable yet.",
+      message: "SantaClawz cannot confirm your live runtime path. Buyers should not pay until relay, heartbeat, and worker reachability are healthy.",
+      nextAction: "Restart the relay or runtime, then run seller:ready again.",
+      stage: stage ?? "runtime"
+    };
+  }
+  if (stage === "paid_execution_probe") {
+    return {
+      headline: "You can be discovered, but paid execution is not proven yet.",
+      message: "Your local worker needs to return a completed santaclawz-return/1.0 package with verified output, manifest, and deliverables before paid work should count.",
+      nextAction: "Run test:hire with --request-type paid_execution --allow-paid-execution-dry-run and fix the worker return package.",
+      stage
+    };
+  }
+  if (stage === "payments" || stage === "payout" || stage === "pricing" || stage === "x402") {
+    return {
+      headline: "You are not ready to accept paid work yet.",
+      message: firstBlocker?.message ?? "Payment, payout, pricing, or x402 rail setup is incomplete.",
+      nextAction: "Use quote-required until pricing is clear. Configure payout and run seller:ready again.",
+      stage: stage ?? "payments"
+    };
+  }
+  if (stage === "ownership") {
+    return {
+      headline: "Your SantaClawz identity is created, but runtime control is not verified.",
+      message: "SantaClawz needs proof that this runtime controls the enrolled agent identity before publishing or accepting work.",
+      nextAction: "Finish enrollment from the agent runtime, serve the challenge, and run seller:ready again.",
+      stage
+    };
+  }
+  if (stage === "zeko_publish") {
+    return {
+      headline: "Your runtime is close, but the public proof anchor is not complete.",
+      message: firstBlocker?.message ?? "Publish/anchor on Zeko has not completed.",
+      nextAction: "Check Zeko health and run seller:ready again with publish enabled.",
+      stage
+    };
+  }
+  return {
+    headline: "You are not hireable yet.",
+    message: firstBlocker?.message ?? "SantaClawz found a readiness blocker.",
+    nextAction: "Run seller:ready after fixing the blocker.",
+    stage: stage ?? "unknown"
+  };
 }
 
 export async function runSellerReadiness(config) {
@@ -579,6 +660,12 @@ export function printReadiness(readiness) {
   console.log(line("Payment gate", checks.paymentReady, readiness.plan?.readyRails?.join(", ") ?? ""));
   if (checks.paidExecutionReturnPackage !== undefined) {
     console.log(line("Paid execution package", checks.paidExecutionReturnPackage, readiness.paidExecutionProbe?.reason ?? ""));
+  }
+  if (readiness.statusCoaching?.headline) {
+    console.log(`Agent coaching: ${readiness.statusCoaching.headline}`);
+    if (readiness.statusCoaching.message) {
+      console.log(`Next: ${readiness.statusCoaching.message}`);
+    }
   }
   console.log(`Agent hireable: ${readiness.hireable ? "yes" : "no"}`);
   if (Array.isArray(readiness.allowedRequestTypes) && readiness.allowedRequestTypes.length > 0) {

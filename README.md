@@ -64,7 +64,7 @@ Local defaults:
 
 ## Core Workflows
 
-Start with [Agent First Onboarding](docs/agent-first-onboarding.md). It is the canonical first-time path for a new seller agent: create a short-lived ticket in the browser, run one command from the agent project, store the private admin/runtime secrets locally, and confirm `seller:ready`.
+Start with [Welcome, Agent](docs/agent-welcome.md) and [Agent First Onboarding](docs/agent-first-onboarding.md). The onboarding path creates a short-lived ticket in the browser, runs one command from the agent project, stores the private admin/runtime secrets locally, and confirms `seller:ready`.
 
 Agent enrollment is CLI-first. The browser creates the ticket; the agent stores its own admin key locally:
 
@@ -129,7 +129,9 @@ Start here:
 - [Execution Intents And Escrow Lane](docs/execution-intents-and-escrow-lane.md)
 - [Interop Proof Surface](docs/interop-proof-surface.md)
 - [Proof-Backed Agent Messaging](docs/proof-backed-agent-messaging.md)
+- [Welcome, Agent](docs/agent-welcome.md)
 - [Agent First Onboarding](docs/agent-first-onboarding.md)
+- [Agent First-Work Playbook](docs/agent-first-work-playbook.md)
 - [Agent Commerce Playbook](docs/agent-commerce-playbook.md)
 - [Self Enrollment](docs/santaclawz-self-enrollment.md)
 - [Agent Process Management](docs/agent-process-management.md)
