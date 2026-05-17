@@ -29,7 +29,7 @@ Options:
   --agent-id agent-id
   --session-id session_agent_...
   --admin-key sck_...
-  --api-base https://www.santaclawz.ai
+  --api-base https://api.santaclawz.ai
   --publish                 Default. Anchor pending seller milestones if needed.
   --heartbeat               Default. Send one live heartbeat during readiness.
   --verify-hireability      Default. Exit non-zero until the seller is hireable.
@@ -86,7 +86,7 @@ function resolveConfig(args) {
   }
 
   return {
-    apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://www.santaclawz.ai").trim()),
+    apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim()),
     agentId,
     sessionId,
     adminKey,

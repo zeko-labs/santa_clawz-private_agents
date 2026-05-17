@@ -1,10 +1,10 @@
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 
 function printUsage() {
   console.error(`Usage:
   CLAWZ_API_KEY="..." pnpm delete:agent -- \\
     --session-id session_agent_... \\
-    [--api-base https://www.santaclawz.ai] \\
+    [--api-base https://api.santaclawz.ai] \\
     [--reason "Lost admin key for smoke-test registration"]
 
   CLAWZ_API_KEY="..." pnpm delete:agent -- \\

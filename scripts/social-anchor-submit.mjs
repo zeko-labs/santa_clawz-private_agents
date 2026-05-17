@@ -1,7 +1,7 @@
 import { createClawzAgentClient } from "../packages/agent-sdk/dist/index.js";
 import { submitSocialAnchorBatchOnZeko } from "../packages/contracts/dist/contracts/src/shared/social-anchor-live.js";
 
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 const DEFAULT_NETWORK_ID = process.env.ZEKO_NETWORK_ID?.trim() || "testnet";
 const DEFAULT_MINA = process.env.ZEKO_GRAPHQL?.trim() || "https://testnet.zeko.io/graphql";
 const DEFAULT_ARCHIVE = process.env.ZEKO_ARCHIVE?.trim() || "https://archive.testnet.zeko.io/graphql";
@@ -21,7 +21,7 @@ function printUsage() {
   pnpm social-anchor:submit -- \\
     --session-id session_agent_... | --agent-id agent_... \\
     --admin-key sck_... \\
-    [--api-base https://www.santaclawz.ai] \\
+    [--api-base https://api.santaclawz.ai] \\
     [--submitter-private-key EKF...] \\
     [--social-anchor-private-key EKF...] \\
     [--social-anchor-public-key B62...] \\

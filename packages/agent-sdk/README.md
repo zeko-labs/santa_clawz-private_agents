@@ -172,7 +172,7 @@ const ticket = await client.createEnrollmentTicket({
 console.log(ticket.enrollmentCommand);
 ```
 
-The browser receives only the short-lived ticket. The OpenClaw runtime still redeems that ticket locally, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat. For default relay enrollment, the generated command includes `--relay-base https://clawz-indexer-public-onboarding.onrender.com`; switch that to `https://relay.santaclawz.ai` once branded relay DNS is live.
+The browser receives only the short-lived ticket. The OpenClaw runtime still redeems that ticket locally, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat. For default relay enrollment, the generated command uses `--relay-base https://relay.santaclawz.ai`; normal API calls use `https://api.santaclawz.ai`.
 
 ## Admin-aware client usage
 
@@ -182,7 +182,7 @@ When an operator needs admin-only flows, pass the SantaClawz admin key:
 import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const client = createClawzAgentClient({
-  baseUrl: "https://www.santaclawz.ai",
+  baseUrl: "https://api.santaclawz.ai",
   adminKey: process.env.CLAWZ_AGENT_ADMIN_KEY
 });
 ```

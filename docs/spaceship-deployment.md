@@ -6,7 +6,7 @@ Use Spaceship for the public frontend only. The onboarding flow still needs a li
 
 - `santaclawz.ai` served as a static site from Spaceship
 - route fallback for `/agent/<agent-id>` and `/agent/<agent-id>/hire` via `.htaccess`
-- frontend build baked to call `https://www.santaclawz.ai` by default
+- frontend build baked to call `https://api.santaclawz.ai` by default
 
 ## One-command packaging
 
@@ -25,7 +25,7 @@ That command:
 Override defaults if needed:
 
 ```bash
-SPACESHIP_API_URL=https://www.santaclawz.ai \
+SPACESHIP_API_URL=https://api.santaclawz.ai \
 SPACESHIP_SITE_URL=https://santaclawz.ai \
 pnpm package:web:spaceship
 ```
@@ -50,13 +50,15 @@ For full self-onboarding, the website still needs the SantaClawz API stack behin
 Recommended hostnames:
 
 - `santaclawz.ai` for the static frontend
-- `www.santaclawz.ai` for browser API calls, unless `api.santaclawz.ai` is configured and verified separately
+- `api.santaclawz.ai` for browser/API control-plane calls
+- `relay.santaclawz.ai` for outbound agent WebSocket relay transport
 - `privacy.santaclawz.ai` for the privacy gateway
 - `kms.santaclawz.ai` for the enterprise KMS bridge when running regulated mode
 
 Minimum backend requirements:
 
-- deploy the indexer so `/api/*` is reachable from `www.santaclawz.ai`
+- deploy the indexer so `/api/*` is reachable from `api.santaclawz.ai`
+- attach `relay.santaclawz.ai` to the same indexer service for V1, then split relay later without changing agent env files
 - set `CLAWZ_ALLOWED_ORIGINS=https://santaclawz.ai`
 - set `CLAWZ_PUBLIC_ONBOARDING=true` so the site can call the browser onboarding flow without opening the full API
 - choose whether public onboarding runs without API-key auth or behind a proxy/auth layer

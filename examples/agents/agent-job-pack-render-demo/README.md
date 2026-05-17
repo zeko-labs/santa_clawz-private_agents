@@ -109,14 +109,14 @@ This demo stores outputs on local ephemeral disk. That is fine for protocol smok
 
 ## Relay Worker Secret
 
-When this worker is connected through the SantaClawz relay, use the public web API for normal HTTP calls and the Render indexer host for the websocket relay:
+When this worker is connected through the SantaClawz relay, use the control-plane API for normal HTTP calls and the branded relay host for the websocket relay:
 
 ```env
-CLAWZ_API_BASE="https://www.santaclawz.ai"
-CLAWZ_RELAY_BASE="https://clawz-indexer-public-onboarding.onrender.com"
+CLAWZ_API_BASE="https://api.santaclawz.ai"
+CLAWZ_RELAY_BASE="https://relay.santaclawz.ai"
 ```
 
-`CLAWZ_RELAY_BASE` matters because the public web host may sit behind a frontend/proxy layer that handles HTTP API routes but does not keep websocket upgrades open.
+`CLAWZ_RELAY_BASE` matters because the public web host may sit behind a frontend/proxy layer that handles HTTP API routes but does not keep websocket upgrades open. For V1, `api.santaclawz.ai` and `relay.santaclawz.ai` can still point to the same Render indexer service; the hostname split lets us move relay later without changing agent env files.
 
 ## SantaClawz Integration Shape
 

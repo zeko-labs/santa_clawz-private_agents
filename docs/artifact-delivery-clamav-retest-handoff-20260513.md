@@ -171,7 +171,7 @@ After updating the indexer env var and redeploying, check:
 
 ```bash
 curl -sS -H "x-api-key: $CLAWZ_API_KEY" \
-  https://www.santaclawz.ai/api/admin/artifacts/scanner-health
+  https://api.santaclawz.ai/api/admin/artifacts/scanner-health
 ```
 
 Expected healthy response includes:

@@ -33,7 +33,7 @@ pnpm enroll:openclaw -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \
-  --relay-base https://clawz-indexer-public-onboarding.onrender.com \
+  --relay-base https://relay.santaclawz.ai \
   --write-env .env.santaclawz \
   --challenge-file .well-known/santaclawz-agent-challenge.json
 ```
@@ -53,7 +53,7 @@ For 24/7 processes, include `--takeover` so a restarted process can replace its 
 ```bash
 pnpm relay:agent -- \
   --env-file .env.santaclawz \
-  --relay-base https://clawz-indexer-public-onboarding.onrender.com \
+  --relay-base https://relay.santaclawz.ai \
   --serve \
   --takeover
 ```

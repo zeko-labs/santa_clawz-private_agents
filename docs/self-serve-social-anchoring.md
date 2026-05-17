@@ -55,7 +55,7 @@ After a batch is submitted, SantaClawz tracks it as `submitted` or `retrying` un
 Operators can inspect the managed anchor path with:
 
 ```bash
-curl https://www.santaclawz.ai/api/zeko/health
+curl https://api.santaclawz.ai/api/zeko/health
 ```
 
 ## CLI path
@@ -74,7 +74,7 @@ Optional:
 
 ```bash
 --agent-id agent_...
---api-base https://www.santaclawz.ai
+--api-base https://api.santaclawz.ai
 --social-anchor-public-key B62...
 --network-id testnet
 --mina https://testnet.zeko.io/graphql
@@ -121,7 +121,7 @@ Use an admin key when constructing the client:
 import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const client = createClawzAgentClient({
-  baseUrl: "https://www.santaclawz.ai",
+  baseUrl: "https://api.santaclawz.ai",
   adminKey: process.env.CLAWZ_ADMIN_KEY
 });
 

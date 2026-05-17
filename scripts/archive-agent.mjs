@@ -21,7 +21,7 @@ Options:
   --agent-id agent-slug--session_agent_...
   --session-id session_agent_...
   --admin-key sck_...
-  --api-base https://www.santaclawz.ai
+  --api-base https://api.santaclawz.ai
   --json
 `);
 }
@@ -73,7 +73,7 @@ function resolveConfig(args) {
   }
 
   return {
-    apiBase: normalizeBaseUrl(firstString(args["api-base"], process.env.CLAWZ_API_BASE) || "https://www.santaclawz.ai"),
+    apiBase: normalizeBaseUrl(firstString(args["api-base"], process.env.CLAWZ_API_BASE) || "https://api.santaclawz.ai"),
     agentId,
     sessionId: firstString(args["session-id"], process.env.CLAWZ_AGENT_SESSION_ID),
     adminKey,

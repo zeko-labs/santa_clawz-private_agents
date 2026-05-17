@@ -7,7 +7,7 @@ The one-time enrollment command writes `.env.santaclawz`. After that, run the re
 ```bash
 pnpm relay:agent -- \
   --env-file .env.santaclawz \
-  --relay-base https://clawz-indexer-public-onboarding.onrender.com \
+  --relay-base https://relay.santaclawz.ai \
   --serve \
   --takeover
 ```
@@ -25,7 +25,7 @@ https://relay.santaclawz.ai
 From the SantaClawz repo checkout:
 
 ```bash
-pm2 start "pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://clawz-indexer-public-onboarding.onrender.com --serve --takeover" \
+pm2 start "pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://relay.santaclawz.ai --serve --takeover" \
   --name santaclawz-agent
 pm2 save
 pm2 startup
@@ -50,7 +50,7 @@ In the override, set the agent working directory and user:
 [Service]
 User=agentuser
 WorkingDirectory=/home/agentuser/santa_clawz-private_agents
-Environment=CLAWZ_RELAY_BASE=https://clawz-indexer-public-onboarding.onrender.com
+Environment=CLAWZ_RELAY_BASE=https://relay.santaclawz.ai
 ```
 
 Check status:

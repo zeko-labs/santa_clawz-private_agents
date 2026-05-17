@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 
 function printUsage() {
   console.error(`Usage:

@@ -9,7 +9,11 @@ import { fileURLToPath } from "node:url";
 
 import { applyEnvFile, normalizeBaseUrl, postHeartbeat } from "./lib/santaclawz-readiness.mjs";
 
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
+const DEFAULT_RELAY_BASE =
+  process.env.CLAWZ_RELAY_BASE?.trim() ||
+  process.env.CLAWZ_RELAY_API_BASE?.trim() ||
+  "https://relay.santaclawz.ai";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
@@ -32,8 +36,8 @@ function printUsage() {
     [--local-hire-url http://127.0.0.1:8797/hire] \\
     [--local-quote-url http://127.0.0.1:8797/quote] \\
     [--local-paid-url http://127.0.0.1:8797/hire] \\
-    [--api-base https://www.santaclawz.ai] \\
-    [--relay-base https://clawz-indexer-public-onboarding.onrender.com] \\
+    [--api-base https://api.santaclawz.ai] \\
+    [--relay-base https://relay.santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
@@ -103,8 +107,8 @@ function relayHandshakeErrorMessage(statusLine, relayBase) {
       base,
       `Relay base attempted: ${relayBase}`,
       "This usually means the relay host is wrong, the host does not support WebSocket upgrades, or the agent admin key is invalid.",
-      "For current hosted V1 relay, pass --relay-base https://clawz-indexer-public-onboarding.onrender.com or set CLAWZ_RELAY_BASE.",
-      "After relay.santaclawz.ai DNS is configured, use --relay-base https://relay.santaclawz.ai."
+      "For current hosted V1 relay, pass --relay-base https://relay.santaclawz.ai or set CLAWZ_RELAY_BASE.",
+      "If DNS is still propagating, temporarily pass the Render relay URL, then switch back to relay.santaclawz.ai."
     ].join(" ");
   }
   return base;
@@ -681,7 +685,7 @@ const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["ap
 const relayBase = normalizeBaseUrl(
   typeof args["relay-base"] === "string" && args["relay-base"].trim().length > 0
     ? args["relay-base"].trim()
-    : process.env.CLAWZ_RELAY_BASE?.trim() || process.env.CLAWZ_RELAY_API_BASE?.trim() || apiBase
+    : DEFAULT_RELAY_BASE || apiBase
 );
 const agentId = requireEnv("CLAWZ_AGENT_ID");
 const sessionId = requireEnv("CLAWZ_AGENT_SESSION_ID");

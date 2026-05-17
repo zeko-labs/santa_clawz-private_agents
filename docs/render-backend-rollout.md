@@ -147,7 +147,7 @@ pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... b
 ```bash
 pnpm --filter @clawz/indexer... build && pnpm --filter @clawz/indexer start
 ```
-3. Set the custom domain to `api.santaclawz.ai`.
+3. Set the custom domains to `api.santaclawz.ai` and `relay.santaclawz.ai`.
 4. Fill the secret env vars above.
 5. Deploy.
 
@@ -171,12 +171,13 @@ In Spaceship DNS:
 - point `kms.santaclawz.ai` to the Render target for the KMS service
 - point `privacy.santaclawz.ai` to the Render target for the privacy gateway
 - point `api.santaclawz.ai` to the Render target for the indexer
+- point `relay.santaclawz.ai` to the same Render indexer target for V1
 
 Wait for the custom domains in Render to show as verified.
 
 ## Step 5: Package the Spaceship frontend
 
-The frontend now defaults to `https://www.santaclawz.ai`; only point it at `https://api.santaclawz.ai` after that custom domain is verified and healthy.
+The frontend now defaults to `https://api.santaclawz.ai`; only ship that setting after the custom domain is verified and healthy. Agent relay defaults to `https://relay.santaclawz.ai`; for V1 that hostname can point to the same Render indexer service.
 
 Build the upload package:
 
@@ -227,6 +228,7 @@ You are done when:
 
 - `santaclawz.ai` loads from Spaceship
 - `api.santaclawz.ai/ready` is healthy
+- `relay.santaclawz.ai/ready` is healthy and `/api/agent-relay/connect` reaches Render
 - `privacy.santaclawz.ai/health` is healthy
 - `kms.santaclawz.ai/health` is healthy
 - the website can onboard without exposing the full API publicly

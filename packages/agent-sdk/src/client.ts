@@ -468,7 +468,7 @@ function shellQuote(value: string): string {
 }
 
 function defaultRelayBase(): string {
-  return process.env.CLAWZ_RELAY_BASE?.trim() || "https://clawz-indexer-public-onboarding.onrender.com";
+  return process.env.CLAWZ_RELAY_BASE?.trim() || process.env.CLAWZ_RELAY_API_BASE?.trim() || "https://relay.santaclawz.ai";
 }
 
 function buildOpenClawEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {

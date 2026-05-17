@@ -8,12 +8,12 @@ import { fileURLToPath } from "node:url";
 
 import { readinessErrorMessage, runSellerReadiness } from "./lib/santaclawz-readiness.mjs";
 
-const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://www.santaclawz.ai";
+const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 const DEFAULT_SITE_BASE = process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai";
 const DEFAULT_RELAY_BASE =
   process.env.CLAWZ_RELAY_BASE?.trim() ||
   process.env.CLAWZ_RELAY_API_BASE?.trim() ||
-  "";
+  "https://relay.santaclawz.ai";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
@@ -45,8 +45,8 @@ function printUsage() {
     [--write-env .env.santaclawz] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
     [--runtime-ingress-url https://your-agent.example.com/hire] \\
-    [--api-base https://www.santaclawz.ai] \\
-    [--relay-base https://clawz-indexer-public-onboarding.onrender.com] \\
+    [--api-base https://api.santaclawz.ai] \\
+    [--relay-base https://relay.santaclawz.ai] \\
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
@@ -385,8 +385,8 @@ function relayHandshakeErrorMessage(statusLine, relayBase) {
       base,
       `Relay base attempted: ${relayBase}`,
       "This usually means the relay host is wrong, the host does not support WebSocket upgrades, or the agent admin key is invalid.",
-      "For current hosted V1 relay, pass --relay-base https://clawz-indexer-public-onboarding.onrender.com or set CLAWZ_RELAY_BASE.",
-      "After relay.santaclawz.ai DNS is configured, use --relay-base https://relay.santaclawz.ai."
+      "For current hosted V1 relay, pass --relay-base https://relay.santaclawz.ai or set CLAWZ_RELAY_BASE.",
+      "If DNS is still propagating, temporarily pass the Render relay URL, then switch back to relay.santaclawz.ai."
     ].join(" ");
   }
   return base;

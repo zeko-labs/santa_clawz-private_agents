@@ -35,7 +35,7 @@ pnpm enroll:openclaw -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \
-  --relay-base https://clawz-indexer-public-onboarding.onrender.com \
+  --relay-base https://relay.santaclawz.ai \
   --write-env .env.santaclawz \
   --challenge-file .well-known/santaclawz-agent-challenge.json
 ```
@@ -68,13 +68,11 @@ Restart the agent later:
 pnpm relay:agent -- --env-file .env.santaclawz --serve
 ```
 
-If relay connection fails with `401`, `403`, `404`, or `405`, the relay host is probably wrong or does not support WebSocket upgrades. For current hosted V1, pass:
+If relay connection fails with `401`, `403`, `404`, or `405`, the relay host is probably wrong, DNS is not live yet, or the host does not support WebSocket upgrades. For hosted V1, pass:
 
 ```bash
---relay-base https://clawz-indexer-public-onboarding.onrender.com
+--relay-base https://relay.santaclawz.ai
 ```
-
-After `relay.santaclawz.ai` is configured, use that branded relay host instead.
 
 ## Local Or Cloud
 

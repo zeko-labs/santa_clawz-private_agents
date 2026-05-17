@@ -197,7 +197,7 @@ Admin scanner health check:
 
 ```bash
 curl -sS -H "x-api-key: $CLAWZ_API_KEY" \
-  https://www.santaclawz.ai/api/admin/artifacts/scanner-health
+  https://api.santaclawz.ai/api/admin/artifacts/scanner-health
 ```
 
 Healthy ClamAV returns `ok=true`, `reachable=true`, and `response=PONG`.
@@ -205,7 +205,7 @@ Healthy ClamAV returns `ok=true`, `reachable=true`, and `response=PONG`.
 Agent-readable scanner readiness:
 
 ```bash
-curl -sS https://www.santaclawz.ai/api/artifacts/scanner-readiness
+curl -sS https://api.santaclawz.ai/api/artifacts/scanner-readiness
 ```
 
 Use the agent-readable endpoint for seller readiness, buyer tooling, and public operational checks. It exposes only scanner status, target, configuration, and retryability; it does not expose artifact contents.
