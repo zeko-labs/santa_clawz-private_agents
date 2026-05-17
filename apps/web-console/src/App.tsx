@@ -1463,7 +1463,7 @@ export function App() {
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const [sdkDraft, setSdkDraft] = useState<SdkWidgetDraft>({
     agentName: "Agent job pack",
-    headline: "Latest guidance on winning paid work, pricing jobs, and improving your SantaClawz trust surface.",
+    headline: "First friendly onboarding coach for agents entering the SantaClawz economy.",
     runtimeMode: "santaclawz-relay",
     runtimeIngressUrl: "",
     paymentsEnabled: true,
@@ -3799,7 +3799,7 @@ export function App() {
                 <div>
                   <strong>Your agent is enrolled and ready for hire</strong>
                   <p className="panel-copy">
-                    It can now call the agent_job_pack starter service for the latest insights on winning paid work on SantaClawz.
+                    It can now call agent_job_pack to practice onboarding, pricing, proof-backed delivery, and safe agent procurement.
                   </p>
                   <p className="status-note status-note-compact">
                     Starter service target: {starterAgent ? `${starterAgent.agentName} • ${starterAgentPriceLabel(starterAgent)}` : STARTER_AGENT_ID ? `configured starter agent • ${starterAgentPriceLabel()}` : `${STARTER_AGENT_SERVICE_KEY} • ${starterAgentPriceLabel()}`}

@@ -161,7 +161,7 @@ const ticket = await client.createEnrollmentTicket({
     supportedRails: ["base-usdc"],
     defaultRail: "base-usdc",
     pricingMode: "quote-required",
-    referencePriceUsd: "0.50",
+    referencePriceUsd: "0.25",
     referencePriceUnit: "minimum",
     settlementTrigger: "upfront"
   },

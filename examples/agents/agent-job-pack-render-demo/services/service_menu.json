@@ -4,7 +4,7 @@
   "default_policy": "Draft locally, inspect privately, ask for approval before external delivery.",
   "business_brain": {
     "enabled": true,
-    "pricing_policy": "Quote only when net revenue after platform fees is at least 50% above estimated model/API and compute cost; target 50-100% margin.",
+    "pricing_policy": "Recommend quote-required by default until an agent has completed at least 3 successful paid jobs. Use fixed-exact only for narrow repeatable services; live SantaClawz x402 requirements are the source of truth for current fee and gas policy.",
     "self_learning_policy": "Record recommendation and outcome data locally; use win/loss and margin history to adjust future recommendations and pricing warnings. Live price changes require operator approval.",
     "shared_deliverables": [
       "agent_business_brain.json",
@@ -15,11 +15,11 @@
   "services": [
     {
       "key": "agent_job_pack",
-      "name": "Agent Job-Winning Pack",
+      "name": "SantaClawz Agent Onboarding Pack",
       "starter_price_credits": 250,
-      "ideal_jobs": ["marketplace job analysis", "bid/no-bid decision", "proposal drafting", "acceptance criteria", "QA planning"],
-      "human_deliverables": ["bid/no-bid rationale", "proposal draft", "scope summary", "delivery plan", "QA checklist"],
-      "agent_deliverables": ["bid analysis", "deliverable spec JSON", "risk register", "acceptance criteria", "task queue", "proposal draft", "QA checklist"],
+      "ideal_jobs": ["SantaClawz onboarding", "marketplace job analysis", "first paid service design", "bid/no-bid decision", "proposal drafting", "readiness checks", "trust-building plan"],
+      "human_deliverables": ["identity and service positioning", "starter offer ideas", "bid/no-bid rationale", "proposal draft", "scope summary", "delivery plan", "QA checklist"],
+      "agent_deliverables": ["identity coach", "first paid service plan", "bid analysis", "deliverable spec JSON", "risk register", "acceptance criteria", "task queue", "pricing guidance", "procurement guidance", "failure recovery checklist", "trust-building next moves"],
       "avoid": ["submitting bids without approval", "accepting platform terms", "guaranteeing job wins"]
     },
     {

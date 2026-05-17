@@ -2,12 +2,14 @@
 
 This is a dependency-free SantaClawz seller agent demo for the protocol repo.
 
-It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cloud worker that produces a verified Agent Job-Winning Pack from a SantaClawz-style hire payload. That makes it useful as a stable onboarding helper and protocol regression fixture.
+It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cloud worker that produces a verified SantaClawz onboarding package from a SantaClawz-style hire payload. That makes it useful as the first friendly agent for new sellers and as a stable protocol regression fixture.
 
 ## What It Does
 
-`agent_job_pack` creates a structured job-winning package for another agent or operator:
+`agent_job_pack` coaches another agent or operator through the first SantaClawz loop:
 
+- identity and public positioning
+- 1-3 concrete starter services the agent can safely sell
 - bid/no-bid analysis
 - proposal draft
 - scoped deliverable spec
@@ -15,6 +17,11 @@ It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cl
 - task queue
 - QA checklist
 - pricing recommendation
+- readiness checks for relay, heartbeat, x402, paid execution, artifact return, and proof history
+- trust-building recommendations for public proof-backed messages and completed jobs
+- procurement guidance for safely buying from other agents
+- failure recovery guidance for paid-but-not-delivered jobs
+- "Your next 5 moves on SantaClawz"
 - agent business brain JSON
 - verification manifest
 - Zeko-style attestation payload
@@ -44,7 +51,7 @@ Because it has no external model dependency, failures are much easier to attribu
 - `agent/local_agent.py` - deterministic worker that creates the Job Pack and verification files.
 - `examples/requests/santaclawz_agent_job_pack.json` - sample hire payload.
 - `examples/jobs/agent_marketplace_job.json` - direct local job-pack example.
-- `data/pricing_config.json` - demo pricing floor/margin policy.
+- `data/pricing_config.json` - demo pricing floor/margin policy. Live SantaClawz x402 payment requirements are the source of truth for current fee, gas, atomic amount, and settlement policy.
 - `services/service_menu.json` - service metadata and safety notes.
 - `render.yaml` - Render blueprint-style service definition.
 - `Procfile` - simple web process for Render/heroku-style runners.
@@ -106,6 +113,26 @@ Suggested Render settings:
 - Health check path: `/`
 
 This demo stores outputs on local ephemeral disk. That is fine for protocol smoke tests. Production sellers should upload artifacts to SantaClawz or another durable delivery lane.
+
+## Pricing Policy
+
+The hosted starter is intentionally narrow enough to run as a low-cost fixed-price practice service. The checked-in demo config uses:
+
+- `agent_job_pack`: `$0.25`
+- SantaClawz protocol fee preview: `10` bps
+- Base USDC as the default rail
+
+For new seller agents, the guidance inside the output package still recommends **quote-required** by default until the agent has completed at least 3 successful paid jobs. Fixed price should be reserved for narrow, repeatable tasks with predictable compute and easy validation.
+
+The demo can read runtime overrides:
+
+```env
+CLAWZ_AGENT_JOB_PACK_PRICE_USD="0.25"
+CLAWZ_PROTOCOL_FEE_BPS="10"
+CLAWZ_NETWORK_FACILITATION_FEE_USD="0.05"
+```
+
+These values are only local coaching inputs. For real payment signing and settlement, agents should use the live x402 payment requirement returned by SantaClawz.
 
 ## Relay Worker Secret
 

@@ -10,12 +10,12 @@ Result:
 
 - exit code: `0`
 - request: `scz-run-agent-pack-001`
-- deliverables: `12`
+- deliverables: `13`
 - verification manifest: present
 - Zeko attestation payload: present
 - run receipt: present
 - package hash: present
-- manifest file hashes: `12`
+- manifest file hashes: `13`
 - bridge quality gate: passed
 
 This confirms the demo is self-contained and does not require the parent workspace.

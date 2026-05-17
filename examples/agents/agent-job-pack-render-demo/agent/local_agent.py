@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -39,6 +40,7 @@ PACKAGE_FILES = [
     "qa_checklist.md",
     "proposal_draft.md",
     "client_reply.md",
+    "santaclawz_next_moves.md",
 ]
 
 
@@ -208,8 +210,8 @@ DEFAULT_PRICING_CONFIG: dict[str, Any] = {
     "currency": "USD",
     "target_margin_min": 0.5,
     "target_margin_max": 1.0,
-    "platform_fee_rate": 0.01,
-    "santaclawz_protocol_fee_bps": 100,
+    "platform_fee_rate": 0.001,
+    "santaclawz_protocol_fee_bps": 10,
     "network_facilitation_fee_usd": 0.05,
     "settlement_model": "fee-on-reserve-v1",
     "default_rail": "base-usdc",
@@ -218,7 +220,7 @@ DEFAULT_PRICING_CONFIG: dict[str, Any] = {
         "ethereum-usdc": "x402-ethereum-mainnet-usdc-reserve-release-v4",
     },
     "pricing_mode": {
-        "agent_job_pack": "quote-required",
+        "agent_job_pack": "fixed-exact",
         "ai_career_readiness": "quote-required",
         "spreadsheet_cleanup": "fixed-exact",
         "pitch_deck_review": "quote-required",
@@ -230,7 +232,7 @@ DEFAULT_PRICING_CONFIG: dict[str, Any] = {
     "default_model_cost_per_1k_tokens_usd": 0.01,
     "risk_buffer_rate": 0.15,
     "minimum_price_usd": {
-        "agent_job_pack": 0.5,
+        "agent_job_pack": 0.25,
         "ai_career_readiness": 49.0,
         "spreadsheet_cleanup": 39.0,
         "pitch_deck_review": 79.0,
@@ -528,6 +530,26 @@ def nested_lookup(config: dict[str, Any], section: str, service: Service, comple
     return fallback
 
 
+def env_float(name: str, fallback: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return fallback
+    try:
+        return float(raw)
+    except ValueError:
+        return fallback
+
+
+def env_int(name: str, fallback: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        return fallback
+
+
 def estimate_job_cost(job: dict[str, Any], service: Service, complexity: str, config: dict[str, Any]) -> dict[str, Any]:
     minutes = nested_lookup(config, "estimated_minutes", service, complexity, 30.0)
     tokens = nested_lookup(config, "estimated_model_tokens", service, complexity, 20000.0)
@@ -561,6 +583,8 @@ def parse_price_usd(value: Any) -> float | None:
 
 
 def service_minimum_price(config: dict[str, Any], service: Service) -> float:
+    if service.key == "agent_job_pack":
+        return env_float("CLAWZ_AGENT_JOB_PACK_PRICE_USD", env_float("AGENT_JOB_PACK_PRICE_USD", 0.25))
     minimums = config.get("minimum_price_usd", {})
     if isinstance(minimums, dict) and isinstance(minimums.get(service.key), (int, float)):
         return float(minimums[service.key])
@@ -575,9 +599,9 @@ def service_pricing_mode(config: dict[str, Any], service: Service) -> str:
 
 
 def onchain_fee_preview(gross_amount_usd: float, config: dict[str, Any]) -> dict[str, Any]:
-    fee_bps = int(config.get("santaclawz_protocol_fee_bps", 100))
+    fee_bps = env_int("CLAWZ_PROTOCOL_FEE_BPS", int(config.get("santaclawz_protocol_fee_bps", 10)))
     protocol_fee = gross_amount_usd * fee_bps / 10000.0
-    network_fee = float(config.get("network_facilitation_fee_usd", 0.05))
+    network_fee = env_float("CLAWZ_NETWORK_FACILITATION_FEE_USD", float(config.get("network_facilitation_fee_usd", 0.05)))
     effective_fee = max(protocol_fee, network_fee)
     fee_basis = "protocol-bps" if protocol_fee >= network_fee else "network-facilitation-minimum"
     seller_net = gross_amount_usd - effective_fee
@@ -952,6 +976,95 @@ def build_deliverable_spec(job: dict[str, Any], service: Service) -> dict[str, A
         "risks": risk_flags(job, service, missing),
         "acceptance_criteria": acceptance_criteria(service, missing),
         "approval_gates": approval_gates,
+        "santaclawz_onboarding": build_santaclawz_onboarding(job, service, pricing),
+    }
+
+
+def build_santaclawz_onboarding(job: dict[str, Any], service: Service, pricing: dict[str, Any]) -> dict[str, Any]:
+    title = job_title(job, service)
+    service_line = service.title.lower()
+    onchain = pricing.get("onchain_settlement", {})
+    fee_bps = onchain.get("protocol_fee_bps")
+    network_fee = onchain.get("network_facilitation_fee_amount_usd")
+    fee_policy = (
+        f"Use the live SantaClawz x402 payment requirement as the source of truth. "
+        f"This local preview currently assumes {fee_bps} bps protocol fee plus a ${network_fee} network facilitation minimum."
+    )
+    return {
+        "schema_version": "santaclawz-agent-onboarding/1.0",
+        "purpose": "Help a new commerce-capable agent discover a sellable service, avoid protocol mistakes, and build trust.",
+        "identity": {
+            "questions": [
+                "What can you reliably do without inventing facts or leaking secrets?",
+                "What service can you describe in one sentence?",
+                "What proof-backed output would make a buyer trust you?",
+            ],
+            "suggested_public_description": (
+                f"I help with {service_line} by producing scoped, reviewable outputs with hashes, "
+                "clear assumptions, and SantaClawz proof history."
+            ),
+            "positioning_note": f"Lead with one narrow service before trying to sell broad agent capability. Current request: {title}.",
+        },
+        "first_paid_service_ideas": [
+            {
+                "offer": "Setup and readiness audit",
+                "why_safe": "Narrow scope, low risk, easy to verify.",
+                "deliverable": "A checklist covering relay, heartbeat, x402, paid execution, artifact return, and proof history.",
+            },
+            {
+                "offer": "Structured task or proposal package",
+                "why_safe": "The output is reviewable before any external action.",
+                "deliverable": "Bid/no-bid, scope, acceptance criteria, task queue, risk register, and QA checklist.",
+            },
+            {
+                "offer": "Proof-backed output summary",
+                "why_safe": "Keeps private work local while publishing useful hashes and public lessons.",
+                "deliverable": "Public-safe message plus digest/root references for the completed work.",
+            },
+        ],
+        "pricing": {
+            "default_recommendation": "Start with quote-required until you complete at least 3 successful paid jobs.",
+            "fixed_price_rule": "Use fixed-exact only for narrow, repeatable tasks with predictable compute and validation.",
+            "live_fee_policy": fee_policy,
+            "starter_price_note": "agent_job_pack is intentionally narrow enough to run as a low-cost fixed starter service.",
+        },
+        "readiness": [
+            "Run seller:ready and resolve every blocker.",
+            "Keep relay and heartbeat live.",
+            "Run test:hire before paid work.",
+            "Confirm paid_execution reaches your runtime and returns santaclawz-return/1.0.",
+            "Confirm artifacts, verification_manifest, package_hash, and proof history are visible.",
+        ],
+        "trust_building": [
+            "Publish one proof-backed intro explaining what you can safely do.",
+            "Complete a small practice transaction before chasing larger paid jobs.",
+            "Record public-safe output summaries with digest/root references.",
+            "Keep completion rate high by declining or quoting around unclear work.",
+        ],
+        "procurement": [
+            "When buying from another agent, inspect readiness, live status, pricing mode, completion score, and proof history.",
+            "Validate x402 payment payload shape before signing.",
+            "Reuse the same idempotent payment payload when resuming a stuck job.",
+            "Verify returned artifacts, package hash, and delivery manifest before marking work accepted.",
+        ],
+        "failure_recovery": [
+            "If payment succeeds but relay or delivery times out, do not create a new payment immediately.",
+            "Check payment-state with the original ledger/request/payment digest.",
+            "Retry/resume with the same idempotent payment payload once SantaClawz confirms the service is healthy.",
+            "Archive the incident in your local reputation notes if the seller repeatedly fails delivery.",
+        ],
+        "community": [
+            "Join useful public threads and answer with operational lessons, not spam.",
+            "Post public-safe updates when you improve your service or complete a milestone.",
+            "Use agent_job_pack as a practice counterparty before relying on unknown sellers.",
+        ],
+        "next_5_moves": [
+            "Confirm your strongest sellable service.",
+            "Keep pricing quote-required until you complete 3 jobs.",
+            "Run seller:ready and test:hire.",
+            "Publish one proof-backed intro/update.",
+            "Try one low-risk paid or dry-run transaction with agent_job_pack.",
+        ],
     }
 
 
@@ -1223,6 +1336,7 @@ def render_pricing_recommendation(job: dict[str, Any], service: Service, spec: d
         f"- Network facilitation fee estimate: ${onchain['network_facilitation_fee_amount_usd']}",
         f"- Effective fee basis: {onchain['fee_basis']}",
         f"- Pricing commitment SHA-256: {onchain['pricing_commitment_sha256']}",
+        "- Source of truth: live SantaClawz x402 payment requirements. This local preview is coaching only.",
         "",
         "## Listing Update Command",
         "",
@@ -1255,6 +1369,7 @@ def render_pricing_recommendation(job: dict[str, Any], service: Service, spec: d
             "",
             "## Pricing Update Rule",
             "",
+            "Use quote-required by default until the agent has completed at least 3 successful paid jobs. Use fixed-exact only for narrow, repeatable tasks with predictable compute and validation.",
             "Recommend a price increase when seller net after onchain/network fee is below 50% margin, historical service margin is below 50%, or actual cost exceeds estimate.",
             "Do not update live pricing automatically; require operator approval before changing SantaClawz listing prices.",
             "",
@@ -1295,6 +1410,73 @@ def build_learning_feedback(job: dict[str, Any], service: Service, spec: dict[st
             "Recommend, but do not autonomously publish, price changes.",
         ],
     }
+
+
+def render_santaclawz_next_moves(job: dict[str, Any], service: Service, spec: dict[str, Any]) -> str:
+    onboarding = spec["santaclawz_onboarding"]
+    identity = onboarding["identity"]
+    pricing = onboarding["pricing"]
+    lines = [
+        f"# SantaClawz Agent Onboarding Coach: {job_title(job, service)}",
+        "",
+        "This package is not just a job-winning pack. It is a first friendly SantaClawz coach for an agent learning how to earn, buy, prove, recover, and build reputation.",
+        "",
+        "## Identity",
+        "",
+        f"- Suggested public description: {identity['suggested_public_description']}",
+        f"- Positioning note: {identity['positioning_note']}",
+        "",
+        "Ask yourself:",
+        "",
+        *[f"- {question}" for question in identity["questions"]],
+        "",
+        "## First Paid Service Ideas",
+        "",
+    ]
+    for idea in onboarding["first_paid_service_ideas"]:
+        lines.extend(
+            [
+                f"- {idea['offer']}: {idea['why_safe']}",
+                f"  Deliverable: {idea['deliverable']}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Pricing",
+            "",
+            f"- Default: {pricing['default_recommendation']}",
+            f"- Fixed price: {pricing['fixed_price_rule']}",
+            f"- Live fee policy: {pricing['live_fee_policy']}",
+            f"- Starter note: {pricing['starter_price_note']}",
+            "",
+            "## Readiness",
+            "",
+            *[f"- {item}" for item in onboarding["readiness"]],
+            "",
+            "## Trust-Building",
+            "",
+            *[f"- {item}" for item in onboarding["trust_building"]],
+            "",
+            "## Procurement",
+            "",
+            *[f"- {item}" for item in onboarding["procurement"]],
+            "",
+            "## Failure Recovery",
+            "",
+            *[f"- {item}" for item in onboarding["failure_recovery"]],
+            "",
+            "## Community Belonging",
+            "",
+            *[f"- {item}" for item in onboarding["community"]],
+            "",
+            "## Your next 5 moves on SantaClawz",
+            "",
+            *[f"{index}. {item}" for index, item in enumerate(onboarding["next_5_moves"], start=1)],
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def render_proposal_draft(job: dict[str, Any], service: Service, spec: dict[str, Any]) -> str:
@@ -1457,6 +1639,7 @@ def write_agent_package(
     (package_dir / "qa_checklist.md").write_text(render_qa_checklist(job, service, spec), encoding="utf-8")
     (package_dir / "proposal_draft.md").write_text(render_proposal_draft(job, service, spec), encoding="utf-8")
     (package_dir / "client_reply.md").write_text(render_client_reply(job, service, spec), encoding="utf-8")
+    (package_dir / "santaclawz_next_moves.md").write_text(render_santaclawz_next_moves(job, service, spec), encoding="utf-8")
     log_recommendation(job, service, spec, package_dir)
     return package_dir
 
