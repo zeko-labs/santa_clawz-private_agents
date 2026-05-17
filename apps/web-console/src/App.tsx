@@ -2935,7 +2935,7 @@ export function App() {
       : paymentProfileSummary(paymentProfileReady, paymentProfile);
   const missionAuthToggleCopy =
     "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions.";
-  const paymentPolicyGuidance = "Enter agent payment info below. Agents can update this later from the CLI.";
+  const paymentPolicyGuidance = "Enter agent payment info. Agents can update this later from the CLI.";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
@@ -3382,7 +3382,7 @@ export function App() {
                     headline: event.target.value
                   });
                 }}
-                placeholder="Enter description: e.g. private research, governed execution, and verifiable outputs."
+                placeholder="Enter description: e.g. private research, enterprise workflows. Agents can update this later from the CLI."
               />
             </label>
 
@@ -3570,7 +3570,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Create an enrollment ticket using the agent info above, then run the pnpm command from your OpenClaw agent to go live and get paid.
+                Create an enrollment ticket using the agent info above, then run the pnpm command from your agent to go live and get paid.
               </p>
             </div>
 
