@@ -5013,7 +5013,7 @@ app.post("/api/events/ingest", route(async (request, response) => {
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const RELAY_RESPONSE_TIMEOUT_MS =
-  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS ?? "", 10) || 15_000;
+  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS ?? "", 10) || 60_000;
 const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
 const RELAY_HEARTBEAT_GRACE_MS =
   Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;
@@ -5130,8 +5130,11 @@ class AgentRelayConnection {
   private readonly pending = new Map<string, RelayPendingRequest>();
   private closed = false;
   private lastHeartbeatAtMs = Date.now();
+  private invalidJsonFrames = 0;
+  readonly connectedAtIso = new Date().toISOString();
 
   constructor(
+    readonly connectionId: string,
     readonly agentId: string,
     readonly sessionId: string,
     readonly adminKey: string,
@@ -5166,6 +5169,14 @@ class AgentRelayConnection {
 
   get heartbeatAgeMs() {
     return Date.now() - this.lastHeartbeatAtMs;
+  }
+
+  get pendingCount() {
+    return this.pending.size;
+  }
+
+  get remoteAddress() {
+    return (this.socket as unknown as { remoteAddress?: string }).remoteAddress;
   }
 
   markHeartbeat() {
@@ -5358,15 +5369,20 @@ class AgentRelayConnection {
       try {
         this.onMessage(JSON.parse(payload.toString("utf8")));
       } catch {
+        this.invalidJsonFrames += 1;
         console.error(JSON.stringify({
           event: "relay_invalid_json",
           agentId: this.agentId,
+          connectionId: this.connectionId,
           payloadBytes: payload.length,
           payloadDigestSha256: createHash("sha256").update(payload.toString("base64")).digest("hex"),
-          payloadPreview: payload.toString("utf8").slice(0, 200)
+          payloadPreview: payload.toString("utf8").slice(0, 200),
+          invalidJsonFrames: this.invalidJsonFrames
         }));
-        this.rejectPending("Relay sent invalid JSON while SantaClawz was waiting for the agent response.");
-        this.close(1003, "invalid json");
+        if (this.invalidJsonFrames >= 3) {
+          this.rejectPending("Relay sent repeated invalid JSON while SantaClawz was waiting for the agent response.");
+          this.close(1003, "repeated invalid json");
+        }
         return;
       }
     }
@@ -5382,7 +5398,7 @@ class AgentRelayConnection {
 }
 
 class AgentRelayHub {
-  private readonly connectionsByAgent = new Map<string, AgentRelayConnection>();
+  private readonly connectionsByAgent = new Map<string, AgentRelayConnection[]>();
   private readonly staleSweepInterval: ReturnType<typeof setInterval>;
   private readonly messageRateLimiter = new RelayMessageRateLimiter();
 
@@ -5394,7 +5410,7 @@ class AgentRelayHub {
   }
 
   isConnected(agentId: string) {
-    const connection = this.connectionsByAgent.get(agentId);
+    const connection = this.activeConnection(agentId);
     if (!connection) {
       return false;
     }
@@ -5406,7 +5422,8 @@ class AgentRelayHub {
   }
 
   statusFor(agentId: string) {
-    const connection = this.connectionsByAgent.get(agentId);
+    const connections = this.cleanupConnections(agentId);
+    const connection = this.activeConnection(agentId);
     const connected = Boolean(connection && connection.isFresh());
     if (connection && !connected) {
       connection.terminate("Relay heartbeat is stale.");
@@ -5416,6 +5433,18 @@ class AgentRelayHub {
       connected,
       status: connected ? "connected" : "waiting",
       checkedAtIso: new Date().toISOString(),
+      activeConnectionId: connection?.connectionId ?? null,
+      activeConnectedAtIso: connection?.connectedAtIso ?? null,
+      connectionCount: connections.length,
+      freshConnectionCount: connections.filter((candidate) => candidate.isFresh()).length,
+      connections: connections.map((candidate) => ({
+        connectionId: candidate.connectionId,
+        connectedAtIso: candidate.connectedAtIso,
+        heartbeatAgeMs: candidate.heartbeatAgeMs,
+        pendingCount: candidate.pendingCount,
+        fresh: candidate.isFresh(),
+        remoteAddress: candidate.remoteAddress ?? null
+      })),
       reason: connected
         ? "SantaClawz relay has an active fresh websocket connection."
         : "SantaClawz relay is waiting for a fresh agent websocket connection."
@@ -5433,7 +5462,7 @@ class AgentRelayHub {
       headers: Record<string, string>;
     };
   }) {
-    const connection = this.connectionsByAgent.get(input.agentId);
+    const connection = this.activeConnection(input.agentId);
     if (!connection?.connected) {
       throw new Error("SantaClawz relay is waiting for this agent to connect.");
     }
@@ -5446,11 +5475,37 @@ class AgentRelayHub {
 
   private closeStaleConnections() {
     const nowMs = Date.now();
-    for (const connection of this.connectionsByAgent.values()) {
-      if (!connection.isFresh(nowMs)) {
-        connection.terminate("Relay heartbeat is stale.");
+    for (const [agentId, connections] of this.connectionsByAgent.entries()) {
+      for (const connection of connections) {
+        if (!connection.isFresh(nowMs)) {
+          connection.terminate("Relay heartbeat is stale.");
+        }
       }
+      this.cleanupConnections(agentId);
     }
+  }
+
+  private cleanupConnections(agentId: string) {
+    const connections = this.connectionsByAgent.get(agentId) ?? [];
+    const active = connections.filter((connection) => connection.connected);
+    if (active.length === 0) {
+      this.connectionsByAgent.delete(agentId);
+      return [];
+    }
+    this.connectionsByAgent.set(agentId, active);
+    return active;
+  }
+
+  private activeConnection(agentId: string) {
+    const connections = this.cleanupConnections(agentId);
+    const fresh = connections.filter((connection) => connection.isFresh());
+    fresh.sort((left, right) => {
+      if (left.pendingCount !== right.pendingCount) {
+        return left.pendingCount - right.pendingCount;
+      }
+      return right.connectedAtIso.localeCompare(left.connectedAtIso);
+    });
+    return fresh[0];
   }
 
   async handleUpgrade(request: IncomingMessage, socket: Socket) {
@@ -5479,10 +5534,11 @@ class AgentRelayHub {
         "\r\n"
       ].join("\r\n")
     );
-    const existing = this.connectionsByAgent.get(agentId);
-    existing?.close(1012, "new relay connection");
+    const existing = this.cleanupConnections(agentId);
     let connection!: AgentRelayConnection;
+    const connectionId = `relay_conn_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
     connection = new AgentRelayConnection(
+      connectionId,
       auth.agentId,
       auth.sessionId,
       adminKey,
@@ -5491,7 +5547,10 @@ class AgentRelayHub {
         void this.handleMessage(connection, message);
       },
       () => {
-        if (this.connectionsByAgent.get(agentId) === connection) {
+        const remaining = this.cleanupConnections(agentId).filter((candidate) => candidate !== connection);
+        if (remaining.length > 0) {
+          this.connectionsByAgent.set(agentId, remaining);
+        } else {
           this.connectionsByAgent.delete(agentId);
           void this.plane.recordAgentRuntimeHeartbeat({
             agentId,
@@ -5505,7 +5564,16 @@ class AgentRelayHub {
       }
     );
     connection.markHeartbeat();
-    this.connectionsByAgent.set(agentId, connection);
+    this.connectionsByAgent.set(agentId, [...existing, connection]);
+    if (existing.length > 0) {
+      console.error(JSON.stringify({
+        event: "relay_additional_connection",
+        agentId,
+        connectionId,
+        existingConnectionIds: existing.map((candidate) => candidate.connectionId),
+        note: "Accepted additional relay connection without evicting the existing socket. Delivery will use the freshest connection with the fewest pending jobs."
+      }));
+    }
     await this.plane.recordAgentRuntimeHeartbeat({
       agentId,
       sessionId: auth.sessionId,
@@ -5518,7 +5586,8 @@ class AgentRelayHub {
       type: "relay_ready",
       agentId: auth.agentId,
       sessionId: auth.sessionId,
-      serviceKey: auth.serviceKey
+      serviceKey: auth.serviceKey,
+      connectionId
     });
   }
 
