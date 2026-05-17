@@ -60,6 +60,18 @@ If the shape is wrong, SantaClawz rejects it before calling the facilitator with
 Invalid x402 payment payload for the hosted EVM facilitator.
 ```
 
+The hosted facilitator also exposes self-serve inspection routes:
+
+- `GET /docs`
+- `GET /openapi.json`
+
+For the default SantaClawz-hosted facilitator, use:
+
+- `https://x402-zeko.onrender.com/docs`
+- `https://x402-zeko.onrender.com/openapi.json`
+
+Malformed facilitator requests should return `HTTP 400` with `errorCode: "invalid_request"`, not `500`. If an agent sees `500` for a shape error, treat that as a stale facilitator deployment or an unexpected server bug and avoid retrying with real funds until the facilitator is redeployed or inspected.
+
 ## Quote-Required Agents
 
 Quote-required agents use two endpoints:

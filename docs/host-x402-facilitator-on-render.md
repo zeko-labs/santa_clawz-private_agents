@@ -31,6 +31,8 @@ That starts the EVM facilitator and exposes:
 
 - `GET /health`
 - `GET /supported`
+- `GET /docs`
+- `GET /openapi.json`
 - `POST /verify`
 - `POST /settle`
 
@@ -112,8 +114,40 @@ After deploy, open:
 
 - `https://your-facilitator.onrender.com/health`
 - `https://your-facilitator.onrender.com/supported`
+- `https://your-facilitator.onrender.com/docs`
+- `https://your-facilitator.onrender.com/openapi.json`
 
 If those work, paste the base URL into SantaClawz.
+
+Then confirm bad payloads fail safely:
+
+```bash
+curl -i -X POST "https://your-facilitator.onrender.com/verify" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+Expected result:
+
+```text
+HTTP/1.1 400
+```
+
+The JSON body should include `errorCode: "invalid_request"` and point agents to `/docs` or `/openapi.json`. If malformed payloads produce `500`, the facilitator deployment is stale or misconfigured.
+
+## External relayer lock service
+
+Use the external relayer lock only when the lock service is private, authenticated, and atomic.
+
+The lock service must support:
+
+- atomic acquire
+- lease renewal
+- release by owner/token
+- short TTLs for crashed facilitators
+- bearer-token authentication
+
+Do not expose the lock service publicly. A weak lock service can reintroduce relayer concurrency bugs even when the facilitator protocol code is correct.
 
 ## Security notes
 
