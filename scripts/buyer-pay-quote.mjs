@@ -27,6 +27,7 @@ Options:
   --json
 
 This command pays an existing accepted quote intent. It never creates a fresh quote.
+Run pnpm buyer:payment:check first if you are testing a new buyer integration or SDK payload shape.
 `);
 }
 

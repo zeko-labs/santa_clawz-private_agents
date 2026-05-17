@@ -465,6 +465,13 @@ async function main() {
     });
     assert.equal(feeSplitPayload.sessionId, "session_fee_split_sdk");
     assert.equal(feeSplitPayload.extensions.santaclawz.idempotencyKey, feeSplitPayload.paymentId);
+    assert.equal(feeSplitPayload.payloadShape, "santaclawz-hosted-exact-fee-split-v1");
+    assert.equal(feeSplitPayload.accepted.asset, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+    assert.equal(feeSplitPayload.accepted.amount, "420000");
+    assert.equal(feeSplitPayload.accepted.payTo, "0x1908217952D7117f5aeFBbd91AeBf04566D286f9");
+    assert.equal(feeSplitPayload.accepted.extra.feeSplit.grossAmount, "420000");
+    assert.equal(feeSplitPayload.payload.authorization.value, "419580");
+    assert.equal(feeSplitPayload.payload.feeAuthorization.authorization.value, "420");
     assert.equal(feeSplitPayload.authorization.typedData.message.value, "419580");
     assert.equal(feeSplitPayload.feeAuthorization.typedData.message.value, "420");
     assert.match(feeSplitPayload.paymentContextDigest, /^[a-f0-9]{64}$/);

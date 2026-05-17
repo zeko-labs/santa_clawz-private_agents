@@ -39,6 +39,19 @@ For hosted Base/Ethereum EVM facilitators, the payment payload must include:
 
 `accepted.asset` is the token contract address string, not the full asset object from the payment requirement. Do not post the payment requirement itself as the payment payload.
 
+For SantaClawz fee-split payloads, use the SDK helper. It includes both:
+
+- top-level x402 fields SantaClawz uses for local rail matching and idempotency
+- hosted facilitator fields: `accepted`, `payload.authorization`, and `payload.feeAuthorization`
+
+Before submitting a payment payload, validate it locally:
+
+```bash
+pnpm buyer:payment:check -- \
+  --quote-manifest ./santaclawz_quote.json \
+  --payment-payload-file ./payment-payload.json
+```
+
 If the shape is wrong, SantaClawz rejects it before calling the facilitator with:
 
 ```text

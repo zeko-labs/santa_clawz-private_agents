@@ -284,6 +284,17 @@ function buildEip3009Authorization(input: {
   };
 }
 
+function feeSplitAssetAddress(input: {
+  accept: Record<string, unknown>;
+  evm: Record<string, unknown>;
+}) {
+  const asset = input.accept.asset;
+  if (isRecord(asset) && typeof asset.address === "string" && asset.address.trim().length > 0) {
+    return asset.address;
+  }
+  return stringField(input.evm, "assetAddress", "extensions.evm");
+}
+
 export async function buildClawzFeeSplitExactPaymentPayload(
   input: ClawzFeeSplitPaymentPayloadInput
 ): Promise<Record<string, unknown>> {
@@ -296,6 +307,12 @@ export async function buildClawzFeeSplitExactPaymentPayload(
   const protocolFeePayTo = stringField(feeSplit, "protocolFeePayTo", "feeSplit");
   const sellerAmount = stringField(feeSplit, "sellerAmount", "feeSplit");
   const protocolFeeAmount = stringField(feeSplit, "protocolFeeAmount", "feeSplit");
+  const grossAmountValue = accept.amount ?? accept.price;
+  if (typeof grossAmountValue !== "string" || grossAmountValue.trim().length === 0) {
+    throw new Error("accept.amount is required.");
+  }
+  const grossAmount = grossAmountValue;
+  const assetAddress = feeSplitAssetAddress({ accept, evm });
   const sellerTypedData = buildReceiveWithAuthorizationTypedData({
     evm,
     from: input.payer,
@@ -333,9 +350,45 @@ export async function buildClawzFeeSplitExactPaymentPayload(
         settlementModel: "x402-exact-evm-fee-split-v1",
         sellerPayTo,
         protocolFeePayTo,
+        grossAmount,
         sellerAmount,
-        protocolFeeAmount
+        protocolFeeAmount,
+        ...(Number.isInteger(feeSplit.feeBps) ? { feeBps: feeSplit.feeBps } : {})
       }
+    }
+  };
+  const hostedAccepted = {
+    scheme: accept.scheme,
+    network: stringField(accept, "network", "accept"),
+    asset: assetAddress,
+    amount: grossAmount,
+    payTo: sellerPayTo,
+    maxTimeoutSeconds: isRecord(evm) && Number.isFinite(Number(evm.maxTimeoutSeconds)) ? Number(evm.maxTimeoutSeconds) : 60,
+    extra: {
+      name: typeof evm.eip712Name === "string" ? evm.eip712Name : "USD Coin",
+      version: typeof evm.assetVersion === "string" ? evm.assetVersion : "2",
+      settlementModel: "x402-exact-evm-fee-split-v1",
+      feeSplit: {
+        version: typeof feeSplit.version === "string" ? feeSplit.version : "protocol-owner-fee-v1",
+        grossAmount,
+        sellerAmount,
+        protocolFeeAmount,
+        sellerPayTo,
+        protocolFeePayTo,
+        feeSettlementMode:
+          typeof feeSplit.feeSettlementMode === "string" ? feeSplit.feeSettlementMode : "exact-eip3009-split-v1",
+        ...(Number.isInteger(feeSplit.feeBps) ? { feeBps: feeSplit.feeBps } : {})
+      }
+    }
+  };
+  const hostedPayload = {
+    signature: sellerSignature,
+    authorization: sellerTypedData.message,
+    primitive: "evm-eip3009-receive-with-authorization",
+    feeAuthorization: {
+      signature: feeSignature,
+      authorization: feeTypedData.message,
+      primitive: "evm-eip3009-receive-with-authorization"
     }
   };
   const payloadWithoutDigest: Record<string, unknown> = {
@@ -348,13 +401,16 @@ export async function buildClawzFeeSplitExactPaymentPayload(
     settlementRail: "evm",
     networkId: stringField(accept, "network", "accept"),
     asset: accept.asset,
-    amount: accept.amount ?? accept.price,
+    amount: grossAmount,
     payer: input.payer,
-    payTo: accept.payTo,
+    payTo: sellerPayTo,
     sessionId: input.sessionId,
     issuedAtIso,
     expiresAtIso,
-    extensions
+    extensions,
+    accepted: hostedAccepted,
+    payload: hostedPayload,
+    payloadShape: "santaclawz-hosted-exact-fee-split-v1"
   };
   const basePayload = {
     ...payloadWithoutDigest,
