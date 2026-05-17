@@ -1,3 +1,4 @@
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { createRetryablePlatformFailure, isRetryablePlatformStatus } from "./platform-failures.mjs";
@@ -106,6 +107,7 @@ function defaultReadinessOptions(config) {
     publish: config.publish !== false,
     localOnly: config.localOnly === true,
     verifyAvailability: config.verifyAvailability !== false,
+    paidExecutionProbe: config.paidExecutionProbe === true,
     limit: config.limit,
     operatorNote: config.operatorNote ?? "OpenClaw enrollment readiness publish"
   };
@@ -144,6 +146,174 @@ export async function fetchAvailability(config) {
 
 export async function fetchZekoHealth(config) {
   return requestJson(`${config.apiBase}/api/zeko/health`);
+}
+
+function sha256Hex(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function signLocalHireHeaders(input) {
+  const bodySha256 = sha256Hex(input.body);
+  const signature = createHmac("sha256", input.signingSecret)
+    .update(`${input.timestamp}.${input.requestId}.${bodySha256}`)
+    .digest("hex");
+  return {
+    authorization: `Bearer ${input.ingressToken}`,
+    "content-type": "application/json",
+    "x-santaclawz-request-id": input.requestId,
+    "x-santaclawz-timestamp": input.timestamp,
+    "x-santaclawz-body-sha256": bodySha256,
+    "x-santaclawz-signature": `v1=${signature}`
+  };
+}
+
+function readinessEnv(config, name) {
+  return typeof config[name] === "string" && config[name].trim().length > 0
+    ? config[name].trim()
+    : process.env[name]?.trim() ?? "";
+}
+
+function verifiedOutputFromReturn(value) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value.verified_output ?? value.verifiedOutput;
+}
+
+function hasVerifiedPaidReturnPackage(value) {
+  const verifiedOutput = verifiedOutputFromReturn(value);
+  if (!verifiedOutput || typeof verifiedOutput !== "object") {
+    return false;
+  }
+  const manifest = verifiedOutput.verification_manifest ?? verifiedOutput.verificationManifest;
+  const deliverables = Array.isArray(verifiedOutput.deliverables) ? verifiedOutput.deliverables : [];
+  return Boolean(
+    value.status === "completed" &&
+      (value.schema_version === "santaclawz-return/1.0" || value.schemaVersion === "santaclawz-return/1.0") &&
+      (typeof verifiedOutput.package_hash === "string" || typeof verifiedOutput.packageHash === "string") &&
+      manifest &&
+      typeof manifest === "object" &&
+      deliverables.length > 0
+  );
+}
+
+export async function runPaidExecutionProbe(config, plan) {
+  const pricingMode = plan?.pricingMode;
+  if (pricingMode !== "fixed-exact" && pricingMode !== "quote-required") {
+    return {
+      attempted: false,
+      ok: true,
+      skipped: true,
+      reason: "paid_execution probe is only needed for paid quote-required or fixed-exact agents."
+    };
+  }
+
+  const localHireUrl =
+    config.localHireUrl ??
+    process.env.CLAWZ_LOCAL_HIRE_URL?.trim() ??
+    process.env.OPENCLAW_LOCAL_HIRE_URL?.trim() ??
+    "http://127.0.0.1:8797/hire";
+  const ingressToken = readinessEnv(config, "CLAWZ_AGENT_INGRESS_TOKEN");
+  const signingSecret = readinessEnv(config, "CLAWZ_AGENT_SIGNING_SECRET");
+  const serviceKey = readinessEnv(config, "CLAWZ_AGENT_SERVICE_KEY");
+  const agentId = config.agentId;
+  const sessionId = config.sessionId;
+  const missing = [
+    !ingressToken ? "CLAWZ_AGENT_INGRESS_TOKEN" : "",
+    !signingSecret ? "CLAWZ_AGENT_SIGNING_SECRET" : "",
+    !serviceKey ? "CLAWZ_AGENT_SERVICE_KEY" : ""
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    return {
+      attempted: false,
+      ok: false,
+      skipped: false,
+      localHireUrl,
+      reason: `Missing local paid-execution probe secrets: ${missing.join(", ")}.`
+    };
+  }
+
+  const readyRail = Array.isArray(plan.rails) ? plan.rails.find((rail) => rail?.ready && rail?.amountUsd) : undefined;
+  const settledAmountUsd = readyRail?.amountUsd ?? plan.referencePriceUsd ?? "0.01";
+  const requestId = `hire_probe_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const timestamp = new Date().toISOString();
+  const payload = {
+    schema_version: "santaclawz-request/1.0",
+    request_id: requestId,
+    agent_id: agentId,
+    session_id: sessionId,
+    caller_type: "operator",
+    service: serviceKey,
+    service_key: serviceKey,
+    verification_required: true,
+    return_channel: "santaclawz",
+    request_type: "paid_execution",
+    pricing_mode: pricingMode,
+    payment_status: "settled",
+    settled_amount_usd: settledAmountUsd,
+    paid_or_escrowed: true,
+    payment: {
+      status: "settled",
+      rail: readyRail?.rail ?? plan.defaultRail ?? "base-usdc",
+      amount_usd: settledAmountUsd,
+      authorization_id: `seller_ready_probe_${requestId}`
+    },
+    input: {
+      title: "SantaClawz paid execution readiness probe",
+      client_request:
+        "Return a tiny paid_execution readiness package with a buyer-visible deliverable, verification manifest, and package hash.",
+      requested_deliverables: [
+        "A santaclawz-return/1.0 completed package with verified_output, verification_manifest, and at least one deliverable."
+      ]
+    }
+  };
+  const body = JSON.stringify(payload);
+  let response;
+  let responseBody;
+  try {
+    response = await fetch(localHireUrl, {
+      method: "POST",
+      headers: signLocalHireHeaders({
+        body,
+        timestamp,
+        requestId,
+        ingressToken,
+        signingSecret
+      }),
+      body
+    });
+    const responseText = await response.text();
+    try {
+      responseBody = JSON.parse(responseText);
+    } catch {
+      responseBody = responseText;
+    }
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      localHireUrl,
+      requestId,
+      reason: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  const packageVerified = hasVerifiedPaidReturnPackage(responseBody);
+  return {
+    attempted: true,
+    ok: response.ok && packageVerified,
+    status: response.status,
+    localHireUrl,
+    requestId,
+    packageVerified,
+    returnStatus: responseBody && typeof responseBody === "object" ? responseBody.status : undefined,
+    reason: response.ok
+      ? packageVerified
+        ? "Paid execution returned a verified package."
+        : "Paid execution response did not include a completed verified_output package with manifest and deliverables."
+      : `Local paid execution probe returned HTTP ${response.status}.`,
+    response: responseBody
+  };
 }
 
 export async function publishSocialAnchors(config, options) {
@@ -191,6 +361,8 @@ function buildReadinessSummary(input) {
   const runtimeReachable = input.availabilitySkipped === true ? true : availability.reachable === true;
   const paymentReady = freeTestMode ? false : quoteMode ? paymentProfileReady : fixedMode ? railReady : paymentProfileReady;
   const freeTestPolicyReady = freeTestMode && !paymentsEnabled;
+  const paidExecutionProbeRequired = Boolean(input.paidExecutionProbeRequired && !freeTestMode && (quoteMode || fixedMode));
+  const paidExecutionProbeOk = !paidExecutionProbeRequired || input.paidExecutionProbe?.ok === true;
   const blockers = [];
 
   if (!ownershipVerified) {
@@ -217,6 +389,12 @@ function buildReadinessSummary(input) {
   }
   if (!runtimeReachable) {
     blockers.push({ stage: "runtime", message: availability.reason ?? "Public agent ingress is not reachable." });
+  }
+  if (paidExecutionProbeRequired && input.paidExecutionProbe?.ok !== true) {
+    blockers.push({
+      stage: "paid_execution_probe",
+      message: input.paidExecutionProbe?.reason ?? "Local paid_execution probe did not return a verified package."
+    });
   }
   if (input.publish?.ok === false && !publishedOnZeko) {
     blockers.unshift({
@@ -257,7 +435,8 @@ function buildReadinessSummary(input) {
       runtimeReachable,
       publishedOnZeko,
       paymentReady,
-      fixedPriceRailReady: fixedMode ? railReady : undefined
+      fixedPriceRailReady: fixedMode ? railReady : undefined,
+      paidExecutionReturnPackage: paidExecutionProbeRequired ? paidExecutionProbeOk : undefined
     },
     plan: {
       published: publishedOnZeko,
@@ -294,6 +473,17 @@ function buildReadinessSummary(input) {
           reachable: input.availability.payload?.reachable,
           status: input.availability.payload?.status,
           reason: input.availability.payload?.reason
+        }
+      : { attempted: false },
+    paidExecutionProbe: input.paidExecutionProbe
+      ? {
+          attempted: input.paidExecutionProbe.attempted === true,
+          ok: input.paidExecutionProbe.ok === true,
+          localHireUrl: input.paidExecutionProbe.localHireUrl,
+          requestId: input.paidExecutionProbe.requestId,
+          packageVerified: input.paidExecutionProbe.packageVerified,
+          returnStatus: input.paidExecutionProbe.returnStatus,
+          reason: input.paidExecutionProbe.reason
         }
       : { attempted: false },
     zekoHealth: input.zekoHealth?.payload?.socialAnchor
@@ -340,6 +530,9 @@ export async function runSellerReadiness(config) {
     options.verifyAvailability ? fetchAvailability(resolvedConfig) : Promise.resolve(undefined),
     publish?.ok === false || beforePlan.payload?.published !== true ? fetchZekoHealth(resolvedConfig) : Promise.resolve(undefined)
   ]);
+  const paidExecutionProbe = options.paidExecutionProbe
+    ? await runPaidExecutionProbe(resolvedConfig, afterPlan.payload ?? beforePlan.payload ?? {})
+    : undefined;
 
   return buildReadinessSummary({
     config: resolvedConfig,
@@ -352,7 +545,9 @@ export async function runSellerReadiness(config) {
     publish,
     availability,
     availabilitySkipped: !options.verifyAvailability,
-    zekoHealth
+    zekoHealth,
+    paidExecutionProbe,
+    paidExecutionProbeRequired: options.paidExecutionProbe
   });
 }
 
@@ -382,6 +577,9 @@ export function printReadiness(readiness) {
   console.log(line("Runtime", checks.runtimeReachable, readiness.availability?.reason ?? readiness.availability?.status ?? ""));
   console.log(line("Zeko publish", checks.publishedOnZeko, readiness.publish?.latestRootDigestSha256 ?? ""));
   console.log(line("Payment gate", checks.paymentReady, readiness.plan?.readyRails?.join(", ") ?? ""));
+  if (checks.paidExecutionReturnPackage !== undefined) {
+    console.log(line("Paid execution package", checks.paidExecutionReturnPackage, readiness.paidExecutionProbe?.reason ?? ""));
+  }
   console.log(`Agent hireable: ${readiness.hireable ? "yes" : "no"}`);
   if (Array.isArray(readiness.allowedRequestTypes) && readiness.allowedRequestTypes.length > 0) {
     console.log(`Allowed request types: ${readiness.allowedRequestTypes.join(", ")}`);

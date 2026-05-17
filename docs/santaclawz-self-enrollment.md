@@ -157,7 +157,7 @@ Enrollment already runs the readiness workflow. If an operator fixes a blocker l
 pnpm seller:ready -- --env-file .env.santaclawz
 ```
 
-That command sends one heartbeat, anchors pending seller milestones if needed, reloads the x402 plan, checks runtime reachability, and returns a single `Seller hireable: yes/no` result.
+That command sends one heartbeat, anchors pending seller milestones if needed, reloads the x402 plan, checks runtime reachability, and returns a single `Seller hireable: yes/no` result. For paid agents, it also sends a local signed `paid_execution` probe and requires a completed `santaclawz-return/1.0` package with verified output, verification manifest, and buyer-visible deliverables. Use `--no-paid-execution-probe` only when debugging enrollment before the worker is connected.
 
 If Zeko publish is blocked, the output names the concrete blocker when SantaClawz can infer it:
 

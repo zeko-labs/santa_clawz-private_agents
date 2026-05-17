@@ -1463,6 +1463,166 @@ function jsonDigestSha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
+function paymentLedgerListOptionsFromQuery(query: unknown) {
+  const limit = queryString(query, "limit");
+  const agentId = queryString(query, "agentId");
+  const sessionId = queryString(query, "sessionId");
+  const quoteIntentId = queryString(query, "quoteIntentId") ?? queryString(query, "intentId");
+  const hireRequestId = queryString(query, "hireRequestId") ?? queryString(query, "requestId");
+  const paymentPayloadDigestSha256 =
+    queryString(query, "paymentPayloadDigestSha256") ??
+    queryString(query, "paymentPayloadDigest") ??
+    queryString(query, "payloadDigest");
+  return {
+    ...(agentId ? { agentId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(quoteIntentId ? { quoteIntentId } : {}),
+    ...(hireRequestId ? { hireRequestId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
+    ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+  };
+}
+
+function paymentStateRetryEndpoint(input: {
+  apiBase: string;
+  intentId?: string;
+  requestId?: string;
+  agentId?: string;
+  paymentPayloadDigestSha256?: string;
+}) {
+  if (input.intentId) {
+    return `${input.apiBase}/api/x402/quote-intent?${new URLSearchParams({ intentId: input.intentId }).toString()}`;
+  }
+  if (input.agentId) {
+    return `${input.apiBase}/api/agents/${encodeURIComponent(input.agentId)}/hire`;
+  }
+  if (input.paymentPayloadDigestSha256) {
+    return `${input.apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 }).toString()}`;
+  }
+  if (input.requestId) {
+    return `${input.apiBase}/api/executions/${encodeURIComponent(input.requestId)}/state`;
+  }
+  return undefined;
+}
+
+async function optionalExecutionIntentResult(intentId: string | undefined) {
+  if (!intentId) return undefined;
+  try {
+    return await controlPlane.getExecutionIntentResult(intentId);
+  } catch {
+    return undefined;
+  }
+}
+
+async function optionalHireRequest(requestId: string | undefined) {
+  if (!requestId) return undefined;
+  try {
+    return await controlPlane.getHireRequest(requestId);
+  } catch {
+    return undefined;
+  }
+}
+
+async function buildX402PaymentStateResponse(input: {
+  apiBase: string;
+  ledgerId?: string;
+  intentId?: string;
+  requestId?: string;
+  paymentPayloadDigestSha256?: string;
+}) {
+  const ledgerEntry = input.ledgerId ? await controlPlane.getPaymentLedgerEntry(input.ledgerId) : undefined;
+  const paymentLedger = await controlPlane.listPaymentLedger({
+    ...(input.intentId ? { quoteIntentId: input.intentId } : {}),
+    ...(input.requestId ? { hireRequestId: input.requestId } : {}),
+    ...(input.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 } : {}),
+    limit: 10
+  });
+  const entries = ledgerEntry
+    ? [
+        ledgerEntry,
+        ...paymentLedger.entries.filter((entry) => entry.ledgerId !== ledgerEntry.ledgerId)
+      ]
+    : paymentLedger.entries;
+  const latestLedger = entries[0];
+  const intentId = input.intentId ?? latestLedger?.quoteIntentId;
+  const requestId = input.requestId ?? latestLedger?.hireRequestId;
+  const intent = await optionalExecutionIntentResult(intentId);
+  const hireRequest = await optionalHireRequest(
+    requestId ?? (isRecord(intent) && isRecord(intent.latestExecution) && typeof intent.latestExecution.requestId === "string"
+      ? intent.latestExecution.requestId
+      : undefined)
+  );
+  const resolvedRequestId = hireRequest?.requestId ?? requestId;
+  const paymentPayloadDigestSha256 = input.paymentPayloadDigestSha256 ?? latestLedger?.paymentPayloadDigestSha256;
+  const retryEndpoint = paymentStateRetryEndpoint({
+    apiBase: input.apiBase,
+    ...(intentId ? { intentId } : {}),
+    ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+    ...(latestLedger?.agentId ? { agentId: latestLedger.agentId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+  });
+  const stateEndpoint = resolvedRequestId
+    ? `${input.apiBase}/api/executions/${encodeURIComponent(resolvedRequestId)}/state`
+    : intentId
+      ? `${input.apiBase}/api/execution/intents/${encodeURIComponent(intentId)}`
+      : paymentPayloadDigestSha256
+        ? `${input.apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+        : undefined;
+  const latestLifecycle = latestLedger?.lifecycleStatus;
+  const paymentAuthorized =
+    latestLedger?.paymentStatus === "authorization_verified" ||
+    latestLedger?.paymentStatus === "payment_verified" ||
+    latestLedger?.paymentStatus === "settled" ||
+    latestLedger?.paymentStatus === "already_settled" ||
+    latestLedger?.paymentStatus === "execution_completed";
+  const terminal =
+    latestLifecycle?.completionStatus === "completed" ||
+    latestLifecycle?.completionStatus === "failed" ||
+    latestLifecycle?.completionStatus === "return_rejected" ||
+    (isRecord(intent) && isRecord(intent.intent) && (intent.intent.status === "settled" || intent.intent.status === "refunded"));
+  const needsAttention = latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed";
+  const nextAction = terminal
+    ? "result_lookup"
+    : latestLedger?.settlementRecovery?.canRetrySettlement
+      ? "retry_settlement_same_payload"
+      : resolvedRequestId
+        ? "poll_execution_state"
+        : paymentAuthorized
+          ? "retry_same_payment_payload"
+          : "submit_or_resubmit_payment_payload";
+  return {
+    schemaVersion: "santaclawz-x402-payment-state/1.0",
+    ok: true,
+    generatedAtIso: new Date().toISOString(),
+    lookup: {
+      ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+      ...(intentId ? { intentId } : {}),
+      ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+      ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+    },
+    payment: {
+      entries,
+      ...(latestLedger ? { latestLedger } : {}),
+      ledgerEntryCount: entries.length
+    },
+    ...(intent ? { intent } : {}),
+    ...(hireRequest ? { execution: hireRequest } : {}),
+    retryResume: {
+      safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256 && !terminal),
+      nextAction,
+      terminal: Boolean(terminal),
+      needsAttention,
+      ...(retryEndpoint ? { retryEndpoint } : {}),
+      ...(stateEndpoint ? { stateEndpoint } : {}),
+      guidance: terminal
+        ? "This payment path reached a terminal state. Read the result/artifact state before creating another payment."
+        : paymentPayloadDigestSha256
+          ? "Retry or resume with the exact same signed x402 payment payload. Do not ask the buyer to sign a new payment until this state says it failed or expired."
+          : "No signed payment payload digest was found yet. Submit the signed x402 payload once, then use this endpoint to resume safely."
+    }
+  };
+}
+
 function isEvmTransactionHash(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -3154,10 +3314,9 @@ app.get("/api/agents/:agentId/payments", route(async (request, response) => {
       response.status(400).json({ error: "agentId is required." });
       return;
     }
-    const limit = queryString(request.query, "limit");
     response.json(await controlPlane.listPaymentLedger({
-      agentId,
-      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+      ...paymentLedgerListOptionsFromQuery(request.query),
+      agentId
     }));
   } catch (error) {
     response.status(400).json({
@@ -3166,14 +3325,38 @@ app.get("/api/agents/:agentId/payments", route(async (request, response) => {
   }
 }));
 
+app.get("/api/x402/payment-state", route(async (request, response) => {
+  try {
+    const ledgerId = queryString(request.query, "ledgerId");
+    const intentId = queryString(request.query, "intentId") ?? queryString(request.query, "quoteIntentId");
+    const requestId = queryString(request.query, "requestId") ?? queryString(request.query, "hireRequestId");
+    const paymentPayloadDigestSha256 =
+      queryString(request.query, "paymentPayloadDigestSha256") ??
+      queryString(request.query, "paymentPayloadDigest") ??
+      queryString(request.query, "payloadDigest");
+    if (!ledgerId && !intentId && !requestId && !paymentPayloadDigestSha256) {
+      response.status(400).json({
+        error: "Provide ledgerId, intentId, requestId, or paymentPayloadDigestSha256."
+      });
+      return;
+    }
+    response.json(await buildX402PaymentStateResponse({
+      apiBase: getBaseUrl(request),
+      ...(ledgerId ? { ledgerId } : {}),
+      ...(intentId ? { intentId } : {}),
+      ...(requestId ? { requestId } : {}),
+      ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load x402 payment state."
+    });
+  }
+}));
+
 app.get("/api/payments", route(async (request, response) => {
   try {
-    const limit = queryString(request.query, "limit");
-    response.json(await controlPlane.listPaymentLedger({
-      ...(queryString(request.query, "agentId") ? { agentId: queryString(request.query, "agentId")! } : {}),
-      ...(queryString(request.query, "sessionId") ? { sessionId: queryString(request.query, "sessionId")! } : {}),
-      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
-    }));
+    response.json(await controlPlane.listPaymentLedger(paymentLedgerListOptionsFromQuery(request.query)));
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to list payments."
@@ -3249,18 +3432,7 @@ app.get("/api/artifacts/scanner-readiness", route(async (_request, response) => 
 
 app.get("/api/admin/x402/ledger", route(async (request, response) => {
   try {
-    const agentId = queryString(request.query, "agentId");
-    const sessionId = queryString(request.query, "sessionId");
-    const quoteIntentId = queryString(request.query, "quoteIntentId");
-    const hireRequestId = queryString(request.query, "hireRequestId");
-    const limit = queryString(request.query, "limit");
-    response.json(await controlPlane.listPaymentLedger({
-      ...(agentId ? { agentId } : {}),
-      ...(sessionId ? { sessionId } : {}),
-      ...(quoteIntentId ? { quoteIntentId } : {}),
-      ...(hireRequestId ? { hireRequestId } : {}),
-      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
-    }));
+    response.json(await controlPlane.listPaymentLedger(paymentLedgerListOptionsFromQuery(request.query)));
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to list x402 payment ledger."

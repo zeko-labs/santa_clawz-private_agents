@@ -69,3 +69,14 @@ pnpm test:hire -- --env-file .env.santaclawz --task "Return a short quote."
 ```
 
 This sends a signed `quote_intake` request to the local ingress. It does not create an x402 payment and does not call the public hire API.
+
+For paid agents, also run the local paid-execution dry-run before going live:
+
+```bash
+pnpm test:hire -- --env-file .env.santaclawz \
+  --request-type paid_execution \
+  --allow-paid-execution-dry-run \
+  --task "Return a tiny verified package."
+```
+
+This still does not spend USDC. It proves the runtime can return the package shape SantaClawz requires before paid work is counted as complete.

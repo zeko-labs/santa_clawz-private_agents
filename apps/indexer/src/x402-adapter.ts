@@ -337,6 +337,30 @@ function formatUsdAtomic(value: bigint, minFractionDigits = 0): string {
   return `${whole}.${fractionText}`;
 }
 
+function usdAmountToAssetAtomicAmount(amountUsd: string | undefined, assetDecimals: number): string | null {
+  const usdAtomic = parseUsdAtomic(amountUsd);
+  if (usdAtomic === null || assetDecimals < 0 || assetDecimals > 36) {
+    return null;
+  }
+  if (assetDecimals === 6) {
+    return usdAtomic.toString();
+  }
+  if (assetDecimals > 6) {
+    return (usdAtomic * decimalScale(BigInt(assetDecimals - 6))).toString();
+  }
+  return (usdAtomic / decimalScale(BigInt(6 - assetDecimals))).toString();
+}
+
+function requireAssetAtomicAmount(rail: AgentX402RailPlan): string {
+  const amount = usdAmountToAssetAtomicAmount(rail.amountUsd, rail.assetDecimals);
+  if (!amount || BigInt(amount) <= 0n) {
+    throw new Error(
+      `Unable to convert ${rail.rail} amountUsd='${rail.amountUsd ?? ""}' into atomic ${rail.assetSymbol} units.`
+    );
+  }
+  return amount;
+}
+
 function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   if (denominator <= 0n) {
     throw new Error("denominator must be positive.");
@@ -1126,6 +1150,7 @@ function railAcceptPreview(plan: AgentX402Plan, rail: AgentX402RailPlan) {
   if (!amount) {
     return undefined;
   }
+  const atomicAmount = rail.settlementRail === "evm" ? usdAmountToAssetAtomicAmount(amount, rail.assetDecimals) : null;
   const feePreview = plan.feePreviewByRail?.find((preview) => preview.rail === rail.rail);
 
   return {
@@ -1139,7 +1164,8 @@ function railAcceptPreview(plan: AgentX402Plan, rail: AgentX402RailPlan) {
       ...(rail.assetAddress ? { address: rail.assetAddress } : {})
     },
     price: amount,
-    amount,
+    amount: atomicAmount ?? amount,
+    amountUsd: amount,
     ...(rail.payTo ? { payTo: rail.payTo } : {}),
     settlementModel: rail.settlementModel,
     description: railDescription(rail),
@@ -1158,6 +1184,8 @@ function railAcceptPreview(plan: AgentX402Plan, rail: AgentX402RailPlan) {
         pricingMode: plan.pricingMode,
         ...(plan.referencePriceUsd ? { referencePriceUsd: plan.referencePriceUsd } : {}),
         ...(plan.referencePriceUnit ? { referencePriceUnit: plan.referencePriceUnit } : {}),
+        amountUsd: amount,
+        ...(atomicAmount ? { atomicAmount } : {}),
         settlementTrigger: plan.settlementTrigger,
         ...(feePreview ? { feePreview } : {}),
         missing: rail.missing,
@@ -1419,6 +1447,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
 
   const feePreview = plan.feePreviewByRail?.find((preview) => preview.rail === rail.rail);
   const escrowContract = rail.settlementContractAddress;
+  const atomicAmount = requireAssetAtomicAmount(rail);
 
   if (rail.executionMode === "reserve-release" && !escrowContract) {
     return null;
@@ -1429,7 +1458,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
       if (feePreview?.protocolFeeRecipient && feePreview.feeBps > 0) {
         return zekoX402Module.buildBaseMainnetUsdcReserveReleaseFeeOnReserveRail({
           payTo: rail.payTo,
-          amount: rail.amountUsd,
+          amount: atomicAmount,
           escrowContract: escrowContract!,
           protocolFeePayTo: feePreview.protocolFeeRecipient,
           feeBps: feePreview.feeBps,
@@ -1439,7 +1468,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
 
       return zekoX402Module.buildBaseMainnetUsdcReserveReleaseRail({
         payTo: rail.payTo,
-        amount: rail.amountUsd,
+        amount: atomicAmount,
         escrowContract: escrowContract!,
         ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {})
       }) as JsonRecord;
@@ -1448,7 +1477,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
     const exactFeeSplit = exactFeeSplitForRail(feePreview);
     return zekoX402Module.buildBaseMainnetUsdcRail({
       payTo: rail.payTo,
-      amount: rail.amountUsd,
+      amount: atomicAmount,
       ...(exactFeeSplit ?? {}),
       ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {})
     }) as JsonRecord;
@@ -1459,7 +1488,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
       if (feePreview?.protocolFeeRecipient && feePreview.feeBps > 0) {
         return zekoX402Module.buildEthereumMainnetUsdcReserveReleaseFeeOnReserveRail({
           payTo: rail.payTo,
-          amount: rail.amountUsd,
+          amount: atomicAmount,
           escrowContract: escrowContract!,
           protocolFeePayTo: feePreview.protocolFeeRecipient,
           feeBps: feePreview.feeBps,
@@ -1469,7 +1498,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
 
       return zekoX402Module.buildEthereumMainnetUsdcReserveReleaseRail({
         payTo: rail.payTo,
-        amount: rail.amountUsd,
+        amount: atomicAmount,
         escrowContract: escrowContract!,
         ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {})
       }) as JsonRecord;
@@ -1478,7 +1507,7 @@ function buildLiveRail(plan: AgentX402Plan, rail: AgentX402RailPlan): JsonRecord
     const exactFeeSplit = exactFeeSplitForRail(feePreview);
     return zekoX402Module.buildEthereumMainnetUsdcRail({
       payTo: rail.payTo,
-      amount: rail.amountUsd,
+      amount: atomicAmount,
       ...(exactFeeSplit ?? {}),
       ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {})
     }) as JsonRecord;

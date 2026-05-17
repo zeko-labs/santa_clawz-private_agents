@@ -143,6 +143,8 @@ The planning routes translate the stored SantaClawz payment profile into:
 
 The live hire path uses the configured Base facilitator for fixed-price `paid_execution` before SantaClawz forwards work to the agent. Receipts must still distinguish payment settlement from actual work completion; see [x402 execution semantics](./x402-execution-semantics.md).
 
+Fixed-price buyer agents should follow the exact preflight -> sign -> validate -> submit -> state -> artifact path in [Fixed-Price Payment Flow](./fixed-price-payment-flow.md). EVM x402 payment requirements emitted by SantaClawz use atomic token units for `amount` fields, while `amountUsd` remains a human display field.
+
 Quote-required sellers use a quote-to-payment bridge instead of changing their public pricing mode to fixed price:
 
 ```http
@@ -169,6 +171,18 @@ pnpm buyer:payment:check -- \
   --quote-manifest ./santaclawz_quote.json \
   --payment-payload-file ./payment-payload.json
 ```
+
+Fixed-price buyer tools should validate the exact x402 requirement, then submit with `pnpm buyer:pay-fixed`:
+
+```bash
+pnpm buyer:pay-fixed -- \
+  --agent-id <agent-id> \
+  --task "Run the paid task." \
+  --payment-payload-file ./payment-payload.json \
+  --allow-real-money
+```
+
+If the submit response is interrupted, resume state with `GET /api/x402/payment-state?paymentPayloadDigestSha256=<sha256>` and retry the same signed payment payload only when the state response says it is safe.
 
 Production paid completions must return a verified worker output package. SantaClawz refuses `paid_execution` completions unless the runtime returns `agent_completed_verified` classification with buyer-visible deliverables and verification manifest data; demo completions remain suitable only for free-test or non-paid flows.
 

@@ -523,6 +523,16 @@ async function requestJson(url, init) {
   };
 }
 
+function firstX402Accept(payload) {
+  return (
+    payload?.accepts?.[0] ??
+    payload?.paymentRequired?.accepts?.[0] ??
+    payload?.paymentRequirements?.accepts?.[0] ??
+    payload?.requirements?.accepts?.[0] ??
+    payload?.routes?.[0]?.accepts?.[0]
+  );
+}
+
 async function requestBytes(url, init) {
   const response = await fetch(url, init);
   return {
@@ -1867,6 +1877,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
   const server = startServer(workspaceDir, port, {
     CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
     CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
+    CLAWZ_PROTOCOL_OWNER_FEE_BPS: "10",
     CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
     CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M: "1"
   });
@@ -2265,6 +2276,17 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(paidReady.payload.readiness.paymentReady, true);
     assert.equal(typeof paidReady.payload.readiness.hireable, "boolean");
 
+    const paidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        status: "live",
+        ttlSeconds: 60
+      })
+    });
+    assert.equal(paidAgentHeartbeat.status, 200);
+
     const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
@@ -2274,6 +2296,10 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(unpaidPaidHire.status, 402);
     assert.equal(typeof unpaidPaidHire.payload, "object");
+    const fixedPriceAccept = firstX402Accept(unpaidPaidHire.payload);
+    assert.ok(fixedPriceAccept, JSON.stringify(unpaidPaidHire.payload));
+    assert.equal(fixedPriceAccept.amount, "200000");
+    assert.notEqual(fixedPriceAccept.amount, "0.20");
 
     const quoteReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
       method: "POST",
@@ -2434,6 +2460,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       assert.equal(acceptedQuote.payload.ok, true);
       assert.equal(acceptedQuote.payload.intent.status, "pending");
       assert.equal(acceptedQuote.payload.paymentRequirement.protocol, "x402");
+      const acceptedQuoteAccept = firstX402Accept(acceptedQuote.payload.paymentRequirement);
+      assert.equal(acceptedQuoteAccept.amount, "420000");
+      assert.notEqual(acceptedQuoteAccept.amount, "0.42");
 
       const quoteIntentPaymentRequired = await requestJson(
         `${baseUrl}/api/x402/quote-intent?intentId=${encodeURIComponent(acceptedQuote.payload.intent.intentId)}`,
@@ -2444,6 +2473,18 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       );
       assert.equal(quoteIntentPaymentRequired.status, 402);
       assert.equal(quoteIntentPaymentRequired.payload.protocol, "x402");
+      const quoteIntentAccept = firstX402Accept(quoteIntentPaymentRequired.payload);
+      assert.equal(quoteIntentAccept.amount, "420000");
+      assert.notEqual(quoteIntentAccept.amount, "0.42");
+
+      const quotePaymentState = await requestJson(
+        `${baseUrl}/api/x402/payment-state?intentId=${encodeURIComponent(acceptedQuote.payload.intent.intentId)}`
+      );
+      assert.equal(quotePaymentState.status, 200);
+      assert.equal(quotePaymentState.payload.schemaVersion, "santaclawz-x402-payment-state/1.0");
+      assert.equal(quotePaymentState.payload.lookup.intentId, acceptedQuote.payload.intent.intentId);
+      assert.match(quotePaymentState.payload.retryResume.retryEndpoint, /\/api\/x402\/quote-intent\?intentId=exec_/);
+      assert.equal(quotePaymentState.payload.retryResume.terminal, false);
     } else {
       assert.equal(acceptedQuote.status, 400);
       assert.match(acceptedQuote.payload.error, /cannot emit a live x402 challenge/);
@@ -3392,6 +3433,8 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
         envPath,
         "--api-base",
         baseUrl,
+        "--relay-base",
+        baseUrl,
         "--local-hire-url",
         `http://127.0.0.1:${ingressPort}/hire`,
         "--takeover",
@@ -3705,6 +3748,8 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
 
     const microPaymentCatalog = await requestJson(`${baseUrl}/.well-known/x402.json?sessionId=session_demo_enterprise`);
     assert.equal(microPaymentCatalog.status, 200);
+    assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].amount, "10000");
+    assert.notEqual(microPaymentCatalog.payload.routes[0].accepts[0].amount, "0.01");
     assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].settlementModel, "x402-exact-evm-fee-split-v1");
     assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].extensions.evm.feeSplit.grossAmount, "10000");
     assert.equal(microPaymentCatalog.payload.routes[0].accepts[0].extensions.evm.feeSplit.sellerAmount, "8000");

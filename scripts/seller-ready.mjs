@@ -17,6 +17,7 @@ const BOOLEAN_FLAGS = new Set([
   "no-publish",
   "local-only",
   "no-availability",
+  "no-paid-execution-probe",
   "verify-hireability"
 ]);
 
@@ -37,6 +38,8 @@ Options:
   --local-only              Mark local/dev anchor batches confirmed without a Zeko transaction.
   --no-heartbeat            Do not send a heartbeat during readiness.
   --no-availability         Do not ask SantaClawz to probe the public ingress.
+  --local-hire-url url      Local ingress used for the paid_execution return-package probe.
+  --no-paid-execution-probe Skip the local paid_execution return-package probe.
   --allow-incomplete        Print blockers but exit 0.
   --json
 
@@ -45,6 +48,10 @@ Environment variables:
   CLAWZ_AGENT_ID
   CLAWZ_AGENT_SESSION_ID
   CLAWZ_AGENT_ADMIN_KEY
+  CLAWZ_AGENT_INGRESS_TOKEN
+  CLAWZ_AGENT_SIGNING_SECRET
+  CLAWZ_AGENT_SERVICE_KEY
+  CLAWZ_LOCAL_HIRE_URL
 `);
 }
 
@@ -94,6 +101,11 @@ function resolveConfig(args) {
     publish: !args["no-publish"],
     localOnly: Boolean(args["local-only"]),
     verifyAvailability: !args["no-availability"],
+    paidExecutionProbe: !args["no-paid-execution-probe"],
+    localHireUrl: String(args["local-hire-url"] ?? process.env.CLAWZ_LOCAL_HIRE_URL ?? process.env.OPENCLAW_LOCAL_HIRE_URL ?? "http://127.0.0.1:8797/hire").trim(),
+    CLAWZ_AGENT_INGRESS_TOKEN: String(process.env.CLAWZ_AGENT_INGRESS_TOKEN ?? "").trim(),
+    CLAWZ_AGENT_SIGNING_SECRET: String(process.env.CLAWZ_AGENT_SIGNING_SECRET ?? "").trim(),
+    CLAWZ_AGENT_SERVICE_KEY: String(process.env.CLAWZ_AGENT_SERVICE_KEY ?? "").trim(),
     operatorNote: "Seller readiness publish/anchor"
   };
 }

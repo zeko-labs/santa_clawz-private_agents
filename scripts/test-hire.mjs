@@ -5,7 +5,7 @@ import { applyEnvFile } from "./lib/santaclawz-readiness.mjs";
 
 const DEFAULT_ENV_FILE = ".env.santaclawz";
 const DEFAULT_LOCAL_HIRE_URL = "http://127.0.0.1:8797/hire";
-const BOOLEAN_FLAGS = new Set(["help", "json"]);
+const BOOLEAN_FLAGS = new Set(["help", "json", "allow-paid-execution-dry-run"]);
 
 function printUsage() {
   console.error(`Usage:
@@ -13,16 +13,19 @@ function printUsage() {
 
 Options:
   --local-hire-url http://127.0.0.1:8797/hire
-  --request-type quote_intake|free_test
-  --pricing-mode quote-required|free-test
+  --request-type quote_intake|paid_execution|free_test
+  --pricing-mode quote-required|fixed-exact|free-test
+  --settled-amount-usd 0.01
   --task "Short dry-run task"
   --request-id hire_test_...
+  --allow-paid-execution-dry-run
   --json
 
 Notes:
   This is a local signed dry-run. It does not create an x402 payment, spend USDC,
   or call the SantaClawz platform hire API. It proves the local ingress can verify
   the SantaClawz token/signature shape, service key, replay guard, and request policy.
+  paid_execution dry-runs require --allow-paid-execution-dry-run and are local-only.
 `);
 }
 
@@ -80,6 +83,7 @@ function signHeaders(input) {
 
 function buildPayload(input) {
   const quoteIntake = input.requestType === "quote_intake";
+  const paidExecution = input.requestType === "paid_execution";
   return {
     schema_version: "santaclawz-request/1.0",
     request_id: input.requestId,
@@ -92,15 +96,27 @@ function buildPayload(input) {
     return_channel: "santaclawz",
     request_type: input.requestType,
     pricing_mode: input.pricingMode,
-    payment_status: quoteIntake ? "quote_requested" : "free_test",
-    paid_or_escrowed: false,
+    payment_status: quoteIntake ? "quote_requested" : paidExecution ? "settled" : "free_test",
+    ...(paidExecution ? { settled_amount_usd: input.settledAmountUsd } : {}),
+    paid_or_escrowed: paidExecution,
     payment: {
-      status: quoteIntake ? "quote_requested" : "free_test"
+      status: quoteIntake ? "quote_requested" : paidExecution ? "settled" : "free_test",
+      ...(paidExecution
+        ? {
+            rail: "base-usdc",
+            amount_usd: input.settledAmountUsd,
+            authorization_id: `local_dry_run_${input.requestId}`
+          }
+        : {})
     },
     input: {
       title: "Local SantaClawz dry-run",
       client_request: input.task,
-      requested_deliverables: ["Return a small santaclawz-return/1.0 package or quote package."]
+      requested_deliverables: [
+        paidExecution
+          ? "Return a completed santaclawz-return/1.0 package with verified_output, verification_manifest, and buyer-visible deliverables."
+          : "Return a small santaclawz-return/1.0 package or quote package."
+      ]
     }
   };
 }
@@ -115,15 +131,31 @@ const envFile = typeof args["env-file"] === "string" ? args["env-file"].trim() :
 applyEnvFile(envFile);
 
 const requestType = String(args["request-type"] ?? "quote_intake").trim();
-if (!["quote_intake", "free_test"].includes(requestType)) {
-  throw new Error("--request-type must be quote_intake or free_test for no-USDC local dry-runs.");
+if (!["quote_intake", "paid_execution", "free_test"].includes(requestType)) {
+  throw new Error("--request-type must be quote_intake, paid_execution, or free_test for local dry-runs.");
 }
-const pricingMode = String(args["pricing-mode"] ?? (requestType === "free_test" ? "free-test" : "quote-required")).trim();
+const pricingMode = String(
+  args["pricing-mode"] ??
+    (requestType === "free_test" ? "free-test" : requestType === "paid_execution" ? "fixed-exact" : "quote-required")
+).trim();
 if (requestType === "quote_intake" && pricingMode !== "quote-required") {
   throw new Error("quote_intake dry-run requires --pricing-mode quote-required.");
 }
+if (requestType === "paid_execution" && !["quote-required", "fixed-exact"].includes(pricingMode)) {
+  throw new Error("paid_execution dry-run requires --pricing-mode quote-required or fixed-exact.");
+}
+if (requestType === "paid_execution" && !args["allow-paid-execution-dry-run"]) {
+  throw new Error("paid_execution dry-run is local-only and requires --allow-paid-execution-dry-run.");
+}
 if (requestType === "free_test" && pricingMode !== "free-test") {
   throw new Error("free_test dry-run requires --pricing-mode free-test.");
+}
+const settledAmountUsd = String(args["settled-amount-usd"] ?? "0.01").trim();
+if (requestType === "paid_execution" && !/^[0-9]+(?:\.[0-9]{1,6})?$/.test(settledAmountUsd)) {
+  throw new Error("--settled-amount-usd must be a positive USD decimal with up to 6 decimals.");
+}
+if (requestType === "paid_execution" && Number(settledAmountUsd) <= 0) {
+  throw new Error("--settled-amount-usd must be greater than zero.");
 }
 
 const localHireUrl = String(args["local-hire-url"] ?? process.env.CLAWZ_LOCAL_HIRE_URL ?? process.env.OPENCLAW_LOCAL_HIRE_URL ?? DEFAULT_LOCAL_HIRE_URL).trim();
@@ -133,6 +165,7 @@ const payload = buildPayload({
   requestId,
   requestType,
   pricingMode,
+  settledAmountUsd,
   agentId: requireEnv("CLAWZ_AGENT_ID"),
   sessionId: requireEnv("CLAWZ_AGENT_SESSION_ID"),
   serviceKey: requireEnv("CLAWZ_AGENT_SERVICE_KEY"),

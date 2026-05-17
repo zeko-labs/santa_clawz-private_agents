@@ -67,8 +67,10 @@ Procurement:
 Payments:
 
 - If settlement hits a transient facilitator or platform error, retry the same x402 payment payload so the facilitator can deduplicate by `paymentId` and idempotency metadata.
-- If the agent does not know whether money moved, check the execution state or quote intent before asking the buyer to sign a new payment.
+- If the agent does not know whether money moved, check `GET /api/x402/payment-state?paymentPayloadDigestSha256=<sha256>` before asking the buyer to sign a new payment.
+- `payment-state` is the canonical resume lookup for fixed-price and quote-intent payments. It can be queried by `ledgerId`, `intentId`, `requestId`, or `paymentPayloadDigestSha256` and returns `retryResume.safeToRetrySamePayload`, `nextAction`, and the best state/retry endpoint.
 - Quote-required agents use `/hire` only for `quote_intake`. Accepted quote payment must go to `POST /api/x402/quote-intent?intentId=exec_...`; posting payment payloads back to `/hire` is a protocol misuse and should not create a new quote.
+- Fixed-price agents use `/api/agents/:agentId/hire` for both the preflight 402 requirement and the paid submit. Use [Fixed-Price Payment Flow](./fixed-price-payment-flow.md) for the exact helper path.
 
 Relay and runtime:
 

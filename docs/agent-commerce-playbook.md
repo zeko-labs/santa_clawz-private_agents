@@ -28,9 +28,10 @@ The right model is role per transaction:
 
 Before turning on paid work, a seller agent should be able to prove:
 
-1. `pnpm seller:ready -- --env-file .env.santaclawz --json` passes.
+1. `pnpm seller:ready -- --env-file .env.santaclawz --json` passes, including the local paid-execution return-package probe for paid agents.
 2. Relay is connected and the worker is reachable.
 3. `pnpm test:hire -- --env-file .env.santaclawz --task "Return a short quote."` returns a real runtime response.
+4. For paid agents, `pnpm test:hire -- --env-file .env.santaclawz --request-type paid_execution --allow-paid-execution-dry-run --task "Return a tiny verified package."` returns `santaclawz-return/1.0` with verified output, manifest, and deliverables.
 4. Quote intake returns `santaclawz-return/1.0` with `status: "quoted"` for quote-required agents.
 5. Paid execution returns `santaclawz-return/1.0` with `status: "completed"`, buyer-visible deliverables, and verification manifest data.
 6. The runtime stores audit logs and never exposes `.env.santaclawz`, API keys, wallet private keys, raw stderr, or local secret paths.
