@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 
+import { canonicalDigest } from "../packages/protocol/src/hashing/digest.js";
+
 const BOOLEAN_FLAGS = new Set(["help", "json"]);
 
 function printUsage() {
@@ -168,6 +170,19 @@ function add(errors, condition, message) {
   }
 }
 
+function isAtomicAmount(value) {
+  return typeof value === "string" && /^[0-9]+$/.test(value) && BigInt(value) > 0n;
+}
+
+function authorizationDigest(payload) {
+  const {
+    authorizationDigest: _authorizationDigest,
+    x402Version: _x402Version,
+    ...digestPayload
+  } = payload;
+  return canonicalDigest(digestPayload).sha256Hex;
+}
+
 function validatePaymentPayload(input) {
   const errors = [];
   const warnings = [];
@@ -177,19 +192,27 @@ function validatePaymentPayload(input) {
   add(errors, paymentPayload.settlementRail === "evm", "paymentPayload.settlementRail must be 'evm' for Base/Ethereum USDC.");
   add(errors, typeof paymentPayload.payTo === "string", "paymentPayload.payTo is required.");
   add(errors, typeof paymentPayload.amount === "string", "paymentPayload.amount is required.");
+  add(errors, isAtomicAmount(paymentPayload.amount), "paymentPayload.amount must be an atomic token-unit string, not decimal USD. For Base USDC, $0.25 is '250000'.");
   add(errors, isRecord(paymentPayload.authorization), "paymentPayload.authorization is required.");
   add(errors, isRecord(paymentPayload.authorization?.typedData?.message), "paymentPayload.authorization.typedData.message is required.");
   add(errors, typeof paymentPayload.authorization?.signature === "string", "paymentPayload.authorization.signature is required.");
   add(errors, /^[a-f0-9]{64}$/i.test(String(paymentPayload.authorizationDigest ?? "")), "paymentPayload.authorizationDigest must be a 64-character hex digest.");
+  const expectedAuthorizationDigest = authorizationDigest(paymentPayload);
+  add(errors, paymentPayload.authorizationDigest === expectedAuthorizationDigest, "paymentPayload.authorizationDigest does not match the canonical payload digest. Rebuild the payload instead of editing it by hand.");
 
   const accept = matchingAccept(paymentRequirement, paymentPayload);
   add(errors, Boolean(accept), "Payment payload does not match any advertised payment requirement accept option.");
+  if (accept) {
+    const acceptAmount = String(accept.amount ?? accept.price ?? "");
+    add(errors, isAtomicAmount(acceptAmount), "Matched payment requirement amount must be an atomic token-unit string. For Base USDC, $0.25 is '250000'.");
+  }
 
   const accepted = isRecord(paymentPayload.accepted) ? paymentPayload.accepted : null;
   add(errors, Boolean(accepted), "paymentPayload.accepted is required for the hosted EVM facilitator.");
   if (accepted) {
     add(errors, typeof accepted.asset === "string", "paymentPayload.accepted.asset must be the token address string.");
     add(errors, typeof accepted.amount === "string", "paymentPayload.accepted.amount is required.");
+    add(errors, isAtomicAmount(accepted.amount), "paymentPayload.accepted.amount must be an atomic token-unit string. For Base USDC, $0.25 is '250000'.");
     add(errors, typeof accepted.payTo === "string", "paymentPayload.accepted.payTo is required.");
     if (accept) {
       const assetAddress = isRecord(accept.asset) ? accept.asset.address : accept.asset;
@@ -206,6 +229,9 @@ function validatePaymentPayload(input) {
     const hostedFeeSplit = isRecord(accepted?.extra?.feeSplit) ? accepted.extra.feeSplit : null;
     add(errors, Boolean(hostedFeeSplit), "paymentPayload.accepted.extra.feeSplit is required for exact fee-split payments.");
     if (hostedFeeSplit) {
+      add(errors, isAtomicAmount(hostedFeeSplit.grossAmount), "accepted.extra.feeSplit.grossAmount must be an atomic token-unit string.");
+      add(errors, isAtomicAmount(hostedFeeSplit.sellerAmount), "accepted.extra.feeSplit.sellerAmount must be an atomic token-unit string.");
+      add(errors, isAtomicAmount(hostedFeeSplit.protocolFeeAmount), "accepted.extra.feeSplit.protocolFeeAmount must be an atomic token-unit string.");
       add(errors, hostedFeeSplit.grossAmount === String(paymentPayload.amount), "accepted.extra.feeSplit.grossAmount must equal paymentPayload.amount.");
       add(errors, String(hostedFeeSplit.sellerAmount ?? "") === String(feeSplit.sellerAmount ?? ""), "accepted.extra.feeSplit.sellerAmount does not match the advertised split.");
       add(errors, String(hostedFeeSplit.protocolFeeAmount ?? "") === String(feeSplit.protocolFeeAmount ?? ""), "accepted.extra.feeSplit.protocolFeeAmount does not match the advertised split.");
@@ -224,6 +250,8 @@ function validatePaymentPayload(input) {
     networkId: paymentPayload.networkId,
     amount: paymentPayload.amount,
     payTo: paymentPayload.payTo,
+    authorizationDigestValid: paymentPayload.authorizationDigest === expectedAuthorizationDigest,
+    expectedAuthorizationDigest,
     errors,
     warnings
   };
