@@ -296,9 +296,19 @@ function normalizePaymentRequiredEvmAmounts(value: JsonRecord): JsonRecord {
     // The SantaClawz x402 contract treats EVM payment amount fields as token
     // minor units. Keep decimal display values in price/amountUsd, but force
     // accepts[].amount to the atomic gross amount when an exact fee split exists.
+    const normalizedExtensions = isRecord(extensions)
+      ? {
+          ...extensions,
+          evm: {
+            ...(evm ?? {}),
+            amountUnit: "atomic"
+          }
+        }
+      : extensions;
     return {
       ...accept,
-      amount: grossAmount
+      amount: grossAmount,
+      extensions: normalizedExtensions
     };
   });
   return normalized;
@@ -1221,6 +1231,7 @@ function railAcceptPreview(plan: AgentX402Plan, rail: AgentX402RailPlan) {
       ...(rail.settlementRail === "evm"
         ? {
             evm: {
+              amountUnit: atomicAmount ? "atomic" : "decimal",
               ...(rail.facilitatorUrl ? { facilitatorUrl: rail.facilitatorUrl } : {}),
               ...(rail.settlementContractAddress ? { escrowContract: rail.settlementContractAddress } : {}),
               ...(feePreview
