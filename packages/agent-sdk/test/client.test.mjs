@@ -442,6 +442,7 @@ async function main() {
             settlementModel: "x402-exact-evm-fee-split-v1",
             extensions: {
               evm: {
+                amountUnit: "atomic",
                 chainId: 8453,
                 assetAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
                 eip712Name: "USD Coin",
@@ -464,10 +465,12 @@ async function main() {
       signTypedData: ({ message }) => `0xsigned_${message.to}_${message.value}`
     });
     assert.equal(feeSplitPayload.sessionId, "session_fee_split_sdk");
+    assert.equal(feeSplitPayload.extensions.evm.amountUnit, "atomic");
     assert.equal(feeSplitPayload.extensions.santaclawz.idempotencyKey, feeSplitPayload.paymentId);
     assert.equal(feeSplitPayload.payloadShape, "santaclawz-hosted-exact-fee-split-v1");
     assert.equal(feeSplitPayload.accepted.asset, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
     assert.equal(feeSplitPayload.accepted.amount, "420000");
+    assert.equal(feeSplitPayload.accepted.extra.amountUnit, "atomic");
     assert.equal(feeSplitPayload.accepted.payTo, "0x1908217952D7117f5aeFBbd91AeBf04566D286f9");
     assert.equal(feeSplitPayload.accepted.extra.feeSplit.grossAmount, "420000");
     assert.equal(feeSplitPayload.payload.authorization.value, "419580");

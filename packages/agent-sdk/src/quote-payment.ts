@@ -313,6 +313,12 @@ export async function buildClawzFeeSplitExactPaymentPayload(
   }
   const grossAmount = grossAmountValue;
   const assetAddress = feeSplitAssetAddress({ accept, evm });
+  const amountUnit =
+    isRecord(accept.extensions) &&
+    isRecord(accept.extensions.evm) &&
+    accept.extensions.evm.amountUnit === "atomic"
+      ? "atomic"
+      : "decimal";
   const sellerTypedData = buildReceiveWithAuthorizationTypedData({
     evm,
     from: input.payer,
@@ -343,6 +349,9 @@ export async function buildClawzFeeSplitExactPaymentPayload(
     feeNonce: feeTypedData.message.nonce
   }).sha256Hex.slice(0, 24)}`;
   const extensions = {
+    evm: {
+      amountUnit
+    },
     santaclawz: {
       paymentId,
       idempotencyKey: paymentId,
@@ -367,6 +376,7 @@ export async function buildClawzFeeSplitExactPaymentPayload(
     extra: {
       name: typeof evm.eip712Name === "string" ? evm.eip712Name : "USD Coin",
       version: typeof evm.assetVersion === "string" ? evm.assetVersion : "2",
+      amountUnit,
       settlementModel: "x402-exact-evm-fee-split-v1",
       feeSplit: {
         version: typeof feeSplit.version === "string" ? feeSplit.version : "protocol-owner-fee-v1",

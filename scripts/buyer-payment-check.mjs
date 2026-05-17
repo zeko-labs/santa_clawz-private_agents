@@ -174,6 +174,11 @@ function isAtomicAmount(value) {
   return typeof value === "string" && /^[0-9]+$/.test(value) && BigInt(value) > 0n;
 }
 
+function evmAmountUnit(value) {
+  const amountUnit = value?.extensions?.evm?.amountUnit;
+  return amountUnit === "atomic" || amountUnit === "decimal" ? amountUnit : "";
+}
+
 function authorizationDigest(payload) {
   const {
     authorizationDigest: _authorizationDigest,
@@ -205,6 +210,13 @@ function validatePaymentPayload(input) {
   if (accept) {
     const acceptAmount = String(accept.amount ?? accept.price ?? "");
     add(errors, isAtomicAmount(acceptAmount), "Matched payment requirement amount must be an atomic token-unit string. For Base USDC, $0.25 is '250000'.");
+    if (evmAmountUnit(accept) === "atomic") {
+      add(
+        errors,
+        evmAmountUnit(paymentPayload) === "atomic",
+        "paymentPayload.extensions.evm.amountUnit must be 'atomic' because the matched payment requirement uses atomic EVM token units."
+      );
+    }
   }
 
   const accepted = isRecord(paymentPayload.accepted) ? paymentPayload.accepted : null;

@@ -41,7 +41,7 @@ For hosted Base/Ethereum EVM facilitators, the payment payload must include:
 
 `accepted.amount` is always the token minor-unit amount for EVM rails. For Base/Ethereum USDC, `$0.25` is `"250000"`, not `"0.25"`. Human display fields such as `amountUsd` may contain `"0.25"`; x402 amount fields, fee-split amounts, and EIP-3009 authorization values must be atomic units.
 
-SantaClawz marks EVM payment requirements with `extensions.evm.amountUnit: "atomic"` so hosted x402 facilitator helpers do not convert the amount a second time.
+SantaClawz marks EVM payment requirements with `extensions.evm.amountUnit: "atomic"` so hosted x402 facilitator helpers do not convert the amount a second time. Buyer SDKs must preserve that generic EVM extension in the signed payment payload; do not rely on app-named extension aliases for amount units.
 
 For SantaClawz fee-split payloads, use the SDK helper. It includes both:
 

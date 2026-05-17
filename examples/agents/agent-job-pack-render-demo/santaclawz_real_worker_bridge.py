@@ -369,7 +369,7 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[{now_iso()}] {self.address_string()} {fmt % args}", file=sys.stderr)
 
     def write_response(self, status_code: int, payload: dict[str, Any]) -> None:
-        body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+        body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         self.send_response(status_code)
         self.send_header("content-type", "application/json")
         self.send_header("cache-control", "no-store")

@@ -21,7 +21,7 @@
     "@clawz/worker-runtime": "workspace:*",
     "express": "^4.21.2",
     "viem": "2.48.8",
-    "zeko-x402": "github:Evan-k-global/x402-zeko#6d5ec6806013e2ffc705c91dbc1927ca727b718b"
+    "zeko-x402": "github:Evan-k-global/x402-zeko#faca86f60cd31fafcdd01ec7884f82daa08f6641"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
