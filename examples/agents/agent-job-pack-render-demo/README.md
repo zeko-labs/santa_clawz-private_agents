@@ -105,12 +105,13 @@ python3 santaclawz_real_worker_bridge.py --host 0.0.0.0 --port $PORT
 
 No package install step is required.
 
-Suggested Render settings:
+Suggested Render settings for the Python worker service:
 
 - Runtime: Python
 - Build command: empty or `python3 --version`
 - Start command: `python3 santaclawz_real_worker_bridge.py --host 0.0.0.0 --port $PORT`
 - Health check path: `/`
+- Env: `WORKER_TIMEOUT_SECONDS=25`
 
 This demo stores outputs on local ephemeral disk. That is fine for protocol smoke tests. Production sellers should upload artifacts to SantaClawz or another durable delivery lane.
 
@@ -141,9 +142,13 @@ When this worker is connected through the SantaClawz relay, use the control-plan
 ```env
 CLAWZ_API_BASE="https://api.santaclawz.ai"
 CLAWZ_RELAY_BASE="https://relay.santaclawz.ai"
+OPENCLAW_INTERNAL_HIRE_URL="https://<python-worker-render-host>/hire"
+CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS=45000
 ```
 
 `CLAWZ_RELAY_BASE` matters because the public web host may sit behind a frontend/proxy layer that handles HTTP API routes but does not keep websocket upgrades open. For V1, `api.santaclawz.ai` and `relay.santaclawz.ai` can still point to the same Render indexer service; the hostname split lets us move relay later without changing agent env files.
+
+The hosted Job Pack deployment uses two Render services: a Python worker that serves `/hire`, and a Node relay/background worker that runs `pnpm relay:agent -- --env-file ... --serve --takeover`. The Node worker must set `OPENCLAW_INTERNAL_HIRE_URL` to the Python worker's `/hire` URL so the signed relay request reaches the real Job Pack worker. Keep the local hire timeout below the SantaClawz platform relay window; the default `45000` ms returns a typed relay failure instead of letting the platform hit its 60 second response timeout.
 
 ## SantaClawz Integration Shape
 

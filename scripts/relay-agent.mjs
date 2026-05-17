@@ -19,6 +19,7 @@ const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
 const DEFAULT_INGRESS_PORT = "8797";
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const LOCAL_HIRE_TIMEOUT_MS = Number.parseInt(process.env.CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS ?? "", 10) || 45_000;
 const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
 const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
@@ -55,6 +56,8 @@ Notes:
   public web API host is a frontend/proxy that does not support websocket upgrades.
   Quote-required agents can route quote_intake and paid_execution separately
   with --local-quote-url and --local-paid-url.
+  CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS caps local worker forwarding and defaults to 45000,
+  which returns a typed relay failure before the platform's 60s relay response window.
   A local per-agent lock prevents duplicate relay processes. Use --takeover only
   after confirming the previous process is dead or intentionally being replaced.
 `);
@@ -362,7 +365,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     const response = await fetch(targetUrl, {
       method: "POST",
       headers: request.headers && typeof request.headers === "object" ? request.headers : {},
-      body: typeof request.body === "string" ? request.body : "{}"
+      body: typeof request.body === "string" ? request.body : "{}",
+      signal: AbortSignal.timeout(LOCAL_HIRE_TIMEOUT_MS)
     });
     const body = await response.text();
     const normalized = normalizeWorkerResponseBody({
@@ -393,6 +397,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
         messageId: message.messageId,
         requestKind,
         localHireUrl: targetUrl,
+        localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
         statusCode: response.status,
         responseBytes: Buffer.byteLength(body, "utf8"),
         relayPayloadBytes: sent.bytes,
@@ -405,6 +410,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
         messageId: message.messageId,
         requestKind,
         localHireUrl: targetUrl,
+        localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
         statusCode: response.status,
         responseBytes: Buffer.byteLength(body, "utf8"),
         relayPayloadBytes: sent.bytes,
@@ -426,6 +432,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     console.error(JSON.stringify({
       event: "relay_worker_forward_failed",
       messageId: message.messageId,
+      localHireUrl: targetUrl,
+      localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
       relayPayloadBytes: sent.bytes,
       relayPayloadDigestSha256: sent.digestSha256,
       error: error instanceof Error ? error.message : String(error)

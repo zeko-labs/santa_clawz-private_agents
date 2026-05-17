@@ -8,4 +8,4 @@ services:
     healthCheckPath: "/"
     envVars:
       - key: WORKER_TIMEOUT_SECONDS
-        value: "110"
+        value: "25"
