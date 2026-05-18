@@ -2529,6 +2529,19 @@ pre,
   font-size: 0.75rem;
 }
 
+.activation-status-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .activation-ticket-issued-row {
   align-items: center;
 }
