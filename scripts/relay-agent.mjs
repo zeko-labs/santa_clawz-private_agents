@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +30,7 @@ const RELAY_AGENT_FEATURES = [
   "hire_ack",
   "worker_progress",
   "local_timeout_watchdog",
+  "node_http_worker_forwarding",
   "worker_response_telemetry"
 ];
 const RELAY_AGENT_BUILD =
@@ -377,6 +380,80 @@ function normalizeWorkerResponseBody(input) {
   };
 }
 
+function sanitizeWorkerForwardHeaders(headers) {
+  const output = {};
+  const blocked = new Set([
+    "connection",
+    "content-length",
+    "host",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade"
+  ]);
+  if (!headers || typeof headers !== "object") {
+    return output;
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    const normalizedKey = String(key).toLowerCase();
+    if (blocked.has(normalizedKey)) {
+      continue;
+    }
+    if (typeof value === "string") {
+      output[key] = value;
+    } else if (Array.isArray(value)) {
+      output[key] = value.map((item) => String(item));
+    }
+  }
+  return output;
+}
+
+function postWorkerRequest(targetUrl, input) {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(targetUrl);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const body = typeof input.body === "string" ? input.body : "{}";
+    const transport = url.protocol === "http:" ? http : https;
+    const request = transport.request(
+      url,
+      {
+        method: "POST",
+        headers: {
+          ...sanitizeWorkerForwardHeaders(input.headers),
+          "content-length": Buffer.byteLength(body, "utf8")
+        },
+        timeout: input.timeoutMs
+      },
+      (response) => {
+        response.setEncoding("utf8");
+        let responseBody = "";
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          resolve({
+            status: response.statusCode ?? 502,
+            body: responseBody
+          });
+        });
+      }
+    );
+    request.on("timeout", () => {
+      request.destroy(new Error(`Local worker did not return within ${input.timeoutMs}ms.`));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 async function handleRelayMessage(message, localHireUrl, sendJson) {
   if (!message || typeof message !== "object" || message.type !== "hire_request") {
     return;
@@ -459,14 +536,13 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       relayAgentFeatures: RELAY_AGENT_FEATURES,
       localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS
     });
-    const response = await fetch(targetUrl, {
-      method: "POST",
+    const response = await postWorkerRequest(targetUrl, {
       headers: request.headers && typeof request.headers === "object" ? request.headers : {},
       body: typeof request.body === "string" ? request.body : "{}",
-      signal: AbortSignal.timeout(LOCAL_HIRE_TIMEOUT_MS)
+      timeoutMs: LOCAL_HIRE_TIMEOUT_MS
     });
     clearTimeout(watchdog);
-    const body = await response.text();
+    const body = response.body;
     const normalized = normalizeWorkerResponseBody({
       body,
       requestBody: typeof request.body === "string" ? request.body : "{}"
@@ -524,8 +600,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     const failedEnvelope = {
       type: "hire_response",
       messageId: message.messageId,
-      statusCode: error instanceof Error && error.name === "TimeoutError" ? 504 : 502,
-      workerStatusCode: error instanceof Error && error.name === "TimeoutError" ? 504 : 502,
+      statusCode: error instanceof Error && /timed? out|timeout/i.test(error.message) ? 504 : 502,
+      workerStatusCode: error instanceof Error && /timed? out|timeout/i.test(error.message) ? 504 : 502,
       body: failedReturnPackage({
         requestId: requestIdFromSignedBody(request.body),
         incidentId: `relay_forward_${Date.now()}`,
