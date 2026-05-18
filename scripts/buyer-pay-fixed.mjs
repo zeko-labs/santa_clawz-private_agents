@@ -129,6 +129,37 @@ function digestJson(value) {
   return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
+function stringField(value, key) {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : "";
+}
+
+function paidExecutionSummary(responseOk, payload) {
+  const operational = isRecord(payload?.operationalStatus) ? payload.operationalStatus : {};
+  const payment = isRecord(payload?.payment) ? payload.payment : {};
+  const paymentStatus = stringField(operational, "paymentStatus") || stringField(payload, "paymentStatus") || stringField(payment, "status");
+  const settlementStatus = stringField(operational, "settlementStatus") || stringField(payload, "settlementStatus") || "unknown";
+  const relayDeliveryStatus = stringField(operational, "relayDeliveryStatus") || stringField(payload, "relayDeliveryStatus") || "not_confirmed";
+  const agentExecutionStatus =
+    stringField(operational, "agentExecutionStatus") || stringField(payload, "agentExecutionStatus") || stringField(payload, "status") || "not_confirmed";
+  const paymentAccepted = ["authorized", "settled", "paid", "escrowed"].includes(paymentStatus);
+  const jobCompleted =
+    responseOk &&
+    ["settled", "paid", "escrowed"].includes(paymentStatus) &&
+    settlementStatus === "settled" &&
+    ["forwarded", "recorded"].includes(relayDeliveryStatus) &&
+    agentExecutionStatus === "completed";
+  return {
+    ok: jobCompleted,
+    paymentAccepted,
+    paymentStatus: paymentStatus || "unknown",
+    settlementStatus,
+    relayDeliveryStatus,
+    agentExecutionStatus,
+    jobCompleted,
+    code: jobCompleted ? "paid_execution_completed" : "paid_execution_not_completed"
+  };
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
@@ -196,7 +227,7 @@ try {
 }
 
 const output = {
-  ok: response.ok,
+  ...paidExecutionSummary(response.ok, payload),
   status: response.status,
   agentId,
   paymentPayloadDigestSha256: digestJson(paymentPayload),
@@ -211,6 +242,6 @@ const output = {
 };
 console.log(JSON.stringify(output, null, 2));
 
-if (!response.ok) {
+if (!output.ok) {
   process.exitCode = 1;
 }

@@ -106,6 +106,45 @@ function isX402PaymentPayload(value) {
   );
 }
 
+function stringField(value, key) {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : "";
+}
+
+function paidExecutionSummary(responseOk, payload) {
+  const paidExecution = isRecord(payload?.paidExecution) ? payload.paidExecution : {};
+  const operational = isRecord(paidExecution.operationalStatus)
+    ? paidExecution.operationalStatus
+    : isRecord(payload?.operationalStatus)
+      ? payload.operationalStatus
+      : {};
+  const payment = isRecord(payload?.payment) ? payload.payment : {};
+  const paymentStatus = stringField(operational, "paymentStatus") || stringField(payload, "paymentStatus") || stringField(payment, "status");
+  const settlementStatus = stringField(operational, "settlementStatus") || stringField(payload, "settlementStatus") || "unknown";
+  const relayDeliveryStatus = stringField(operational, "relayDeliveryStatus") || stringField(payload, "relayDeliveryStatus") || "not_confirmed";
+  const agentExecutionStatus =
+    stringField(operational, "agentExecutionStatus") ||
+    stringField(payload, "agentExecutionStatus") ||
+    stringField(paidExecution, "status") ||
+    "not_confirmed";
+  const paymentAccepted = ["authorized", "settled", "paid", "escrowed"].includes(paymentStatus);
+  const jobCompleted =
+    responseOk &&
+    ["settled", "paid", "escrowed"].includes(paymentStatus) &&
+    settlementStatus === "settled" &&
+    ["forwarded", "recorded"].includes(relayDeliveryStatus) &&
+    agentExecutionStatus === "completed";
+  return {
+    ok: jobCompleted,
+    paymentAccepted,
+    paymentStatus: paymentStatus || "unknown",
+    settlementStatus,
+    relayDeliveryStatus,
+    agentExecutionStatus,
+    jobCompleted,
+    code: jobCompleted ? "paid_execution_completed" : "paid_execution_not_completed"
+  };
+}
+
 function paymentPayloadShapeFailure(message, extra = {}) {
   return {
     ok: false,
@@ -253,7 +292,7 @@ if (args.json) {
           intentId
         }
       : {
-          ok: response.ok,
+          ...paidExecutionSummary(response.ok, payload),
           status: response.status,
           intentId,
           response: payload
@@ -263,6 +302,8 @@ if (args.json) {
   console.log(JSON.stringify(payload, null, 2));
 }
 
-if (!response.ok) {
+if (args.json && !paidExecutionSummary(response.ok, payload).ok) {
+  process.exitCode = 1;
+} else if (!args.json && !response.ok) {
   process.exitCode = 1;
 }
