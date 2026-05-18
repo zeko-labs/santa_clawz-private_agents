@@ -210,6 +210,19 @@ function warnIfRenderPublicWorkerUrl(targetUrl) {
   }));
 }
 
+function warnIfBundledIngressAndExplicitPaidRoute(input) {
+  if (!input.shouldServe || !input.localPaidUrl) {
+    return;
+  }
+  console.error(JSON.stringify({
+    event: "relay_worker_split_route_notice",
+    defaultRoute: input.localHireUrl,
+    paidExecutionRoute: input.localPaidUrl,
+    note:
+      "Bundled --serve ingress is enabled, but paid_execution is explicitly routed to --local-paid-url/CLAWZ_LOCAL_PAID_EXECUTION_URL. This is expected for split-route agents such as Hermes bridges."
+  }));
+}
+
 function firstNonEmptyString(...values) {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) {
@@ -977,6 +990,11 @@ try {
   for (const target of new Set(Object.values(localHireRoutes))) {
     warnIfRenderPublicWorkerUrl(target);
   }
+  warnIfBundledIngressAndExplicitPaidRoute({
+    shouldServe,
+    localHireUrl,
+    localPaidUrl
+  });
 
   if (shouldHeartbeat) {
       const firstHeartbeat = await postHeartbeat({

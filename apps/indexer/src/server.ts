@@ -2264,6 +2264,18 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       paymentsReady: consoleState.paymentProfileReady,
       quoteReady,
       paidExecutionReady,
+      runtimeRoutes: {
+        mode: consoleState.profile.runtimeDelivery.mode,
+        ...(consoleState.profile.runtimeDelivery.runtimeIngressUrl
+          ? { default: consoleState.profile.runtimeDelivery.runtimeIngressUrl }
+          : {}),
+        ...(consoleState.profile.runtimeDelivery.runtimeRoutes?.quote_intake
+          ? { quote_intake: consoleState.profile.runtimeDelivery.runtimeRoutes.quote_intake }
+          : {}),
+        ...(consoleState.profile.runtimeDelivery.runtimeRoutes?.paid_execution
+          ? { paid_execution: consoleState.profile.runtimeDelivery.runtimeRoutes.paid_execution }
+          : {})
+      },
       deliveryLanes: supportedDeliveryLanes(),
       scannerReady: scannerHealth.reachable,
       scanner: {

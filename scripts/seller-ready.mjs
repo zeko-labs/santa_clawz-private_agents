@@ -95,6 +95,22 @@ function resolveConfig(args) {
     throw new Error("agent-id, session-id, and admin-key are required. Use --env-file .env.santaclawz or set CLAWZ_AGENT_* env vars.");
   }
 
+  const localHireUrl = String(
+    args["local-paid-url"] ??
+      args["local-hire-url"] ??
+      process.env.CLAWZ_LOCAL_PAID_HIRE_URL ??
+      process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL ??
+      process.env.CLAWZ_LOCAL_HIRE_URL ??
+      process.env.OPENCLAW_LOCAL_HIRE_URL ??
+      "http://127.0.0.1:8797/hire"
+  ).trim();
+  const localRouteSummary = {
+    ...(args["local-hire-url"] || process.env.CLAWZ_LOCAL_HIRE_URL || process.env.OPENCLAW_LOCAL_HIRE_URL
+      ? { default: String(args["local-hire-url"] ?? process.env.CLAWZ_LOCAL_HIRE_URL ?? process.env.OPENCLAW_LOCAL_HIRE_URL).trim() }
+      : {}),
+    paid_execution: localHireUrl
+  };
+
   return {
     apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim()),
     agentId,
@@ -105,15 +121,8 @@ function resolveConfig(args) {
     localOnly: Boolean(args["local-only"]),
     verifyAvailability: !args["no-availability"],
     paidExecutionProbe: !args["no-paid-execution-probe"],
-    localHireUrl: String(
-      args["local-paid-url"] ??
-        args["local-hire-url"] ??
-        process.env.CLAWZ_LOCAL_PAID_HIRE_URL ??
-        process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL ??
-        process.env.CLAWZ_LOCAL_HIRE_URL ??
-        process.env.OPENCLAW_LOCAL_HIRE_URL ??
-        "http://127.0.0.1:8797/hire"
-    ).trim(),
+    localHireUrl,
+    localRouteSummary,
     CLAWZ_AGENT_INGRESS_TOKEN: String(process.env.CLAWZ_AGENT_INGRESS_TOKEN ?? "").trim(),
     CLAWZ_AGENT_SIGNING_SECRET: String(process.env.CLAWZ_AGENT_SIGNING_SECRET ?? "").trim(),
     CLAWZ_AGENT_SERVICE_KEY: String(process.env.CLAWZ_AGENT_SERVICE_KEY ?? "").trim(),

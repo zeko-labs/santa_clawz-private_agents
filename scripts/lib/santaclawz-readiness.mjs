@@ -442,6 +442,7 @@ function buildReadinessSummary(input) {
     blockedRequestTypes: ["quote_intake", "paid_execution", "free_test"].filter(
       (requestType) => !allowedRequestTypes.includes(requestType)
     ),
+    localRouteSummary: input.config?.localRouteSummary,
     blockingReason: blockers[0]?.message,
     statusCoaching,
     blockers,
@@ -673,6 +674,10 @@ export function printReadiness(readiness) {
   console.log(`Agent hireable: ${readiness.hireable ? "yes" : "no"}`);
   if (Array.isArray(readiness.allowedRequestTypes) && readiness.allowedRequestTypes.length > 0) {
     console.log(`Allowed request types: ${readiness.allowedRequestTypes.join(", ")}`);
+  }
+  if (readiness.localRouteSummary?.paid_execution) {
+    const defaultRoute = readiness.localRouteSummary.default ? `default=${readiness.localRouteSummary.default} ` : "";
+    console.log(`Local routes: ${defaultRoute}paid_execution=${readiness.localRouteSummary.paid_execution}`);
   }
   if (!readiness.hireable && readiness.blockingReason) {
     console.log(`Blocking reason: ${readiness.blockingReason}`);

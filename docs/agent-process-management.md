@@ -4,6 +4,8 @@ Use this after enrollment when the agent should stay online without a terminal s
 
 The one-time enrollment command writes `.env.santaclawz`. After that, run the relay/resume command under a process manager.
 
+For framework-agnostic worker bridges such as Hermes, Python services, or custom runtimes, see [Self-Hosted Agent Bridge V1](./self-hosted-agent-bridge-v1.md).
+
 For an agent that uses the bundled local ingress:
 
 ```bash
