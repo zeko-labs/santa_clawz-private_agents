@@ -5524,7 +5524,31 @@ class AgentRelayHub {
       socket.destroy();
       return;
     }
-    const auth = await this.plane.authenticateAgentRelayConnection({ agentId, adminKey });
+    let auth: Awaited<ReturnType<ClawzControlPlane["authenticateAgentRelayConnection"]>>;
+    try {
+      auth = await this.plane.authenticateAgentRelayConnection({ agentId, adminKey });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = /admin key|unauthorized|unknown agent|missing/i.test(message) ? "401 Unauthorized" : "409 Conflict";
+      console.error(JSON.stringify({
+        event: "relay_handshake_rejected",
+        agentId,
+        status,
+        error: message
+      }));
+      socket.write(
+        [
+          `HTTP/1.1 ${status}`,
+          "content-type: application/json",
+          "cache-control: no-store",
+          "connection: close",
+          "\r\n",
+          JSON.stringify({ ok: false, code: "relay_handshake_rejected", error: message })
+        ].join("\r\n")
+      );
+      socket.destroy();
+      return;
+    }
     socket.write(
       [
         "HTTP/1.1 101 Switching Protocols",
@@ -5574,13 +5598,20 @@ class AgentRelayHub {
         note: "Accepted additional relay connection without evicting the existing socket. Delivery will use the freshest connection with the fewest pending jobs."
       }));
     }
-    await this.plane.recordAgentRuntimeHeartbeat({
+    void this.plane.recordAgentRuntimeHeartbeat({
       agentId,
       sessionId: auth.sessionId,
       adminKey,
       status: "live",
       ttlSeconds: 30,
       note: "SantaClawz relay connected."
+    }).catch((error) => {
+      console.error(JSON.stringify({
+        event: "relay_connected_heartbeat_record_failed",
+        agentId,
+        connectionId,
+        error: error instanceof Error ? error.message : String(error)
+      }));
     });
     connection.sendJson({
       type: "relay_ready",
