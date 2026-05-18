@@ -2184,6 +2184,20 @@ function paidExecutionTerminalOutcome(request: HireRequestRecord, nowMs = Date.n
   return "pending";
 }
 
+function hasVerifiedPaidExecutionForSession(
+  hireRequests: HireRequestFile,
+  sessionId: string,
+  options: { includePrivate?: boolean } = {}
+) {
+  return hireRequests.requests.some(
+    (request) =>
+      request.sessionId === sessionId &&
+      (options.includePrivate !== false || !isPrivateHireRequest(request)) &&
+      request.requestType === "paid_execution" &&
+      paidExecutionTerminalOutcome(request) === "completed"
+  );
+}
+
 function buildAgentCompletionScore(
   hireRequests: HireRequestFile,
   sessionId: string,
@@ -2256,6 +2270,7 @@ function buildAgentReadinessState(input: {
   runtimeReachable: boolean;
   heartbeat: AgentRuntimeHeartbeatState;
   paymentReady: boolean;
+  paidExecutionProvenByHistory?: boolean;
   lastJobStatus?: AgentReadinessState["lastJobStatus"];
 }): AgentReadinessState {
   const heartbeatLive = input.heartbeat.status === "live";
@@ -2292,14 +2307,12 @@ function buildAgentReadinessState(input: {
     blockers.push("payment-not-ready");
   }
   const paidMode = input.profile.paymentProfile.pricingMode === "fixed-exact" || input.profile.paymentProfile.pricingMode === "quote-required";
-  const paidExecutionProven = paidMode ? input.heartbeat.paidExecutionProbe?.ok === true : undefined;
-  const upgradeReasons = paidMode
-    ? [
-        ...(!input.heartbeat.relayAgentWorkerTiming ? ["missing-current-relay-timing"] : []),
-        ...(input.heartbeat.paidExecutionProbe?.ok === true ? [] : ["paid-execution-not-proven"])
-      ]
-    : [];
+  const paidExecutionProven = paidMode
+    ? input.heartbeat.paidExecutionProbe?.ok === true || input.paidExecutionProvenByHistory === true
+    : undefined;
+  const upgradeReasons = paidMode && !paidExecutionProven ? ["paid-execution-not-proven"] : [];
   const needsUpgrade = paidMode && upgradeReasons.length > 0;
+  const readinessWarnings = paidMode && !input.heartbeat.relayAgentWorkerTiming ? ["missing-current-relay-timing"] : [];
 
   return {
     relayConnected: input.relayConnected,
@@ -2311,6 +2324,7 @@ function buildAgentReadinessState(input: {
     hireable: blockers.length === 0,
     ...(paidExecutionProven !== undefined ? { paidExecutionProven } : {}),
     ...(needsUpgrade ? { needsUpgrade, upgradeReasons } : {}),
+    ...(readinessWarnings.length ? { readinessWarnings } : {}),
     lastJobStatus: input.lastJobStatus ?? "none",
     blockers
   };
@@ -7740,6 +7754,9 @@ export class ClawzControlPlane {
       runtimeReachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
+      paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, focus.sessionId, {
+        includePrivate: !publicProfileView
+      }),
       lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId, { includePrivate: !publicProfileView })
     });
     const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId);
@@ -7870,6 +7887,7 @@ export class ClawzControlPlane {
       runtimeReachable: relayProfile ? relayConnected : reachability.reachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
+      paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, sessionId, { includePrivate: true }),
       lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
     });
     const availabilityReason = relayProfile
@@ -8124,6 +8142,7 @@ export class ClawzControlPlane {
           runtimeReachable: relayProfile ? relayConnected : runtimeHeartbeat.status === "live",
           heartbeat: runtimeHeartbeat,
           paymentReady,
+          paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, sessionId, { includePrivate: true }),
           lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
         });
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);

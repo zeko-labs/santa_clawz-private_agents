@@ -173,6 +173,7 @@ export interface ClawzAgentReadinessResponse extends Record<string, unknown> {
   paidExecutionProven?: boolean;
   needsUpgrade?: boolean;
   upgradeReasons?: string[];
+  readinessWarnings?: string[];
   scannerReady: boolean;
 }
 

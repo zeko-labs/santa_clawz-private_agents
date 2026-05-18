@@ -1054,6 +1054,7 @@ export interface AgentReadinessState {
   paidExecutionProven?: boolean;
   needsUpgrade?: boolean;
   upgradeReasons?: string[];
+  readinessWarnings?: string[];
   lastJobStatus?: "none" | "submitted" | "quoted" | "completed" | "failed";
   blockers: string[];
 }

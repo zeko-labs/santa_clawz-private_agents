@@ -518,6 +518,11 @@ function shellArg(value) {
 function formatEnrollmentCard(summary, options = {}) {
   const envFile = summary.envFile ?? DEFAULT_ENV_FILE;
   const envArg = shellArg(envFile);
+  const statusLabel = summary.readiness
+    ? summary.agentHireable
+      ? "hireable"
+      : "not hireable yet"
+    : "readiness not checked yet";
   const lines = [
     "",
     "SantaClawz agent onboarding card",
@@ -528,7 +533,7 @@ function formatEnrollmentCard(summary, options = {}) {
     `Programmatic hire API: ${summary.programmaticHireApiUrl ?? "not reported"}`,
     `Private env: ${envFile}`,
     `Relay base: ${summary.relayBase ?? "same as API base"}`,
-    `Status: ${summary.agentHireable ? "hireable" : "not hireable yet"}`,
+    `Status: ${statusLabel}`,
     "Human input still needed only if payout wallet, fixed price, cloud hosting, or enterprise auth policy is missing.",
     "",
     "Run after enrollment:",

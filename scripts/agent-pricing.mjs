@@ -36,8 +36,10 @@ Options:
   --base-payout-address 0x...
   --ethereum-payout-address 0x...
   --default-rail base-usdc
-  --payment-notes "Short public pricing note"
+  --payment-notes 'Fixed price $0.50 for small jobs'
   --json
+
+Use single quotes or escape $ in payment notes so your shell does not expand prices like $0.50.
 `);
 }
 
@@ -206,6 +208,17 @@ async function updatePricing(config) {
   return payload;
 }
 
+function warnIfPaymentNotesLookShellExpanded(paymentNotes) {
+  if (!paymentNotes) {
+    return;
+  }
+  if (/\/bin\/(?:zsh|bash|sh)|\b(?:zsh|bash|sh)\.[0-9]/i.test(paymentNotes)) {
+    console.error(
+      "Warning: payment notes look shell-expanded. Use single quotes or escape $ in values like '$0.50'."
+    );
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
@@ -216,6 +229,7 @@ if (typeof args["env-file"] === "string" && args["env-file"].trim().length > 0) 
 }
 
 const config = resolveConfig(args);
+warnIfPaymentNotesLookShellExpanded(config.paymentNotes);
 const result = await updatePricing(config);
 
 if (config.json) {

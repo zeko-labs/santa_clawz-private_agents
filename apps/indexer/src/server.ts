@@ -1406,6 +1406,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     paidExecutionProven: agent.readiness?.paidExecutionProven === true,
     needsUpgrade: agent.readiness?.needsUpgrade === true,
     ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
+    ...(agent.readiness?.readinessWarnings?.length ? { readinessWarnings: agent.readiness.readinessWarnings } : {}),
     capabilityTags,
     pricing: {
       pricingMode: agent.pricingMode,
@@ -1428,6 +1429,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
       paidExecutionProven: agent.readiness?.paidExecutionProven === true,
       needsUpgrade: agent.readiness?.needsUpgrade === true,
       ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
+      ...(agent.readiness?.readinessWarnings?.length ? { readinessWarnings: agent.readiness.readinessWarnings } : {}),
       relayConnected: agent.readiness?.relayConnected === true,
       heartbeatLive: agent.readiness?.heartbeatLive === true,
       runtimeReachable: agent.readiness?.runtimeReachable === true,
@@ -2279,6 +2281,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       paidExecutionProven: consoleState.readiness?.paidExecutionProven === true,
       needsUpgrade: consoleState.readiness?.needsUpgrade === true,
       ...(consoleState.readiness?.upgradeReasons?.length ? { upgradeReasons: consoleState.readiness.upgradeReasons } : {}),
+      ...(consoleState.readiness?.readinessWarnings?.length ? { readinessWarnings: consoleState.readiness.readinessWarnings } : {}),
       runtimeRoutes: {
         mode: consoleState.profile.runtimeDelivery.mode,
         ...(consoleState.profile.runtimeDelivery.runtimeIngressUrl
