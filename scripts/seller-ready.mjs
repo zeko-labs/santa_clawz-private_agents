@@ -39,6 +39,7 @@ Options:
   --no-heartbeat            Do not send a heartbeat during readiness.
   --no-availability         Do not ask SantaClawz to probe the public ingress.
   --local-hire-url url      Local ingress used for the paid_execution return-package probe.
+  --local-paid-url url      Local paid_execution route when it differs from quote/default ingress.
   --no-paid-execution-probe Skip the local paid_execution return-package probe.
   --allow-incomplete        Print blockers but exit 0.
   --json
@@ -52,6 +53,8 @@ Environment variables:
   CLAWZ_AGENT_SIGNING_SECRET
   CLAWZ_AGENT_SERVICE_KEY
   CLAWZ_LOCAL_HIRE_URL
+  CLAWZ_LOCAL_PAID_HIRE_URL
+  CLAWZ_LOCAL_PAID_EXECUTION_URL
 `);
 }
 
@@ -102,7 +105,15 @@ function resolveConfig(args) {
     localOnly: Boolean(args["local-only"]),
     verifyAvailability: !args["no-availability"],
     paidExecutionProbe: !args["no-paid-execution-probe"],
-    localHireUrl: String(args["local-hire-url"] ?? process.env.CLAWZ_LOCAL_HIRE_URL ?? process.env.OPENCLAW_LOCAL_HIRE_URL ?? "http://127.0.0.1:8797/hire").trim(),
+    localHireUrl: String(
+      args["local-paid-url"] ??
+        args["local-hire-url"] ??
+        process.env.CLAWZ_LOCAL_PAID_HIRE_URL ??
+        process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL ??
+        process.env.CLAWZ_LOCAL_HIRE_URL ??
+        process.env.OPENCLAW_LOCAL_HIRE_URL ??
+        "http://127.0.0.1:8797/hire"
+    ).trim(),
     CLAWZ_AGENT_INGRESS_TOKEN: String(process.env.CLAWZ_AGENT_INGRESS_TOKEN ?? "").trim(),
     CLAWZ_AGENT_SIGNING_SECRET: String(process.env.CLAWZ_AGENT_SIGNING_SECRET ?? "").trim(),
     CLAWZ_AGENT_SERVICE_KEY: String(process.env.CLAWZ_AGENT_SERVICE_KEY ?? "").trim(),

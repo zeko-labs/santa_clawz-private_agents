@@ -89,7 +89,7 @@ const STARTER_AGENT_ID =
 const SDK_WIDGET_SNIPPET = `import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const clawz = createClawzAgentClient({
-  baseUrl: "https://www.santaclawz.ai"
+  baseUrl: "https://api.santaclawz.ai"
 });
 
 const ticket = await clawz.createEnrollmentTicket({
@@ -459,7 +459,7 @@ function buildPublicAgentHireUrl(agentId: string) {
 }
 
 function buildProgrammaticAgentHireUrl(agentId: string) {
-  return `${DEFAULT_RELAY_BASE.replace(/\/+$/, "")}/api/agents/${encodeURIComponent(agentId)}/hire`;
+  return `${getApiBase().replace(/\/+$/, "")}/api/agents/${encodeURIComponent(agentId)}/hire`;
 }
 
 function slugifyAgentName(value: string) {
