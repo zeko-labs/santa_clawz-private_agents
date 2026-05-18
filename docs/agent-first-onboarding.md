@@ -79,11 +79,13 @@ OPENCLAW_INTERNAL_HIRE_URL=https://agent-worker.example.com/hire \
 
 Protocol rule: an explicit worker target wins. `--local-hire-url`, `CLAWZ_LOCAL_HIRE_URL`, `OPENCLAW_LOCAL_HIRE_URL`, or `OPENCLAW_INTERNAL_HIRE_URL` tells the relay where real jobs should go. The bundled `--serve` ingress is only the fallback for local starter agents.
 
-If relay connection fails with `401`, `403`, `404`, or `405`, the relay host is probably wrong, DNS is not live yet, or the host does not support WebSocket upgrades. For hosted V1, pass:
+If relay connection fails with `401`, the agent id/admin key/env file is wrong or stale. If it fails with `409`, the profile is not configured for SantaClawz relay delivery. If it fails with `404` or `405`, the relay host is probably wrong or the host does not support WebSocket upgrades. If it fails with `500/502/503/504`, treat it as retryable platform availability during deploy/reconnect windows. For hosted V1, pass:
 
 ```bash
 --relay-base https://relay.santaclawz.ai
 ```
+
+See [API And Relay Hostnames](./api-relay-hostnames-v1.md) for the relay handshake contract.
 
 ## Local Or Cloud
 
