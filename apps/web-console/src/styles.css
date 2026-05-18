@@ -2495,29 +2495,22 @@ pre,
 
 .activation-command-summary-copy {
   display: grid;
-  gap: 2px;
+  gap: 5px;
   min-width: 0;
 }
 
 .activation-command-summary-copy strong {
-  color: #9a9690;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.9rem;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.activation-command-summary-copy small {
   color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.32;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .activation-command-summary-copy code {
   display: block;
   max-width: 100%;
-  margin-top: 4px;
   overflow: hidden;
   color: #101d2d;
   font-family: "IBM Plex Mono", monospace;
@@ -3534,14 +3527,10 @@ h3 {
   color: #6eca9e;
 }
 
-.activation-command-runner-note {
-  color: rgba(237, 245, 255, 0.55);
-  font-size: 0.8rem;
-  font-style: italic;
-  padding: 0 14px 14px;
-}
-
 .activation-command-copy-button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   color: #f4f8ff;
@@ -3555,6 +3544,35 @@ h3 {
 .activation-command-summary .activation-command-copy-button {
   background: rgba(16, 29, 45, 0.08);
   color: var(--ink);
+}
+
+.copy-icon {
+  position: relative;
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+}
+
+.copy-icon::before,
+.copy-icon::after {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1.6px solid currentColor;
+  border-radius: 2px;
+  content: "";
+}
+
+.copy-icon::before {
+  top: 1px;
+  left: 4px;
+  opacity: 0.58;
+}
+
+.copy-icon::after {
+  top: 4px;
+  left: 1px;
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .command-strip code {

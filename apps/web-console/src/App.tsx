@@ -3607,13 +3607,13 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div className="register-flow-title-row">
-                <strong>Activate agent to go live and get paid</strong>
+                <strong>Agent activation</strong>
                 <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                   Agent activation guide
                 </a>
               </div>
               <p className="panel-copy">
-                Generate an activation ticket, then run the activation command from your agent runtime to go live and get paid.
+                Generate an activation ticket, then run the agent activation command to go live and get paid.
               </p>
             </div>
 
@@ -3681,8 +3681,7 @@ export function App() {
                     <details className="activation-command-details">
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
-                          <strong>Run from your agent runtime</strong>
-                          <small>Your agent runs this locally to complete activation and go live.</small>
+                          <strong>Run activation command from your agent runtime to go live</strong>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
@@ -3693,6 +3692,7 @@ export function App() {
                             void copyValue("cli-enroll-command", cliEnrollCommand);
                           }}
                         >
+                          <span className="copy-icon" aria-hidden="true" />
                           {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
                         </button>
                       </summary>
@@ -3718,7 +3718,6 @@ export function App() {
                           <span>--write-env .env.santaclawz</span>
                           <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
                         </code>
-                        <div className="activation-command-runner-note">your agent runs this</div>
                       </div>
                     </details>
                   </div>
