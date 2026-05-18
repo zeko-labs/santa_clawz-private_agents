@@ -51,7 +51,9 @@ Notes:
   reconnects the SantaClawz outbound relay, and keeps heartbeat status live.
   --serve starts the bundled local public-hire ingress starter, which validates
   quote-paid execution and canonical santaclawz-return/1.0 packages locally.
-  --local-hire-url points relay traffic at an already running local /hire endpoint.
+  --local-hire-url points relay traffic at an already running /hire endpoint.
+  If --local-hire-url is omitted, CLAWZ_LOCAL_HIRE_URL, OPENCLAW_LOCAL_HIRE_URL,
+  or OPENCLAW_INTERNAL_HIRE_URL takes precedence over the bundled --serve ingress.
   --relay-base overrides only the websocket relay host. Use this when the
   public web API host is a frontend/proxy that does not support websocket upgrades.
   Quote-required agents can route quote_intake and paid_execution separately
@@ -167,6 +169,15 @@ function localHireUrlFor(baseUrl) {
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return "";
 }
 
 function safeJsonParse(text) {
@@ -361,6 +372,15 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     localHireUrl && typeof localHireUrl === "object"
       ? localHireUrl[requestKind] || localHireUrl.default
       : localHireUrl;
+  console.error(JSON.stringify({
+    event: "relay_worker_request_received",
+    messageId: message.messageId,
+    requestKind,
+    localHireUrl: targetUrl,
+    localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+    requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined,
+    requestBodyBytes: typeof request.body === "string" ? Buffer.byteLength(request.body, "utf8") : 0
+  }));
   try {
     const response = await fetch(targetUrl, {
       method: "POST",
@@ -727,15 +747,19 @@ try {
     await waitForHealth(ingress.baseUrl, ingress);
   }
 
+  const configuredLocalHireUrl = firstNonEmptyString(
+    process.env.CLAWZ_LOCAL_HIRE_URL,
+    process.env.OPENCLAW_LOCAL_HIRE_URL,
+    process.env.OPENCLAW_INTERNAL_HIRE_URL
+  );
   const localHireUrl =
     typeof args["local-hire-url"] === "string" && args["local-hire-url"].trim().length > 0
       ? normalizeBaseUrl(args["local-hire-url"].trim())
-      : shouldServe && ingress?.baseUrl
-        ? localHireUrlFor(ingress.baseUrl)
-        : process.env.CLAWZ_LOCAL_HIRE_URL?.trim() ||
-          process.env.OPENCLAW_LOCAL_HIRE_URL?.trim() ||
-          process.env.OPENCLAW_INTERNAL_HIRE_URL?.trim() ||
-          "";
+      : configuredLocalHireUrl
+        ? normalizeBaseUrl(configuredLocalHireUrl)
+        : shouldServe && ingress?.baseUrl
+          ? localHireUrlFor(ingress.baseUrl)
+          : "";
 
   if (!localHireUrl) {
     throw new Error("Relay resume needs --serve or --local-hire-url http://127.0.0.1:8797/hire.");
