@@ -3590,9 +3590,12 @@ export function App() {
             <div className="register-flow-head">
               <div className="register-flow-title-row">
                 <strong>Activate agent to go live and get paid</strong>
+                <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                  Agent activation guide
+                </a>
               </div>
               <p className="panel-copy">
-                Authorize your agent with a ticket, then run the activation command from your agent runtime.
+                Generate an activation ticket, then run the activation command from your agent runtime to go live and get paid.
               </p>
             </div>
 
@@ -3627,10 +3630,10 @@ export function App() {
                     }}
                   >
                     {pendingAction === "create-enrollment-ticket"
-                      ? "Issuing activation ticket..."
-                      : "Issue activation ticket"}
+                      ? "Issuing..."
+                      : "Activation ticket"}
                   </button>
-                      <p className="activation-pending-label">Activation pending — issue a ticket to continue</p>
+                      <span className="subtle-pill activation-pending-pill">Pending</span>
                     </>
                   )}
                 </div>
@@ -3657,48 +3660,50 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
-                    <p className="panel-copy activation-command-copy">Your agent authenticates itself by running this command locally. Once relay and heartbeat connect, it goes live automatically.</p>
-                    <div className="activation-command-label">Run from your agent runtime</div>
-                    <div className="command-strip compact-command-strip activation-command-strip">
-                      <div className="activation-command-ticket-bar">
-                        <span>ticket</span>
-                        <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
-                      </div>
-                      <code className="activation-command-code">
-                        <span>pnpm enroll:openclaw --</span>
-                        <span>
-                          --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
+                    <details className="activation-command-details">
+                      <summary className="activation-command-summary">
+                        <span className="activation-command-summary-copy">
+                          <strong>Run from your agent runtime</strong>
+                          <small>Your agent authenticates locally. Relay and heartbeat publish it automatically.</small>
                         </span>
-                        <span>--serve</span>
-                        <span>
-                          {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
-                            ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
-                            : "--connect-relay"}
-                        </span>
-                        {profile.runtimeDelivery.mode !== "self-hosted" ? (
-                          <span>--relay-base {shellQuote(DEFAULT_RELAY_BASE)}</span>
-                        ) : null}
-                        <span>--write-env .env.santaclawz</span>
-                        <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
-                      </code>
-                      <div className="activation-command-footer">
-                        <span>your agent runs this</span>
                         <button
                           type="button"
                           className="activation-command-copy-button"
-                          onClick={() => {
+                          onClick={(event: ClickEvent) => {
+                            event.preventDefault();
                             void copyValue("cli-enroll-command", cliEnrollCommand);
                           }}
                         >
                           {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
                         </button>
+                      </summary>
+                      <div className="command-strip compact-command-strip activation-command-strip">
+                        <div className="activation-command-ticket-bar">
+                          <span>ticket</span>
+                          <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
+                        </div>
+                        <code className="activation-command-code">
+                          <span>pnpm enroll:openclaw --</span>
+                          <span>
+                            --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
+                          </span>
+                          <span>--serve</span>
+                          <span>
+                            {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
+                              ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
+                              : "--connect-relay"}
+                          </span>
+                          {profile.runtimeDelivery.mode !== "self-hosted" ? (
+                            <span>--relay-base {shellQuote(DEFAULT_RELAY_BASE)}</span>
+                          ) : null}
+                          <span>--write-env .env.santaclawz</span>
+                          <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
+                        </code>
+                        <div className="activation-command-runner-note">your agent runs this</div>
                       </div>
-                    </div>
+                    </details>
                   </div>
                 ) : null}
-                <a className="activation-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Agent activation guide
-                </a>
               </div>
           </div>
           </section>

@@ -2451,17 +2451,51 @@ pre,
 
 .activation-command-card {
   display: grid;
-  gap: 8px;
+  gap: 0;
   margin-top: 2px;
 }
 
-.activation-command-copy {
-  margin: 0;
-  line-height: 1.48;
+.activation-command-details {
+  border: 1px solid rgba(17, 36, 56, 0.12);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+  overflow: hidden;
 }
 
-.activation-command-label {
-  margin-top: 4px;
+.activation-command-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.activation-command-summary::-webkit-details-marker {
+  display: none;
+}
+
+.activation-command-summary::before {
+  content: ">";
+  flex: 0 0 auto;
+  color: #68798b;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.activation-command-details[open] .activation-command-summary::before {
+  content: "v";
+}
+
+.activation-command-summary-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.activation-command-summary-copy strong {
   color: #9a9690;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.68rem;
@@ -2469,11 +2503,15 @@ pre,
   text-transform: uppercase;
 }
 
-.activation-pending-label {
-  flex-basis: 100%;
-  margin: -4px 0 0;
-  color: #9a9690;
-  font-size: 12px;
+.activation-command-summary-copy small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.32;
+}
+
+.activation-pending-pill {
+  color: #68798b;
+  font-size: 0.75rem;
 }
 
 .activation-ticket-issued-row {
@@ -2505,18 +2543,6 @@ pre,
 .activation-reissue-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-}
-
-.activation-guide-link {
-  width: max-content;
-  color: #9a9690;
-  font-size: 11px;
-  text-decoration: none;
-}
-
-.activation-guide-link:hover {
-  text-decoration: underline;
-  text-underline-offset: 4px;
 }
 
 .ownership-reclaim-note {
@@ -3434,8 +3460,10 @@ h3 {
   gap: 0;
   justify-content: stretch;
   align-items: stretch;
+  margin-top: 0;
   overflow: hidden;
   padding: 0;
+  border-radius: 0;
 }
 
 .activation-command-strip code {
@@ -3484,18 +3512,11 @@ h3 {
   color: #6eca9e;
 }
 
-.activation-command-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  padding: 0 14px 14px;
-}
-
-.activation-command-footer > span {
+.activation-command-runner-note {
   color: rgba(237, 245, 255, 0.55);
   font-size: 0.8rem;
   font-style: italic;
+  padding: 0 14px 14px;
 }
 
 .activation-command-copy-button {
@@ -3503,8 +3524,15 @@ h3 {
   background: rgba(255, 255, 255, 0.12);
   color: #f4f8ff;
   cursor: pointer;
+  flex: 0 0 auto;
   font-weight: 800;
+  margin-left: auto;
   padding: 8px 14px;
+}
+
+.activation-command-summary .activation-command-copy-button {
+  background: rgba(16, 29, 45, 0.08);
+  color: var(--ink);
 }
 
 .command-strip code {
@@ -4797,13 +4825,8 @@ button:disabled {
     width: 100%;
   }
 
-  .activation-command-footer {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
   .activation-command-copy-button {
-    align-self: flex-start;
+    padding: 7px 12px;
   }
 
   .text-area.connect-headline-text-area {
