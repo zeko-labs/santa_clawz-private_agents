@@ -1040,13 +1040,13 @@ try {
   const relayAgentWorkerWarnings = [...workerRouteWarnings, ...envFileOverrideWarnings];
   warnIfEnvFileRouteIsOverridden(envFileOverrideWarnings);
   if (
-    relayAgentWorkerWarnings.length > 0 &&
+    workerRouteWarnings.length > 0 &&
     /^(1|true|yes)$/i.test(process.env.CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL ?? process.env.CLAWZ_REQUIRE_PRIVATE_WORKER_URL ?? "")
   ) {
     throw new Error(
       [
-        "Relay worker route policy requires private worker URLs and unambiguous route env, but this process has route warnings.",
-        `Warnings: ${relayAgentWorkerWarnings.join(", ")}`,
+        "Relay worker route policy requires private worker URLs, but at least one effective route points at a known public provider URL.",
+        `Warnings: ${workerRouteWarnings.join(", ")}`,
         "Set OPENCLAW_INTERNAL_HIRE_URL or --local-hire-url to the Render Internal address, for example http://<internal-host>:<port>/hire."
       ].join(" ")
     );
