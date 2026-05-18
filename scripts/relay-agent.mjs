@@ -743,12 +743,26 @@ async function connectRelay(options) {
     }
   });
   const relayHeartbeatInterval = setInterval(() => {
-    sendJson({ type: "heartbeat", status: "live", ttlSeconds: 30 });
+    sendJson({
+      type: "heartbeat",
+      status: "live",
+      ttlSeconds: 30,
+      relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+      relayAgentBuild: RELAY_AGENT_BUILD,
+      relayAgentFeatures: RELAY_AGENT_FEATURES
+    });
   }, HEARTBEAT_INTERVAL_MS);
   socket.once("close", () => {
     clearInterval(relayHeartbeatInterval);
   });
-  sendJson({ type: "heartbeat", status: "live", ttlSeconds: 30 });
+  sendJson({
+    type: "heartbeat",
+    status: "live",
+    ttlSeconds: 30,
+    relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+    relayAgentBuild: RELAY_AGENT_BUILD,
+    relayAgentFeatures: RELAY_AGENT_FEATURES
+  });
   return { socket, closed, relayUrl: relayUrl.toString() };
 }
 
@@ -941,26 +955,32 @@ try {
   };
 
   if (shouldHeartbeat) {
-    const firstHeartbeat = await postHeartbeat({
-      apiBase,
-      agentId,
-      sessionId,
-      adminKey,
-      ttlSeconds: 30,
-      heartbeatNote: "SantaClawz relay resume heartbeat."
-    });
-    if (!firstHeartbeat.ok) {
-      throw new Error(firstHeartbeat.payload?.error ?? `Heartbeat failed with status ${firstHeartbeat.status}`);
-    }
-    heartbeatInterval = setInterval(() => {
-      void postHeartbeat({
+      const firstHeartbeat = await postHeartbeat({
         apiBase,
         agentId,
         sessionId,
         adminKey,
         ttlSeconds: 30,
-        heartbeatNote: "SantaClawz relay resume heartbeat."
-      }).catch((error) => {
+        heartbeatNote: "SantaClawz relay resume heartbeat.",
+        relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+        relayAgentBuild: RELAY_AGENT_BUILD,
+        relayAgentFeatures: RELAY_AGENT_FEATURES
+      });
+    if (!firstHeartbeat.ok) {
+      throw new Error(firstHeartbeat.payload?.error ?? `Heartbeat failed with status ${firstHeartbeat.status}`);
+    }
+    heartbeatInterval = setInterval(() => {
+        void postHeartbeat({
+          apiBase,
+          agentId,
+          sessionId,
+          adminKey,
+          ttlSeconds: 30,
+          heartbeatNote: "SantaClawz relay resume heartbeat.",
+          relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+          relayAgentBuild: RELAY_AGENT_BUILD,
+          relayAgentFeatures: RELAY_AGENT_FEATURES
+        }).catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
       });
     }, HEARTBEAT_INTERVAL_MS);

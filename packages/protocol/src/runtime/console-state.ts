@@ -1005,6 +1005,9 @@ export interface AgentRuntimeHeartbeatState {
   staleAtIso?: string;
   reason?: string;
   note?: string;
+  relayAgentProtocolVersion?: string;
+  relayAgentBuild?: string;
+  relayAgentFeatures?: string[];
 }
 
 export interface AgentRuntimeAvailabilityState {

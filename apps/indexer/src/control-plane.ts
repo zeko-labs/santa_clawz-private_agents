@@ -679,6 +679,9 @@ interface AgentRuntimeHeartbeatRecord {
   receivedAtIso: string;
   ttlSeconds: number;
   note?: string;
+  relayAgentProtocolVersion?: string;
+  relayAgentBuild?: string;
+  relayAgentFeatures?: string[];
 }
 
 interface AgentRuntimeHeartbeatFile {
@@ -690,6 +693,9 @@ interface AgentRuntimeHeartbeatOptions extends AgentRuntimeAvailabilityOptions {
   ttlSeconds?: number;
   note?: string;
   adminKey?: string;
+  relayAgentProtocolVersion?: string;
+  relayAgentBuild?: string;
+  relayAgentFeatures?: string[];
 }
 
 interface ConsoleStateOptions {
@@ -3580,7 +3586,10 @@ export class ClawzControlPlane {
       lastHeartbeatAtIso: record.receivedAtIso,
       staleAtIso,
       reason,
-      ...(record.note ? { note: record.note } : {})
+      ...(record.note ? { note: record.note } : {}),
+      ...(record.relayAgentProtocolVersion ? { relayAgentProtocolVersion: record.relayAgentProtocolVersion } : {}),
+      ...(record.relayAgentBuild ? { relayAgentBuild: record.relayAgentBuild } : {}),
+      ...(record.relayAgentFeatures?.length ? { relayAgentFeatures: record.relayAgentFeatures } : {})
     };
   }
 
@@ -7863,13 +7872,31 @@ export class ClawzControlPlane {
     );
     const receivedAtIso = new Date().toISOString();
     const note = typeof options.note === "string" ? options.note.trim().slice(0, 240) : "";
+    const relayAgentProtocolVersion =
+      typeof options.relayAgentProtocolVersion === "string"
+        ? options.relayAgentProtocolVersion.trim().slice(0, 80)
+        : "";
+    const relayAgentBuild =
+      typeof options.relayAgentBuild === "string"
+        ? options.relayAgentBuild.trim().slice(0, 80)
+        : "";
+    const relayAgentFeatures = Array.isArray(options.relayAgentFeatures)
+      ? options.relayAgentFeatures
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 20)
+      : [];
     const nextRecord: AgentRuntimeHeartbeatRecord = {
       agentId,
       sessionId,
       status,
       receivedAtIso,
       ttlSeconds,
-      ...(note ? { note } : {})
+      ...(note ? { note } : {}),
+      ...(relayAgentProtocolVersion ? { relayAgentProtocolVersion } : {}),
+      ...(relayAgentBuild ? { relayAgentBuild } : {}),
+      ...(relayAgentFeatures.length ? { relayAgentFeatures } : {})
     };
     const file = await this.loadRuntimeHeartbeatFile();
     const existingRecord = file.heartbeats.find((record) => record.sessionId === sessionId);
@@ -7880,6 +7907,9 @@ export class ClawzControlPlane {
       existingRecord.status === "live" &&
       existingRecord.ttlSeconds === ttlSeconds &&
       (existingRecord.note ?? "") === (nextRecord.note ?? "") &&
+      (existingRecord.relayAgentProtocolVersion ?? "") === (nextRecord.relayAgentProtocolVersion ?? "") &&
+      (existingRecord.relayAgentBuild ?? "") === (nextRecord.relayAgentBuild ?? "") &&
+      JSON.stringify(existingRecord.relayAgentFeatures ?? []) === JSON.stringify(nextRecord.relayAgentFeatures ?? []) &&
       Number.isFinite(existingReceivedAtMs) &&
       Date.parse(receivedAtIso) - existingReceivedAtMs < AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS;
     if (heartbeatCanCoalesce) {

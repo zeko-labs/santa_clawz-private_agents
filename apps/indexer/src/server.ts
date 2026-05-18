@@ -288,6 +288,9 @@ type AgentHeartbeatRequestBody = {
   status?: unknown;
   ttlSeconds?: unknown;
   note?: unknown;
+  relayAgentProtocolVersion?: unknown;
+  relayAgentBuild?: unknown;
+  relayAgentFeatures?: unknown;
 };
 type SponsorRequestBody = { amountMina?: unknown; sessionId?: unknown; purpose?: unknown };
 type RecoveryRequestBody = { sessionId?: unknown };
@@ -1087,7 +1090,10 @@ function parseAgentHeartbeatRequest(body: unknown): AgentHeartbeatRequestBody {
         sessionId: body.sessionId,
         status: body.status,
         ttlSeconds: body.ttlSeconds,
-        note: body.note
+        note: body.note,
+        relayAgentProtocolVersion: body.relayAgentProtocolVersion,
+        relayAgentBuild: body.relayAgentBuild,
+        relayAgentFeatures: body.relayAgentFeatures
       }
     : {};
 }
@@ -3224,6 +3230,15 @@ app.post("/api/agents/:agentId/heartbeat", route(async (request, response) => {
         ...(status ? { status } : {}),
         ...(typeof ttlSeconds === "number" && Number.isFinite(ttlSeconds) ? { ttlSeconds } : {}),
         ...(typeof body.note === "string" && body.note.trim().length > 0 ? { note: body.note.trim() } : {}),
+        ...(typeof body.relayAgentProtocolVersion === "string" && body.relayAgentProtocolVersion.trim().length > 0
+          ? { relayAgentProtocolVersion: body.relayAgentProtocolVersion.trim() }
+          : {}),
+        ...(typeof body.relayAgentBuild === "string" && body.relayAgentBuild.trim().length > 0
+          ? { relayAgentBuild: body.relayAgentBuild.trim() }
+          : {}),
+        ...(Array.isArray(body.relayAgentFeatures)
+          ? { relayAgentFeatures: body.relayAgentFeatures.filter((value): value is string => typeof value === "string") }
+          : {}),
         ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
       })
     );
@@ -5792,7 +5807,12 @@ class AgentRelayHub {
         adminKey: connection.adminKey,
         status: parseAgentRuntimeStatus(message.status) ?? "live",
         ttlSeconds: typeof message.ttlSeconds === "number" ? message.ttlSeconds : 30,
-        note: "SantaClawz relay heartbeat."
+        note: "SantaClawz relay heartbeat.",
+        ...(typeof message.relayAgentProtocolVersion === "string" ? { relayAgentProtocolVersion: message.relayAgentProtocolVersion } : {}),
+        ...(typeof message.relayAgentBuild === "string" ? { relayAgentBuild: message.relayAgentBuild } : {}),
+        ...(Array.isArray(message.relayAgentFeatures)
+          ? { relayAgentFeatures: message.relayAgentFeatures.filter((value): value is string => typeof value === "string") }
+          : {})
       }).catch(() => undefined);
     }
   }

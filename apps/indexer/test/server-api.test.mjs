@@ -3568,12 +3568,18 @@ async function testMissionAuthVerificationPersists() {
         sessionId,
         status: "live",
         ttlSeconds: 20,
-        note: "Local smoke heartbeat."
+        note: "Local smoke heartbeat.",
+        relayAgentProtocolVersion: "santaclawz-relay-agent/test",
+        relayAgentBuild: "test-build-123",
+        relayAgentFeatures: ["worker_progress", "node_http_worker_forwarding"]
       })
     });
     assert.equal(heartbeat.status, 200);
     assert.equal(heartbeat.payload.status, "live");
     assert.equal(heartbeat.payload.lastHeartbeatAtIso, heartbeat.payload.checkedAtIso);
+    assert.equal(heartbeat.payload.relayAgentProtocolVersion, "santaclawz-relay-agent/test");
+    assert.equal(heartbeat.payload.relayAgentBuild, "test-build-123");
+    assert.deepEqual(heartbeat.payload.relayAgentFeatures, ["worker_progress", "node_http_worker_forwarding"]);
     const coalescedHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
       method: "POST",
       headers: {
@@ -3583,7 +3589,10 @@ async function testMissionAuthVerificationPersists() {
         sessionId,
         status: "live",
         ttlSeconds: 20,
-        note: "Local smoke heartbeat."
+        note: "Local smoke heartbeat.",
+        relayAgentProtocolVersion: "santaclawz-relay-agent/test",
+        relayAgentBuild: "test-build-123",
+        relayAgentFeatures: ["worker_progress", "node_http_worker_forwarding"]
       })
     });
     assert.equal(coalescedHeartbeat.status, 200);
@@ -3594,6 +3603,8 @@ async function testMissionAuthVerificationPersists() {
     assert.equal(availability.status, 200);
     assert.equal(availability.payload.runtimeStatus, "live");
     assert.equal(availability.payload.heartbeat.status, "live");
+    assert.equal(availability.payload.heartbeat.relayAgentBuild, "test-build-123");
+    assert.deepEqual(availability.payload.heartbeat.relayAgentFeatures, ["worker_progress", "node_http_worker_forwarding"]);
     assert.equal(availability.payload.readiness.heartbeatLive, true);
 
     const registry = await requestJson(`${baseUrl}/api/agents`);
