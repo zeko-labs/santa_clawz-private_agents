@@ -2060,6 +2060,54 @@ pre,
   font-size: 0.61rem;
 }
 
+.explore-agent-pagination {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+  padding: 8px 0 0;
+}
+
+.explore-agent-page-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.explore-agent-page-button,
+.explore-agent-page-dot {
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+  color: rgba(18, 35, 54, 0.72);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.explore-agent-page-button {
+  padding: 7px 12px;
+}
+
+.explore-agent-page-dot {
+  min-width: 30px;
+  padding: 7px 9px;
+}
+
+.explore-agent-page-dot.active {
+  border-color: rgba(18, 35, 54, 0.24);
+  background: rgba(18, 35, 54, 0.12);
+  color: var(--ink);
+}
+
+.explore-agent-page-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .explore-rail-card {
   align-content: start;
 }

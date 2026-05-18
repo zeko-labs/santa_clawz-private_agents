@@ -124,6 +124,7 @@ const EXPLORE_REGISTRY_POLL_MS = 8_000;
 const EXPLORE_AGENT_BOARD_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
+const EXPLORE_AGENTS_PAGE_SIZE = 12;
 type NavSectionKey = "activate" | "explore";
 
 interface AppRouteState {
@@ -1471,6 +1472,7 @@ export function App() {
   const [exploreQuery, setExploreQuery] = useState("");
   const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
   const [exploreAgentSort, setExploreAgentSort] = useState<ExploreAgentSortKey>("online");
+  const [exploreAgentPage, setExploreAgentPage] = useState(1);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
@@ -3028,7 +3030,7 @@ export function App() {
   const boardTopicTags = Array.from(
     new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
   ).slice(0, 8);
-  const visibleExploreAgents = [...filteredRegistry]
+  const sortedExploreAgents = [...filteredRegistry]
     .sort((left, right) => {
       const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
       const leftCompletedJobs = left.completionScore?.completedJobCount ?? -1;
@@ -3056,8 +3058,13 @@ export function App() {
         }
       }
       return (right.lastUpdatedAtIso ?? "").localeCompare(left.lastUpdatedAtIso ?? "");
-    })
-    .slice(0, 12);
+    });
+  const exploreAgentPageCount = Math.max(1, Math.ceil(sortedExploreAgents.length / EXPLORE_AGENTS_PAGE_SIZE));
+  const currentExploreAgentPage = Math.min(exploreAgentPage, exploreAgentPageCount);
+  const visibleExploreAgents = sortedExploreAgents.slice(
+    (currentExploreAgentPage - 1) * EXPLORE_AGENTS_PAGE_SIZE,
+    currentExploreAgentPage * EXPLORE_AGENTS_PAGE_SIZE
+  );
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4266,6 +4273,7 @@ export function App() {
                       aria-pressed={selectedExploreFilter === "messages"}
                       onClick={() => {
                         setSelectedExploreFilter(selectedExploreFilter === "messages" ? null : "messages");
+                        setExploreAgentPage(1);
                       }}
                     >
                       <span>Activity</span>
@@ -4277,6 +4285,7 @@ export function App() {
                       aria-pressed={selectedExploreFilter === "agents"}
                       onClick={() => {
                         setSelectedExploreFilter(selectedExploreFilter === "agents" ? null : "agents");
+                        setExploreAgentPage(1);
                       }}
                     >
                       <span>Agents</span>
@@ -4288,6 +4297,7 @@ export function App() {
                       aria-pressed={selectedExploreFilter === "payments"}
                       onClick={() => {
                         setSelectedExploreFilter(selectedExploreFilter === "payments" ? null : "payments");
+                        setExploreAgentPage(1);
                       }}
                     >
                       <span>Payouts</span>
@@ -4302,6 +4312,7 @@ export function App() {
                       value={exploreQuery}
                       onChange={(event: ValueInputEvent) => {
                         setExploreQuery(event.target.value);
+                        setExploreAgentPage(1);
                       }}
                       placeholder="Agent, topic, rail, or skill"
                     />
@@ -4319,6 +4330,7 @@ export function App() {
                           onClick={() => {
                             setExploreQuery(tag);
                             setSelectedExploreFilter(null);
+                            setExploreAgentPage(1);
                           }}
                         >
                           #{tag}
@@ -4364,7 +4376,7 @@ export function App() {
                           </h3>
                           <span className="explore-count-inline">
                             {selectedExploreFilter === "agents"
-                              ? `${visibleExploreAgents.length} shown`
+                              ? `${sortedExploreAgents.length} shown`
                               : `${exploreActivityItems.length} shown`}
                           </span>
                         </div>
@@ -4383,6 +4395,7 @@ export function App() {
                               value={exploreAgentSort}
                               onChange={(event: ValueInputEvent) => {
                                 setExploreAgentSort(event.target.value as ExploreAgentSortKey);
+                                setExploreAgentPage(1);
                               }}
                             >
                               <option value="online">Online</option>
@@ -4402,33 +4415,77 @@ export function App() {
                                 <p className="panel-copy">Try a different search, topic, or filter to find public agent profiles.</p>
                               </article>
                             ) : (
-                              visibleExploreAgents.map((agent) => (
-                                <article key={agent.agentId} className="explore-card explore-agent-list-card">
-                                  <div className="explore-card-head">
-                                    <div className="explore-card-topline">
-                                      <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
-                                      <div className="explore-card-meta">
-                                        <button
-                                          type="button"
-                                          className="inline-link-button agent-name-link"
-                                          onClick={() => {
-                                            showAgentProfile(agent.agentId);
-                                          }}
-                                        >
-                                          {agent.agentName} &gt;&gt;
-                                        </button>
-                                        <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
+                              <>
+                                {visibleExploreAgents.map((agent) => (
+                                  <article key={agent.agentId} className="explore-card explore-agent-list-card">
+                                    <div className="explore-card-head">
+                                      <div className="explore-card-topline">
+                                        <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
+                                        <div className="explore-card-meta">
+                                          <button
+                                            type="button"
+                                            className="inline-link-button agent-name-link"
+                                            onClick={() => {
+                                              showAgentProfile(agent.agentId);
+                                            }}
+                                          >
+                                            {agent.agentName} &gt;&gt;
+                                          </button>
+                                          <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
+                                        </div>
                                       </div>
+                                      <span className={`runtime-pill ${agent.runtimeStatus}`}>{runtimeStatusLabel(agent.runtimeStatus)}</span>
                                     </div>
-                                    <span className={`runtime-pill ${agent.runtimeStatus}`}>{runtimeStatusLabel(agent.runtimeStatus)}</span>
-                                  </div>
-                                  <p className="explore-card-quote">{agent.headline}</p>
-                                  <div className="explore-tag-row compact">
-                                    <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                    <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
-                                  </div>
-                                </article>
-                              ))
+                                    <p className="explore-card-quote">{agent.headline}</p>
+                                    <div className="explore-tag-row compact">
+                                      <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
+                                      <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
+                                    </div>
+                                  </article>
+                                ))}
+                                {exploreAgentPageCount > 1 ? (
+                                  <nav className="explore-agent-pagination" aria-label="Public agents pages">
+                                    <button
+                                      type="button"
+                                      className="explore-agent-page-button"
+                                      disabled={currentExploreAgentPage === 1}
+                                      onClick={() => {
+                                        setExploreAgentPage((page) => Math.max(1, page - 1));
+                                      }}
+                                    >
+                                      Previous
+                                    </button>
+                                    <div className="explore-agent-page-list">
+                                      {Array.from({ length: exploreAgentPageCount }, (_, index) => {
+                                        const page = index + 1;
+                                        return (
+                                          <button
+                                            key={`agent-page-${page}`}
+                                            type="button"
+                                            className={`explore-agent-page-dot${page === currentExploreAgentPage ? " active" : ""}`}
+                                            aria-current={page === currentExploreAgentPage ? "page" : undefined}
+                                            onClick={() => {
+                                              setExploreAgentPage(page);
+                                            }}
+                                          >
+                                            {page}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="explore-agent-page-button"
+                                      disabled={currentExploreAgentPage === exploreAgentPageCount}
+                                      onClick={() => {
+                                        setExploreAgentPage((page) => Math.min(exploreAgentPageCount, page + 1));
+                                      }}
+                                    >
+                                      Next
+                                    </button>
+                                  </nav>
+                                ) : null}
+                              </>
                             )
                           ) : exploreActivityItems.length === 0 ? (
                             <article className="explore-card agent-board-empty-card">
