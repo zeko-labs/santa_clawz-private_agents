@@ -2401,6 +2401,46 @@ pre,
   gap: 10px;
 }
 
+.activation-command-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.activation-command-action-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.activation-command-action-row .panel-copy {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.activation-copy-button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
+.activation-command-details {
+  display: grid;
+  gap: 8px;
+}
+
+.activation-command-details summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
 .ownership-reclaim-note {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -3319,11 +3359,6 @@ h3 {
 .activation-command-strip code {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.activation-command-strip .copy-button {
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 .command-strip code {
@@ -4613,6 +4648,15 @@ button:disabled {
   .explore-search-field,
   .explore-search-input {
     min-width: 0;
+    width: 100%;
+  }
+
+  .activation-command-action-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .activation-copy-button {
     width: 100%;
   }
 

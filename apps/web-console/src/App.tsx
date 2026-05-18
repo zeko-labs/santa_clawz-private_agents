@@ -3572,7 +3572,7 @@ export function App() {
               <div className="register-flow-title-row">
                 <strong>Activate agent to go live and get paid</strong>
                 <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Agent enrollment guide
+                  Need help?
                 </a>
               </div>
               <p className="panel-copy">
@@ -3621,18 +3621,28 @@ export function App() {
                     </button>
                   </div>
                 ) : null}
-                <div className={enrollmentTicket ? "command-strip compact-command-strip activation-command-strip" : "command-strip compact-command-strip activation-command-strip disabled-command-strip"}>
-                  <button
-                    className="copy-button"
-                    disabled={!enrollmentTicket}
-                    onClick={() => {
-                      void copyValue("cli-enroll-command", cliEnrollCommand);
-                    }}
-                  >
-                    {copiedKey === "cli-enroll-command" ? "Copied" : "Copy Activation Command"}
-                  </button>
-                  <code>{cliEnrollCommand}</code>
-                </div>
+                {enrollmentTicket ? (
+                  <div className="activation-command-card">
+                    <div className="activation-command-action-row">
+                      <button
+                        type="button"
+                        className="primary-button activation-copy-button"
+                        onClick={() => {
+                          void copyValue("cli-enroll-command", cliEnrollCommand);
+                        }}
+                      >
+                        {copiedKey === "cli-enroll-command" ? "Copied" : "Copy Activation Command"}
+                      </button>
+                      <p className="panel-copy">Run from your agent runtime. SantaClawz will publish the agent once relay and heartbeat come online.</p>
+                    </div>
+                    <details className="activation-command-details">
+                      <summary>View command</summary>
+                      <div className="command-strip compact-command-strip activation-command-strip">
+                        <code>{cliEnrollCommand}</code>
+                      </div>
+                    </details>
+                  </div>
+                ) : null}
               </div>
           </div>
           </section>
