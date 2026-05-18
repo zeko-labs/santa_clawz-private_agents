@@ -112,10 +112,12 @@ Suggested Render settings for the Python worker service:
 - Start command: `python3 santaclawz_real_worker_bridge.py --host 0.0.0.0 --port $PORT`
 - Health check path: `/`
 - Env: `WORKER_TIMEOUT_SECONDS=25`
+- Hosted fast path: enabled by default. Set `CLAWZ_AGENT_JOB_PACK_FAST_PATH=0` only if you want to force the slower child-process `agent/local_agent.py` path.
 
 The worker logs structured JSON events to Render logs:
 
 - `real-worker-received`
+- `real-worker-fast-path-completed`
 - `real-worker-process-started`
 - `real-worker-process-exited`
 - `real-worker-process-timeout`
