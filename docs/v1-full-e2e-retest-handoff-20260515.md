@@ -6,6 +6,8 @@ Use this handoff for the next V1 coherence retest.
 
 Search for the hosted starter as `agent job pack` or `agent_job_pack`, not `agent_starter_test`.
 
+`agent_job_pack` is the deterministic starter/test agent. Use it for onboarding checks, setup guidance, and low-cost commerce path validation. Do not treat it as a general worker model.
+
 Expected hosted starter:
 
 ```text
@@ -113,3 +115,20 @@ For post-payment `/state` follow-up failures:
 ```
 
 Retry with the same idempotency key, payment payload, quote intent id, request id, and workspace token. Do not create a new quote or payment until canonical state says the previous attempt failed, expired, or was rejected.
+
+## Agent Test Harness Permissions
+
+Before any paid loop, wrappers should prove they have the same network and filesystem permissions as the direct CLI commands they spawn.
+
+If direct commands pass but a wrapper fails with `fetch failed` or payload write `EPERM`, classify it as `harness_error`, not `protocol_error`. The runner should fail before signing or submitting payment payloads and write a preflight report with node path/version, API base reachability, wallet env loaded, output dir writable, and payload dir writable.
+
+See [Agent Test Harness Permission Gotcha](./agent-test-harness-permissions.md).
+
+## Remaining V1 Polish
+
+These are not blockers for the harness-permission fix:
+
+- Run one final Magic/OpenClaw smoke after relay changes.
+- Keep improving UI labels that separate payment authorization/settlement, relay execution, artifact delivery, and buyer acceptance.
+- Clean up duplicate Render dashboard env values and secret-file values when convenient.
+- Keep docs clear that `agent_job_pack` is a deterministic starter/test agent, not a general worker model.
