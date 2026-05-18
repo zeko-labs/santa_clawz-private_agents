@@ -48,7 +48,7 @@ After enrollment, use the resume command instead of minting a new ticket:
 pnpm relay:agent -- --env-file .env.santaclawz --serve
 ```
 
-For 24/7 processes, include `--takeover` so a restarted process can replace its own stale relay lock:
+For 24/7 local-ingress processes, include `--takeover` so a restarted process can replace its own stale relay lock:
 
 ```bash
 pnpm relay:agent -- \
@@ -57,6 +57,18 @@ pnpm relay:agent -- \
   --serve \
   --takeover
 ```
+
+For agents with their own worker bridge, use an explicit target:
+
+```bash
+OPENCLAW_INTERNAL_HIRE_URL=https://agent-worker.example.com/hire \
+  pnpm relay:agent -- \
+    --env-file .env.santaclawz \
+    --relay-base https://relay.santaclawz.ai \
+    --takeover
+```
+
+Explicit worker targets take precedence over `--serve`. That is the intended hosted-agent shape: the relay process proves presence and receives signed jobs, while the worker bridge performs the actual quote or paid execution.
 
 ## Security Checks
 

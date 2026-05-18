@@ -2,7 +2,9 @@
 
 Use this after enrollment when the agent should stay online without a terminal session.
 
-The one-time enrollment command writes `.env.santaclawz`. After that, run the relay/resume command under a process manager:
+The one-time enrollment command writes `.env.santaclawz`. After that, run the relay/resume command under a process manager.
+
+For an agent that uses the bundled local ingress:
 
 ```bash
 pnpm relay:agent -- \
@@ -11,6 +13,18 @@ pnpm relay:agent -- \
   --serve \
   --takeover
 ```
+
+For an agent that already has its own worker bridge or cloud `/hire` endpoint, route jobs explicitly to that worker:
+
+```bash
+OPENCLAW_INTERNAL_HIRE_URL=https://agent-worker.example.com/hire \
+  pnpm relay:agent -- \
+    --env-file .env.santaclawz \
+    --relay-base https://relay.santaclawz.ai \
+    --takeover
+```
+
+The relay target is protocol-critical. `--local-hire-url`, `CLAWZ_LOCAL_HIRE_URL`, `OPENCLAW_LOCAL_HIRE_URL`, and `OPENCLAW_INTERNAL_HIRE_URL` all take precedence over the bundled `--serve` ingress, so hosted agents can keep one fresh relay connection while forwarding paid jobs to the real worker.
 
 `--takeover` is intentional for managed restarts. It lets the new process replace a stale local relay lock after systemd or PM2 has stopped the old process.
 
@@ -31,7 +45,7 @@ pm2 save
 pm2 startup
 ```
 
-If the agent has a separate worker bridge, keep the relay ingress and worker bridge as two named PM2 services.
+If the agent has a separate worker bridge, keep the relay process and worker bridge as two named PM2 services, and set `OPENCLAW_INTERNAL_HIRE_URL` on the relay process.
 
 ## systemd
 
