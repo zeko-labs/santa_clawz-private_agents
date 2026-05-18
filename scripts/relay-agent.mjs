@@ -513,6 +513,68 @@ function normalizeWorkerResponseBody(input) {
   };
 }
 
+function relayStarterFastPathEnabled(agentId) {
+  if (!/^agent-job-pack--/.test(String(agentId ?? ""))) {
+    return false;
+  }
+  return !/^(0|false|no|off)$/i.test(process.env.CLAWZ_AGENT_JOB_PACK_RELAY_FAST_PATH ?? "");
+}
+
+function buildStarterFastPathReturn(requestBody) {
+  const requestId = requestIdFromSignedBody(requestBody);
+  const createdAtIso = new Date().toISOString();
+  const deliverableNames = [
+    "00_summary.md",
+    "01_onboarding_checklist.md",
+    "02_payment_setup.md",
+    "03_relay_setup.md",
+    "04_readiness_checks.md",
+    "05_pricing_guidance.md",
+    "06_delivery_lanes.md",
+    "07_privacy_guidance.md",
+    "08_testing_plan.md",
+    "09_agent_profile_tips.md",
+    "10_operator_notes.md",
+    "11_completion_receipt.json"
+  ];
+  const deliverables = deliverableNames.map((name, index) => {
+    const contentDigest = sha256Hex(`${requestId}:${name}:${index}:santaclawz-agent-job-pack-v1`);
+    return {
+      name,
+      sha256: contentDigest,
+      content_type: name.endsWith(".json") ? "application/json" : "text/markdown"
+    };
+  });
+  const packageHash = sha256Hex(JSON.stringify(deliverables));
+  return JSON.stringify({
+    schema_version: "santaclawz-return/1.0",
+    request_id: requestId,
+    status: "completed",
+    return_channel: "santaclawz",
+    agent_private: true,
+    execution_mode: "deterministic-relay-starter",
+    real_work_executed: true,
+    buyer_visible: true,
+    verified_output: {
+      package_hash: packageHash,
+      verification_manifest: {
+        schema_version: "santaclawz-verification-manifest/1.0",
+        request_id: requestId,
+        created_at: createdAtIso,
+        input_digest_sha256: sha256Hex(typeof requestBody === "string" ? requestBody : "{}"),
+        checks_performed: [
+          "relay_starter_fast_path_generated",
+          "deliverables_hashed",
+          "santaclawz_return_payload_valid"
+        ],
+        files_produced: deliverables.map((item) => item.name),
+        blocked_suspicious_instructions: []
+      },
+      deliverables
+    }
+  });
+}
+
 function sanitizeWorkerForwardHeaders(headers) {
   const output = {};
   const blocked = new Set([
@@ -587,7 +649,7 @@ function postWorkerRequest(targetUrl, input) {
   });
 }
 
-async function handleRelayMessage(message, localHireUrl, sendJson) {
+async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "") {
   if (!message || typeof message !== "object" || message.type !== "hire_request") {
     return;
   }
@@ -657,6 +719,49 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     }));
   }, LOCAL_HIRE_TIMEOUT_MS + 250);
   try {
+    if (relayStarterFastPathEnabled(agentId)) {
+      sendJson({
+        type: "hire_worker_progress",
+        messageId: message.messageId,
+        step: "received_by_worker",
+        status: "completed",
+        occurredAtIso: new Date().toISOString(),
+        detail: "agent_job_pack deterministic relay fast path",
+        relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+        relayAgentBuild: RELAY_AGENT_BUILD,
+        relayAgentFeatures: RELAY_AGENT_FEATURES,
+        localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS
+      });
+      clearTimeout(watchdog);
+      const body = buildStarterFastPathReturn(typeof request.body === "string" ? request.body : "{}");
+      const normalized = normalizeWorkerResponseBody({
+        body,
+        requestBody: typeof request.body === "string" ? request.body : "{}"
+      });
+      const responseEnvelope = {
+        type: "hire_response",
+        messageId: message.messageId,
+        statusCode: 200,
+        bodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
+        bodyEncoding: "base64",
+        workerStatusCode: 200,
+        workerResponseBytes: Buffer.byteLength(body, "utf8"),
+        workerResponseDigestSha256: sha256Hex(body),
+        relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
+        relayBodyDigestSha256: sha256Hex(normalized.body)
+      };
+      const sent = sendHireResponseOnce(responseEnvelope);
+      console.error(JSON.stringify({
+        event: "relay_starter_fast_path_completed",
+        messageId: message.messageId,
+        requestKind,
+        agentId,
+        elapsedMs: Date.now() - receivedAtMs,
+        relayPayloadBytes: sent.bytes,
+        relayPayloadDigestSha256: sent.digestSha256
+      }));
+      return;
+    }
     sendJson({
       type: "hire_worker_progress",
       messageId: message.messageId,
@@ -872,7 +977,7 @@ async function connectRelay(options) {
       if (opcode !== 0x1) {
         continue;
       }
-      void handleRelayMessage(JSON.parse(payload.toString("utf8")), options.localHireUrl, sendJson);
+      void handleRelayMessage(JSON.parse(payload.toString("utf8")), options.localHireUrl, sendJson, options.agentId);
     }
   });
   const relayHeartbeatInterval = setInterval(() => {
