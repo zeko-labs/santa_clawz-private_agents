@@ -42,6 +42,14 @@ const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.me
 const ingressEntry = path.join(repoRoot, "starters", "openclaw-public-hire-ingress", "server.mjs");
 
 const BOOLEAN_FLAGS = new Set(["help", "serve", "json", "no-heartbeat", "takeover"]);
+const WORKER_ROUTE_ENV_KEYS = [
+  "CLAWZ_LOCAL_HIRE_URL",
+  "OPENCLAW_LOCAL_HIRE_URL",
+  "OPENCLAW_INTERNAL_HIRE_URL",
+  "CLAWZ_LOCAL_PAID_HIRE_URL",
+  "CLAWZ_LOCAL_PAID_EXECUTION_URL",
+  "CLAWZ_LOCAL_QUOTE_URL"
+];
 
 function printUsage() {
   console.error(`Usage:
@@ -189,6 +197,36 @@ function localHireUrlFor(baseUrl) {
   return url.toString();
 }
 
+function cleanWorkerRouteValue(value) {
+  let output = String(value ?? "").trim();
+  for (let index = 0; index < 2; index += 1) {
+    if ((output.startsWith('"') && output.endsWith('"')) || (output.startsWith("'") && output.endsWith("'"))) {
+      output = output.slice(1, -1).trim();
+    }
+  }
+  for (const key of WORKER_ROUTE_ENV_KEYS) {
+    const prefix = `${key}=`;
+    if (output.startsWith(prefix)) {
+      output = output.slice(prefix.length).trim();
+      if ((output.startsWith('"') && output.endsWith('"')) || (output.startsWith("'") && output.endsWith("'"))) {
+        output = output.slice(1, -1).trim();
+      }
+      break;
+    }
+  }
+  return output;
+}
+
+function normalizeWorkerRouteUrl(value) {
+  return normalizeBaseUrl(cleanWorkerRouteValue(value));
+}
+
+function buildWorkerRouteValueWarnings(localHireRoutes) {
+  return Object.entries(localHireRoutes)
+    .filter(([, targetUrl]) => WORKER_ROUTE_ENV_KEYS.some((key) => String(targetUrl).startsWith(`${key}=`)))
+    .map(([route]) => `worker_route_contains_env_assignment:${route}`);
+}
+
 function warnIfRenderPublicWorkerUrl(targetUrl) {
   if (!process.env.RENDER || !targetUrl) {
     return;
@@ -227,12 +265,7 @@ function buildEnvFileOverrideWarnings(env) {
   const checkedKeys = [
     "CLAWZ_API_BASE",
     "CLAWZ_RELAY_BASE",
-    "CLAWZ_LOCAL_HIRE_URL",
-    "OPENCLAW_LOCAL_HIRE_URL",
-    "OPENCLAW_INTERNAL_HIRE_URL",
-    "CLAWZ_LOCAL_PAID_HIRE_URL",
-    "CLAWZ_LOCAL_PAID_EXECUTION_URL",
-    "CLAWZ_LOCAL_QUOTE_URL"
+    ...WORKER_ROUTE_ENV_KEYS
   ];
   return checkedKeys
     .filter((key) => {
@@ -1012,9 +1045,9 @@ try {
   );
   const localHireUrl =
     typeof args["local-hire-url"] === "string" && args["local-hire-url"].trim().length > 0
-      ? normalizeBaseUrl(args["local-hire-url"].trim())
+      ? normalizeWorkerRouteUrl(args["local-hire-url"])
       : configuredLocalHireUrl
-        ? normalizeBaseUrl(configuredLocalHireUrl)
+        ? normalizeWorkerRouteUrl(configuredLocalHireUrl)
         : shouldServe && ingress?.baseUrl
           ? localHireUrlFor(ingress.baseUrl)
           : "";
@@ -1024,20 +1057,25 @@ try {
   }
   const localQuoteUrl =
     typeof args["local-quote-url"] === "string" && args["local-quote-url"].trim().length > 0
-      ? normalizeBaseUrl(args["local-quote-url"].trim())
-      : process.env.CLAWZ_LOCAL_QUOTE_URL?.trim() || "";
+      ? normalizeWorkerRouteUrl(args["local-quote-url"])
+      : process.env.CLAWZ_LOCAL_QUOTE_URL?.trim()
+        ? normalizeWorkerRouteUrl(process.env.CLAWZ_LOCAL_QUOTE_URL)
+        : "";
   const localPaidUrl =
     typeof args["local-paid-url"] === "string" && args["local-paid-url"].trim().length > 0
-      ? normalizeBaseUrl(args["local-paid-url"].trim())
-      : process.env.CLAWZ_LOCAL_PAID_HIRE_URL?.trim() || process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL?.trim() || "";
+      ? normalizeWorkerRouteUrl(args["local-paid-url"])
+      : firstNonEmptyString(process.env.CLAWZ_LOCAL_PAID_HIRE_URL, process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL)
+        ? normalizeWorkerRouteUrl(firstNonEmptyString(process.env.CLAWZ_LOCAL_PAID_HIRE_URL, process.env.CLAWZ_LOCAL_PAID_EXECUTION_URL))
+        : "";
   const localHireRoutes = {
     default: localHireUrl,
     ...(localQuoteUrl ? { quote_intake: localQuoteUrl } : {}),
     ...(localPaidUrl ? { paid_execution: localPaidUrl } : {})
   };
   const workerRouteWarnings = buildWorkerRouteWarnings(localHireRoutes);
+  const workerRouteValueWarnings = buildWorkerRouteValueWarnings(localHireRoutes);
   const envFileOverrideWarnings = buildEnvFileOverrideWarnings(envFileValues);
-  const relayAgentWorkerWarnings = [...workerRouteWarnings, ...envFileOverrideWarnings];
+  const relayAgentWorkerWarnings = [...workerRouteWarnings, ...workerRouteValueWarnings, ...envFileOverrideWarnings];
   warnIfEnvFileRouteIsOverridden(envFileOverrideWarnings);
   if (
     workerRouteWarnings.length > 0 &&

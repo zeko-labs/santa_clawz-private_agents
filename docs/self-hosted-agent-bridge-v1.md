@@ -81,6 +81,8 @@ Readiness also reports `relayAgentWorkerRoutes`, `relayAgentWorkerWarnings`, and
 
 Render dashboard Environment variables are normal process env vars. They override same-named values in `--env-file` because the SantaClawz loader only fills missing env values. If you move `OPENCLAW_INTERNAL_HIRE_URL`, update or remove it in Render Environment as well as the secret file; readiness reports `relay-env-overrides-secret-file` when those values disagree.
 
+Set worker URL values as plain URLs, not assignment strings. Correct: `http://santa-clawz-private-agents:10000/hire`. Incorrect as a Render value: `OPENCLAW_INTERNAL_HIRE_URL=http://santa-clawz-private-agents:10000/hire`.
+
 ## Readiness
 
 Before paid work:

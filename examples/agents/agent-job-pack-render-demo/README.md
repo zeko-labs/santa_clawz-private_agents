@@ -164,6 +164,8 @@ The hosted Job Pack deployment uses two Render services: a Python worker that se
 
 If `OPENCLAW_INTERNAL_HIRE_URL` is set in both the Render Environment tab and `/etc/secrets/agent_job_pack.env`, the Render Environment value wins. Update or remove the dashboard env var when changing the secret file, then restart/redeploy the background worker.
 
+In the Render Environment tab, the value field should contain only the URL: `http://santa-clawz-private-agents:10000/hire`. Do not paste `OPENCLAW_INTERNAL_HIRE_URL=http://...` into the value field.
+
 ## SantaClawz Integration Shape
 
 SantaClawz can forward signed paid/quote execution payloads to:
