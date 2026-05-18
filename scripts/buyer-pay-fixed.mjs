@@ -142,6 +142,9 @@ function paidExecutionSummary(responseOk, payload) {
   const agentExecutionStatus =
     stringField(operational, "agentExecutionStatus") || stringField(payload, "agentExecutionStatus") || stringField(payload, "status") || "not_confirmed";
   const paymentAccepted = ["authorized", "settled", "paid", "escrowed"].includes(paymentStatus);
+  const paymentOk = paymentAccepted;
+  const executionOk = agentExecutionStatus === "completed";
+  const artifactDeliveryOk = executionOk && ["forwarded", "recorded"].includes(relayDeliveryStatus);
   const jobCompleted =
     responseOk &&
     ["settled", "paid", "escrowed"].includes(paymentStatus) &&
@@ -150,12 +153,18 @@ function paidExecutionSummary(responseOk, payload) {
     agentExecutionStatus === "completed";
   return {
     ok: jobCompleted,
+    overallOk: jobCompleted,
+    paymentOk,
+    executionOk,
+    artifactDeliveryOk,
     paymentAccepted,
     paymentStatus: paymentStatus || "unknown",
     settlementStatus,
     relayDeliveryStatus,
     agentExecutionStatus,
     jobCompleted,
+    retryable: paymentOk && !executionOk,
+    nextAction: paymentOk && !executionOk ? "retry_delivery_or_resume_execution" : jobCompleted ? "none" : "inspect_payment_state",
     code: jobCompleted ? "paid_execution_completed" : "paid_execution_not_completed"
   };
 }

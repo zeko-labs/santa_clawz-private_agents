@@ -124,7 +124,13 @@ export async function postHeartbeat(config) {
       note: config.heartbeatNote ?? "SantaClawz seller readiness heartbeat.",
       ...(typeof config.relayAgentProtocolVersion === "string" ? { relayAgentProtocolVersion: config.relayAgentProtocolVersion } : {}),
       ...(typeof config.relayAgentBuild === "string" ? { relayAgentBuild: config.relayAgentBuild } : {}),
-      ...(Array.isArray(config.relayAgentFeatures) ? { relayAgentFeatures: config.relayAgentFeatures } : {})
+      ...(Array.isArray(config.relayAgentFeatures) ? { relayAgentFeatures: config.relayAgentFeatures } : {}),
+      ...(config.relayAgentWorkerRoutes && typeof config.relayAgentWorkerRoutes === "object"
+        ? { relayAgentWorkerRoutes: config.relayAgentWorkerRoutes }
+        : {}),
+      ...(Array.isArray(config.relayAgentWorkerWarnings)
+        ? { relayAgentWorkerWarnings: config.relayAgentWorkerWarnings }
+        : {})
     })
   });
 }

@@ -193,13 +193,7 @@ function warnIfRenderPublicWorkerUrl(targetUrl) {
   if (!process.env.RENDER || !targetUrl) {
     return;
   }
-  let url;
-  try {
-    url = new URL(targetUrl);
-  } catch {
-    return;
-  }
-  if (!url.hostname.endsWith(".onrender.com")) {
+  if (!isPublicRenderWorkerUrl(targetUrl)) {
     return;
   }
   console.error(JSON.stringify({
@@ -208,6 +202,25 @@ function warnIfRenderPublicWorkerUrl(targetUrl) {
     warning:
       "This relay worker is running on Render and forwarding jobs to a public onrender.com URL. For Render-to-Render worker calls, use the target service's private Internal address from Render Connect, for example http://<internal-host>:<port>/hire. Public Render URLs can be slower, less reliable, and can stall paid relay execution."
   }));
+}
+
+function isPublicRenderWorkerUrl(targetUrl) {
+  let url;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return false;
+  }
+  return url.hostname.endsWith(".onrender.com");
+}
+
+function buildWorkerRouteWarnings(localHireRoutes) {
+  if (!process.env.RENDER) {
+    return [];
+  }
+  return Object.entries(localHireRoutes)
+    .filter(([, targetUrl]) => isPublicRenderWorkerUrl(targetUrl))
+    .map(([route]) => `public_render_worker_url:${route}`);
 }
 
 function warnIfBundledIngressAndExplicitPaidRoute(input) {
@@ -783,7 +796,9 @@ async function connectRelay(options) {
       ttlSeconds: 30,
       relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
       relayAgentBuild: RELAY_AGENT_BUILD,
-      relayAgentFeatures: RELAY_AGENT_FEATURES
+      relayAgentFeatures: RELAY_AGENT_FEATURES,
+      relayAgentWorkerRoutes: options.relayAgentWorkerRoutes,
+      relayAgentWorkerWarnings: options.relayAgentWorkerWarnings
     });
   }, HEARTBEAT_INTERVAL_MS);
   socket.once("close", () => {
@@ -795,7 +810,9 @@ async function connectRelay(options) {
     ttlSeconds: 30,
     relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
     relayAgentBuild: RELAY_AGENT_BUILD,
-    relayAgentFeatures: RELAY_AGENT_FEATURES
+    relayAgentFeatures: RELAY_AGENT_FEATURES,
+    relayAgentWorkerRoutes: options.relayAgentWorkerRoutes,
+    relayAgentWorkerWarnings: options.relayAgentWorkerWarnings
   });
   return { socket, closed, relayUrl: relayUrl.toString() };
 }
@@ -987,6 +1004,19 @@ try {
     ...(localQuoteUrl ? { quote_intake: localQuoteUrl } : {}),
     ...(localPaidUrl ? { paid_execution: localPaidUrl } : {})
   };
+  const workerRouteWarnings = buildWorkerRouteWarnings(localHireRoutes);
+  if (
+    workerRouteWarnings.length > 0 &&
+    /^(1|true|yes)$/i.test(process.env.CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL ?? process.env.CLAWZ_REQUIRE_PRIVATE_WORKER_URL ?? "")
+  ) {
+    throw new Error(
+      [
+        "Relay worker route policy requires private worker URLs, but at least one route points at public onrender.com.",
+        `Warnings: ${workerRouteWarnings.join(", ")}`,
+        "Set OPENCLAW_INTERNAL_HIRE_URL or --local-hire-url to the Render Internal address, for example http://<internal-host>:<port>/hire."
+      ].join(" ")
+    );
+  }
   for (const target of new Set(Object.values(localHireRoutes))) {
     warnIfRenderPublicWorkerUrl(target);
   }
@@ -1006,7 +1036,9 @@ try {
         heartbeatNote: "SantaClawz relay resume heartbeat.",
         relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
         relayAgentBuild: RELAY_AGENT_BUILD,
-        relayAgentFeatures: RELAY_AGENT_FEATURES
+        relayAgentFeatures: RELAY_AGENT_FEATURES,
+        relayAgentWorkerRoutes: localHireRoutes,
+        relayAgentWorkerWarnings: workerRouteWarnings
       });
     if (!firstHeartbeat.ok) {
       throw new Error(firstHeartbeat.payload?.error ?? `Heartbeat failed with status ${firstHeartbeat.status}`);
@@ -1021,7 +1053,9 @@ try {
           heartbeatNote: "SantaClawz relay resume heartbeat.",
           relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
           relayAgentBuild: RELAY_AGENT_BUILD,
-          relayAgentFeatures: RELAY_AGENT_FEATURES
+          relayAgentFeatures: RELAY_AGENT_FEATURES,
+          relayAgentWorkerRoutes: localHireRoutes,
+          relayAgentWorkerWarnings: workerRouteWarnings
         }).catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
       });
@@ -1038,6 +1072,7 @@ try {
     relayBase,
     localHireUrl,
     localHireRoutes,
+    workerRouteWarnings,
     servingIngress: ingress?.baseUrl,
     heartbeat: shouldHeartbeat ? "live" : "skipped"
   };
@@ -1063,7 +1098,9 @@ try {
         apiBase: relayBase,
         agentId,
         adminKey,
-        localHireUrl: localHireRoutes
+        localHireUrl: localHireRoutes,
+        relayAgentWorkerRoutes: localHireRoutes,
+        relayAgentWorkerWarnings: workerRouteWarnings
       });
       attempt = 0;
       console.error(JSON.stringify({

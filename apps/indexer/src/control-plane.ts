@@ -682,6 +682,8 @@ interface AgentRuntimeHeartbeatRecord {
   relayAgentProtocolVersion?: string;
   relayAgentBuild?: string;
   relayAgentFeatures?: string[];
+  relayAgentWorkerRoutes?: Record<string, string>;
+  relayAgentWorkerWarnings?: string[];
 }
 
 interface AgentRuntimeHeartbeatFile {
@@ -696,6 +698,8 @@ interface AgentRuntimeHeartbeatOptions extends AgentRuntimeAvailabilityOptions {
   relayAgentProtocolVersion?: string;
   relayAgentBuild?: string;
   relayAgentFeatures?: string[];
+  relayAgentWorkerRoutes?: Record<string, string>;
+  relayAgentWorkerWarnings?: string[];
 }
 
 interface ConsoleStateOptions {
@@ -3589,7 +3593,9 @@ export class ClawzControlPlane {
       ...(record.note ? { note: record.note } : {}),
       ...(record.relayAgentProtocolVersion ? { relayAgentProtocolVersion: record.relayAgentProtocolVersion } : {}),
       ...(record.relayAgentBuild ? { relayAgentBuild: record.relayAgentBuild } : {}),
-      ...(record.relayAgentFeatures?.length ? { relayAgentFeatures: record.relayAgentFeatures } : {})
+      ...(record.relayAgentFeatures?.length ? { relayAgentFeatures: record.relayAgentFeatures } : {}),
+      ...(record.relayAgentWorkerRoutes ? { relayAgentWorkerRoutes: record.relayAgentWorkerRoutes } : {}),
+      ...(record.relayAgentWorkerWarnings?.length ? { relayAgentWorkerWarnings: record.relayAgentWorkerWarnings } : {})
     };
   }
 
@@ -7887,6 +7893,22 @@ export class ClawzControlPlane {
           .filter(Boolean)
           .slice(0, 20)
       : [];
+    const relayAgentWorkerRoutes =
+      options.relayAgentWorkerRoutes && typeof options.relayAgentWorkerRoutes === "object" && !Array.isArray(options.relayAgentWorkerRoutes)
+        ? Object.fromEntries(
+            Object.entries(options.relayAgentWorkerRoutes)
+              .filter(([key, value]) => typeof key === "string" && typeof value === "string" && value.trim().length > 0)
+              .map(([key, value]) => [key.trim().slice(0, 60), value.trim().slice(0, 500)])
+              .slice(0, 8)
+          )
+        : {};
+    const relayAgentWorkerWarnings = Array.isArray(options.relayAgentWorkerWarnings)
+      ? options.relayAgentWorkerWarnings
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim().slice(0, 120))
+          .filter(Boolean)
+          .slice(0, 10)
+      : [];
     const nextRecord: AgentRuntimeHeartbeatRecord = {
       agentId,
       sessionId,
@@ -7896,7 +7918,9 @@ export class ClawzControlPlane {
       ...(note ? { note } : {}),
       ...(relayAgentProtocolVersion ? { relayAgentProtocolVersion } : {}),
       ...(relayAgentBuild ? { relayAgentBuild } : {}),
-      ...(relayAgentFeatures.length ? { relayAgentFeatures } : {})
+      ...(relayAgentFeatures.length ? { relayAgentFeatures } : {}),
+      ...(Object.keys(relayAgentWorkerRoutes).length ? { relayAgentWorkerRoutes } : {}),
+      ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {})
     };
     const file = await this.loadRuntimeHeartbeatFile();
     const existingRecord = file.heartbeats.find((record) => record.sessionId === sessionId);
@@ -7910,6 +7934,8 @@ export class ClawzControlPlane {
       (existingRecord.relayAgentProtocolVersion ?? "") === (nextRecord.relayAgentProtocolVersion ?? "") &&
       (existingRecord.relayAgentBuild ?? "") === (nextRecord.relayAgentBuild ?? "") &&
       JSON.stringify(existingRecord.relayAgentFeatures ?? []) === JSON.stringify(nextRecord.relayAgentFeatures ?? []) &&
+      JSON.stringify(existingRecord.relayAgentWorkerRoutes ?? {}) === JSON.stringify(nextRecord.relayAgentWorkerRoutes ?? {}) &&
+      JSON.stringify(existingRecord.relayAgentWorkerWarnings ?? []) === JSON.stringify(nextRecord.relayAgentWorkerWarnings ?? []) &&
       Number.isFinite(existingReceivedAtMs) &&
       Date.parse(receivedAtIso) - existingReceivedAtMs < AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS;
     if (heartbeatCanCoalesce) {

@@ -291,6 +291,8 @@ type AgentHeartbeatRequestBody = {
   relayAgentProtocolVersion?: unknown;
   relayAgentBuild?: unknown;
   relayAgentFeatures?: unknown;
+  relayAgentWorkerRoutes?: unknown;
+  relayAgentWorkerWarnings?: unknown;
 };
 type SponsorRequestBody = { amountMina?: unknown; sessionId?: unknown; purpose?: unknown };
 type RecoveryRequestBody = { sessionId?: unknown };
@@ -2254,6 +2256,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       pricingMode === "free-test" ||
       (consoleState.paymentProfileReady && consoleState.paidJobsEnabled && (pricingMode === "fixed-exact" || pricingMode === "quote-required"));
     const pricingReadiness = pricingReadinessNotes({ pricingMode, quoteReady, paidExecutionReady });
+    const relayAgentWorkerWarnings = availability.heartbeat.relayAgentWorkerWarnings ?? [];
     response.json({
       schemaVersion: "santaclawz-agent-readiness/1.0",
       ok: true,
@@ -2286,12 +2289,17 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       },
       privacyModes: supportedPrivacyModes(),
       lastHeartbeatAtIso: availability.heartbeat.lastHeartbeatAtIso,
+      ...(availability.heartbeat.relayAgentWorkerRoutes ? { relayAgentWorkerRoutes: availability.heartbeat.relayAgentWorkerRoutes } : {}),
+      ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {}),
       lastJobStatus: consoleState.readiness?.lastJobStatus ?? "none",
       pricingReadiness,
       knownBlockers: [
         ...(consoleState.readiness?.blockers ?? []),
         ...(paidExecutionReady ? [] : pricingReadiness.filter((note) => note.endsWith("not-ready") || note === "quote-intake-only")),
-        ...(scannerHealth.reachable ? [] : ["artifact-scanner-unavailable"])
+        ...(scannerHealth.reachable ? [] : ["artifact-scanner-unavailable"]),
+        ...(relayAgentWorkerWarnings.some((warning) => warning.startsWith("public_render_worker_url"))
+          ? ["relay-worker-public-render-url"]
+          : [])
       ],
       readiness: consoleState.readiness,
       availability,
@@ -3250,6 +3258,12 @@ app.post("/api/agents/:agentId/heartbeat", route(async (request, response) => {
           : {}),
         ...(Array.isArray(body.relayAgentFeatures)
           ? { relayAgentFeatures: body.relayAgentFeatures.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(body.relayAgentWorkerRoutes && typeof body.relayAgentWorkerRoutes === "object" && !Array.isArray(body.relayAgentWorkerRoutes)
+          ? { relayAgentWorkerRoutes: body.relayAgentWorkerRoutes as Record<string, string> }
+          : {}),
+        ...(Array.isArray(body.relayAgentWorkerWarnings)
+          ? { relayAgentWorkerWarnings: body.relayAgentWorkerWarnings.filter((value): value is string => typeof value === "string") }
           : {}),
         ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
       })
@@ -5824,6 +5838,12 @@ class AgentRelayHub {
         ...(typeof message.relayAgentBuild === "string" ? { relayAgentBuild: message.relayAgentBuild } : {}),
         ...(Array.isArray(message.relayAgentFeatures)
           ? { relayAgentFeatures: message.relayAgentFeatures.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(message.relayAgentWorkerRoutes && typeof message.relayAgentWorkerRoutes === "object" && !Array.isArray(message.relayAgentWorkerRoutes)
+          ? { relayAgentWorkerRoutes: message.relayAgentWorkerRoutes as Record<string, string> }
+          : {}),
+        ...(Array.isArray(message.relayAgentWorkerWarnings)
+          ? { relayAgentWorkerWarnings: message.relayAgentWorkerWarnings.filter((value): value is string => typeof value === "string") }
           : {})
       }).catch(() => undefined);
     }

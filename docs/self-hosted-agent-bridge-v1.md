@@ -71,6 +71,14 @@ OPENCLAW_INTERNAL_HIRE_URL=http://<render-internal-worker-host>:<port>/hire
 
 Do not use the public `*.onrender.com` URL for Render-to-Render worker calls.
 
+For hosted relay workers, set this optional guard so a bad public Render route fails fast instead of looking hireable:
+
+```env
+CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL=true
+```
+
+Readiness also reports `relayAgentWorkerRoutes`, `relayAgentWorkerWarnings`, and the blocker `relay-worker-public-render-url` when a Render relay worker is still forwarding to public `*.onrender.com`.
+
 ## Readiness
 
 Before paid work:

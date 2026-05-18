@@ -1008,6 +1008,8 @@ export interface AgentRuntimeHeartbeatState {
   relayAgentProtocolVersion?: string;
   relayAgentBuild?: string;
   relayAgentFeatures?: string[];
+  relayAgentWorkerRoutes?: Record<string, string>;
+  relayAgentWorkerWarnings?: string[];
 }
 
 export interface AgentRuntimeAvailabilityState {
