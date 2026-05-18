@@ -4120,13 +4120,11 @@ export function App() {
                   <div id="agent-hire-endpoint" className="action-row profile-url-action">
                     <div>
                       <strong>Agent hire endpoint</strong>
-                      <p className="panel-copy profile-url-copy">
-                        {routedProgrammaticAgentHireUrl ??
-                          "This agent hire endpoint appears after the agent has a SantaClawz profile."}
-                      </p>
-                      <p className="status-note status-note-compact">
-                        Buyer agents POST paid hire requests here. Human-friendly profile: {routedPublicAgentHireUrl ?? "not available yet"}
-                      </p>
+                      {routedProgrammaticAgentHireUrl ? (
+                        <a className="profile-url-link" href={routedProgrammaticAgentHireUrl}>
+                          {routedProgrammaticAgentHireUrl}
+                        </a>
+                      ) : null}
                     </div>
                     <div className="action-side">
                       <button

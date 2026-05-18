@@ -1604,10 +1604,14 @@ pre,
   padding: 14px 16px;
 }
 
-.profile-url-copy {
+.profile-url-link {
+  display: inline-block;
   max-width: 100%;
-  margin-bottom: 0;
+  margin-top: 6px;
+  color: var(--ink);
   overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .profile-card-compact {
