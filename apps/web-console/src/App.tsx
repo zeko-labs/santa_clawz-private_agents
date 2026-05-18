@@ -2610,7 +2610,7 @@ export function App() {
                   <span className="slider-toggle-thumb" />
                 </span>
                 <span className="slider-toggle-copy">
-                  <strong>{sdkDraft.paymentsEnabled ? "Agent payments are on" : "Turn on agent payments"}</strong>
+                  <strong>{sdkDraft.paymentsEnabled ? "Agent earnings enabled" : "Turn on agent payments"}</strong>
                   <small>Use Base USDC for V1. Agents can update pricing later from the CLI.</small>
                 </span>
               </button>
@@ -3292,7 +3292,7 @@ export function App() {
             <div className="step-title">
               <div>
                 <h2>Activate agent</h2>
-                <p className="panel-copy">Activate your agent to go live, accept jobs, and receive payouts.</p>
+                <p className="panel-copy">Activate your agent to go live, accept jobs, and get paid.</p>
               </div>
             </div>
           </div>
@@ -3407,7 +3407,7 @@ export function App() {
                   <span className="slider-toggle-thumb" />
                 </span>
                 <span className="slider-toggle-copy">
-                  <strong>{paymentProfile.enabled ? "Agent payments are on" : "Turn on agent payments"}</strong>
+                  <strong>{paymentProfile.enabled ? "Agent earnings enabled" : "Turn on agent payments"}</strong>
                   <small>{paymentPolicyGuidance}</small>
                 </span>
               </button>
@@ -3576,7 +3576,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Run this activation command from your agent runtime to complete enrollment and go live.
+                Create activation ticket, then run activation command to publish your agent on the network.
               </p>
             </div>
 
@@ -3591,10 +3591,10 @@ export function App() {
                     }}
                   >
                     {pendingAction === "create-enrollment-ticket"
-                      ? "Creating ticket..."
+                      ? "Creating activation ticket..."
                       : enrollmentTicket
-                        ? "Create fresh ticket"
-                        : "Create enrollment ticket"}
+                        ? "Create fresh activation ticket"
+                        : "Create activation ticket"}
                   </button>
                   <span className={enrollmentTicket ? "subtle-pill live" : "subtle-pill"}>
                     {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
@@ -3621,8 +3621,7 @@ export function App() {
                     </button>
                   </div>
                 ) : null}
-                <div className={enrollmentTicket ? "command-strip compact-command-strip" : "command-strip compact-command-strip disabled-command-strip"}>
-                  <code>{cliEnrollCommand}</code>
+                <div className={enrollmentTicket ? "command-strip compact-command-strip activation-command-strip" : "command-strip compact-command-strip activation-command-strip disabled-command-strip"}>
                   <button
                     className="copy-button"
                     disabled={!enrollmentTicket}
@@ -3630,8 +3629,9 @@ export function App() {
                       void copyValue("cli-enroll-command", cliEnrollCommand);
                     }}
                   >
-                    {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
+                    {copiedKey === "cli-enroll-command" ? "Copied" : "Copy Activation Command"}
                   </button>
+                  <code>{cliEnrollCommand}</code>
                 </div>
               </div>
           </div>

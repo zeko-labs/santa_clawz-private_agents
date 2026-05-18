@@ -3311,6 +3311,21 @@ h3 {
   margin-top: 8px;
 }
 
+.activation-command-strip {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.activation-command-strip code {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.activation-command-strip .copy-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .command-strip code {
   font-size: 0.9rem;
   overflow-wrap: anywhere;
