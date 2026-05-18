@@ -5305,7 +5305,35 @@ class AgentRelayConnection {
       status: "completed",
       occurredAtIso: typeof message.receivedAtIso === "string" ? message.receivedAtIso : new Date().toISOString(),
       relayMessageId: messageId,
-      detail: typeof message.localHireUrl === "string" ? message.localHireUrl : "worker acknowledged relay hire request"
+      detail: [
+        typeof message.localHireUrl === "string" ? message.localHireUrl : "worker acknowledged relay hire request",
+        typeof message.relayAgentProtocolVersion === "string" ? message.relayAgentProtocolVersion : "",
+        typeof message.relayAgentBuild === "string" ? `build ${message.relayAgentBuild.slice(0, 12)}` : ""
+      ].filter(Boolean).join("; ")
+    });
+  }
+
+  handleProgress(message: Record<string, unknown>) {
+    const messageId = typeof message.messageId === "string" ? message.messageId : "";
+    const pending = this.pending.get(messageId);
+    if (!pending) {
+      return;
+    }
+    const step = message.step === "received_by_worker" ? "received_by_worker" : undefined;
+    if (!step) {
+      return;
+    }
+    pending.trace.push({
+      step,
+      status: message.status === "failed" ? "failed" : "completed",
+      occurredAtIso: typeof message.occurredAtIso === "string" ? message.occurredAtIso : new Date().toISOString(),
+      relayMessageId: messageId,
+      detail: [
+        typeof message.detail === "string" ? message.detail : "",
+        typeof message.relayAgentProtocolVersion === "string" ? message.relayAgentProtocolVersion : "",
+        typeof message.relayAgentBuild === "string" ? `build ${message.relayAgentBuild.slice(0, 12)}` : "",
+        typeof message.localHireTimeoutMs === "number" ? `timeout ${message.localHireTimeoutMs}ms` : ""
+      ].filter(Boolean).join("; ")
     });
   }
 
@@ -5702,6 +5730,10 @@ class AgentRelayHub {
     }
     if (message.type === "hire_ack") {
       connection.handleAck(message);
+      return;
+    }
+    if (message.type === "hire_worker_progress") {
+      connection.handleProgress(message);
       return;
     }
     if (message.type === "post_message") {

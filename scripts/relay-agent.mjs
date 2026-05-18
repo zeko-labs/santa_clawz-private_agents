@@ -23,6 +23,18 @@ const CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = Number.parseInt(process.env.CLAWZ_AGENT
 const LOCAL_HIRE_TIMEOUT_MS = Math.max(1_000, Math.min(CONFIGURED_LOCAL_HIRE_TIMEOUT_MS, 50_000));
 const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
 const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
+const RELAY_AGENT_PROTOCOL_VERSION = "santaclawz-relay-agent/1.2";
+const RELAY_AGENT_FEATURES = [
+  "hire_ack",
+  "worker_progress",
+  "local_timeout_watchdog",
+  "worker_response_telemetry"
+];
+const RELAY_AGENT_BUILD =
+  process.env.RENDER_GIT_COMMIT?.trim() ||
+  process.env.VERCEL_GIT_COMMIT_SHA?.trim() ||
+  process.env.CLAWZ_AGENT_BUILD_COMMIT?.trim() ||
+  "local";
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const ingressEntry = path.join(repoRoot, "starters", "openclaw-public-hire-ingress", "server.mjs");
 
@@ -392,6 +404,9 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     receivedAtIso: new Date().toISOString(),
     requestKind,
     localHireUrl: targetUrl,
+    relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+    relayAgentBuild: RELAY_AGENT_BUILD,
+    relayAgentFeatures: RELAY_AGENT_FEATURES,
     requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined
   });
   let responded = false;
@@ -432,6 +447,18 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     }));
   }, LOCAL_HIRE_TIMEOUT_MS + 250);
   try {
+    sendJson({
+      type: "hire_worker_progress",
+      messageId: message.messageId,
+      step: "received_by_worker",
+      status: "completed",
+      occurredAtIso: new Date().toISOString(),
+      detail: `forwarding to ${targetUrl}`,
+      relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+      relayAgentBuild: RELAY_AGENT_BUILD,
+      relayAgentFeatures: RELAY_AGENT_FEATURES,
+      localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS
+    });
     const response = await fetch(targetUrl, {
       method: "POST",
       headers: request.headers && typeof request.headers === "object" ? request.headers : {},
@@ -866,6 +893,9 @@ try {
   const summary = {
     agentId,
     sessionId,
+    relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+    relayAgentBuild: RELAY_AGENT_BUILD,
+    relayAgentFeatures: RELAY_AGENT_FEATURES,
     apiBase,
     relayBase,
     localHireUrl,

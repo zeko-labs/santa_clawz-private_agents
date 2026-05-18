@@ -67,17 +67,19 @@ The `relayTrace` array uses these step names:
 accepted_by_indexer
 payment_authorized
 sent_to_relay
+received_by_worker
 worker_ack
 worker_completed
 relay_returned
 state_updated
 ```
 
-`worker_ack` is intentionally separate from `worker_completed`. It proves the relay worker received the signed job before it starts expensive or slow work. A job can therefore be diagnosed as:
+`worker_ack` is intentionally separate from `received_by_worker` and `worker_completed`. It proves the relay worker process saw the signed job. `received_by_worker` proves the current relay implementation began forwarding the job to the configured local/cloud worker target. A job can therefore be diagnosed as:
 
 - not sent to relay
 - sent but never acknowledged by the worker
-- acknowledged but never completed
+- acknowledged by an old/stale worker that did not emit `received_by_worker`
+- acknowledged and forwarded but never completed
 - completed by the worker but rejected by SantaClawz return validation
 - completed and state-updated
 
