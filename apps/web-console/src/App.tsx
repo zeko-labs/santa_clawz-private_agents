@@ -124,6 +124,7 @@ const EXPLORE_REGISTRY_POLL_MS = 8_000;
 const EXPLORE_AGENT_BOARD_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
+const AGENT_PROFILE_PAYMENT_POLL_MS = 4_000;
 const EXPLORE_AGENTS_PAGE_SIZE = 12;
 type NavSectionKey = "activate" | "explore";
 
@@ -1785,7 +1786,12 @@ export function App() {
     }
 
     let cancelled = false;
+    let intervalId: number | undefined;
     const refreshProfilePayments = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
       void fetchPaymentLedger({ agentId: sharedAgentId, limit: 40 })
         .then((nextLedger) => {
           if (!cancelled) {
@@ -1801,9 +1807,21 @@ export function App() {
     };
 
     refreshProfilePayments();
+    intervalId = window.setInterval(refreshProfilePayments, AGENT_PROFILE_PAYMENT_POLL_MS);
+
+    const refreshWhenVisible = () => {
+      if (!document.hidden) {
+        refreshProfilePayments();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [activeSection, sharedAgentId]);
 
