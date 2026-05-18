@@ -1016,6 +1016,16 @@ export interface AgentRuntimeHeartbeatState {
     localHireTimeoutMs?: number;
     maxLocalHireTimeoutMs?: number;
   };
+  paidExecutionProbe?: {
+    attempted: boolean;
+    ok: boolean;
+    checkedAtIso: string;
+    requestId?: string;
+    localHireUrl?: string;
+    packageVerified?: boolean;
+    returnStatus?: string;
+    reason?: string;
+  };
 }
 
 export interface AgentRuntimeAvailabilityState {
@@ -1041,6 +1051,9 @@ export interface AgentReadinessState {
   paymentReady: boolean;
   published: boolean;
   hireable: boolean;
+  paidExecutionProven?: boolean;
+  needsUpgrade?: boolean;
+  upgradeReasons?: string[];
   lastJobStatus?: "none" | "submitted" | "quoted" | "completed" | "failed";
   blockers: string[];
 }

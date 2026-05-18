@@ -133,6 +133,9 @@ export async function postHeartbeat(config) {
         : {}),
       ...(config.relayAgentWorkerTiming && typeof config.relayAgentWorkerTiming === "object"
         ? { relayAgentWorkerTiming: config.relayAgentWorkerTiming }
+        : {}),
+      ...(config.paidExecutionProbe && typeof config.paidExecutionProbe === "object"
+        ? { paidExecutionProbe: config.paidExecutionProbe }
         : {})
     })
   });
@@ -627,6 +630,23 @@ export async function runSellerReadiness(config) {
   const paidExecutionProbe = options.paidExecutionProbe
     ? await runPaidExecutionProbe(resolvedConfig, afterPlan.payload ?? beforePlan.payload ?? {})
     : undefined;
+  let paidExecutionProbeHeartbeat;
+  if (options.heartbeat && paidExecutionProbe?.attempted === true) {
+    paidExecutionProbeHeartbeat = await postHeartbeat({
+      ...resolvedConfig,
+      heartbeatNote: "SantaClawz paid execution readiness probe.",
+      paidExecutionProbe: {
+        attempted: true,
+        ok: paidExecutionProbe.ok === true,
+        checkedAtIso: new Date().toISOString(),
+        localHireUrl: paidExecutionProbe.localHireUrl,
+        requestId: paidExecutionProbe.requestId,
+        packageVerified: paidExecutionProbe.packageVerified === true,
+        returnStatus: paidExecutionProbe.returnStatus,
+        reason: paidExecutionProbe.reason
+      }
+    });
+  }
 
   return buildReadinessSummary({
     config: resolvedConfig,
@@ -634,7 +654,7 @@ export async function runSellerReadiness(config) {
     beforePlan,
     afterState,
     afterPlan,
-    heartbeat,
+    heartbeat: paidExecutionProbeHeartbeat?.ok ? paidExecutionProbeHeartbeat : heartbeat,
     heartbeatSkipped: !options.heartbeat,
     publish,
     availability,

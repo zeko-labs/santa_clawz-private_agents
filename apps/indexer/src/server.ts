@@ -294,6 +294,7 @@ type AgentHeartbeatRequestBody = {
   relayAgentWorkerRoutes?: unknown;
   relayAgentWorkerWarnings?: unknown;
   relayAgentWorkerTiming?: unknown;
+  paidExecutionProbe?: unknown;
 };
 type SponsorRequestBody = { amountMina?: unknown; sessionId?: unknown; purpose?: unknown };
 type RecoveryRequestBody = { sessionId?: unknown };
@@ -1402,6 +1403,9 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     paymentsReady: agent.paymentProfileReady,
     quoteReady,
     paidExecutionReady,
+    paidExecutionProven: agent.readiness?.paidExecutionProven === true,
+    needsUpgrade: agent.readiness?.needsUpgrade === true,
+    ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
     capabilityTags,
     pricing: {
       pricingMode: agent.pricingMode,
@@ -1421,6 +1425,9 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
       paymentsReady: agent.paymentProfileReady,
       quoteReady,
       paidExecutionReady,
+      paidExecutionProven: agent.readiness?.paidExecutionProven === true,
+      needsUpgrade: agent.readiness?.needsUpgrade === true,
+      ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
       relayConnected: agent.readiness?.relayConnected === true,
       heartbeatLive: agent.readiness?.heartbeatLive === true,
       runtimeReachable: agent.readiness?.runtimeReachable === true,
@@ -2269,6 +2276,9 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       paymentsReady: consoleState.paymentProfileReady,
       quoteReady,
       paidExecutionReady,
+      paidExecutionProven: consoleState.readiness?.paidExecutionProven === true,
+      needsUpgrade: consoleState.readiness?.needsUpgrade === true,
+      ...(consoleState.readiness?.upgradeReasons?.length ? { upgradeReasons: consoleState.readiness.upgradeReasons } : {}),
       runtimeRoutes: {
         mode: consoleState.profile.runtimeDelivery.mode,
         ...(consoleState.profile.runtimeDelivery.runtimeIngressUrl
@@ -2293,6 +2303,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       lastHeartbeatAtIso: availability.heartbeat.lastHeartbeatAtIso,
       ...(availability.heartbeat.relayAgentWorkerRoutes ? { relayAgentWorkerRoutes: availability.heartbeat.relayAgentWorkerRoutes } : {}),
       ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {}),
+      ...(availability.heartbeat.paidExecutionProbe ? { paidExecutionProbe: availability.heartbeat.paidExecutionProbe } : {}),
       executionTiming: {
         executionMode: relayAgentWorkerTiming?.executionMode ?? "sync",
         platformRelayTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
@@ -3286,6 +3297,9 @@ app.post("/api/agents/:agentId/heartbeat", route(async (request, response) => {
           : {}),
         ...(body.relayAgentWorkerTiming && typeof body.relayAgentWorkerTiming === "object" && !Array.isArray(body.relayAgentWorkerTiming)
           ? { relayAgentWorkerTiming: body.relayAgentWorkerTiming as Record<string, unknown> }
+          : {}),
+        ...(body.paidExecutionProbe && typeof body.paidExecutionProbe === "object" && !Array.isArray(body.paidExecutionProbe)
+          ? { paidExecutionProbe: body.paidExecutionProbe as Record<string, unknown> }
           : {}),
         ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
       })
@@ -5877,6 +5891,9 @@ class AgentRelayHub {
           : {}),
         ...(message.relayAgentWorkerTiming && typeof message.relayAgentWorkerTiming === "object" && !Array.isArray(message.relayAgentWorkerTiming)
           ? { relayAgentWorkerTiming: message.relayAgentWorkerTiming as Record<string, unknown> }
+          : {}),
+        ...(message.paidExecutionProbe && typeof message.paidExecutionProbe === "object" && !Array.isArray(message.paidExecutionProbe)
+          ? { paidExecutionProbe: message.paidExecutionProbe as Record<string, unknown> }
           : {})
       }).catch(() => undefined);
     }

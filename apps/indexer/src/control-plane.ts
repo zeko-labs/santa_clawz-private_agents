@@ -690,6 +690,16 @@ interface AgentRuntimeHeartbeatRecord {
     localHireTimeoutMs?: number;
     maxLocalHireTimeoutMs?: number;
   };
+  paidExecutionProbe?: {
+    attempted: boolean;
+    ok: boolean;
+    checkedAtIso: string;
+    requestId?: string;
+    localHireUrl?: string;
+    packageVerified?: boolean;
+    returnStatus?: string;
+    reason?: string;
+  };
 }
 
 interface AgentRuntimeHeartbeatFile {
@@ -707,6 +717,7 @@ interface AgentRuntimeHeartbeatOptions extends AgentRuntimeAvailabilityOptions {
   relayAgentWorkerRoutes?: Record<string, string>;
   relayAgentWorkerWarnings?: string[];
   relayAgentWorkerTiming?: Record<string, unknown>;
+  paidExecutionProbe?: Record<string, unknown>;
 }
 
 interface ConsoleStateOptions {
@@ -2280,6 +2291,15 @@ function buildAgentReadinessState(input: {
   if (!input.paymentReady) {
     blockers.push("payment-not-ready");
   }
+  const paidMode = input.profile.paymentProfile.pricingMode === "fixed-exact" || input.profile.paymentProfile.pricingMode === "quote-required";
+  const paidExecutionProven = paidMode ? input.heartbeat.paidExecutionProbe?.ok === true : undefined;
+  const upgradeReasons = paidMode
+    ? [
+        ...(!input.heartbeat.relayAgentWorkerTiming ? ["missing-current-relay-timing"] : []),
+        ...(input.heartbeat.paidExecutionProbe?.ok === true ? [] : ["paid-execution-not-proven"])
+      ]
+    : [];
+  const needsUpgrade = paidMode && upgradeReasons.length > 0;
 
   return {
     relayConnected: input.relayConnected,
@@ -2289,6 +2309,8 @@ function buildAgentReadinessState(input: {
     paymentReady: input.paymentReady,
     published: input.published,
     hireable: blockers.length === 0,
+    ...(paidExecutionProven !== undefined ? { paidExecutionProven } : {}),
+    ...(needsUpgrade ? { needsUpgrade, upgradeReasons } : {}),
     lastJobStatus: input.lastJobStatus ?? "none",
     blockers
   };
@@ -3603,7 +3625,8 @@ export class ClawzControlPlane {
       ...(record.relayAgentFeatures?.length ? { relayAgentFeatures: record.relayAgentFeatures } : {}),
       ...(record.relayAgentWorkerRoutes ? { relayAgentWorkerRoutes: record.relayAgentWorkerRoutes } : {}),
       ...(record.relayAgentWorkerWarnings?.length ? { relayAgentWorkerWarnings: record.relayAgentWorkerWarnings } : {}),
-      ...(record.relayAgentWorkerTiming ? { relayAgentWorkerTiming: record.relayAgentWorkerTiming } : {})
+      ...(record.relayAgentWorkerTiming ? { relayAgentWorkerTiming: record.relayAgentWorkerTiming } : {}),
+      ...(record.paidExecutionProbe ? { paidExecutionProbe: record.paidExecutionProbe } : {})
     };
   }
 
@@ -7930,6 +7953,37 @@ export class ClawzControlPlane {
       }
       relayAgentWorkerTiming = timing;
     }
+    let paidExecutionProbe: AgentRuntimeHeartbeatRecord["paidExecutionProbe"] | undefined;
+    if (options.paidExecutionProbe && typeof options.paidExecutionProbe === "object" && !Array.isArray(options.paidExecutionProbe)) {
+      const checkedAtIso =
+        typeof options.paidExecutionProbe.checkedAtIso === "string" && Number.isFinite(Date.parse(options.paidExecutionProbe.checkedAtIso))
+          ? options.paidExecutionProbe.checkedAtIso
+          : receivedAtIso;
+      paidExecutionProbe = {
+        attempted: options.paidExecutionProbe.attempted === true,
+        ok: options.paidExecutionProbe.ok === true,
+        checkedAtIso,
+        ...(typeof options.paidExecutionProbe.requestId === "string"
+          ? { requestId: options.paidExecutionProbe.requestId.trim().slice(0, 120) }
+          : {}),
+        ...(typeof options.paidExecutionProbe.localHireUrl === "string"
+          ? { localHireUrl: options.paidExecutionProbe.localHireUrl.trim().slice(0, 500) }
+          : {}),
+        ...(typeof options.paidExecutionProbe.packageVerified === "boolean"
+          ? { packageVerified: options.paidExecutionProbe.packageVerified }
+          : {}),
+        ...(typeof options.paidExecutionProbe.returnStatus === "string"
+          ? { returnStatus: options.paidExecutionProbe.returnStatus.trim().slice(0, 80) }
+          : {}),
+        ...(typeof options.paidExecutionProbe.reason === "string"
+          ? { reason: options.paidExecutionProbe.reason.trim().slice(0, 240) }
+          : {})
+      };
+    }
+    const file = await this.loadRuntimeHeartbeatFile();
+    const existingRecord = file.heartbeats.find((record) => record.sessionId === sessionId);
+    const effectiveRelayAgentWorkerTiming = relayAgentWorkerTiming ?? existingRecord?.relayAgentWorkerTiming;
+    const effectivePaidExecutionProbe = paidExecutionProbe ?? existingRecord?.paidExecutionProbe;
     const nextRecord: AgentRuntimeHeartbeatRecord = {
       agentId,
       sessionId,
@@ -7942,10 +7996,9 @@ export class ClawzControlPlane {
       ...(relayAgentFeatures.length ? { relayAgentFeatures } : {}),
       ...(Object.keys(relayAgentWorkerRoutes).length ? { relayAgentWorkerRoutes } : {}),
       ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {}),
-      ...(relayAgentWorkerTiming ? { relayAgentWorkerTiming } : {})
+      ...(effectiveRelayAgentWorkerTiming ? { relayAgentWorkerTiming: effectiveRelayAgentWorkerTiming } : {}),
+      ...(effectivePaidExecutionProbe ? { paidExecutionProbe: effectivePaidExecutionProbe } : {})
     };
-    const file = await this.loadRuntimeHeartbeatFile();
-    const existingRecord = file.heartbeats.find((record) => record.sessionId === sessionId);
     const existingReceivedAtMs = existingRecord ? Date.parse(existingRecord.receivedAtIso) : Number.NaN;
     const heartbeatCanCoalesce =
       existingRecord &&
@@ -7959,6 +8012,7 @@ export class ClawzControlPlane {
       JSON.stringify(existingRecord.relayAgentWorkerRoutes ?? {}) === JSON.stringify(nextRecord.relayAgentWorkerRoutes ?? {}) &&
       JSON.stringify(existingRecord.relayAgentWorkerWarnings ?? []) === JSON.stringify(nextRecord.relayAgentWorkerWarnings ?? []) &&
       JSON.stringify(existingRecord.relayAgentWorkerTiming ?? {}) === JSON.stringify(nextRecord.relayAgentWorkerTiming ?? {}) &&
+      JSON.stringify(existingRecord.paidExecutionProbe ?? {}) === JSON.stringify(nextRecord.paidExecutionProbe ?? {}) &&
       Number.isFinite(existingReceivedAtMs) &&
       Date.parse(receivedAtIso) - existingReceivedAtMs < AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS;
     if (heartbeatCanCoalesce) {

@@ -64,6 +64,8 @@ Run the readiness check whenever anything changes:
 pnpm seller:ready -- --env-file .env.santaclawz --json
 ```
 
+For paid agents, `seller:ready` runs a local `paid_execution` probe by default and publishes the result back to SantaClawz. A paid agent can be online and payment-configured before it is truly proven; buyer agents should look for `paidExecutionProven: true` and clear `needsUpgrade` status in `/api/agents/:agentId/ready`.
+
 Restart the agent later with the bundled local ingress:
 
 ```bash
