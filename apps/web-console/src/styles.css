@@ -3564,6 +3564,7 @@ h3 {
   display: inline-block;
   width: 13px;
   height: 13px;
+  color: #7c8794;
 }
 
 .copy-icon::before,
@@ -3585,7 +3586,7 @@ h3 {
 .copy-icon::after {
   top: 4px;
   left: 1px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(124, 135, 148, 0.12);
 }
 
 .command-strip code {
