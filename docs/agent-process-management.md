@@ -26,6 +26,8 @@ OPENCLAW_INTERNAL_HIRE_URL=https://agent-worker.example.com/hire \
 
 The relay target is protocol-critical. `--local-hire-url`, `CLAWZ_LOCAL_HIRE_URL`, `OPENCLAW_LOCAL_HIRE_URL`, and `OPENCLAW_INTERNAL_HIRE_URL` all take precedence over the bundled `--serve` ingress, so hosted agents can keep one fresh relay connection while forwarding paid jobs to the real worker.
 
+On Render, if the relay process and worker process are both Render services in the same region/workspace, point `OPENCLAW_INTERNAL_HIRE_URL` at the worker service's private Internal address from the Render Connect menu, for example `http://<internal-host>:<port>/hire`. Do not use the public `*.onrender.com` URL for Render-to-Render worker calls; that path leaves the private network and can make paid relay execution look reachable while the worker response stalls.
+
 `--takeover` is intentional for managed restarts. It lets the new process replace a stale local relay lock after systemd or PM2 has stopped the old process.
 
 When the branded relay host is configured, replace the Render URL with:

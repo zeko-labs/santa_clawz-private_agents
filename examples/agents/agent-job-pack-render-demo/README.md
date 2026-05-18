@@ -153,13 +153,13 @@ When this worker is connected through the SantaClawz relay, use the control-plan
 ```env
 CLAWZ_API_BASE="https://api.santaclawz.ai"
 CLAWZ_RELAY_BASE="https://relay.santaclawz.ai"
-OPENCLAW_INTERNAL_HIRE_URL="https://<python-worker-render-host>/hire"
+OPENCLAW_INTERNAL_HIRE_URL="http://<render-internal-python-worker-host>:<port>/hire"
 CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS=45000
 ```
 
 `CLAWZ_RELAY_BASE` matters because the public web host may sit behind a frontend/proxy layer that handles HTTP API routes but does not keep websocket upgrades open. For V1, `api.santaclawz.ai` and `relay.santaclawz.ai` can still point to the same Render indexer service; the hostname split lets us move relay later without changing agent env files.
 
-The hosted Job Pack deployment uses two Render services: a Python worker that serves `/hire`, and a Node relay/background worker that runs `pnpm relay:agent -- --env-file ... --takeover`. The Node worker must set `OPENCLAW_INTERNAL_HIRE_URL` to the Python worker's `/hire` URL so the signed relay request reaches the real Job Pack worker. If `--serve` is also present, the explicit `OPENCLAW_INTERNAL_HIRE_URL` still wins; `--serve` should only be used when intentionally running the bundled local ingress. Keep the local hire timeout below the SantaClawz platform relay window; the default `45000` ms returns a typed relay failure instead of letting the platform hit its 60 second response timeout. Values above `50000` ms are clamped by the reference relay for buyer safety.
+The hosted Job Pack deployment uses two Render services: a Python worker that serves `/hire`, and a Node relay/background worker that runs `pnpm relay:agent -- --env-file ... --takeover`. The Node worker must set `OPENCLAW_INTERNAL_HIRE_URL` to the Python worker's `/hire` URL so the signed relay request reaches the real Job Pack worker. If both services run on Render in the same region/workspace, use the Python worker service's private Internal address from Render's Connect menu, not the public `*.onrender.com` URL. Render background workers can send private-network requests to web/private services, and Render documents public `.onrender.com` service-to-service calls as the wrong URL for internal traffic. If `--serve` is also present, the explicit `OPENCLAW_INTERNAL_HIRE_URL` still wins; `--serve` should only be used when intentionally running the bundled local ingress. Keep the local hire timeout below the SantaClawz platform relay window; the default `45000` ms returns a typed relay failure instead of letting the platform hit its 60 second response timeout. Values above `50000` ms are clamped by the reference relay for buyer safety.
 
 ## SantaClawz Integration Shape
 

@@ -189,6 +189,27 @@ function localHireUrlFor(baseUrl) {
   return url.toString();
 }
 
+function warnIfRenderPublicWorkerUrl(targetUrl) {
+  if (!process.env.RENDER || !targetUrl) {
+    return;
+  }
+  let url;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return;
+  }
+  if (!url.hostname.endsWith(".onrender.com")) {
+    return;
+  }
+  console.error(JSON.stringify({
+    event: "relay_worker_public_render_url_warning",
+    localHireUrl: targetUrl,
+    warning:
+      "This relay worker is running on Render and forwarding jobs to a public onrender.com URL. For Render-to-Render worker calls, use the target service's private Internal address from Render Connect, for example http://<internal-host>:<port>/hire. Public Render URLs can be slower, less reliable, and can stall paid relay execution."
+  }));
+}
+
 function firstNonEmptyString(...values) {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) {
@@ -953,6 +974,9 @@ try {
     ...(localQuoteUrl ? { quote_intake: localQuoteUrl } : {}),
     ...(localPaidUrl ? { paid_execution: localPaidUrl } : {})
   };
+  for (const target of new Set(Object.values(localHireRoutes))) {
+    warnIfRenderPublicWorkerUrl(target);
+  }
 
   if (shouldHeartbeat) {
       const firstHeartbeat = await postHeartbeat({
