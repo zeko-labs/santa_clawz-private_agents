@@ -3756,10 +3756,12 @@ export function App() {
                     </details>
                   </div>
                 ) : null}
-                <div className="activation-status-card">
-                  <span className={`runtime-status-pill compact ${activationStatus.className}`}>{activationStatus.label}</span>
-                  <span>{activationStatus.detail}</span>
-                </div>
+                {enrollmentTicket || isRegisteredSession || activationRegistryAgent ? (
+                  <div className="activation-status-card">
+                    <span className={`runtime-status-pill compact ${activationStatus.className}`}>{activationStatus.label}</span>
+                    <span>{activationStatus.detail}</span>
+                  </div>
+                ) : null}
               </div>
           </div>
           </section>
