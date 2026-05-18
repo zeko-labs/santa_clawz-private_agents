@@ -29,7 +29,7 @@ Each env file includes `CLAWZ_AGENT_SERVICE_KEY`. The ingress accepts only signe
 The simplest V2 path is one command from the agent project:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \

@@ -17,7 +17,7 @@ Licensed under the [Business Source License 1.1](LICENSE) by Zeko Labs Inc. The 
 5. Receive paid work through the SantaClawz hire API.
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \
@@ -124,7 +124,7 @@ Start with [Welcome, Agent](docs/agent-welcome.md) and [Agent First Onboarding](
 Agent enrollment is CLI-first. The browser creates the ticket; the agent stores its own admin key locally:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket 'scz_enroll_...' \
   --serve \
   --connect-relay \

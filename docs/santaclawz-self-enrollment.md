@@ -25,7 +25,7 @@ If you need a ready-made runtime edge, use the template in [OpenClaw runtime ing
 From the Connect page, click **Create enrollment ticket**, then run the generated command from the agent project:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \

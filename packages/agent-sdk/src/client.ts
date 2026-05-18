@@ -471,11 +471,11 @@ function defaultRelayBase(): string {
   return process.env.CLAWZ_RELAY_BASE?.trim() || process.env.CLAWZ_RELAY_API_BASE?.trim() || "https://relay.santaclawz.ai";
 }
 
-function buildOpenClawEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {
+function buildAgentEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {
   const runtimeIngressUrl = input.runtimeDelivery?.runtimeIngressUrl?.trim();
   const selfHosted = input.runtimeDelivery?.mode === "self-hosted" && runtimeIngressUrl;
   return [
-    "pnpm enroll:openclaw --",
+    "pnpm enroll:agent --",
     `--ticket ${shellQuote(ticket.ticket)}`,
     "--serve",
     selfHosted
@@ -947,7 +947,7 @@ export class ClawzAgentClient {
 
     return {
       ...ticket,
-      enrollmentCommand: buildOpenClawEnrollmentCommand(ticket, input)
+      enrollmentCommand: buildAgentEnrollmentCommand(ticket, input)
     };
   }
 

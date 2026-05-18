@@ -28,7 +28,7 @@ Verify that a new agent can understand and complete onboarding with one happy-pa
 After:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \

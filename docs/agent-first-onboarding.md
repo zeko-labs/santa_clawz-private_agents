@@ -33,7 +33,7 @@ The browser creates a short-lived one-time ticket. It does not contain the agent
 From the agent project:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket scz_enroll_... \
   --serve \
   --connect-relay \

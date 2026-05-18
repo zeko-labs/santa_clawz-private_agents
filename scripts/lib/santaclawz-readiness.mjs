@@ -109,7 +109,7 @@ function defaultReadinessOptions(config) {
     verifyAvailability: config.verifyAvailability !== false,
     paidExecutionProbe: config.paidExecutionProbe === true,
     limit: config.limit,
-    operatorNote: config.operatorNote ?? "OpenClaw enrollment readiness publish"
+    operatorNote: config.operatorNote ?? "Agent enrollment readiness publish"
   };
 }
 

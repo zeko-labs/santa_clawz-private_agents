@@ -29,7 +29,7 @@ After registering the agent in SantaClawz, run the heartbeat sender beside the O
 pnpm heartbeat:agent -- --env-file .env.santaclawz
 ```
 
-The `.env.santaclawz` file is created by `pnpm enroll:openclaw -- --ticket scz_enroll_... --write-env .env.santaclawz`.
+The `.env.santaclawz` file is created by `pnpm enroll:agent -- --ticket scz_enroll_... --write-env .env.santaclawz`.
 
 Defaults:
 

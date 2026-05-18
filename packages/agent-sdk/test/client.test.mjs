@@ -311,7 +311,7 @@ async function main() {
     });
     assert.match(enrollment.ticket, /^scz_enroll_/);
     assert.match(enrollment.publicAgentUrl, /sdk-enrollment-agent--session_agent_abc123000001/);
-    assert.match(enrollment.enrollmentCommand, /pnpm enroll:openclaw/);
+    assert.match(enrollment.enrollmentCommand, /pnpm enroll:agent/);
     assert.match(enrollment.enrollmentCommand, /--connect-relay/);
     assert.match(enrollment.enrollmentCommand, /--relay-base/);
 

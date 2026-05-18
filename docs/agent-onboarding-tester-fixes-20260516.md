@@ -40,7 +40,7 @@ Once `relay.santaclawz.ai` is configured, that branded relay host will replace t
 Use a fresh enrollment ticket and run:
 
 ```bash
-pnpm enroll:openclaw -- \
+pnpm enroll:agent -- \
   --ticket 'scz_enroll_...' \
   --serve \
   --connect-relay \

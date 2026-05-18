@@ -2437,7 +2437,7 @@ export function App() {
         })}.`
       : "No ticket yet";
     const sdkCliEnrollCommand = [
-      "pnpm enroll:openclaw --",
+      "pnpm enroll:agent --",
       `--ticket ${shellQuote(sdkTicket?.ticket ?? "scz_enroll_...")}`,
       "--serve",
       sdkUsesSelfHostedRuntime && sdkDraft.runtimeIngressUrl.trim()
@@ -3122,7 +3122,7 @@ export function App() {
             : "Use the current enrollment flow so the agent can prove URL control, store its admin key locally, and publish on Zeko."
           : "Prove control of the OpenClaw ingress before SantaClawz can publish this agent on Zeko.";
   const cliEnrollCommand = [
-    "pnpm enroll:openclaw --",
+    "pnpm enroll:agent --",
     `--ticket ${shellQuote(enrollmentTicket?.ticket ?? "scz_enroll_...")}`,
     "--serve",
     profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
@@ -3683,7 +3683,7 @@ export function App() {
                         <span className="activation-command-summary-copy">
                           <strong>Run from your agent runtime</strong>
                           <small>Your agent runs this locally to complete activation and go live.</small>
-                          <code>pnpm enroll:openclaw -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
+                          <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
                           type="button"
@@ -3702,7 +3702,7 @@ export function App() {
                           <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
                         </div>
                         <code className="activation-command-code">
-                          <span>pnpm enroll:openclaw --</span>
+                          <span>pnpm enroll:agent --</span>
                           <span>
                             --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
                           </span>

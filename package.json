@@ -51,6 +51,7 @@
     "start:indexer": "pnpm --filter @clawz/indexer start",
     "start:enterprise-kms": "pnpm --filter @clawz/enterprise-kms start",
     "start:privacy-gateway": "pnpm --filter @clawz/privacy-gateway start",
+    "enroll:agent": "node scripts/enroll-openclaw-agent.mjs",
     "enroll:openclaw": "node scripts/enroll-openclaw-agent.mjs",
     "enroll:publicclawz": "node scripts/enroll-openclaw-agent.mjs",
     "verify:proof": "pnpm --filter @clawz/indexer verify:proof",
