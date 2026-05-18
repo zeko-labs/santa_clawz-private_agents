@@ -507,6 +507,10 @@ function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+function ticketPreview(value: string) {
+  return `${value.slice(0, 16)}...`;
+}
+
 async function copyText(value: string) {
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
     throw new Error("Clipboard access is unavailable in this browser.");
@@ -822,6 +826,13 @@ function formatCompactCount(value: number) {
   return value.toString();
 }
 
+function normalizePaymentLifecycleLabel(label?: string) {
+  if (!label) {
+    return "";
+  }
+  return label.toLowerCase() === "payment authorized, awaiting completion" ? "Awaiting completion" : label;
+}
+
 function paymentActivityLine(entry: PaymentLedgerEntry) {
   const amount = entry.sellerNetAmountUsd?.trim() || entry.amountUsd;
   const rail = entry.rail === "base-usdc" ? "Base USDC" : railLabel(entry.rail);
@@ -832,7 +843,7 @@ function paymentActivityLine(entry: PaymentLedgerEntry) {
     return `$${amount} settlement retry available on ${rail}`;
   }
   if (entry.lifecycleStatus?.label) {
-    return `$${amount} ${entry.lifecycleStatus.label.toLowerCase()} on ${rail}`;
+    return `$${amount} ${normalizePaymentLifecycleLabel(entry.lifecycleStatus.label).toLowerCase()} on ${rail}`;
   }
   if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
     return `$${amount} paid on ${rail}, return rejected`;
@@ -857,7 +868,7 @@ function paymentActivityHeadline(entry: PaymentLedgerEntry) {
     return `$${amount} ${asset} payment needs settlement retry on ${network}`;
   }
   if (entry.lifecycleStatus?.label) {
-    return `$${amount} ${asset} ${entry.lifecycleStatus.label.toLowerCase()} on ${network}`;
+    return `$${amount} ${asset} ${normalizePaymentLifecycleLabel(entry.lifecycleStatus.label).toLowerCase()} on ${network}`;
   }
   if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
     return `$${amount} ${asset} payment return rejected on ${network}`;
@@ -873,7 +884,7 @@ function paymentActivityHeadline(entry: PaymentLedgerEntry) {
 
 function paymentActivityBadge(entry: PaymentLedgerEntry) {
   if (entry.lifecycleStatus?.label) {
-    return entry.lifecycleStatus.label;
+    return normalizePaymentLifecycleLabel(entry.lifecycleStatus.label);
   }
   if (entry.settlementRecovery?.canRetrySettlement) {
     return "Retry settlement";
@@ -3096,12 +3107,13 @@ export function App() {
     "--write-env .env.santaclawz",
     "--challenge-file .well-known/santaclawz-agent-challenge.json"
   ].filter(Boolean).join(" ");
-  const enrollmentTicketExpiryLabel = enrollmentTicket
-    ? `Ticket expires ${new Date(enrollmentTicket.expiresAtIso).toLocaleTimeString([], {
+  const enrollmentTicketExpiryTime = enrollmentTicket
+    ? new Date(enrollmentTicket.expiresAtIso).toLocaleTimeString([], {
         hour: "numeric",
         minute: "2-digit"
-      })}.`
-    : "Create a ticket after the fields above are ready.";
+      })
+    : "";
+  const enrollmentTicketPreview = enrollmentTicket ? ticketPreview(enrollmentTicket.ticket) : "";
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
@@ -3571,17 +3583,34 @@ export function App() {
             <div className="register-flow-head">
               <div className="register-flow-title-row">
                 <strong>Activate agent to go live and get paid</strong>
-                <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Need help?
-                </a>
               </div>
               <p className="panel-copy">
-                Create activation ticket, then run activation command to publish your agent on the network.
+                Authorize your agent with a ticket, then run the activation command from your agent runtime.
               </p>
             </div>
 
             <div className="register-cli-stack">
-                <div className="ticket-action-row">
+                <div className={enrollmentTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
+                  {enrollmentTicket ? (
+                    <>
+                      <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
+                        <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
+                        <span aria-hidden="true"> · </span>
+                        <span>expires {enrollmentTicketExpiryTime}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="activation-reissue-button"
+                        disabled={pendingAction === "create-enrollment-ticket" || !enrollmentReady}
+                        onClick={() => {
+                          void createEnrollmentTicketAction();
+                        }}
+                      >
+                        {pendingAction === "create-enrollment-ticket" ? "Reissuing..." : "Reissue ticket"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
                   <button
                     type="button"
                     className="primary-button"
@@ -3591,14 +3620,12 @@ export function App() {
                     }}
                   >
                     {pendingAction === "create-enrollment-ticket"
-                      ? "Creating activation ticket..."
-                      : enrollmentTicket
-                        ? "Create fresh activation ticket"
-                        : "Create activation ticket"}
+                      ? "Issuing activation ticket..."
+                      : "Issue activation ticket"}
                   </button>
-                  <span className={enrollmentTicket ? "subtle-pill live" : "subtle-pill"}>
-                    {enrollmentTicket ? enrollmentTicketExpiryLabel : "No ticket yet"}
-                  </span>
+                      <p className="activation-pending-label">Activation pending — issue a ticket to continue</p>
+                    </>
+                  )}
                 </div>
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
@@ -3623,26 +3650,48 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
-                    <div className="activation-command-action-row">
-                      <button
-                        type="button"
-                        className="primary-button activation-copy-button"
-                        onClick={() => {
-                          void copyValue("cli-enroll-command", cliEnrollCommand);
-                        }}
-                      >
-                        {copiedKey === "cli-enroll-command" ? "Copied" : "Copy Activation Command"}
-                      </button>
-                      <p className="panel-copy">Run from your agent runtime. SantaClawz will publish the agent once relay and heartbeat come online.</p>
-                    </div>
-                    <details className="activation-command-details">
-                      <summary>View command</summary>
-                      <div className="command-strip compact-command-strip activation-command-strip">
-                        <code>{cliEnrollCommand}</code>
+                    <p className="panel-copy activation-command-copy">Your agent authenticates itself by running this command locally. Once relay and heartbeat connect, it goes live automatically.</p>
+                    <div className="activation-command-label">Run from your agent runtime</div>
+                    <div className="command-strip compact-command-strip activation-command-strip">
+                      <div className="activation-command-ticket-bar">
+                        <span>ticket</span>
+                        <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
                       </div>
-                    </details>
+                      <code className="activation-command-code">
+                        <span>pnpm enroll:openclaw --</span>
+                        <span>
+                          --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
+                        </span>
+                        <span>--serve</span>
+                        <span>
+                          {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
+                            ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
+                            : "--connect-relay"}
+                        </span>
+                        {profile.runtimeDelivery.mode !== "self-hosted" ? (
+                          <span>--relay-base {shellQuote(DEFAULT_RELAY_BASE)}</span>
+                        ) : null}
+                        <span>--write-env .env.santaclawz</span>
+                        <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
+                      </code>
+                      <div className="activation-command-footer">
+                        <span>your agent runs this</span>
+                        <button
+                          type="button"
+                          className="activation-command-copy-button"
+                          onClick={() => {
+                            void copyValue("cli-enroll-command", cliEnrollCommand);
+                          }}
+                        >
+                          {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
+                <a className="activation-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                  Agent activation guide
+                </a>
               </div>
           </div>
           </section>
@@ -4162,8 +4211,7 @@ export function App() {
                     </div>
                     <div className="profile-score-stack" aria-label="Agent proof, success, and job activity metrics">
                       <span className="proof-score-pill">
-                        {agentTrustScore}% proof
-                        <small>score</small>
+                        {agentTrustScore}% readiness
                       </span>
                       <span className={`proof-score-pill ${agentCompletionScoreClass}`}>
                         {agentCompletionScoreLabel}

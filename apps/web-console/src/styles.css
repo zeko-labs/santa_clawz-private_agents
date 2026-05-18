@@ -2403,40 +2403,70 @@ pre,
 
 .activation-command-card {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.42);
-}
-
-.activation-command-action-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.activation-command-action-row .panel-copy {
-  margin: 0;
-  line-height: 1.45;
-}
-
-.activation-copy-button {
-  flex: 0 0 auto;
-  min-height: 44px;
-  padding-inline: 18px;
-}
-
-.activation-command-details {
-  display: grid;
   gap: 8px;
+  margin-top: 2px;
 }
 
-.activation-command-details summary {
-  width: max-content;
-  cursor: pointer;
-  color: var(--muted);
+.activation-command-copy {
+  margin: 0;
+  line-height: 1.48;
+}
+
+.activation-command-label {
+  margin-top: 4px;
+  color: #9a9690;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.activation-pending-label {
+  flex-basis: 100%;
+  margin: -4px 0 0;
+  color: #9a9690;
+  font-size: 12px;
+}
+
+.activation-ticket-issued-row {
+  align-items: center;
+}
+
+.activation-ticket-pill {
+  align-items: center;
+  display: inline-flex;
+  gap: 3px;
+}
+
+.activation-ticket-id {
+  font-family: "IBM Plex Mono", monospace;
   font-weight: 700;
+}
+
+.activation-reissue-button {
+  border: 1px solid #d85a30;
+  border-radius: 999px;
+  background: transparent;
+  color: #d85a30;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 12px;
+}
+
+.activation-reissue-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.activation-guide-link {
+  width: max-content;
+  color: #9a9690;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.activation-guide-link:hover {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
@@ -3352,13 +3382,81 @@ h3 {
 }
 
 .activation-command-strip {
-  justify-content: flex-start;
-  align-items: flex-start;
+  display: grid;
+  gap: 0;
+  justify-content: stretch;
+  align-items: stretch;
+  overflow: hidden;
+  padding: 0;
 }
 
 .activation-command-strip code {
-  flex: 1 1 auto;
   min-width: 0;
+}
+
+.activation-command-ticket-bar {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+  background: #252320;
+}
+
+.activation-command-ticket-bar span {
+  color: rgba(237, 245, 255, 0.55);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.activation-command-ticket-bar strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #6eca9e;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activation-command-code {
+  display: grid;
+  gap: 2px;
+  padding: 14px;
+}
+
+.activation-command-code span {
+  display: block;
+}
+
+.activation-command-code mark {
+  background: transparent;
+  color: #6eca9e;
+}
+
+.activation-command-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 0 14px 14px;
+}
+
+.activation-command-footer > span {
+  color: rgba(237, 245, 255, 0.55);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.activation-command-copy-button {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f4f8ff;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 8px 14px;
 }
 
 .command-strip code {
@@ -4651,13 +4749,13 @@ button:disabled {
     width: 100%;
   }
 
-  .activation-command-action-row {
+  .activation-command-footer {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .activation-copy-button {
-    width: 100%;
+  .activation-command-copy-button {
+    align-self: flex-start;
   }
 
   .text-area.connect-headline-text-area {
