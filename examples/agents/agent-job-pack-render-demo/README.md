@@ -162,6 +162,8 @@ CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL=true
 
 The hosted Job Pack deployment uses two Render services: a Python worker that serves `/hire`, and a Node relay/background worker that runs `pnpm relay:agent -- --env-file ... --takeover`. The Node worker must set `OPENCLAW_INTERNAL_HIRE_URL` to the Python worker's `/hire` URL so the signed relay request reaches the real Job Pack worker. If both services run on Render in the same region/workspace, use the Python worker service's private Internal address from Render's Connect menu, not the public `*.onrender.com` URL. Render background workers can send private-network requests to web/private services, and Render documents public `.onrender.com` service-to-service calls as the wrong URL for internal traffic. `CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL=true` makes the relay fail fast if it is still configured with a public Render worker URL. If `--serve` is also present, the explicit `OPENCLAW_INTERNAL_HIRE_URL` still wins; `--serve` should only be used when intentionally running the bundled local ingress. Keep the local hire timeout below the SantaClawz platform relay window; the default `45000` ms returns a typed relay failure instead of letting the platform hit its 60 second response timeout. Values above `50000` ms are clamped by the reference relay for buyer safety.
 
+If `OPENCLAW_INTERNAL_HIRE_URL` is set in both the Render Environment tab and `/etc/secrets/agent_job_pack.env`, the Render Environment value wins. Update or remove the dashboard env var when changing the secret file, then restart/redeploy the background worker.
+
 ## SantaClawz Integration Shape
 
 SantaClawz can forward signed paid/quote execution payloads to:

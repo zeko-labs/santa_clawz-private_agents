@@ -223,6 +223,37 @@ function buildWorkerRouteWarnings(localHireRoutes) {
     .map(([route]) => `public_render_worker_url:${route}`);
 }
 
+function buildEnvFileOverrideWarnings(env) {
+  const checkedKeys = [
+    "CLAWZ_API_BASE",
+    "CLAWZ_RELAY_BASE",
+    "CLAWZ_LOCAL_HIRE_URL",
+    "OPENCLAW_LOCAL_HIRE_URL",
+    "OPENCLAW_INTERNAL_HIRE_URL",
+    "CLAWZ_LOCAL_PAID_HIRE_URL",
+    "CLAWZ_LOCAL_PAID_EXECUTION_URL",
+    "CLAWZ_LOCAL_QUOTE_URL"
+  ];
+  return checkedKeys
+    .filter((key) => {
+      const fileValue = typeof env[key] === "string" ? env[key].trim() : "";
+      const processValue = typeof process.env[key] === "string" ? process.env[key].trim() : "";
+      return fileValue && processValue && fileValue !== processValue;
+    })
+    .map((key) => `env_overrides_secret_file:${key}`);
+}
+
+function warnIfEnvFileRouteIsOverridden(warnings) {
+  for (const warning of warnings) {
+    console.error(JSON.stringify({
+      event: "relay_env_file_value_overridden",
+      warning,
+      note:
+        "A value in the process environment is overriding the value in --env-file. On Render, dashboard Environment variables take precedence because the relay env-file loader only fills missing process.env values. Update/remove the Render env var or pass an explicit CLI flag."
+    }));
+  }
+}
+
 function warnIfBundledIngressAndExplicitPaidRoute(input) {
   if (!input.shouldServe || !input.localPaidUrl) {
     return;
@@ -934,7 +965,7 @@ if (args.help) {
 }
 
 const envFile = typeof args["env-file"] === "string" ? args["env-file"].trim() : DEFAULT_ENV_FILE;
-applyEnvFile(envFile);
+const envFileValues = applyEnvFile(envFile);
 
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);
 const relayBase = normalizeBaseUrl(
@@ -1005,14 +1036,17 @@ try {
     ...(localPaidUrl ? { paid_execution: localPaidUrl } : {})
   };
   const workerRouteWarnings = buildWorkerRouteWarnings(localHireRoutes);
+  const envFileOverrideWarnings = buildEnvFileOverrideWarnings(envFileValues);
+  const relayAgentWorkerWarnings = [...workerRouteWarnings, ...envFileOverrideWarnings];
+  warnIfEnvFileRouteIsOverridden(envFileOverrideWarnings);
   if (
-    workerRouteWarnings.length > 0 &&
+    relayAgentWorkerWarnings.length > 0 &&
     /^(1|true|yes)$/i.test(process.env.CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL ?? process.env.CLAWZ_REQUIRE_PRIVATE_WORKER_URL ?? "")
   ) {
     throw new Error(
       [
-        "Relay worker route policy requires private worker URLs, but at least one route points at public onrender.com.",
-        `Warnings: ${workerRouteWarnings.join(", ")}`,
+        "Relay worker route policy requires private worker URLs and unambiguous route env, but this process has route warnings.",
+        `Warnings: ${relayAgentWorkerWarnings.join(", ")}`,
         "Set OPENCLAW_INTERNAL_HIRE_URL or --local-hire-url to the Render Internal address, for example http://<internal-host>:<port>/hire."
       ].join(" ")
     );
@@ -1038,7 +1072,7 @@ try {
         relayAgentBuild: RELAY_AGENT_BUILD,
         relayAgentFeatures: RELAY_AGENT_FEATURES,
         relayAgentWorkerRoutes: localHireRoutes,
-        relayAgentWorkerWarnings: workerRouteWarnings
+        relayAgentWorkerWarnings
       });
     if (!firstHeartbeat.ok) {
       throw new Error(firstHeartbeat.payload?.error ?? `Heartbeat failed with status ${firstHeartbeat.status}`);
@@ -1055,7 +1089,7 @@ try {
           relayAgentBuild: RELAY_AGENT_BUILD,
           relayAgentFeatures: RELAY_AGENT_FEATURES,
           relayAgentWorkerRoutes: localHireRoutes,
-          relayAgentWorkerWarnings: workerRouteWarnings
+          relayAgentWorkerWarnings
         }).catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
       });
@@ -1072,7 +1106,7 @@ try {
     relayBase,
     localHireUrl,
     localHireRoutes,
-    workerRouteWarnings,
+    workerRouteWarnings: relayAgentWorkerWarnings,
     servingIngress: ingress?.baseUrl,
     heartbeat: shouldHeartbeat ? "live" : "skipped"
   };
@@ -1100,7 +1134,7 @@ try {
         adminKey,
         localHireUrl: localHireRoutes,
         relayAgentWorkerRoutes: localHireRoutes,
-        relayAgentWorkerWarnings: workerRouteWarnings
+        relayAgentWorkerWarnings
       });
       attempt = 0;
       console.error(JSON.stringify({

@@ -79,6 +79,8 @@ CLAWZ_RELAY_REQUIRE_PRIVATE_WORKER_URL=true
 
 Readiness also reports `relayAgentWorkerRoutes`, `relayAgentWorkerWarnings`, and the blocker `relay-worker-public-render-url` when a Render relay worker is still forwarding to public `*.onrender.com`.
 
+Render dashboard Environment variables are normal process env vars. They override same-named values in `--env-file` because the SantaClawz loader only fills missing env values. If you move `OPENCLAW_INTERNAL_HIRE_URL`, update or remove it in Render Environment as well as the secret file; readiness reports `relay-env-overrides-secret-file` when those values disagree.
+
 ## Readiness
 
 Before paid work:

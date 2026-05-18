@@ -2299,6 +2299,9 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
         ...(scannerHealth.reachable ? [] : ["artifact-scanner-unavailable"]),
         ...(relayAgentWorkerWarnings.some((warning) => warning.startsWith("public_render_worker_url"))
           ? ["relay-worker-public-render-url"]
+          : []),
+        ...(relayAgentWorkerWarnings.some((warning) => warning.startsWith("env_overrides_secret_file"))
+          ? ["relay-env-overrides-secret-file"]
           : [])
       ],
       readiness: consoleState.readiness,
