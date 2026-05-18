@@ -293,6 +293,7 @@ type AgentHeartbeatRequestBody = {
   relayAgentFeatures?: unknown;
   relayAgentWorkerRoutes?: unknown;
   relayAgentWorkerWarnings?: unknown;
+  relayAgentWorkerTiming?: unknown;
 };
 type SponsorRequestBody = { amountMina?: unknown; sessionId?: unknown; purpose?: unknown };
 type RecoveryRequestBody = { sessionId?: unknown };
@@ -2257,6 +2258,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       (consoleState.paymentProfileReady && consoleState.paidJobsEnabled && (pricingMode === "fixed-exact" || pricingMode === "quote-required"));
     const pricingReadiness = pricingReadinessNotes({ pricingMode, quoteReady, paidExecutionReady });
     const relayAgentWorkerWarnings = availability.heartbeat.relayAgentWorkerWarnings ?? [];
+    const relayAgentWorkerTiming = availability.heartbeat.relayAgentWorkerTiming;
     response.json({
       schemaVersion: "santaclawz-agent-readiness/1.0",
       ok: true,
@@ -2291,6 +2293,20 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       lastHeartbeatAtIso: availability.heartbeat.lastHeartbeatAtIso,
       ...(availability.heartbeat.relayAgentWorkerRoutes ? { relayAgentWorkerRoutes: availability.heartbeat.relayAgentWorkerRoutes } : {}),
       ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {}),
+      executionTiming: {
+        executionMode: relayAgentWorkerTiming?.executionMode ?? "sync",
+        platformRelayTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
+        platformRelayTimeoutSeconds: Math.round(RELAY_RESPONSE_TIMEOUT_MS / 1000),
+        ...(typeof relayAgentWorkerTiming?.localHireTimeoutMs === "number"
+          ? {
+              agentLocalHireTimeoutMs: relayAgentWorkerTiming.localHireTimeoutMs,
+              agentLocalHireTimeoutSeconds: Math.round(relayAgentWorkerTiming.localHireTimeoutMs / 1000)
+            }
+          : {}),
+        ...(typeof relayAgentWorkerTiming?.maxLocalHireTimeoutMs === "number"
+          ? { maxAgentLocalHireTimeoutMs: relayAgentWorkerTiming.maxLocalHireTimeoutMs }
+          : {})
+      },
       lastJobStatus: consoleState.readiness?.lastJobStatus ?? "none",
       pricingReadiness,
       knownBlockers: [
@@ -3267,6 +3283,9 @@ app.post("/api/agents/:agentId/heartbeat", route(async (request, response) => {
           : {}),
         ...(Array.isArray(body.relayAgentWorkerWarnings)
           ? { relayAgentWorkerWarnings: body.relayAgentWorkerWarnings.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(body.relayAgentWorkerTiming && typeof body.relayAgentWorkerTiming === "object" && !Array.isArray(body.relayAgentWorkerTiming)
+          ? { relayAgentWorkerTiming: body.relayAgentWorkerTiming as Record<string, unknown> }
           : {}),
         ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {})
       })
@@ -5067,8 +5086,16 @@ app.post("/api/events/ingest", route(async (request, response) => {
 }));
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+function parseBoundedIntegerEnv(name: string, fallback: number, min: number, max: number) {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
+}
+
 const RELAY_RESPONSE_TIMEOUT_MS =
-  Number.parseInt(process.env.CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS ?? "", 10) || 60_000;
+  parseBoundedIntegerEnv("CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS", 120_000, 15_000, 180_000);
 const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
 const RELAY_HEARTBEAT_GRACE_MS =
   Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;
@@ -5847,6 +5874,9 @@ class AgentRelayHub {
           : {}),
         ...(Array.isArray(message.relayAgentWorkerWarnings)
           ? { relayAgentWorkerWarnings: message.relayAgentWorkerWarnings.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(message.relayAgentWorkerTiming && typeof message.relayAgentWorkerTiming === "object" && !Array.isArray(message.relayAgentWorkerTiming)
+          ? { relayAgentWorkerTiming: message.relayAgentWorkerTiming as Record<string, unknown> }
           : {})
       }).catch(() => undefined);
     }

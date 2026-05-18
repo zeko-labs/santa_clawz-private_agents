@@ -21,8 +21,10 @@ const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
 const DEFAULT_INGRESS_PORT = "8797";
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = Number.parseInt(process.env.CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS ?? "", 10) || 45_000;
-const LOCAL_HIRE_TIMEOUT_MS = Math.max(1_000, Math.min(CONFIGURED_LOCAL_HIRE_TIMEOUT_MS, 50_000));
+const DEFAULT_LOCAL_HIRE_TIMEOUT_MS = 45_000;
+const MAX_LOCAL_HIRE_TIMEOUT_MS = 110_000;
+let CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = DEFAULT_LOCAL_HIRE_TIMEOUT_MS;
+let LOCAL_HIRE_TIMEOUT_MS = DEFAULT_LOCAL_HIRE_TIMEOUT_MS;
 const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
 const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
 const RELAY_AGENT_PROTOCOL_VERSION = "santaclawz-relay-agent/1.2";
@@ -61,6 +63,7 @@ function printUsage() {
     [--local-hire-url http://127.0.0.1:8797/hire] \\
     [--local-quote-url http://127.0.0.1:8797/quote] \\
     [--local-paid-url http://127.0.0.1:8797/hire] \\
+    [--local-timeout-ms 90000] \\
     [--api-base https://api.santaclawz.ai] \\
     [--relay-base https://relay.santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
@@ -82,9 +85,9 @@ Notes:
   public web API host is a frontend/proxy that does not support websocket upgrades.
   Quote-required agents can route quote_intake and paid_execution separately
   with --local-quote-url and --local-paid-url.
-  CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS caps local worker forwarding and defaults to 45000,
-  which returns a typed relay failure before the platform's 60s relay response window.
-  Values above 50000 are clamped so the buyer receives a typed worker timeout
+  CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS caps local worker forwarding and defaults to 45000.
+  Model/work agents can set it higher, up to 110000, or pass --local-timeout-ms.
+  Keep it below the platform relay response window so buyers receive a typed worker timeout
   instead of a platform relay timeout.
   A local per-agent lock prevents duplicate relay processes. Use --takeover only
   after confirming the previous process is dead or intentionally being replaced.
@@ -122,6 +125,14 @@ function requireEnv(name) {
     throw new Error(`Missing ${name}. Pass --env-file .env.santaclawz from a completed enrollment.`);
   }
   return value;
+}
+
+function parsePositiveInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
 }
 
 function websocketUrlForApiBase(apiBase, agentId) {
@@ -989,7 +1000,8 @@ async function connectRelay(options) {
       relayAgentBuild: RELAY_AGENT_BUILD,
       relayAgentFeatures: RELAY_AGENT_FEATURES,
       relayAgentWorkerRoutes: options.relayAgentWorkerRoutes,
-      relayAgentWorkerWarnings: options.relayAgentWorkerWarnings
+      relayAgentWorkerWarnings: options.relayAgentWorkerWarnings,
+      relayAgentWorkerTiming: options.relayAgentWorkerTiming
     });
   }, HEARTBEAT_INTERVAL_MS);
   socket.once("close", () => {
@@ -1003,7 +1015,8 @@ async function connectRelay(options) {
     relayAgentBuild: RELAY_AGENT_BUILD,
     relayAgentFeatures: RELAY_AGENT_FEATURES,
     relayAgentWorkerRoutes: options.relayAgentWorkerRoutes,
-    relayAgentWorkerWarnings: options.relayAgentWorkerWarnings
+    relayAgentWorkerWarnings: options.relayAgentWorkerWarnings,
+    relayAgentWorkerTiming: options.relayAgentWorkerTiming
   });
   return { socket, closed, relayUrl: relayUrl.toString() };
 }
@@ -1126,6 +1139,13 @@ if (args.help) {
 
 const envFile = typeof args["env-file"] === "string" ? args["env-file"].trim() : DEFAULT_ENV_FILE;
 const envFileValues = applyEnvFile(envFile);
+CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = parsePositiveInteger(
+  typeof args["local-timeout-ms"] === "string" ? args["local-timeout-ms"] : process.env.CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS,
+  DEFAULT_LOCAL_HIRE_TIMEOUT_MS,
+  1_000,
+  MAX_LOCAL_HIRE_TIMEOUT_MS
+);
+LOCAL_HIRE_TIMEOUT_MS = CONFIGURED_LOCAL_HIRE_TIMEOUT_MS;
 
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);
 const relayBase = normalizeBaseUrl(
@@ -1237,7 +1257,13 @@ try {
         relayAgentBuild: RELAY_AGENT_BUILD,
         relayAgentFeatures: RELAY_AGENT_FEATURES,
         relayAgentWorkerRoutes: localHireRoutes,
-        relayAgentWorkerWarnings
+        relayAgentWorkerWarnings,
+        relayAgentWorkerTiming: {
+          executionMode: "sync",
+          configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
+          localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+          maxLocalHireTimeoutMs: MAX_LOCAL_HIRE_TIMEOUT_MS
+        }
       });
     if (!firstHeartbeat.ok) {
       logHeartbeatFailure("relay_initial_heartbeat_failed_continuing", firstHeartbeat);
@@ -1257,7 +1283,13 @@ try {
           relayAgentBuild: RELAY_AGENT_BUILD,
           relayAgentFeatures: RELAY_AGENT_FEATURES,
           relayAgentWorkerRoutes: localHireRoutes,
-          relayAgentWorkerWarnings
+          relayAgentWorkerWarnings,
+          relayAgentWorkerTiming: {
+            executionMode: "sync",
+            configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
+            localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+            maxLocalHireTimeoutMs: MAX_LOCAL_HIRE_TIMEOUT_MS
+          }
         }).then((result) => {
           if (!result.ok) {
             logHeartbeatFailure("relay_periodic_heartbeat_failed", result);
@@ -1278,6 +1310,12 @@ try {
     relayBase,
     localHireUrl,
     localHireRoutes,
+    executionTiming: {
+      executionMode: "sync",
+      configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
+      localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+      maxLocalHireTimeoutMs: MAX_LOCAL_HIRE_TIMEOUT_MS
+    },
     workerRouteWarnings: relayAgentWorkerWarnings,
     servingIngress: ingress?.baseUrl,
     heartbeat: shouldHeartbeat ? "live" : "skipped"
@@ -1306,7 +1344,13 @@ try {
         adminKey,
         localHireUrl: localHireRoutes,
         relayAgentWorkerRoutes: localHireRoutes,
-        relayAgentWorkerWarnings
+        relayAgentWorkerWarnings,
+        relayAgentWorkerTiming: {
+          executionMode: "sync",
+          configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
+          localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+          maxLocalHireTimeoutMs: MAX_LOCAL_HIRE_TIMEOUT_MS
+        }
       });
       attempt = 0;
       console.error(JSON.stringify({

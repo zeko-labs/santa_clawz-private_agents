@@ -130,6 +130,9 @@ export async function postHeartbeat(config) {
         : {}),
       ...(Array.isArray(config.relayAgentWorkerWarnings)
         ? { relayAgentWorkerWarnings: config.relayAgentWorkerWarnings }
+        : {}),
+      ...(config.relayAgentWorkerTiming && typeof config.relayAgentWorkerTiming === "object"
+        ? { relayAgentWorkerTiming: config.relayAgentWorkerTiming }
         : {})
     })
   });

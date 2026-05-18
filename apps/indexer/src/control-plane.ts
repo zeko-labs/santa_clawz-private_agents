@@ -684,6 +684,12 @@ interface AgentRuntimeHeartbeatRecord {
   relayAgentFeatures?: string[];
   relayAgentWorkerRoutes?: Record<string, string>;
   relayAgentWorkerWarnings?: string[];
+  relayAgentWorkerTiming?: {
+    executionMode?: "sync" | "async";
+    configuredLocalHireTimeoutMs?: number;
+    localHireTimeoutMs?: number;
+    maxLocalHireTimeoutMs?: number;
+  };
 }
 
 interface AgentRuntimeHeartbeatFile {
@@ -700,6 +706,7 @@ interface AgentRuntimeHeartbeatOptions extends AgentRuntimeAvailabilityOptions {
   relayAgentFeatures?: string[];
   relayAgentWorkerRoutes?: Record<string, string>;
   relayAgentWorkerWarnings?: string[];
+  relayAgentWorkerTiming?: Record<string, unknown>;
 }
 
 interface ConsoleStateOptions {
@@ -3595,7 +3602,8 @@ export class ClawzControlPlane {
       ...(record.relayAgentBuild ? { relayAgentBuild: record.relayAgentBuild } : {}),
       ...(record.relayAgentFeatures?.length ? { relayAgentFeatures: record.relayAgentFeatures } : {}),
       ...(record.relayAgentWorkerRoutes ? { relayAgentWorkerRoutes: record.relayAgentWorkerRoutes } : {}),
-      ...(record.relayAgentWorkerWarnings?.length ? { relayAgentWorkerWarnings: record.relayAgentWorkerWarnings } : {})
+      ...(record.relayAgentWorkerWarnings?.length ? { relayAgentWorkerWarnings: record.relayAgentWorkerWarnings } : {}),
+      ...(record.relayAgentWorkerTiming ? { relayAgentWorkerTiming: record.relayAgentWorkerTiming } : {})
     };
   }
 
@@ -7909,6 +7917,19 @@ export class ClawzControlPlane {
           .filter(Boolean)
           .slice(0, 10)
       : [];
+    let relayAgentWorkerTiming: AgentRuntimeHeartbeatRecord["relayAgentWorkerTiming"] | undefined;
+    if (options.relayAgentWorkerTiming && typeof options.relayAgentWorkerTiming === "object" && !Array.isArray(options.relayAgentWorkerTiming)) {
+      const executionMode: "sync" | "async" =
+        options.relayAgentWorkerTiming.executionMode === "async" ? "async" : "sync";
+      const timing: NonNullable<AgentRuntimeHeartbeatRecord["relayAgentWorkerTiming"]> = { executionMode };
+      for (const key of ["configuredLocalHireTimeoutMs", "localHireTimeoutMs", "maxLocalHireTimeoutMs"] as const) {
+        const value = Number(options.relayAgentWorkerTiming[key]);
+        if (Number.isFinite(value) && value > 0) {
+          timing[key] = Math.floor(Math.min(value, 600_000));
+        }
+      }
+      relayAgentWorkerTiming = timing;
+    }
     const nextRecord: AgentRuntimeHeartbeatRecord = {
       agentId,
       sessionId,
@@ -7920,7 +7941,8 @@ export class ClawzControlPlane {
       ...(relayAgentBuild ? { relayAgentBuild } : {}),
       ...(relayAgentFeatures.length ? { relayAgentFeatures } : {}),
       ...(Object.keys(relayAgentWorkerRoutes).length ? { relayAgentWorkerRoutes } : {}),
-      ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {})
+      ...(relayAgentWorkerWarnings.length ? { relayAgentWorkerWarnings } : {}),
+      ...(relayAgentWorkerTiming ? { relayAgentWorkerTiming } : {})
     };
     const file = await this.loadRuntimeHeartbeatFile();
     const existingRecord = file.heartbeats.find((record) => record.sessionId === sessionId);
@@ -7936,6 +7958,7 @@ export class ClawzControlPlane {
       JSON.stringify(existingRecord.relayAgentFeatures ?? []) === JSON.stringify(nextRecord.relayAgentFeatures ?? []) &&
       JSON.stringify(existingRecord.relayAgentWorkerRoutes ?? {}) === JSON.stringify(nextRecord.relayAgentWorkerRoutes ?? {}) &&
       JSON.stringify(existingRecord.relayAgentWorkerWarnings ?? []) === JSON.stringify(nextRecord.relayAgentWorkerWarnings ?? []) &&
+      JSON.stringify(existingRecord.relayAgentWorkerTiming ?? {}) === JSON.stringify(nextRecord.relayAgentWorkerTiming ?? {}) &&
       Number.isFinite(existingReceivedAtMs) &&
       Date.parse(receivedAtIso) - existingReceivedAtMs < AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS;
     if (heartbeatCanCoalesce) {

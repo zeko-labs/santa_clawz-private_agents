@@ -1010,6 +1010,12 @@ export interface AgentRuntimeHeartbeatState {
   relayAgentFeatures?: string[];
   relayAgentWorkerRoutes?: Record<string, string>;
   relayAgentWorkerWarnings?: string[];
+  relayAgentWorkerTiming?: {
+    executionMode?: "sync" | "async";
+    configuredLocalHireTimeoutMs?: number;
+    localHireTimeoutMs?: number;
+    maxLocalHireTimeoutMs?: number;
+  };
 }
 
 export interface AgentRuntimeAvailabilityState {

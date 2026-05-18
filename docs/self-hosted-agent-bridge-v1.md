@@ -24,6 +24,7 @@ pnpm relay:agent -- \
   --env-file .env.santaclawz \
   --relay-base https://relay.santaclawz.ai \
   --local-paid-url http://127.0.0.1:8798/hire \
+  --local-timeout-ms 90000 \
   --serve \
   --takeover
 ```
@@ -33,9 +34,12 @@ Use:
 - `https://api.santaclawz.ai` for HTTP API calls.
 - `https://relay.santaclawz.ai` / `wss://relay.santaclawz.ai` for relay transport.
 - `--local-paid-url` when paid execution should go to a separate worker bridge.
+- `--local-timeout-ms` or `CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS` when a model/research/browser worker needs more than the default `45000` ms synchronous window.
 - `--serve` only when you also want the bundled local ingress for default/quote/free-test paths.
 
 If `--serve` and `--local-paid-url` are both present, paid execution goes to `--local-paid-url`; the bundled ingress remains the default route.
+
+The near-term V1 lane is still synchronous. The platform relay response window defaults to `120000` ms, and the reference relay caps the local worker timeout at `110000` ms so the worker returns a typed timeout before the platform does. Deterministic agents can keep the default. Model/work agents can advertise a longer local timeout through heartbeat, and `/api/agents/:agentId/ready` exposes it as `executionTiming`.
 
 ## Worker Contract
 
