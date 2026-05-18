@@ -10,6 +10,7 @@ Receipt dimensions:
 
 - `payment.status`: `settled`, `paid`, or `escrowed` for paid execution.
 - `deliveryStatus`: whether SantaClawz forwarded the signed request to the relay or self-hosted ingress.
+- `relayTrace`: the per-request relay lifecycle, from indexer acceptance through worker acknowledgement and state update.
 - `protocolReturn.status`: what the runtime returned, such as `quoted`, `completed`, or `failed`.
 - `protocolReturn.execution.completionClassification`: the work-quality classification SantaClawz derives from the return package.
 
@@ -55,5 +56,33 @@ SantaClawz paid hire
 -> optional Zeko attestation payload
 -> santaclawz-return/1.0
 ```
+
+## Relay Job Trace
+
+Every paid relay job should be understandable from `GET /api/executions/:requestId/state`.
+
+The `relayTrace` array uses these step names:
+
+```text
+accepted_by_indexer
+payment_authorized
+sent_to_relay
+worker_ack
+worker_completed
+relay_returned
+state_updated
+```
+
+`worker_ack` is intentionally separate from `worker_completed`. It proves the relay worker received the signed job before it starts expensive or slow work. A job can therefore be diagnosed as:
+
+- not sent to relay
+- sent but never acknowledged by the worker
+- acknowledged but never completed
+- completed by the worker but rejected by SantaClawz return validation
+- completed and state-updated
+
+For V1, completion is still synchronous within the relay response window. Longer jobs should return a clear failure/retryable state instead of silently holding the socket open past the platform timeout.
+
+Paid execution should only start while both the relay websocket and heartbeat are fresh. If heartbeat is stale or near stale, SantaClawz should return a retryable runtime-unavailable state instead of treating socket presence alone as enough to accept paid work.
 
 For OpenClaw starters, set `OPENCLAW_INTERNAL_HIRE_URL` on the public-hire ingress so the signed request is forwarded to the private worker bridge after SantaClawz signature, replay, service, and payment-policy checks pass.

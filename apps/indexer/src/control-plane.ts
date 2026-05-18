@@ -44,6 +44,7 @@ import {
   type AgentProfileState,
   type AgentReadinessState,
   type HireDeliveryReceipt,
+  type HireRelayTraceStep,
   type HireRequestReceipt,
   type SponsorQueueJob,
   type SponsorQueueState,
@@ -152,6 +153,7 @@ type RelayHireDeliveryHandler = (input: {
   workerResponseDigestSha256?: string;
   relayBodyBytes?: number;
   relayBodyDigestSha256?: string;
+  relayTrace?: HireRelayTraceStep[];
 }>;
 
 const LIVE_FLOW_METHODS: Record<LiveFlowKind, readonly string[]> = {
@@ -754,6 +756,7 @@ interface HireRequestRecord {
   localResponseBytes?: number;
   operationalStatus?: HireRequestReceipt["operationalStatus"];
   deliveryReceipt?: HireDeliveryReceipt;
+  relayTrace?: HireRelayTraceStep[];
   ingressBodyDigestSha256?: string;
   ingressResponseStatusCode?: number;
   protocolReturn?: HireRequestReceipt["protocolReturn"];
@@ -844,6 +847,74 @@ function buildHireOperationalStatus(input: {
         ? "submitted"
         : input.hireStatus
   };
+}
+
+function relayTraceFromError(error: unknown): HireRelayTraceStep[] | undefined {
+  const trace = (error as { relayTrace?: unknown })?.relayTrace;
+  if (!Array.isArray(trace)) {
+    return undefined;
+  }
+  return trace.filter((entry): entry is HireRelayTraceStep => {
+    return Boolean(entry && typeof entry === "object" && typeof entry.step === "string" && typeof entry.status === "string");
+  });
+}
+
+function mergeHireRelayTrace(input: {
+  submittedAtIso: string;
+  paymentStatus: HireRequestReceipt["paymentStatus"];
+  requestUpdatedAtIso?: string;
+  relayTrace?: HireRelayTraceStep[];
+  deliveryFailed?: boolean;
+  deliveryStatus?: HireRequestReceipt["deliveryStatus"];
+  completed?: boolean;
+}): HireRelayTraceStep[] {
+  const trace: HireRelayTraceStep[] = [
+    {
+      step: "accepted_by_indexer",
+      status: "completed",
+      occurredAtIso: input.submittedAtIso
+    }
+  ];
+  if (input.paymentStatus === "authorized" || input.paymentStatus === "settled" || input.paymentStatus === "paid" || input.paymentStatus === "escrowed") {
+    trace.push({
+      step: "payment_authorized",
+      status: "completed",
+      occurredAtIso: input.submittedAtIso
+    });
+  }
+  trace.push(...(input.relayTrace ?? []));
+  if (!trace.some((entry) => entry.step === "sent_to_relay")) {
+    trace.push({
+      step: "sent_to_relay",
+      status: input.deliveryFailed ? "failed" : input.deliveryStatus ? "completed" : "not_reached",
+      occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso
+    });
+  }
+  if (!trace.some((entry) => entry.step === "worker_ack")) {
+    trace.push({
+      step: "worker_ack",
+      status: input.deliveryFailed ? "not_reached" : input.deliveryStatus ? "completed" : "not_reached"
+    });
+  }
+  if (!trace.some((entry) => entry.step === "worker_completed")) {
+    trace.push({
+      step: "worker_completed",
+      status: input.completed ? "completed" : input.deliveryFailed ? "not_reached" : "not_reached"
+    });
+  }
+  if (!trace.some((entry) => entry.step === "relay_returned")) {
+    trace.push({
+      step: "relay_returned",
+      status: input.deliveryFailed ? "failed" : input.deliveryStatus ? "completed" : "not_reached",
+      occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso
+    });
+  }
+  trace.push({
+    step: "state_updated",
+    status: "completed",
+    occurredAtIso: input.requestUpdatedAtIso ?? new Date().toISOString()
+  });
+  return trace;
 }
 
 interface HireRequestFile {
@@ -4428,7 +4499,8 @@ export class ClawzControlPlane {
         }).catch((error: unknown) => ({
           deliveryFailed: true as const,
           deliveryError: error instanceof Error ? error.message : String(error),
-          deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(input.agentId)}`
+          deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(input.agentId)}`,
+          ...(relayTraceFromError(error) ? { relayTrace: relayTraceFromError(error) } : {})
         }))
       : undefined;
 
@@ -4449,7 +4521,8 @@ export class ClawzControlPlane {
         }),
         requestKind: signedRequest.requestKind,
         ingressUrl: relayResponse.deliveryTarget,
-        bodyDigestSha256: signedRequest.bodyDigestSha256
+        bodyDigestSha256: signedRequest.bodyDigestSha256,
+        ...("relayTrace" in relayResponse && relayResponse.relayTrace ? { relayTrace: relayResponse.relayTrace } : {})
       };
     }
 
@@ -4512,7 +4585,8 @@ export class ClawzControlPlane {
         responseStatusCode: response.status,
         responseBytes,
         returnValidationError: validationError,
-        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected"
+        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+        ...(relayResponse?.relayTrace ? { relayTrace: relayResponse.relayTrace } : {})
       };
     }
 
@@ -4535,7 +4609,8 @@ export class ClawzControlPlane {
       bodyDigestSha256: signedRequest.bodyDigestSha256,
       responseStatusCode: response.status,
       responseBytes,
-      ...(protocolReturn ? { protocolReturn } : {})
+      ...(protocolReturn ? { protocolReturn } : {}),
+      ...(relayResponse?.relayTrace ? { relayTrace: relayResponse.relayTrace } : {})
     };
   }
 
@@ -8904,12 +8979,13 @@ export class ClawzControlPlane {
       throw new Error(`Unknown agent: ${options.agentId}`);
     }
 
-    const [events, liveFlow, deployment, hireRequests, socialAnchorQueueFile] = await Promise.all([
+    const [events, liveFlow, deployment, hireRequests, socialAnchorQueueFile, runtimeHeartbeatFile] = await Promise.all([
       this.loadEvents(),
       this.getLiveFlowState(),
       this.getDeploymentState(),
       this.loadHireRequestFile(),
-      this.loadSocialAnchorQueueFile()
+      this.loadSocialAnchorQueueFile(),
+      this.loadRuntimeHeartbeatFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
@@ -8979,6 +9055,26 @@ export class ClawzControlPlane {
         Date.now()
       );
     }
+    if (paymentAuthorization.status !== "not-required") {
+      const heartbeatRecord = runtimeHeartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
+      const heartbeat = this.buildAgentRuntimeHeartbeatState({
+        state,
+        sessionId,
+        trustModeId,
+        ...(heartbeatRecord ? { record: heartbeatRecord } : {})
+      });
+      const staleAtMs = heartbeat.staleAtIso ? Date.parse(heartbeat.staleAtIso) : NaN;
+      const nearStale = Number.isFinite(staleAtMs) && staleAtMs - Date.now() < 5000;
+      if (heartbeat.status !== "live" || nearStale) {
+        throw new Error(
+          [
+            "agent_runtime_unavailable_retryable",
+            "SantaClawz will not submit paid execution while the agent heartbeat is stale or near stale.",
+            heartbeat.reason ?? ""
+          ].filter(Boolean).join(": ")
+        );
+      }
+    }
 
     const submittedAtIso = new Date().toISOString();
     const requestId = `hire_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -9030,6 +9126,14 @@ export class ClawzControlPlane {
     const paymentStatus = paymentStatusForHireRequest({
       requestType,
       paymentStatus: paymentAuthorization.status
+    });
+    const relayTrace = mergeHireRelayTrace({
+      submittedAtIso,
+      paymentStatus,
+      deliveryFailed,
+      ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
+      ...("relayTrace" in ingressDelivery && ingressDelivery.relayTrace ? { relayTrace: ingressDelivery.relayTrace } : {}),
+      completed: ingressProtocolReturn?.status === "completed"
     });
     if (
       requestType === "paid_execution" &&
@@ -9088,6 +9192,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
       ...(deliveryReceipt ? { deliveryReceipt } : {}),
+      relayTrace,
       ingressBodyDigestSha256: ingressDelivery.bodyDigestSha256,
       ...(typeof ingressResponseStatusCode === "number" ? { ingressResponseStatusCode } : {}),
       ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
@@ -9268,6 +9373,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
+      relayTrace,
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       jobWorkspace: this.buildJobWorkspace({ requestId, token: jobAccessToken }),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),

@@ -19,6 +19,7 @@ import {
   type ConsoleStateResponse,
   type ExecutionIntentSettlementModel,
   type ExecutionIntentStatus,
+  type HireRelayTraceStep,
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
   type SantaClawzJobPrivacyPreference,
@@ -1775,15 +1776,24 @@ async function ensureAgentOnlineForPayment(response: IndexerResponse, consoleSta
   const agentAvailability = await controlPlane.getAgentRuntimeAvailability({
     sessionId: consoleState.session.sessionId
   });
+  const heartbeatLive = agentAvailability.readiness?.heartbeatLive === true || agentAvailability.heartbeat.status === "live";
+  const staleAtMs = agentAvailability.heartbeat.staleAtIso ? Date.parse(agentAvailability.heartbeat.staleAtIso) : NaN;
+  const heartbeatNearStale = Number.isFinite(staleAtMs) && staleAtMs - Date.now() < 5000;
 
-  if (agentAvailability.reachable) {
+  if (agentAvailability.reachable && heartbeatLive && !heartbeatNearStale) {
     return true;
   }
 
   response.status(503).json({
     ok: false,
+    code: "agent_runtime_unavailable_retryable",
+    retryable: true,
     paymentRequested: false,
-    error: "Agent endpoint is offline; payment not requested.",
+    paymentStatus: "unknown",
+    settlementStatus: "unknown",
+    relayDeliveryStatus: "not_confirmed",
+    agentExecutionStatus: "not_confirmed",
+    error: "Agent runtime is unavailable or heartbeat is stale; payment not requested.",
     agentAvailability
   });
   return false;
@@ -2606,6 +2616,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending",
         narrative: lifecycleNarrative
       },
+      relayTrace: hireRequest.relayTrace ?? [],
       lifecycleNarrative,
       lifecycleChecks: {
         paymentSettled,
@@ -5072,9 +5083,11 @@ type RelayPendingRequest = {
     workerResponseDigestSha256?: string;
     relayBodyBytes?: number;
     relayBodyDigestSha256?: string;
+    relayTrace?: HireRelayTraceStep[];
   }): void;
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
+  trace: HireRelayTraceStep[];
 };
 
 type RelayRateLimitBucket = {
@@ -5231,12 +5244,28 @@ class AgentRelayConnection {
     };
   }) {
     const messageId = `relay_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
-    return new Promise<{ statusCode: number; body: string; deliveryTarget: string; relayMessageId: string }>((resolve, reject) => {
+    return new Promise<{
+      statusCode: number;
+      body: string;
+      deliveryTarget: string;
+      relayMessageId: string;
+      relayTrace?: HireRelayTraceStep[];
+    }>((resolve, reject) => {
+      const trace: HireRelayTraceStep[] = [];
       const timeout = setTimeout(() => {
         this.pending.delete(messageId);
-        reject(new Error("Timed out waiting for agent relay response."));
+        const error = new Error("Timed out waiting for agent relay response.") as Error & { relayTrace?: HireRelayTraceStep[] };
+        trace.push({
+          step: "relay_returned",
+          status: "failed",
+          occurredAtIso: new Date().toISOString(),
+          relayMessageId: messageId,
+          detail: "Timed out waiting for agent relay response."
+        });
+        error.relayTrace = trace;
+        reject(error);
       }, RELAY_RESPONSE_TIMEOUT_MS);
-      this.pending.set(messageId, { resolve, reject, timeout });
+      this.pending.set(messageId, { resolve, reject, timeout, trace });
       try {
         this.sendJson({
           type: "hire_request",
@@ -5250,11 +5279,33 @@ class AgentRelayConnection {
             bodyDigestSha256: input.signedRequest.bodyDigestSha256
           }
         });
+        trace.push({
+          step: "sent_to_relay",
+          status: "completed",
+          occurredAtIso: new Date().toISOString(),
+          relayMessageId: messageId,
+          detail: input.signedRequest.requestKind
+        });
       } catch (error) {
         clearTimeout(timeout);
         this.pending.delete(messageId);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
+    });
+  }
+
+  handleAck(message: Record<string, unknown>) {
+    const messageId = typeof message.messageId === "string" ? message.messageId : "";
+    const pending = this.pending.get(messageId);
+    if (!pending) {
+      return;
+    }
+    pending.trace.push({
+      step: "worker_ack",
+      status: "completed",
+      occurredAtIso: typeof message.receivedAtIso === "string" ? message.receivedAtIso : new Date().toISOString(),
+      relayMessageId: messageId,
+      detail: typeof message.localHireUrl === "string" ? message.localHireUrl : "worker acknowledged relay hire request"
     });
   }
 
@@ -5292,6 +5343,19 @@ class AgentRelayConnection {
       typeof message.relayBodyDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(message.relayBodyDigestSha256)
         ? message.relayBodyDigestSha256.toLowerCase()
         : undefined;
+    pending.trace.push({
+      step: "worker_completed",
+      status: statusCode >= 200 && statusCode < 300 ? "completed" : "failed",
+      occurredAtIso: new Date().toISOString(),
+      relayMessageId: messageId,
+      detail: `worker status ${statusCode}`
+    });
+    pending.trace.push({
+      step: "relay_returned",
+      status: "completed",
+      occurredAtIso: new Date().toISOString(),
+      relayMessageId: messageId
+    });
     pending.resolve({
       statusCode,
       body,
@@ -5301,7 +5365,8 @@ class AgentRelayConnection {
       ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
       ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
       ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
-      ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {})
+      ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {}),
+      relayTrace: pending.trace
     });
   }
 
@@ -5628,6 +5693,10 @@ class AgentRelayHub {
     }
     if (message.type === "hire_response") {
       connection.handleResponse(message);
+      return;
+    }
+    if (message.type === "hire_ack") {
+      connection.handleAck(message);
       return;
     }
     if (message.type === "post_message") {

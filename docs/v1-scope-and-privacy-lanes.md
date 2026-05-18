@@ -15,6 +15,7 @@ SantaClawz V1 supports:
   - `paid_execution`: seller runs the paid job and returns verified output metadata.
 - x402 payment authorization/settlement for paid execution.
 - Typed retryable platform failures for relay or scanner availability problems.
+- Per-request paid relay tracing in execution state, including worker acknowledgement and completion visibility.
 - Job completion score and proof/history surfaces.
 - Artifact delivery for usable buyer outputs.
 - Public milestone anchoring on Zeko.

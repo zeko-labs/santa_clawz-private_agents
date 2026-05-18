@@ -3346,12 +3346,24 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(["relay_disconnected", "relay_timeout"].includes(hire.payload.deliveryReceipt.stage), true);
     assert.match(hire.payload.deliveryReceipt.target, /^santaclawz-relay:\/\//);
     assert.match(hire.payload.deliveryError, /relay response|Relay connection/);
+    assert.deepEqual(
+      hire.payload.relayTrace.map((entry) => `${entry.step}:${entry.status}`),
+      [
+        "accepted_by_indexer:completed",
+        "sent_to_relay:completed",
+        "relay_returned:failed",
+        "worker_ack:not_reached",
+        "worker_completed:not_reached",
+        "state_updated:completed"
+      ]
+    );
 
     const executionLookup = await requestJson(`${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}`);
     assert.equal(executionLookup.status, 200);
     assert.equal(executionLookup.payload.request.requestId, hire.payload.requestId);
     assert.equal(executionLookup.payload.request.operationalStatus.relayDeliveryStatus, "failed");
     assert.equal(["relay_disconnected", "relay_timeout"].includes(executionLookup.payload.request.deliveryReceipt.stage), true);
+    assert.equal(executionLookup.payload.request.relayTrace.at(-1).step, "state_updated");
 
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
@@ -3499,7 +3511,15 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
     assert.match(hire.payload.deliveryReceipt.workerResponseDigestSha256, /^[a-f0-9]{64}$/);
     assert.ok(hire.payload.deliveryReceipt.relayBodyBytes > 4_000);
     assert.match(hire.payload.deliveryReceipt.relayBodyDigestSha256, /^[a-f0-9]{64}$/);
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "worker_ack" && entry.status === "completed"), true);
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "completed"), true);
+    const executionState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
+    );
+    assert.equal(executionState.status, 200);
+    assert.equal(executionState.payload.relayTrace.some((entry) => entry.step === "worker_ack" && entry.status === "completed"), true);
     assert.match(relayLogs.stderr.join(""), /"relayPayloadBytes":[4-9][0-9]{3}/);
+    assert.match(relayLogs.stderr.join(""), /relay_worker_request_received/);
     assert.match(relayLogs.stderr.join(""), /relay_worker_response_normalized/);
 
     console.log("ok - official relay normalizes large worker responses into accepted hire_response JSON");

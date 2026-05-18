@@ -381,6 +381,14 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined,
     requestBodyBytes: typeof request.body === "string" ? Buffer.byteLength(request.body, "utf8") : 0
   }));
+  sendJson({
+    type: "hire_ack",
+    messageId: message.messageId,
+    receivedAtIso: new Date().toISOString(),
+    requestKind,
+    localHireUrl: targetUrl,
+    requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined
+  });
   try {
     const response = await fetch(targetUrl, {
       method: "POST",

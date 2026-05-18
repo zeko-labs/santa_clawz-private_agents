@@ -681,6 +681,7 @@ export interface HireRequestReceipt {
     buyerInboxUrl?: string;
   };
   deliveryReceipt?: HireDeliveryReceipt;
+  relayTrace?: HireRelayTraceStep[];
   ingress?: {
     url: string;
     requestId: string;
@@ -788,6 +789,24 @@ export interface HireDeliveryReceipt {
   relayBodyDigestSha256?: string;
   returnValidationCode?: string;
   errorMessage?: string;
+}
+
+export type HireRelayTraceStepName =
+  | "accepted_by_indexer"
+  | "payment_authorized"
+  | "sent_to_relay"
+  | "received_by_worker"
+  | "worker_ack"
+  | "worker_completed"
+  | "relay_returned"
+  | "state_updated";
+
+export interface HireRelayTraceStep {
+  step: HireRelayTraceStepName;
+  status: "completed" | "failed" | "not_reached";
+  occurredAtIso?: string;
+  relayMessageId?: string;
+  detail?: string;
 }
 
 export type ExecutionIntentStatus = "pending" | "approved" | "executed" | "settled" | "refunded";

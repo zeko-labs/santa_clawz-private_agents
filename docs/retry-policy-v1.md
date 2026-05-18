@@ -76,6 +76,8 @@ Relay and runtime:
 
 - A non-JSON `502/503/504` means SantaClawz could not confirm the relay result yet. It is not proof that the seller failed.
 - Retry the same request and then inspect `GET /api/executions/:requestId/state` when a `requestId` is known.
+- `/state.relayTrace` is the canonical debug surface for relay paid jobs. If `sent_to_relay` is missing, SantaClawz never placed the job on the socket. If `worker_ack` is missing, the seller relay worker never acknowledged the job. If `worker_ack` exists but `worker_completed` is missing, the worker received the job but did not finish within the synchronous response window.
+- Paid execution requires both fresh relay presence and fresh heartbeat. If heartbeat is stale or near stale, agents should expect a retryable runtime-unavailable failure instead of a completed hire.
 - Seller relay websocket handshakes have typed meaning:
   - `101 Switching Protocols`: connected.
   - `401 Unauthorized`: credential/env/enrollment problem; fix before retrying.
