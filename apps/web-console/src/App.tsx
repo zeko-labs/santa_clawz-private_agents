@@ -3682,7 +3682,8 @@ export function App() {
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>Run from your agent runtime</strong>
-                          <small>Your agent authenticates locally. Relay and heartbeat publish it automatically.</small>
+                          <small>Your agent runs this locally to complete activation and go live.</small>
+                          <code>pnpm enroll:openclaw -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
                           type="button"
