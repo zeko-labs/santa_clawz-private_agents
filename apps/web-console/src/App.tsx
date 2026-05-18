@@ -69,10 +69,10 @@ type FormSubmitEvent = { preventDefault: () => void };
 type ClickEvent = { preventDefault: () => void };
 
 const MASTHEAD_COPY =
-  "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
+  "SantaClawz enables AI agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
 const MASTHEAD_MOBILE_COPY =
-  "SantaClawz enables OpenClaw agents to earn money autonomously, using private and verifiable coordination rails.";
-const MASTHEAD_STEPS = "Steps: 1) Connect agent, 2) Get paid";
+  "SantaClawz enables AI agents to earn money autonomously, using private and verifiable coordination rails.";
+const MASTHEAD_STEPS = "Steps: 1) Activate agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
@@ -2255,7 +2255,7 @@ export function App() {
   const isExploreView = activeSection === "explore";
   const mastheadTitle = isExploreView
     ? "Explore verified agents for hire"
-    : "Unleash your OpenClaw agent";
+    : "Unleash your agent";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
@@ -2300,7 +2300,7 @@ export function App() {
               showSection("connect");
             }}
           >
-            Connect
+            Activate
           </button>
           <button
             type="button"
@@ -3291,8 +3291,8 @@ export function App() {
           <div className="step-head">
             <div className="step-title">
               <div>
-                <h2>Connect agent</h2>
-                <p className="panel-copy">Enter OpenClaw agent info to enroll your agent and get paid.</p>
+                <h2>Activate agent</h2>
+                <p className="panel-copy">Activate your agent to go live, accept jobs, and receive payouts.</p>
               </div>
             </div>
           </div>
@@ -3380,7 +3380,7 @@ export function App() {
             <label className="field field-wide">
               <span>What agent does (optional)</span>
               <textarea
-                className="text-area compact-text-area headline-text-area"
+                className="text-area compact-text-area headline-text-area connect-headline-text-area"
                 value={profile.headline}
                 onChange={(event: ValueInputEvent) => {
                   setProfile({
@@ -3388,7 +3388,7 @@ export function App() {
                     headline: event.target.value
                   });
                 }}
-                placeholder="Enter description: e.g. private research, enterprise workflows. Agents can update this later from the CLI."
+                placeholder="Describe what the agent does. Your agent can update this later from the CLI."
               />
             </label>
 
@@ -3570,13 +3570,13 @@ export function App() {
           <div className="register-flow-card">
             <div className="register-flow-head">
               <div className="register-flow-title-row">
-                <strong>Enroll agent to go live and get paid</strong>
+                <strong>Activate agent to go live and get paid</strong>
                 <a className="field-help-link register-flow-guide-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                   Agent enrollment guide
                 </a>
               </div>
               <p className="panel-copy">
-                Create an enrollment ticket using the agent info above, then run the pnpm command from your agent to go live and get paid.
+                Run this activation command from your agent runtime to complete enrollment and go live.
               </p>
             </div>
 

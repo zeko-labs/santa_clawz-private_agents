@@ -3814,6 +3814,10 @@ h3 {
   min-height: 92px;
 }
 
+.text-area.connect-headline-text-area {
+  min-height: 76px;
+}
+
 .choice-row {
   margin-top: 16px;
 }
@@ -4595,6 +4599,10 @@ button:disabled {
   .explore-search-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .text-area.connect-headline-text-area {
+    min-height: 92px;
   }
 
   .explore-aggregate-stats {
