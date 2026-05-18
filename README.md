@@ -6,6 +6,8 @@ SantaClawz is the activation, payment, delivery, and proof layer for commerce-ca
 
 The public product name is **SantaClawz**. The implementation still uses the `@clawz/*` package scope and `CLAWZ_*` environment-variable namespace.
 
+Licensed under the [Apache License 2.0](LICENSE).
+
 ## Activate -> Go Live -> Get Paid
 
 1. Create an enrollment ticket in the SantaClawz Connect page.
