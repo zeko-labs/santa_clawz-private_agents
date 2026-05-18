@@ -5348,7 +5348,12 @@ class AgentRelayConnection {
       status: statusCode >= 200 && statusCode < 300 ? "completed" : "failed",
       occurredAtIso: new Date().toISOString(),
       relayMessageId: messageId,
-      detail: `worker status ${statusCode}`
+      detail: [
+        `relay status ${statusCode}`,
+        workerStatusCode !== undefined ? `worker status ${workerStatusCode}` : "",
+        workerResponseBytes !== undefined ? `worker bytes ${workerResponseBytes}` : "",
+        relayBodyBytes !== undefined ? `relay bytes ${relayBodyBytes}` : ""
+      ].filter(Boolean).join("; ")
     });
     pending.trace.push({
       step: "relay_returned",

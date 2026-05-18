@@ -13,6 +13,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -63,6 +64,11 @@ def append_audit(event: dict[str, Any]) -> None:
     event.setdefault("created_at", now_iso())
     with AUDIT_LOG.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def log_event(event: dict[str, Any]) -> None:
+    event.setdefault("created_at", now_iso())
+    print(json.dumps(event, sort_keys=True), file=sys.stderr, flush=True)
 
 
 def first_string(*values: Any, default: str = "") -> str:
@@ -280,16 +286,53 @@ def run_worker(payload: dict[str, Any], raw_body: str, timeout_seconds: int) -> 
 
     command = [sys.executable, str(AGENT), "--mode", "santaclawz-run", str(request_path)]
     started_at = now_iso()
-    completed = subprocess.run(
-        command,
-        cwd=str(ROOT),
-        text=True,
-        capture_output=True,
-        timeout=timeout_seconds,
-        check=False,
+    started_monotonic = dt.datetime.now(dt.timezone.utc)
+    log_event(
+        {
+            "type": "real-worker-process-started",
+            "request_id": request_id,
+            "command": "agent/local_agent.py --mode santaclawz-run",
+            "timeout_seconds": timeout_seconds,
+            "request_path": str(request_path),
+        }
     )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        elapsed_ms = int((dt.datetime.now(dt.timezone.utc) - started_monotonic).total_seconds() * 1000)
+        log_event(
+            {
+                "type": "real-worker-process-timeout",
+                "request_id": request_id,
+                "timeout_seconds": timeout_seconds,
+                "elapsed_ms": elapsed_ms,
+                "stdout_preview": (exc.stdout or "")[:500] if isinstance(exc.stdout, str) else "",
+                "stderr_preview": (exc.stderr or "")[:500] if isinstance(exc.stderr, str) else "",
+            }
+        )
+        raise BridgeError(f"local agent timed out after {timeout_seconds}s", status_code=504) from exc
+    elapsed_ms = int((dt.datetime.now(dt.timezone.utc) - started_monotonic).total_seconds() * 1000)
     stdout = completed.stdout.strip()
     stderr = completed.stderr.strip()
+    log_event(
+        {
+            "type": "real-worker-process-exited",
+            "request_id": request_id,
+            "return_code": completed.returncode,
+            "elapsed_ms": elapsed_ms,
+            "stdout_bytes": len(completed.stdout.encode("utf-8")),
+            "stderr_bytes": len(completed.stderr.encode("utf-8")),
+            "stdout_last_line": stdout.splitlines()[-1] if stdout else "",
+            "stderr_preview": stderr[:500],
+        }
+    )
     if completed.returncode != 0:
         raise BridgeError(f"local agent failed with exit {completed.returncode}: {stderr[:500]}", status_code=500)
     if not stdout:
@@ -329,6 +372,16 @@ def run_worker(payload: dict[str, Any], raw_body: str, timeout_seconds: int) -> 
     }
 
     append_audit(
+        {
+            "type": "real-worker-completed",
+            "request_id": request_id,
+            "status": return_payload.get("status"),
+            "run_dir": str(run_dir),
+            "deliverable_count": quality["deliverable_count"],
+            "package_hash": quality["package_hash"],
+        }
+    )
+    log_event(
         {
             "type": "real-worker-completed",
             "request_id": request_id,
@@ -400,10 +453,21 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw_body)
             request_id = first_string(request_id, payload.get("request_id"), payload.get("requestId"), default="")
             append_audit({"type": "real-worker-received", "request_id": request_id, "body_sha256": sha256_text(raw_body)})
+            log_event(
+                {
+                    "type": "real-worker-received",
+                    "request_id": request_id,
+                    "path": self.path,
+                    "body_bytes": len(body_bytes),
+                    "body_sha256": sha256_text(raw_body),
+                    "timeout_seconds": self.timeout_seconds,
+                }
+            )
             return_payload, _quality = run_worker(payload, raw_body, self.timeout_seconds)
             self.write_response(200, return_payload)
         except BridgeError as exc:
             append_audit({"type": "real-worker-failed", "request_id": request_id, "error": str(exc), "status_code": exc.status_code})
+            log_event({"type": "real-worker-failed", "request_id": request_id, "error": str(exc), "status_code": exc.status_code})
             self.write_response(exc.status_code, failure_payload(str(exc), exc.status_code, request_id))
         except Exception as exc:
             append_audit(
@@ -414,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
                     "trace": traceback.format_exc(limit=6),
                 }
             )
+            log_event({"type": "real-worker-unhandled-error", "request_id": request_id, "error": str(exc), "trace": traceback.format_exc(limit=6)})
             self.write_response(500, failure_payload("unhandled real worker bridge error", 500, request_id))
 
 
@@ -438,8 +503,16 @@ def main(argv: list[str]) -> int:
 
     Handler.timeout_seconds = args.timeout_seconds
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"SantaClawz real worker bridge listening on http://{args.host}:{args.port}/hire", file=sys.stderr)
-    print("Forward OPENCLAW_INTERNAL_HIRE_URL here from the SantaClawz relay starter.", file=sys.stderr)
+    log_event(
+        {
+            "type": "real-worker-bridge-listening",
+            "pid": os.getpid(),
+            "url": f"http://{args.host}:{args.port}/hire",
+            "timeout_seconds": args.timeout_seconds,
+            "worker_timeout_seconds_env": os.environ.get("WORKER_TIMEOUT_SECONDS", ""),
+        }
+    )
+    print("Forward OPENCLAW_INTERNAL_HIRE_URL here from the SantaClawz relay starter.", file=sys.stderr, flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

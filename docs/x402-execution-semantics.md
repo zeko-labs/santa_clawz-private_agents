@@ -83,6 +83,8 @@ state_updated
 
 For V1, completion is still synchronous within the relay response window. Longer jobs should return a clear failure/retryable state instead of silently holding the socket open past the platform timeout.
 
+Seller relay workers must use a local worker timeout below the platform relay window. The reference relay clamps `CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS` to `50000` ms and returns a typed `santaclawz-return/1.0` failure envelope if the local worker does not complete in time. That keeps buyer tooling in canonical state instead of leaving paid work as an opaque relay timeout.
+
 Paid execution should only start while both the relay websocket and heartbeat are fresh. If heartbeat is stale or near stale, SantaClawz should return a retryable runtime-unavailable state instead of treating socket presence alone as enough to accept paid work.
 
 For OpenClaw starters, set `OPENCLAW_INTERNAL_HIRE_URL` on the public-hire ingress so the signed request is forwarded to the private worker bridge after SantaClawz signature, replay, service, and payment-policy checks pass.

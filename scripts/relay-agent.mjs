@@ -19,7 +19,8 @@ const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
 const DEFAULT_INGRESS_PORT = "8797";
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const LOCAL_HIRE_TIMEOUT_MS = Number.parseInt(process.env.CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS ?? "", 10) || 45_000;
+const CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = Number.parseInt(process.env.CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS ?? "", 10) || 45_000;
+const LOCAL_HIRE_TIMEOUT_MS = Math.max(1_000, Math.min(CONFIGURED_LOCAL_HIRE_TIMEOUT_MS, 50_000));
 const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
 const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
@@ -60,6 +61,8 @@ Notes:
   with --local-quote-url and --local-paid-url.
   CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS caps local worker forwarding and defaults to 45000,
   which returns a typed relay failure before the platform's 60s relay response window.
+  Values above 50000 are clamped so the buyer receives a typed worker timeout
+  instead of a platform relay timeout.
   A local per-agent lock prevents duplicate relay processes. Use --takeover only
   after confirming the previous process is dead or intentionally being replaced.
 `);
@@ -372,11 +375,13 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     localHireUrl && typeof localHireUrl === "object"
       ? localHireUrl[requestKind] || localHireUrl.default
       : localHireUrl;
+  const receivedAtMs = Date.now();
   console.error(JSON.stringify({
     event: "relay_worker_request_received",
     messageId: message.messageId,
     requestKind,
     localHireUrl: targetUrl,
+    configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
     localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
     requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined,
     requestBodyBytes: typeof request.body === "string" ? Buffer.byteLength(request.body, "utf8") : 0
@@ -389,6 +394,43 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
     localHireUrl: targetUrl,
     requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined
   });
+  let responded = false;
+  const sendHireResponseOnce = (payload) => {
+    if (responded) {
+      return { bytes: 0, digestSha256: "" };
+    }
+    responded = true;
+    return sendJson(payload);
+  };
+  const timeoutEnvelope = () => ({
+    type: "hire_response",
+    messageId: message.messageId,
+    statusCode: 504,
+    workerStatusCode: 504,
+    body: failedReturnPackage({
+      requestId: requestIdFromSignedBody(request.body),
+      incidentId: `relay_worker_timeout_${Date.now()}`,
+      error: `Local worker did not return within ${LOCAL_HIRE_TIMEOUT_MS}ms.`
+    }),
+    workerResponseBytes: 0,
+    workerResponseDigestSha256: sha256Hex(""),
+    relayBodyBytes: 0,
+    relayBodyDigestSha256: sha256Hex("")
+  });
+  const watchdog = setTimeout(() => {
+    const sent = sendHireResponseOnce(timeoutEnvelope());
+    console.error(JSON.stringify({
+      event: "relay_worker_response_timeout",
+      messageId: message.messageId,
+      requestKind,
+      localHireUrl: targetUrl,
+      configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
+      localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+      elapsedMs: Date.now() - receivedAtMs,
+      relayPayloadBytes: sent.bytes,
+      relayPayloadDigestSha256: sent.digestSha256
+    }));
+  }, LOCAL_HIRE_TIMEOUT_MS + 250);
   try {
     const response = await fetch(targetUrl, {
       method: "POST",
@@ -396,6 +438,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       body: typeof request.body === "string" ? request.body : "{}",
       signal: AbortSignal.timeout(LOCAL_HIRE_TIMEOUT_MS)
     });
+    clearTimeout(watchdog);
     const body = await response.text();
     const normalized = normalizeWorkerResponseBody({
       body,
@@ -418,14 +461,16 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       relayBodyBytes: bodyBytes,
       relayBodyDigestSha256: sha256Hex(normalized.body)
     };
-    const sent = sendJson(responseEnvelope);
+    const sent = sendHireResponseOnce(responseEnvelope);
     if (normalized.normalized) {
       console.error(JSON.stringify({
         event: "relay_worker_response_normalized",
         messageId: message.messageId,
         requestKind,
         localHireUrl: targetUrl,
+        configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
         localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+        elapsedMs: Date.now() - receivedAtMs,
         statusCode: response.status,
         responseBytes: Buffer.byteLength(body, "utf8"),
         relayPayloadBytes: sent.bytes,
@@ -438,7 +483,9 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
         messageId: message.messageId,
         requestKind,
         localHireUrl: targetUrl,
+        configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
         localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+        elapsedMs: Date.now() - receivedAtMs,
         statusCode: response.status,
         responseBytes: Buffer.byteLength(body, "utf8"),
         relayPayloadBytes: sent.bytes,
@@ -446,22 +493,26 @@ async function handleRelayMessage(message, localHireUrl, sendJson) {
       }));
     }
   } catch (error) {
+    clearTimeout(watchdog);
     const failedEnvelope = {
       type: "hire_response",
       messageId: message.messageId,
-      statusCode: 502,
+      statusCode: error instanceof Error && error.name === "TimeoutError" ? 504 : 502,
+      workerStatusCode: error instanceof Error && error.name === "TimeoutError" ? 504 : 502,
       body: failedReturnPackage({
         requestId: requestIdFromSignedBody(request.body),
         incidentId: `relay_forward_${Date.now()}`,
         error: error instanceof Error ? error.message : "relay forward failed"
       })
     };
-    const sent = sendJson(failedEnvelope);
+    const sent = sendHireResponseOnce(failedEnvelope);
     console.error(JSON.stringify({
       event: "relay_worker_forward_failed",
       messageId: message.messageId,
       localHireUrl: targetUrl,
+      configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
       localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+      elapsedMs: Date.now() - receivedAtMs,
       relayPayloadBytes: sent.bytes,
       relayPayloadDigestSha256: sent.digestSha256,
       error: error instanceof Error ? error.message : String(error)
