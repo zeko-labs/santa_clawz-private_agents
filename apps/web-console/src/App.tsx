@@ -124,7 +124,7 @@ const EXPLORE_REGISTRY_POLL_MS = 8_000;
 const EXPLORE_AGENT_BOARD_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
-type NavSectionKey = "connect" | "explore";
+type NavSectionKey = "activate" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
@@ -326,28 +326,28 @@ function mergeAvailabilityIntoRegistry(
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
-  return hash === "#explore" || hash === "#explore-agents" ? "explore" : "connect";
+  return hash === "#explore" || hash === "#explore-agents" ? "explore" : "activate";
 }
 
 function parseRouteState(pathname: string, hash: string): AppRouteState {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/";
-  if (normalizedPath === "/connect") {
+  if (normalizedPath === "/activate") {
     return {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "connect",
+      section: "activate",
       sessionId: null,
       staticPage: null
     };
   }
-  if (normalizedPath.startsWith("/connect/")) {
-    const sessionId = decodeURIComponent(normalizedPath.slice("/connect/".length));
+  if (normalizedPath.startsWith("/activate/")) {
+    const sessionId = decodeURIComponent(normalizedPath.slice("/activate/".length));
     return {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "connect",
+      section: "activate",
       sessionId,
       staticPage: null
     };
@@ -391,7 +391,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: "sdk",
-      section: "connect",
+      section: "activate",
       sessionId: null,
       staticPage: null
     };
@@ -401,7 +401,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "connect",
+      section: "activate",
       sessionId: null,
       staticPage: "terms-of-service"
     };
@@ -411,7 +411,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "connect",
+      section: "activate",
       sessionId: null,
       staticPage: "privacy-policy"
     };
@@ -427,8 +427,8 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
 }
 
 function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus: "profile" | "hire" = "profile") {
-  if (section === "connect") {
-    return agentId ? `/connect/${encodeURIComponent(agentId)}` : "/connect";
+  if (section === "activate") {
+    return agentId ? `/activate/${encodeURIComponent(agentId)}` : "/activate";
   }
   if (section === "explore") {
     if (agentId) {
@@ -447,7 +447,7 @@ function initialSelectedSessionId(route: AppRouteState) {
   if (route.sessionId) {
     return route.sessionId;
   }
-  return route.section === "connect" && !route.agentId ? ONBOARDING_SESSION_ID : null;
+  return route.section === "activate" && !route.agentId ? ONBOARDING_SESSION_ID : null;
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -1440,7 +1440,7 @@ export function App() {
           agentId: null,
           agentFocus: "profile" as const,
           hiddenPage: null,
-          section: "connect" as const,
+          section: "activate" as const,
           sessionId: null,
           staticPage: null
         }
@@ -1953,7 +1953,7 @@ export function App() {
         setSelectedSessionId(null);
       } else if (nextRoute.staticPage || nextRoute.hiddenPage) {
         setSelectedSessionId(null);
-      } else if (nextRoute.section === "connect") {
+      } else if (nextRoute.section === "activate") {
         setSelectedSessionId(ONBOARDING_SESSION_ID);
       } else {
         setSelectedSessionId(null);
@@ -2202,14 +2202,14 @@ export function App() {
     setNavOpen(false);
     setSharedAgentFocus("profile");
     setProfileSessionId(null);
-    if (nextSection === "connect") {
+    if (nextSection === "activate") {
       setState(null);
       setProfile(normalizeProfileDraft());
       setEnrollmentTicket(null);
     }
     if (typeof window !== "undefined") {
       setSharedAgentId(null);
-      setSelectedSessionId(nextSection === "connect" ? ONBOARDING_SESSION_ID : null);
+      setSelectedSessionId(nextSection === "activate" ? ONBOARDING_SESSION_ID : null);
       window.history.pushState(null, "", buildSectionPath(nextSection));
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -2276,12 +2276,12 @@ export function App() {
     return (
       <header className="site-header">
         <a
-          href="/connect"
+          href="/activate"
           className="site-brand"
           aria-label="SantaClawz home"
           onClick={(event: ClickEvent) => {
             event.preventDefault();
-            showSection("connect");
+            showSection("activate");
           }}
         >
           <img src="/santaclawz-logo.svg" alt="SantaClawz" className="site-brand-logo" />
@@ -2305,10 +2305,10 @@ export function App() {
         <nav id="site-primary-nav" className={`site-nav${navOpen ? " open" : ""}`} aria-label="Primary">
           <button
             type="button"
-            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "connect" ? " active" : ""}`}
-            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "connect" ? "page" : undefined}
+            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "activate" ? " active" : ""}`}
+            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "activate" ? "page" : undefined}
             onClick={() => {
-              showSection("connect");
+              showSection("activate");
             }}
           >
             Activate
@@ -3284,7 +3284,7 @@ export function App() {
       {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
-        <section id="connect" className="step-stack configure-stack">
+        <section id="activate" className="step-stack configure-stack">
           <section className="panel step-card">
             <div className="step-head">
               <div className="step-title">
@@ -3298,7 +3298,7 @@ export function App() {
           </section>
         </section>
       ) : activeSection !== "explore" ? (
-        <section id="connect" className="step-stack configure-stack">
+        <section id="activate" className="step-stack configure-stack">
           <section className="panel step-card">
           <div className="step-head">
             <div className="step-title">
