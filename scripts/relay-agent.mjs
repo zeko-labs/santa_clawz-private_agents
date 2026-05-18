@@ -287,6 +287,28 @@ function warnIfEnvFileRouteIsOverridden(warnings) {
   }
 }
 
+function isRetryableHeartbeatFailure(result) {
+  return Boolean(
+    result?.payload?.retryable === true ||
+      result?.status === 502 ||
+      result?.status === 503 ||
+      result?.status === 504
+  );
+}
+
+function logHeartbeatFailure(event, result) {
+  console.error(JSON.stringify({
+    event,
+    status: result?.status,
+    retryable: isRetryableHeartbeatFailure(result),
+    code: typeof result?.payload?.code === "string" ? result.payload.code : undefined,
+    error:
+      typeof result?.payload?.error === "string"
+        ? result.payload.error
+        : `Heartbeat failed with status ${result?.status ?? "unknown"}`,
+  }));
+}
+
 function warnIfBundledIngressAndExplicitPaidRoute(input) {
   if (!input.shouldServe || !input.localPaidUrl) {
     return;
@@ -1113,7 +1135,10 @@ try {
         relayAgentWorkerWarnings
       });
     if (!firstHeartbeat.ok) {
-      throw new Error(firstHeartbeat.payload?.error ?? `Heartbeat failed with status ${firstHeartbeat.status}`);
+      logHeartbeatFailure("relay_initial_heartbeat_failed_continuing", firstHeartbeat);
+      if (!isRetryableHeartbeatFailure(firstHeartbeat)) {
+        throw new Error(firstHeartbeat.payload?.error ?? `Heartbeat failed with status ${firstHeartbeat.status}`);
+      }
     }
     heartbeatInterval = setInterval(() => {
         void postHeartbeat({
@@ -1128,6 +1153,10 @@ try {
           relayAgentFeatures: RELAY_AGENT_FEATURES,
           relayAgentWorkerRoutes: localHireRoutes,
           relayAgentWorkerWarnings
+        }).then((result) => {
+          if (!result.ok) {
+            logHeartbeatFailure("relay_periodic_heartbeat_failed", result);
+          }
         }).catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
       });
