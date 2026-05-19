@@ -3602,7 +3602,6 @@ h3 {
 .copy-icon::before {
   top: 1px;
   left: 4px;
-  opacity: 0.58;
 }
 
 .copy-icon::after {
