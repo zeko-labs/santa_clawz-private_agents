@@ -530,7 +530,7 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
     return "Publish first";
   }
   if (agent.pricingMode === "free-test") {
-    return "Free test";
+    return "Demo";
   }
   if (!agent.paymentsEnabled) {
     return "Not open for work";
@@ -693,7 +693,9 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.ownershipVerified ? "owner ownership verified control" : "",
     agent.missionAuthVerified ? "mission auth oauth enterprise web2 verified" : "",
     agent.published ? "published zeko live" : "",
-    agent.paidJobsEnabled ? "payouts live hire paid jobs" : "",
+    agent.paidJobsEnabled ? "pending live hire paid jobs for hire" : "",
+    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true ? "live for hire" : "",
+    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven !== true ? "pending setup readiness" : "",
     agent.paymentsEnabled ? "open for work quote required reference price" : ""
   ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
@@ -909,21 +911,29 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (agent.paidJobsEnabled) {
-    return "Payouts live";
+  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+    return "Demo";
   }
-  if (agent.paymentsEnabled) {
-    return "Open for work";
+  if (agent.runtimeStatus === "offline") {
+    return "Offline";
   }
-  if (agent.published) {
-    return "Published";
+  if (agent.readiness?.hireable === true || (agent.published && !agent.paidJobsEnabled && agent.runtimeStatus === "live")) {
+    return "Live";
   }
-  return "Registered";
+  return "Pending";
 }
 
 function activityLineForAgent(agent: AgentRegistryEntry) {
+  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+    return `Starter/demo agent • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+  }
+  if (agent.runtimeStatus === "offline") {
+    return `Offline • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+  }
   if (agent.paidJobsEnabled) {
-    return `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+    return agent.readiness?.paidExecutionProven === true
+      ? `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`
+      : `Pending readiness • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.paymentsEnabled) {
     return `${referencePriceLine(agent)} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
@@ -977,7 +987,9 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.agentName} is offline right now, but its public proof history stays visible.`;
   }
   if (agent.paidJobsEnabled) {
-    return `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`;
+    return agent.readiness?.paidExecutionProven === true
+      ? `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`
+      : `${agent.agentName} is pending readiness before buyers should pay.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.agentName} is open for quote requests. Buyers and agents can inspect the profile before starting work.`;
@@ -1012,7 +1024,9 @@ function dispatchLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.headline} Default starter service for agents that want the latest guidance on getting hired, pricing work, and improving their public trust surface.`;
   }
   if (agent.paidJobsEnabled) {
-    return `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`;
+    return agent.readiness?.paidExecutionProven === true
+      ? `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`
+      : `${agent.headline} Pending readiness before paid work is accepted.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.headline} Open for quote requests with ${referencePriceLine(agent).toLowerCase()}.`;
@@ -1110,7 +1124,7 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
     return "Fixed price";
   }
   if (mode === "free-test") {
-    return "Free test";
+    return "Demo";
   }
   return "Request quote";
 }
@@ -1126,7 +1140,7 @@ function referencePriceLine(input: {
     return fixedAmount ? `Fixed price: $${fixedAmount}` : "Fixed price";
   }
   if (input.pricingMode === "free-test") {
-    return "Free test";
+    return "Demo";
   }
   const amount = input.referencePriceUsd?.trim();
   if (!amount) {
@@ -2931,6 +2945,7 @@ export function App() {
   const savedPaymentsEnabled = state.paymentsEnabled;
   const savedPaymentProfileReady = state.paymentProfileReady;
   const paidJobsEnabled = state.paidJobsEnabled;
+  const paidExecutionProven = state.readiness?.paidExecutionProven === true;
   const quoteRequestMode =
     savedPaymentsEnabled &&
     state.profile.paymentProfile.pricingMode === "quote-required";
@@ -2955,11 +2970,13 @@ export function App() {
     : !published
       ? "Publish first"
       : freeTestMode
-        ? "Free test"
+        ? "Demo"
       : !savedPaymentsEnabled
         ? "Not open for work"
-        : savedPaymentProfileReady && paidJobsEnabled
+        : savedPaymentProfileReady && paidJobsEnabled && paidExecutionProven
           ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}`
+        : savedPaymentProfileReady && paidJobsEnabled
+            ? "Pending readiness"
           : savedPaymentProfileReady
             ? referencePriceLine(state.profile.paymentProfile)
             : "Finish work setup";
@@ -4207,13 +4224,15 @@ export function App() {
                     <span className="subtle-pill">
                       {agentArchived
                         ? "Archived"
-                        : paidJobsEnabled
-                          ? "Payouts live"
+                        : paidJobsEnabled && paidExecutionProven
+                          ? "Live"
+                          : paidJobsEnabled
+                            ? "Pending"
                           : savedPaymentsEnabled
-                            ? "Open for work"
+                            ? "Pending"
                             : published
-                              ? "Published"
-                      : "Registered"}
+                              ? "Live"
+                      : "Pending"}
                     </span>
                   </div>
                 </div>

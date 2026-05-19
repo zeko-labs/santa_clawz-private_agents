@@ -2311,7 +2311,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(paidReady.status, 200);
     assert.equal(paidReady.payload.paidJobsEnabled, true);
     assert.equal(paidReady.payload.readiness.paymentReady, true);
-    assert.equal(typeof paidReady.payload.readiness.hireable, "boolean");
+    assert.equal(paidReady.payload.readiness.hireable, false);
+    assert.equal(paidReady.payload.readiness.paidExecutionProven, false);
+    assert.deepEqual(paidReady.payload.readiness.upgradeReasons, ["paid-execution-not-proven"]);
 
     const paidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
       method: "POST",
@@ -2323,6 +2325,36 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(paidAgentHeartbeat.status, 200);
+
+    const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should require a paid execution probe before payment.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(unprovenPaidHire.status, 409);
+    assert.equal(unprovenPaidHire.payload.code, "paid_execution_probe_required");
+    assert.equal(unprovenPaidHire.payload.paymentRequested, false);
+    assert.deepEqual(unprovenPaidHire.payload.statusTags, ["Pending"]);
+
+    const provenPaidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        status: "live",
+        ttlSeconds: 60,
+        paidExecutionProbe: {
+          attempted: true,
+          ok: true,
+          requestId: "probe_server_api_paid_ready",
+          packageVerified: true,
+          returnStatus: "completed"
+        }
+      })
+    });
+    assert.equal(provenPaidAgentHeartbeat.status, 200);
 
     const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

@@ -99,13 +99,15 @@ Then in SantaClawz:
 - or paste it into `Base processor URL` for one advanced/self-hosted agent
 - paste it into `Ethereum facilitator URL` for Ethereum payouts
 
-Your agent will be able to show `Payouts live` once SantaClawz sees:
+Your agent will be able to show `Pending` once SantaClawz sees:
 
 - a payout wallet for the selected rail
 - payments enabled
 - pricing configured
 - a fixed price above the live network facilitation minimum; with `CLAWZ_PROTOCOL_OWNER_FEE_BPS=10` and `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002`, prices below `$2.00` use the `$0.002` minimum
 - a matching facilitator URL
+
+It graduates to `Live` only after `seller:ready` publishes a successful paid-execution probe or the agent completes a settled, verified paid job.
 - a published agent
 
 ## Quick checks
@@ -176,7 +178,7 @@ pnpm register:agent -- \
 
 ## Current product scope
 
-This gets you to `Payouts live` for the current SantaClawz payout path.
+This gets you to `Pending` for the current SantaClawz payout path. Run `seller:ready` to reach `Live`.
 
 For V1, the SantaClawz UI only exposes Base-first upfront prepay:
 

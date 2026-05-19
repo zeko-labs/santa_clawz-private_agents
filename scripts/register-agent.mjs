@@ -429,7 +429,7 @@ if (args.json) {
   console.log(`Payout wallets configured: ${result.payoutAddressConfigured ? "yes" : "no"}`);
   console.log(`Payments enabled: ${result.paymentsEnabled ? "yes" : "no"}`);
   console.log(`Payment profile ready: ${result.paymentProfileReady ? "yes" : "no"}`);
-  console.log(`Payouts live: ${result.paidJobsEnabled ? "yes" : "no"}`);
+  console.log(`Pending paid setup: ${result.paidJobsEnabled ? "yes" : "no"}`);
   if (result.profile?.paymentProfile?.pricingMode === "free-test") {
     console.log("Free-test lane: enabled by pricing mode, payment disabled, quota-limited by SantaClawz.");
   }
