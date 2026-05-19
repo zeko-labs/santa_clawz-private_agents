@@ -546,7 +546,7 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
 
 function runtimeStatusLabel(status?: AgentRuntimeStatus) {
   if (status === "live") {
-    return "Live";
+    return "Online";
   }
   if (status === "offline") {
     return "Offline";
@@ -911,7 +911,7 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+  if (isDemoAgent(agent)) {
     return "Demo";
   }
   if (agent.runtimeStatus === "offline") {
@@ -923,8 +923,51 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
   return "Pending";
 }
 
+function marketplaceStatusClass(label: string) {
+  if (label === "Live") {
+    return "runtime-status-live";
+  }
+  if (label === "Offline") {
+    return "runtime-status-offline";
+  }
+  return "runtime-status-waiting";
+}
+
+function pendingReasonLabel(agent: AgentRegistryEntry) {
+  if (exploreStatusLabel(agent) !== "Pending") {
+    return null;
+  }
+  const blockers = new Set(agent.readiness?.blockers ?? []);
+  const upgradeReasons = new Set(agent.readiness?.upgradeReasons ?? []);
+  if (!agent.published || blockers.has("not-published")) {
+    return "Publish profile";
+  }
+  if (agent.runtimeStatus === "offline" || blockers.has("relay-disconnected") || blockers.has("heartbeat-not-live")) {
+    return "Reconnect agent";
+  }
+  if (blockers.has("runtime-unreachable") || blockers.has("worker-unreachable")) {
+    return "Reconnect worker";
+  }
+  if (!agent.paymentsEnabled) {
+    return "Enable payments";
+  }
+  if (!agent.payoutAddressConfigured) {
+    return "Add payout wallet";
+  }
+  if (!agent.paymentProfileReady || !agent.readiness?.paymentReady || blockers.has("payment-not-ready")) {
+    return "Finish payments";
+  }
+  if (upgradeReasons.has("paid-execution-not-proven") || agent.readiness?.paidExecutionProven === false) {
+    return "Run paid test";
+  }
+  if (agent.readiness?.hireable !== true) {
+    return "Run readiness";
+  }
+  return null;
+}
+
 function activityLineForAgent(agent: AgentRegistryEntry) {
-  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+  if (isDemoAgent(agent)) {
     return `Starter/demo agent • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.runtimeStatus === "offline") {
@@ -945,11 +988,31 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
 }
 
 function isStarterAgent(agent: AgentRegistryEntry) {
-  const normalizedName = agent.agentName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalizedName = normalizeAgentKey(agent.agentName);
   return (
     (STARTER_AGENT_ID.length > 0 && agent.agentId === STARTER_AGENT_ID) ||
     agent.serviceKey === STARTER_AGENT_SERVICE_KEY ||
     normalizedName === STARTER_AGENT_SERVICE_KEY
+  );
+}
+
+function normalizeAgentKey(value?: string) {
+  return (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function isDemoAgent(agent: AgentRegistryEntry) {
+  const paidJobCount =
+    (agent.jobActivityStats?.paidExecutionCount ?? 0) +
+    (agent.completionScore?.evaluatedJobCount ?? 0);
+  const nonCommercialActivityAgent =
+    !agent.paymentsEnabled &&
+    !agent.paymentProfileReady &&
+    !agent.payoutAddressConfigured &&
+    paidJobCount === 0;
+  return (
+    isStarterAgent(agent) ||
+    agent.pricingMode === "free-test" ||
+    nonCommercialActivityAgent
   );
 }
 
@@ -3186,6 +3249,7 @@ export function App() {
               className: "runtime-status-waiting"
             };
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
+  const focusedAgentIsDemo = focusedRegistryAgent ? isDemoAgent(focusedRegistryAgent) : freeTestMode;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
   const agentRuntimeCheckPending = Boolean(sharedAgentId) && agentAvailabilityLoading && !focusedAgentAvailability;
@@ -3195,6 +3259,19 @@ export function App() {
   const focusedRuntimeStatusClass = agentRuntimeCheckPending
     ? "runtime-status-waiting"
     : runtimeStatusClass(focusedRuntimeStatus);
+  const focusedMarketplaceStatusLabel = agentArchived
+    ? "Archived"
+    : focusedRegistryAgent
+      ? exploreStatusLabel(focusedRegistryAgent)
+      : focusedAgentIsDemo
+        ? "Demo"
+        : focusedRuntimeStatus === "offline"
+          ? "Offline"
+          : state.readiness?.hireable === true
+            ? "Live"
+            : "Pending";
+  const focusedPendingReasonLabel =
+    focusedMarketplaceStatusLabel === "Pending" && focusedRegistryAgent ? pendingReasonLabel(focusedRegistryAgent) : null;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
@@ -3659,7 +3736,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Generate an activation ticket from the info above. Run the activation command from your agent runtime to go live and get paid.
+                Generate an activation ticket from the info above. Run the activation command from your agent runtime folder, the one containing package.json, to go live and get paid.
               </p>
             </div>
 
@@ -3731,7 +3808,8 @@ export function App() {
                     <details className="activation-command-details">
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
-                          <strong>Run activation command from your agent runtime to go live</strong>
+                          <strong>Run activation command from your agent runtime folder containing package.json to go live</strong>
+                          <span>New setup? Use the activation guide first.</span>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
@@ -4221,25 +4299,18 @@ export function App() {
                   <strong>{profile.agentName}</strong>
                   <div className="profile-status-stack">
                     <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
-                    <span className="subtle-pill">
-                      {agentArchived
-                        ? "Archived"
-                        : paidJobsEnabled && paidExecutionProven
-                          ? "Live"
-                          : paidJobsEnabled
-                            ? "Pending"
-                          : savedPaymentsEnabled
-                            ? "Pending"
-                            : published
-                              ? "Live"
-                      : "Pending"}
-                    </span>
+                    {focusedRuntimeStatusLabel !== "Offline" ? (
+                      <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
+                        {focusedMarketplaceStatusLabel}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="profile-summary-copy">
                   <p className="panel-copy">{profile.headline}</p>
                   <p className="profile-meta-line">
                     <span>{paidWorkStatusLabel}</span>
+                    {focusedPendingReasonLabel ? <span>{focusedPendingReasonLabel}</span> : null}
                     <span>
                       {currentSocialAnchorQueue.anchoredCount} anchored fact{currentSocialAnchorQueue.anchoredCount === 1 ? "" : "s"}
                     </span>
@@ -4408,7 +4479,7 @@ export function App() {
                             setExploreAgentPage(1);
                           }}
                         >
-                          #{tag}
+                          {tag}
                         </button>
                       ))}
                     </div>
@@ -4509,11 +4580,14 @@ export function App() {
                                           <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
                                         </div>
                                       </div>
-                                      <span className={`runtime-pill ${agent.runtimeStatus}`}>{runtimeStatusLabel(agent.runtimeStatus)}</span>
+                                      <span className={`runtime-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
+                                        {exploreStatusLabel(agent)}
+                                      </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
+                                      {pendingReasonLabel(agent) ? <span className="explore-tag">{pendingReasonLabel(agent)}</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
                                     </div>
                                   </article>
@@ -4663,7 +4737,7 @@ export function App() {
                                       {message.topicTags.length > 0 ? (
                                         <div className="explore-tag-row compact">
                                           {message.topicTags.map((tag) => (
-                                            <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
+                                            <span key={`${message.messageId}-${tag}`} className="explore-tag">{tag}</span>
                                           ))}
                                         </div>
                                       ) : null}
