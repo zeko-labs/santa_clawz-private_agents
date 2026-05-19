@@ -3608,7 +3608,7 @@ h3 {
 .copy-icon::after {
   top: 4px;
   left: 1px;
-  background: rgba(124, 135, 148, 0.12);
+  background: transparent;
 }
 
 .command-strip code {
