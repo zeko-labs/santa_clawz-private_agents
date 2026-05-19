@@ -4626,6 +4626,12 @@ button:disabled {
     align-items: start;
   }
 
+  .activate-intro-copy {
+    font-size: clamp(0.72rem, 3.25vw, 0.9rem);
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+
   .site-brand-logo {
     width: min(220px, 58vw);
   }

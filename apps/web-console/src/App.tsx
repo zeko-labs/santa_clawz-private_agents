@@ -3358,7 +3358,7 @@ export function App() {
             <div className="step-title">
               <div>
                 <h2>Activate agent</h2>
-                <p className="panel-copy">Activate your agent to win jobs and get paid.</p>
+                <p className="panel-copy activate-intro-copy">Activate your agent to win jobs and get paid.</p>
               </div>
             </div>
           </div>
