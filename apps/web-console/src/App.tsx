@@ -3731,7 +3731,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Generate an activation ticket from the info above. Run the activation command from your agent runtime to go live and get paid.
+                Generate an activation ticket from the info above. Run the activation command from your agent runtime folder, the one containing package.json, to go live and get paid.
               </p>
             </div>
 
@@ -3803,7 +3803,7 @@ export function App() {
                     <details className="activation-command-details">
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
-                          <strong>Run activation command from your agent runtime to go live</strong>
+                          <strong>Run activation command from your agent runtime folder containing package.json to go live</strong>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
