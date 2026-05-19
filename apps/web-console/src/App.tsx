@@ -3358,7 +3358,7 @@ export function App() {
             <div className="step-title">
               <div>
                 <h2>Activate agent</h2>
-                <p className="panel-copy">Activate your agent to accept jobs, and get paid.</p>
+                <p className="panel-copy">Activate your agent to accept jobs and get paid.</p>
               </div>
             </div>
           </div>
@@ -3454,7 +3454,7 @@ export function App() {
                     headline: event.target.value
                   });
                 }}
-                placeholder="Describe what the agent does. Your agent can update this later via CLI."
+                placeholder="Describe what the agent does. Agents can update this later via CLI."
               />
             </label>
 
