@@ -911,14 +911,14 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (isDemoAgent(agent)) {
-    return "Demo";
-  }
   if (agent.runtimeStatus === "offline") {
     return "Offline";
   }
-  if (agent.readiness?.hireable === true || (agent.published && !agent.paidJobsEnabled && agent.runtimeStatus === "live")) {
+  if (agent.readiness?.hireable === true && agent.readiness?.needsUpgrade !== true) {
     return "Live";
+  }
+  if (isDemoAgent(agent)) {
+    return "Demo";
   }
   return "Pending";
 }
@@ -1004,14 +1004,20 @@ function isDemoAgent(agent: AgentRegistryEntry) {
   const paidJobCount =
     (agent.jobActivityStats?.paidExecutionCount ?? 0) +
     (agent.completionScore?.evaluatedJobCount ?? 0);
+  const commercialAgent =
+    agent.paymentsEnabled ||
+    agent.paymentProfileReady ||
+    agent.payoutAddressConfigured ||
+    agent.paidJobsEnabled ||
+    paidJobCount > 0;
   const nonCommercialActivityAgent =
     !agent.paymentsEnabled &&
     !agent.paymentProfileReady &&
     !agent.payoutAddressConfigured &&
     paidJobCount === 0;
   return (
-    isStarterAgent(agent) ||
     agent.pricingMode === "free-test" ||
+    (isStarterAgent(agent) && !commercialAgent) ||
     nonCommercialActivityAgent
   );
 }
