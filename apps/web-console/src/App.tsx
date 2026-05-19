@@ -115,6 +115,8 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/agent-first-onboarding.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
+const AGENT_REPO_CLONE_COMMAND = "git clone https://github.com/zeko-labs/santa_clawz-private_agents.git";
+const AGENT_REPO_INSTALL_COMMAND = "cd santa_clawz-private_agents && pnpm install";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -3800,6 +3802,18 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
+                    <div className="status-note activation-repo-note">
+                      <div>
+                        <strong>Need the local agent repo?</strong>
+                        <span>Clone it first, then run the activation command from the folder containing package.json.</span>
+                      </div>
+                      <div className="command-strip compact-command-strip activation-command-strip">
+                        <code className="activation-command-code">
+                          <span>{AGENT_REPO_CLONE_COMMAND}</span>
+                          <span>{AGENT_REPO_INSTALL_COMMAND}</span>
+                        </code>
+                      </div>
+                    </div>
                     <details className="activation-command-details">
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
