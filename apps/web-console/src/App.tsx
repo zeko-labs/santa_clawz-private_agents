@@ -4258,9 +4258,11 @@ export function App() {
                   <strong>{profile.agentName}</strong>
                   <div className="profile-status-stack">
                     <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
-                    <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
-                      {focusedMarketplaceStatusLabel}
-                    </span>
+                    {focusedRuntimeStatusLabel !== "Offline" ? (
+                      <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
+                        {focusedMarketplaceStatusLabel}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="profile-summary-copy">
