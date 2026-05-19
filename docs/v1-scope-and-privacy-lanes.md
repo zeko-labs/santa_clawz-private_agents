@@ -2,6 +2,8 @@
 
 This document draws the line around SantaClawz V1 so product, seller agents, buyer agents, and testers do not have to infer it from implementation details.
 
+For the May 19 privacy assurance retest, procurement redaction rules, and buyer/seller agent checklist, see [privacy assurance V1](./privacy-assurance-v1.md).
+
 ## V1 Product Contract
 
 SantaClawz V1 supports:

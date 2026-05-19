@@ -8231,7 +8231,34 @@ export class ClawzControlPlane {
       });
   }
 
-  private publicProcurementIntent(intent: ProcurementIntentRecord) {
+  private isPrivateProcurementIntent(intent: ProcurementIntentRecord) {
+    return intent.jobPrivacy?.visibility === "private" || intent.preferredPrivacyModes.includes("private");
+  }
+
+  private sanitizedProcurementArtifactDelivery(delivery?: SantaClawzArtifactDeliveryPreference) {
+    if (!delivery) {
+      return undefined;
+    }
+    return {
+      mode: delivery.mode,
+      ...(delivery.scanPolicy ? { scanPolicy: delivery.scanPolicy } : {}),
+      ...(typeof delivery.digestRequired === "boolean" ? { digestRequired: delivery.digestRequired } : {}),
+      ...(typeof delivery.buyerAcceptanceRequired === "boolean" ? { buyerAcceptanceRequired: delivery.buyerAcceptanceRequired } : {}),
+      ...(typeof delivery.localScanRequired === "boolean" ? { localScanRequired: delivery.localScanRequired } : {})
+    };
+  }
+
+  private procurementBidPublicView(bid: ProcurementBidRecord) {
+    const { idempotencyKeyHashSha256: _idempotencyKeyHashSha256, ...publicBid } = bid;
+    return publicBid;
+  }
+
+  private procurementDeclinePublicView(decline: ProcurementDeclineRecord) {
+    const { idempotencyKeyHashSha256: _idempotencyKeyHashSha256, ...publicDecline } = decline;
+    return publicDecline;
+  }
+
+  private fullProcurementIntentView(intent: ProcurementIntentRecord) {
     const {
       buyerTokenHashSha256: _buyerTokenHashSha256,
       createIdempotencyKeyHashSha256: _createIdempotencyKeyHashSha256,
@@ -8239,8 +8266,42 @@ export class ClawzControlPlane {
     } = intent;
     return {
       ...publicIntent,
-      bids: publicIntent.bids.map(({ idempotencyKeyHashSha256: _idempotencyKeyHashSha256, ...bid }) => bid),
-      declines: publicIntent.declines.map(({ idempotencyKeyHashSha256: _idempotencyKeyHashSha256, ...decline }) => decline)
+      bids: publicIntent.bids.map((bid) => this.procurementBidPublicView(bid)),
+      declines: publicIntent.declines.map((decline) => this.procurementDeclinePublicView(decline))
+    };
+  }
+
+  private publicProcurementIntent(intent: ProcurementIntentRecord) {
+    if (!this.isPrivateProcurementIntent(intent)) {
+      return this.fullProcurementIntentView(intent);
+    }
+    return {
+      schemaVersion: intent.schemaVersion,
+      intentId: intent.intentId,
+      status: intent.status,
+      createdAtIso: intent.createdAtIso,
+      updatedAtIso: intent.updatedAtIso,
+      ...(intent.budgetUsd ? { budgetUsd: intent.budgetUsd } : {}),
+      ...(intent.deadlineIso ? { deadlineIso: intent.deadlineIso } : {}),
+      ...(intent.bidWindowClosesAtIso ? { bidWindowClosesAtIso: intent.bidWindowClosesAtIso } : {}),
+      privacy: {
+        visibility: "private",
+        activityAnchorMode: "anonymous",
+        publicAggregateStats: true,
+        publicLifecycleEvents: false,
+        publicArtifactMetadata: false
+      },
+      publicSummary: "A private procurement intent is open on SantaClawz.",
+      requiredCapabilities: intent.requiredCapabilities,
+      preferredDeliveryModes: intent.preferredDeliveryModes,
+      preferredPrivacyModes: intent.preferredPrivacyModes,
+      ...(this.sanitizedProcurementArtifactDelivery(intent.artifactDelivery)
+        ? { artifactDelivery: this.sanitizedProcurementArtifactDelivery(intent.artifactDelivery) }
+        : {}),
+      bidCount: intent.bids.length,
+      declineCount: intent.declines.length,
+      ...(intent.selectedAgentId ? { selectedAgentId: intent.selectedAgentId } : {}),
+      ...(intent.selectedBidId ? { selectedBidId: intent.selectedBidId } : {})
     };
   }
 
@@ -8277,7 +8338,7 @@ export class ClawzControlPlane {
         return {
           ok: true,
           idempotent: true,
-          intent: this.publicProcurementIntent(existingIntent),
+          intent: this.fullProcurementIntentView(existingIntent),
           buyerToken: this.procurementIdempotentBuyerToken(idempotencyKey),
           buyerTokenUsage: "Use this token to accept a bid or close the procurement intent."
         };
@@ -8309,7 +8370,7 @@ export class ClawzControlPlane {
     await this.saveProcurementIntentFile({ intents: [intent, ...file.intents].slice(0, 1000) });
     return {
       ok: true,
-      intent: this.publicProcurementIntent(intent),
+      intent: this.fullProcurementIntentView(intent),
       buyerToken,
       buyerTokenUsage: "Use this token to accept a bid or close the procurement intent."
     };
@@ -8333,7 +8394,7 @@ export class ClawzControlPlane {
     };
   }
 
-  async getProcurementIntent(intentId: string) {
+  async getProcurementIntent(intentId: string, options: { token?: string } = {}) {
     const trimmed = intentId.trim();
     const intent = (await this.loadProcurementIntentFile()).intents.find((candidate) => candidate.intentId === trimmed);
     if (!intent) {
@@ -8341,7 +8402,9 @@ export class ClawzControlPlane {
     }
     return {
       ok: true,
-      intent: this.publicProcurementIntent(intent)
+      intent: options.token?.trim() && sha256Hex(options.token.trim()) === intent.buyerTokenHashSha256
+        ? this.fullProcurementIntentView(intent)
+        : this.publicProcurementIntent(intent)
     };
   }
 
@@ -8370,7 +8433,7 @@ export class ClawzControlPlane {
           ok: true,
           idempotent: true,
           intent: this.publicProcurementIntent(intent),
-          bid: this.publicProcurementIntent({
+          bid: this.fullProcurementIntentView({
             ...intent,
             bids: [existingIdempotentBid],
             declines: []
@@ -8410,7 +8473,7 @@ export class ClawzControlPlane {
     return {
       ok: true,
       intent: publicIntent,
-      bid: publicIntent.bids.find((candidate) => candidate.bidId === bid.bidId)!
+      bid: this.procurementBidPublicView(bid)
     };
   }
 
@@ -8433,7 +8496,7 @@ export class ClawzControlPlane {
           ok: true,
           idempotent: true,
           intent: this.publicProcurementIntent(intent),
-          decline: this.publicProcurementIntent({
+          decline: this.fullProcurementIntentView({
             ...intent,
             bids: [],
             declines: [existingIdempotentDecline]
@@ -8461,7 +8524,7 @@ export class ClawzControlPlane {
     return {
       ok: true,
       intent: publicIntent,
-      decline: publicIntent.declines.find((candidate) => candidate.agentId === decline.agentId)!
+      decline: this.procurementDeclinePublicView(decline)
     };
   }
 
@@ -8480,7 +8543,7 @@ export class ClawzControlPlane {
       return {
         ok: true,
         idempotent: true,
-        intent: this.publicProcurementIntent(intent),
+        intent: this.fullProcurementIntentView(intent),
         selectedBid,
         nextAction: {
           type: "submit_hire_request",
@@ -8530,7 +8593,7 @@ export class ClawzControlPlane {
     const acceptedBid = nextIntent.bids.find((bid) => bid.bidId === selectedBid.bidId)!;
     return {
       ok: true,
-      intent: this.publicProcurementIntent(nextIntent),
+      intent: this.fullProcurementIntentView(nextIntent),
       selectedBid: acceptedBid,
       nextAction: {
         type: "submit_hire_request",

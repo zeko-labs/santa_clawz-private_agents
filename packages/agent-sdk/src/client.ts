@@ -815,13 +815,15 @@ export class ClawzAgentClient {
     );
   }
 
-  async getProcurementIntent(input: { intentId: string }): Promise<ClawzProcurementIntentGetResponse> {
+  async getProcurementIntent(input: { intentId: string; token?: string }): Promise<ClawzProcurementIntentGetResponse> {
     const intentId = input.intentId.trim();
     if (!intentId) {
       throw new Error("getProcurementIntent requires intentId.");
     }
     return this.readJson<ClawzProcurementIntentGetResponse>(
-      withQuery(this.baseUrl, `/api/procurement/intents/${encodeURIComponent(intentId)}`)
+      withQuery(this.baseUrl, `/api/procurement/intents/${encodeURIComponent(intentId)}`, {
+        ...(input.token?.trim() ? { token: input.token.trim() } : {})
+      })
     );
   }
 

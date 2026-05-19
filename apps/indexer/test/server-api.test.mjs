@@ -2077,7 +2077,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(procurementBid.status, 200);
     assert.equal(procurementBid.payload.bid.agentId, agentId);
     assert.equal(procurementBid.payload.bid.idempotencyKeyHashSha256, undefined);
-    assert.equal(procurementBid.payload.intent.bids.length, 1);
+    assert.equal(procurementBid.payload.intent.bids, undefined);
+    assert.equal(procurementBid.payload.intent.bidCount, 1);
     const procurementBidRetry = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/bids`, {
       method: "POST",
       headers: {
@@ -2132,6 +2133,32 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     const procurementList = await requestJson(`${baseUrl}/api/procurement/intents?status=open`);
     assert.equal(procurementList.status, 200);
     assert.equal(procurementList.payload.intents.some((intent) => intent.intentId === procurementIntent.payload.intent.intentId), true);
+    const listedPrivateIntent = procurementList.payload.intents.find((intent) => intent.intentId === procurementIntent.payload.intent.intentId);
+    assert.ok(listedPrivateIntent);
+    assert.equal(listedPrivateIntent.taskPrompt, undefined);
+    assert.equal(listedPrivateIntent.requesterContact, undefined);
+    assert.equal(listedPrivateIntent.artifactDelivery?.buyerPublicKey, undefined);
+    assert.equal(listedPrivateIntent.privacy.visibility, "private");
+    assert.equal(listedPrivateIntent.publicSummary, "A private procurement intent is open on SantaClawz.");
+    assert.equal(listedPrivateIntent.bidCount, 1);
+
+    const publicProcurementDetail = await requestJson(
+      `${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}`
+    );
+    assert.equal(publicProcurementDetail.status, 200);
+    assert.equal(publicProcurementDetail.payload.intent.taskPrompt, undefined);
+    assert.equal(publicProcurementDetail.payload.intent.requesterContact, undefined);
+    assert.equal(publicProcurementDetail.payload.intent.artifactDelivery?.buyerPublicKey, undefined);
+    assert.equal(publicProcurementDetail.payload.intent.bids, undefined);
+    assert.equal(publicProcurementDetail.payload.intent.bidCount, 1);
+
+    const buyerProcurementDetail = await requestJson(
+      `${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}?token=${encodeURIComponent(procurementIntent.payload.buyerToken)}`
+    );
+    assert.equal(buyerProcurementDetail.status, 200);
+    assert.equal(buyerProcurementDetail.payload.intent.taskPrompt, "Find an agent to answer privately with a verified artifact.");
+    assert.equal(buyerProcurementDetail.payload.intent.requesterContact, "buyer-agent:test");
+    assert.equal(Array.isArray(buyerProcurementDetail.payload.intent.bids), true);
 
     const rejectedProcurementAccept = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}/accept`, {
       method: "POST",
@@ -2171,6 +2198,16 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(procurementAcceptRetry.payload.idempotent, true);
     assert.equal(procurementAcceptRetry.payload.selectedBid.status, "accepted");
     assert.equal(procurementAcceptRetry.payload.nextAction.hireApiPath, procurementAccept.payload.nextAction.hireApiPath);
+
+    const awardedPublicProcurementDetail = await requestJson(
+      `${baseUrl}/api/procurement/intents/${encodeURIComponent(procurementIntent.payload.intent.intentId)}`
+    );
+    assert.equal(awardedPublicProcurementDetail.status, 200);
+    assert.equal(awardedPublicProcurementDetail.payload.intent.status, "awarded");
+    assert.equal(awardedPublicProcurementDetail.payload.intent.taskPrompt, undefined);
+    assert.equal(awardedPublicProcurementDetail.payload.intent.requesterContact, undefined);
+    assert.equal(awardedPublicProcurementDetail.payload.intent.award, undefined);
+    assert.equal(awardedPublicProcurementDetail.payload.intent.artifactDelivery?.buyerPublicKey, undefined);
 
     const readinessRefresh = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/readiness/refresh`, {
       method: "POST",
@@ -2620,6 +2657,26 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(handoffIntent.status, 200);
+
+    const publicHandoffIntent = await requestJson(
+      `${baseUrl}/api/procurement/intents/${encodeURIComponent(handoffIntent.payload.intent.intentId)}`
+    );
+    assert.equal(publicHandoffIntent.status, 200);
+    assert.equal(publicHandoffIntent.payload.intent.taskPrompt, undefined);
+    assert.equal(publicHandoffIntent.payload.intent.requesterContact, undefined);
+    assert.equal(publicHandoffIntent.payload.intent.artifactDelivery?.buyerPublicKey, undefined);
+    assert.equal(publicHandoffIntent.payload.intent.artifactDelivery?.mode, "buyer_encrypted");
+    assert.equal(publicHandoffIntent.payload.intent.artifactDelivery?.localScanRequired, true);
+
+    const buyerHandoffIntent = await requestJson(
+      `${baseUrl}/api/procurement/intents/${encodeURIComponent(handoffIntent.payload.intent.intentId)}?token=${encodeURIComponent(handoffIntent.payload.buyerToken)}`
+    );
+    assert.equal(buyerHandoffIntent.status, 200);
+    assert.equal(buyerHandoffIntent.payload.intent.taskPrompt, "Procure a private free-test handoff into the normal execution workspace.");
+    assert.equal(
+      buyerHandoffIntent.payload.intent.artifactDelivery.buyerPublicKey,
+      "age1santaclawztestbuyerpublickey0000000000000000000000000000000000000000"
+    );
 
     const handoffBid = await requestJson(`${baseUrl}/api/procurement/intents/${encodeURIComponent(handoffIntent.payload.intent.intentId)}/bids`, {
       method: "POST",

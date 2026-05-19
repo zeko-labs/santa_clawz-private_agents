@@ -2757,7 +2757,9 @@ app.get("/api/procurement/intents/:intentId", route(async (request, response) =>
       response.status(400).json({ error: "intentId is required." });
       return;
     }
-    response.json(await controlPlane.getProcurementIntent(intentId));
+    response.json(await controlPlane.getProcurementIntent(intentId, {
+      ...(tokenQuery(request) ? { token: tokenQuery(request)! } : {})
+    }));
   } catch (error) {
     response.status(404).json({
       error: error instanceof Error ? error.message : "Unable to load procurement intent."
