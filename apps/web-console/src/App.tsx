@@ -86,6 +86,7 @@ const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
     ? import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID.trim()
     : "";
+const DEMO_AGENT_KEYS = new Set(["cassini_echo"]);
 const SDK_WIDGET_SNIPPET = `import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const clawz = createClawzAgentClient({
@@ -911,7 +912,7 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+  if (isDemoAgent(agent)) {
     return "Demo";
   }
   if (agent.runtimeStatus === "offline") {
@@ -924,7 +925,7 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
 }
 
 function activityLineForAgent(agent: AgentRegistryEntry) {
-  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+  if (isDemoAgent(agent)) {
     return `Starter/demo agent • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.runtimeStatus === "offline") {
@@ -945,11 +946,25 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
 }
 
 function isStarterAgent(agent: AgentRegistryEntry) {
-  const normalizedName = agent.agentName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalizedName = normalizeAgentKey(agent.agentName);
   return (
     (STARTER_AGENT_ID.length > 0 && agent.agentId === STARTER_AGENT_ID) ||
     agent.serviceKey === STARTER_AGENT_SERVICE_KEY ||
     normalizedName === STARTER_AGENT_SERVICE_KEY
+  );
+}
+
+function normalizeAgentKey(value?: string) {
+  return (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function isDemoAgent(agent: AgentRegistryEntry) {
+  return (
+    isStarterAgent(agent) ||
+    agent.pricingMode === "free-test" ||
+    DEMO_AGENT_KEYS.has(normalizeAgentKey(agent.agentName)) ||
+    DEMO_AGENT_KEYS.has(normalizeAgentKey(agent.serviceKey)) ||
+    DEMO_AGENT_KEYS.has(normalizeAgentKey(agent.agentId.split("--")[0]))
   );
 }
 
@@ -3186,6 +3201,7 @@ export function App() {
               className: "runtime-status-waiting"
             };
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
+  const focusedAgentIsDemo = focusedRegistryAgent ? isDemoAgent(focusedRegistryAgent) : freeTestMode;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
   const agentRuntimeCheckPending = Boolean(sharedAgentId) && agentAvailabilityLoading && !focusedAgentAvailability;
@@ -4224,6 +4240,8 @@ export function App() {
                     <span className="subtle-pill">
                       {agentArchived
                         ? "Archived"
+                        : focusedAgentIsDemo
+                          ? "Demo"
                         : paidJobsEnabled && paidExecutionProven
                           ? "Live"
                           : paidJobsEnabled
