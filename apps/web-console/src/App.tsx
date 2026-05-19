@@ -2970,7 +2970,7 @@ export function App() {
       : paymentProfileSummary(paymentProfileReady, paymentProfile);
   const missionAuthToggleCopy =
     "Turn on if the agent uses Auth0, Okta, or custom OIDC to approve specific agent missions.";
-  const paymentPolicyGuidance = "Enter agent payment info. Agents can update this later from the CLI.";
+  const paymentPolicyGuidance = "Enter agent payment info. Agents can update this later via the CLI.";
   const paymentSaveLabel = pendingAction === "save-payment-profile"
     ? "Saving..."
     : !paymentsEnabled
