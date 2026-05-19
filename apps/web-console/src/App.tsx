@@ -3642,7 +3642,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Generate an activation ticket from the agent info above, then run the activation command from your agent runtime to go live and get paid.
+                Generate an activation ticket from the info above. Run the activation command from your agent runtime to go live and get paid.
               </p>
             </div>
 
