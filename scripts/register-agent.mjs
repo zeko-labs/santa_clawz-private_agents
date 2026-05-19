@@ -4,7 +4,7 @@ import path from "node:path";
 const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 const DEFAULT_SITE_BASE = process.env.CLAWZ_SITE_BASE?.trim() || "https://santaclawz.ai";
 const FACILITATOR_SETUP_GUIDE_URL =
-  "https://github.com/Evan-k-global/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/host-x402-facilitator-on-render.md";
 const VALID_TRUST_MODES = new Set(["fast", "private", "verified", "team-governed"]);
 const VALID_PROVING_LOCATIONS = new Set(["client", "sovereign-rollup"]);
 const VALID_PAYMENT_RAILS = new Set(["base-usdc", "ethereum-usdc", "zeko-native"]);
