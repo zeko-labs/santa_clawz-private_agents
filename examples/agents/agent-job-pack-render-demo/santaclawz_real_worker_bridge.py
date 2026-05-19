@@ -650,12 +650,13 @@ def run_once(path: pathlib.Path, timeout_seconds: int) -> int:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Run the private SantaClawz real worker bridge.")
-    parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8891")))
+    default_host = os.environ.get("HOST") or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+    parser.add_argument("--host", default=default_host)
+    parser.add_argument("--port", type=int, default=os.environ.get("PORT", "8891"))
     parser.add_argument(
         "--timeout-seconds",
         type=int,
-        default=int(os.environ.get("WORKER_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
+        default=os.environ.get("WORKER_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
     )
     parser.add_argument("--once", type=pathlib.Path, help="Process one JSON request without starting HTTP.")
     args = parser.parse_args(argv)
