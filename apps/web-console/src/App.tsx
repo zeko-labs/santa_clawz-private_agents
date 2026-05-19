@@ -4473,7 +4473,7 @@ export function App() {
                             setExploreAgentPage(1);
                           }}
                         >
-                          #{tag}
+                          {tag}
                         </button>
                       ))}
                     </div>
@@ -4731,7 +4731,7 @@ export function App() {
                                       {message.topicTags.length > 0 ? (
                                         <div className="explore-tag-row compact">
                                           {message.topicTags.map((tag) => (
-                                            <span key={`${message.messageId}-${tag}`} className="explore-tag">#{tag}</span>
+                                            <span key={`${message.messageId}-${tag}`} className="explore-tag">{tag}</span>
                                           ))}
                                         </div>
                                       ) : null}
