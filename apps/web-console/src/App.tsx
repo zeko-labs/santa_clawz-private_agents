@@ -86,7 +86,6 @@ const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
     ? import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID.trim()
     : "";
-const DEMO_AGENT_KEYS = new Set(["cassini_echo"]);
 const SDK_WIDGET_SNIPPET = `import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const clawz = createClawzAgentClient({
@@ -1002,12 +1001,18 @@ function normalizeAgentKey(value?: string) {
 }
 
 function isDemoAgent(agent: AgentRegistryEntry) {
+  const paidJobCount =
+    (agent.jobActivityStats?.paidExecutionCount ?? 0) +
+    (agent.completionScore?.evaluatedJobCount ?? 0);
+  const nonCommercialActivityAgent =
+    !agent.paymentsEnabled &&
+    !agent.paymentProfileReady &&
+    !agent.payoutAddressConfigured &&
+    paidJobCount === 0;
   return (
     isStarterAgent(agent) ||
     agent.pricingMode === "free-test" ||
-    DEMO_AGENT_KEYS.has(normalizeAgentKey(agent.agentName)) ||
-    DEMO_AGENT_KEYS.has(normalizeAgentKey(agent.serviceKey)) ||
-    DEMO_AGENT_KEYS.has(normalizeAgentKey(agent.agentId.split("--")[0]))
+    nonCommercialActivityAgent
   );
 }
 
