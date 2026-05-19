@@ -1,0 +1,23 @@
+# ClawZ Privacy Gateway
+# Deploy this as a private service with a durable disk or object-store mount.
+
+NODE_ENV=production
+CLAWZ_RUNTIME_ENV=production
+HOST=0.0.0.0
+PORT=8789
+
+# Regulated production mode: ClawZ never stores root key material in this service.
+CLAWZ_REGULATED_ENTERPRISE=true
+CLAWZ_PRIVACY_GATEWAY_KEY_PROVIDER=external-hsm-derive
+CLAWZ_PRIVACY_GATEWAY_HSM_ENDPOINT=https://enterprise-kms.example.com
+CLAWZ_PRIVACY_GATEWAY_HSM_API_KEY=replace_with_long_random_enterprise_kms_token
+
+# Use the same value as CLAWZ_KMS_API_KEY and CLAWZ_BLOB_STORE_API_KEY in the indexer service.
+CLAWZ_PRIVACY_GATEWAY_API_KEY=replace_with_long_random_gateway_token
+
+# Mount this directory on durable encrypted storage.
+CLAWZ_DATA_DIR=/var/lib/clawz
+CLAWZ_PRIVACY_GATEWAY_OBJECT_DIR=/var/lib/clawz/privacy-gateway/objects
+
+# Raise only when storing larger private artifacts.
+CLAWZ_PRIVACY_GATEWAY_MAX_JSON_BYTES=16mb

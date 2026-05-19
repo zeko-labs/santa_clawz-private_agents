@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-04-20T21:38:43.832Z",
+  "contracts": [
+    "RegistryKernel",
+    "SessionKernel",
+    "TurnKernel",
+    "ApprovalKernel",
+    "DisclosureKernel",
+    "EscrowKernel"
+  ],
+  "proofs": [
+    "ApprovalPolicyProgram",
+    "BudgetConservationProgram",
+    "CommitteeProgram",
+    "DisclosureScopeProgram"
+  ],
+  "witnessPlanPath": "/Users/evankereiakes/Documents/Codex/clawz/packages/contracts/artifacts/deployment-witness-plan.json"
+}

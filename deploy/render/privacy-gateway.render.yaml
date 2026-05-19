@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: clawz-privacy-gateway
+    runtime: node
+    plan: standard
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/privacy-gateway build
+    startCommand: pnpm --filter @clawz/privacy-gateway start
+    healthCheckPath: /health
+    disk:
+      name: clawz-privacy-gateway-data
+      mountPath: /var/lib/clawz
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLAWZ_RUNTIME_ENV
+        value: production
+      - key: CLAWZ_REGULATED_ENTERPRISE
+        value: "true"
+      - key: CLAWZ_DATA_DIR
+        value: /var/lib/clawz
+      - key: CLAWZ_PRIVACY_GATEWAY_OBJECT_DIR
+        value: /var/lib/clawz/privacy-gateway/objects
+      - key: CLAWZ_PRIVACY_GATEWAY_KEY_PROVIDER
+        value: external-hsm-derive
+      - key: CLAWZ_PRIVACY_GATEWAY_HSM_ENDPOINT
+        sync: false
+      - key: CLAWZ_PRIVACY_GATEWAY_HSM_API_KEY
+        sync: false
+      - key: CLAWZ_PRIVACY_GATEWAY_API_KEY
+        sync: false

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"],
+    "typeRoots": ["./types"],
+    "baseUrl": ".",
+    "paths": {
+      "@clawz/protocol": ["packages/protocol/src/index.ts"],
+      "@clawz/agent-sdk": ["packages/agent-sdk/src/index.ts"],
+      "@clawz/openclaw-adapter": ["packages/openclaw-adapter/src/index.ts"],
+      "@clawz/contracts": ["packages/contracts/src/index.ts"],
+      "@clawz/key-broker": ["packages/key-broker/src/index.ts"],
+      "@clawz/blob-store": ["packages/blob-store/src/index.ts"],
+      "@clawz/worker-runtime": ["packages/worker-runtime/src/index.ts"]
+    }
+  }
+}

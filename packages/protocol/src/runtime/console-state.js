@@ -1,0 +1,62 @@
+export const TRUST_MODE_PRESETS = [
+    {
+        id: "fast",
+        label: "Fast",
+        blurb: "For low-risk drafting and internal synthesis with minimal friction.",
+        preset: "convenient",
+        operatorVisible: true,
+        providerVisible: true,
+        proofLevel: "signed",
+        maxSpendMina: "0.08",
+        retention: "24h checkpoint",
+        defaultArtifactVisibility: "user-visible",
+        defaultProvingLocation: "client",
+        supportedProvingLocations: ["client", "server", "sovereign-rollup"],
+        stripe: ["Visible to your workspace", "Provider approved", "Quick retention"]
+    },
+    {
+        id: "private",
+        label: "Private",
+        blurb: "Default mode for day-to-day work with sealed outputs and bounded disclosure.",
+        preset: "private",
+        operatorVisible: false,
+        providerVisible: false,
+        proofLevel: "rooted",
+        maxSpendMina: "0.18",
+        retention: "72h zero-retention",
+        defaultArtifactVisibility: "operator-blind",
+        defaultProvingLocation: "client",
+        supportedProvingLocations: ["client", "server", "sovereign-rollup"],
+        stripe: ["Visible only to you", "Operator blind", "Deleted after completion"]
+    },
+    {
+        id: "verified",
+        label: "Verified",
+        blurb: "Adds denser receipts and stronger auditability for high-trust deliverables.",
+        preset: "verifiable-minimal",
+        operatorVisible: false,
+        providerVisible: false,
+        proofLevel: "proof-backed",
+        maxSpendMina: "0.25",
+        retention: "Checkpoint only",
+        defaultArtifactVisibility: "operator-blind",
+        defaultProvingLocation: "client",
+        supportedProvingLocations: ["client", "server", "sovereign-rollup"],
+        stripe: ["Operator blind", "Receipt complete", "Selective disclosure only"]
+    },
+    {
+        id: "team-governed",
+        label: "Team-governed",
+        blurb: "For enterprise workflows with guardians, privacy exceptions, and shared review.",
+        preset: "workspace-private",
+        operatorVisible: false,
+        providerVisible: false,
+        proofLevel: "proof-backed",
+        maxSpendMina: "0.40",
+        retention: "Workspace sealed",
+        defaultArtifactVisibility: "team-sealed",
+        defaultProvingLocation: "client",
+        supportedProvingLocations: ["client", "server", "sovereign-rollup"],
+        stripe: ["Visible to your workspace", "Privacy exceptions required", "Compliance scoped"]
+    }
+];

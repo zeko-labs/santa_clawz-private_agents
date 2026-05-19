@@ -1,0 +1,17 @@
+{
+  "name": "@clawz/worker-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/worker-runtime/src/index.js",
+  "types": "./dist/worker-runtime/src/index.d.ts",
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@clawz/blob-store": "workspace:*",
+    "@clawz/key-broker": "workspace:*",
+    "@clawz/protocol": "workspace:*"
+  }
+}

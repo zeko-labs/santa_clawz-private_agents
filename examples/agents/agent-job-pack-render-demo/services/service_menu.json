@@ -1,0 +1,80 @@
+{
+  "agent_name": "Local Services Agent",
+  "positioning": "A local-first supervised agent for concrete business and personal productivity jobs.",
+  "default_policy": "Draft locally, inspect privately, ask for approval before external delivery.",
+  "business_brain": {
+    "enabled": true,
+    "pricing_policy": "Recommend quote-required by default until an agent has completed at least 3 successful paid jobs. Use fixed-exact only for narrow repeatable services; live SantaClawz x402 requirements are the source of truth for current fee and gas policy.",
+    "self_learning_policy": "Record recommendation and outcome data locally; use win/loss and margin history to adjust future recommendations and pricing warnings. Live price changes require operator approval.",
+    "shared_deliverables": [
+      "agent_business_brain.json",
+      "pricing_recommendation.md",
+      "learning_feedback.json"
+    ]
+  },
+  "services": [
+    {
+      "key": "agent_job_pack",
+      "name": "SantaClawz Agent Onboarding Pack",
+      "starter_price_credits": 250,
+      "ideal_jobs": ["SantaClawz onboarding", "marketplace job analysis", "first paid service design", "bid/no-bid decision", "proposal drafting", "readiness checks", "trust-building plan"],
+      "human_deliverables": ["identity and service positioning", "starter offer ideas", "bid/no-bid rationale", "proposal draft", "scope summary", "delivery plan", "QA checklist"],
+      "agent_deliverables": ["identity coach", "first paid service plan", "bid analysis", "deliverable spec JSON", "risk register", "acceptance criteria", "task queue", "pricing guidance", "procurement guidance", "failure recovery checklist", "trust-building next moves"],
+      "avoid": ["submitting bids without approval", "accepting platform terms", "guaranteeing job wins"]
+    },
+    {
+      "key": "spreadsheet_cleanup",
+      "name": "Spreadsheet Cleanup",
+      "starter_price_credits": 250,
+      "ideal_jobs": ["CSV cleanup", "Excel formatting", "dedupe", "normalization", "summary tab"],
+      "human_deliverables": ["data quality notes", "cleaning plan", "change log", "final spreadsheet checklist"],
+      "agent_deliverables": ["schema map", "validation rules JSON", "dedupe strategy", "replayable cleaning recipe", "change manifest"],
+      "avoid": ["financial advice", "tax filing", "unverified destructive edits"]
+    },
+    {
+      "key": "ai_career_readiness",
+      "name": "AI Career Readiness Pack",
+      "starter_price_credits": 500,
+      "ideal_jobs": ["AI-era career transition", "resume and LinkedIn positioning", "skills gap map", "training recommendations", "portfolio project"],
+      "human_deliverables": ["career positioning summary", "resume and LinkedIn targeting plan", "skills gap map", "30-day training roadmap", "proof-of-work project brief", "certificate of completion recommendation"],
+      "agent_deliverables": ["career profile JSON", "target role fit matrix", "skills gap map", "training recommendation plan", "portfolio project spec", "verification rubric"],
+      "avoid": ["guaranteeing interviews", "issuing accredited credentials", "fabricating experience"]
+    },
+    {
+      "key": "pitch_deck_review",
+      "name": "Pitch Deck Review",
+      "starter_price_credits": 400,
+      "ideal_jobs": ["slide critique", "fundraising narrative", "traction clarity", "missing proof points"],
+      "human_deliverables": ["executive summary", "slide-by-slide critique", "missing proof points", "rewrite suggestions"],
+      "agent_deliverables": ["slide inventory JSON", "claim-risk register", "investor objection list", "rewrite task queue", "deck scoring rubric"],
+      "avoid": ["inventing metrics", "legal securities advice", "guaranteed fundraising outcomes"]
+    },
+    {
+      "key": "resume_review",
+      "name": "Resume Review",
+      "starter_price_credits": 300,
+      "ideal_jobs": ["ATS readability", "role targeting", "bullet rewriting", "summary cleanup"],
+      "human_deliverables": ["resume diagnosis", "priority edits", "rewritten bullets", "ATS/readability checklist"],
+      "agent_deliverables": ["resume fact inventory", "job-description keyword map", "truth-preserving bullet rewrites", "ATS issue JSON", "customization checklist"],
+      "avoid": ["fabricating experience", "guaranteeing interviews", "applying without approval"]
+    },
+    {
+      "key": "ai_training_course",
+      "name": "AI Training Course",
+      "starter_price_credits": 500,
+      "ideal_jobs": ["beginner workshop", "lesson plan", "practice exercises", "team enablement"],
+      "human_deliverables": ["lesson outline", "hands-on exercises", "facilitator notes", "assessment rubric"],
+      "agent_deliverables": ["modular lesson graph", "exercise prompts with expected outputs", "grading rubric JSON", "learner state model", "course adaptation rules"],
+      "avoid": ["policy evasion", "credentialed certification claims", "unsafe automation advice"]
+    },
+    {
+      "key": "reminder_bot",
+      "name": "Reminder Bot",
+      "starter_price_credits": 150,
+      "ideal_jobs": ["recurring reminders", "follow-up nudges", "check-in schedules"],
+      "human_deliverables": ["reminder schedule", "confirmation message", "failure/skip behavior", "privacy notes"],
+      "agent_deliverables": ["canonical reminder spec", "timezone-normalized schedule", "idempotency key strategy", "notification templates", "snooze/escalation policy"],
+      "avoid": ["medical adherence guarantees", "harassment", "messages without consent"]
+    }
+  ]
+}

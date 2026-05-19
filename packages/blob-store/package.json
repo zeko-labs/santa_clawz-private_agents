@@ -1,0 +1,17 @@
+{
+  "name": "@clawz/blob-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/blob-store/src/index.js",
+  "types": "./dist/blob-store/src/index.d.ts",
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test test/*.test.mjs",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@clawz/key-broker": "workspace:*",
+    "@clawz/protocol": "workspace:*"
+  }
+}

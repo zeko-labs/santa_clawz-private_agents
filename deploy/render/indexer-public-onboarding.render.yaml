@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: clawz-indexer-public-onboarding
+    runtime: node
+    plan: standard
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... build
+    startCommand: pnpm --filter @clawz/indexer... build && pnpm --filter @clawz/indexer start
+    healthCheckPath: /ready
+    disk:
+      name: clawz-indexer-public-data
+      mountPath: /var/lib/clawz
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLAWZ_RUNTIME_ENV
+        value: production
+      - key: CLAWZ_REGULATED_ENTERPRISE
+        value: "true"
+      - key: CLAWZ_DATA_DIR
+        value: /var/lib/clawz
+      - key: CLAWZ_REQUIRE_API_AUTH
+        value: "true"
+      - key: CLAWZ_PUBLIC_ONBOARDING
+        value: "true"
+      - key: CLAWZ_PUBLIC_PROOF_SURFACE
+        value: discovery-only
+      - key: CLAWZ_STRUCTURED_LOGS
+        value: "true"
+      - key: CLAWZ_PRIVACY_GATEWAY_ATTESTED_EXTERNAL_HSM
+        value: "true"
+      - key: CLAWZ_KEY_BROKER_MODE
+        value: external-kms-backed
+      - key: CLAWZ_BLOB_STORE_MODE
+        value: http-object-store
+      - key: CLAWZ_ALLOWED_ORIGINS
+        value: https://santaclawz.ai
+      - key: CLAWZ_API_KEY_SHA256
+        sync: false
+      - key: CLAWZ_KMS_ENDPOINT
+        sync: false
+      - key: CLAWZ_KMS_API_KEY
+        sync: false
+      - key: CLAWZ_BLOB_STORE_ENDPOINT
+        sync: false
+      - key: CLAWZ_BLOB_STORE_API_KEY
+        sync: false

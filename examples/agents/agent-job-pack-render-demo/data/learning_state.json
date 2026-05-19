@@ -1,0 +1,14 @@
+{
+  "global": {
+    "losses": 0,
+    "outcomes": 0,
+    "recommendations": 0,
+    "wins": 0
+  },
+  "notes": [],
+  "schema_version": "learning-state/1.0",
+  "services": {},
+  "sources": {},
+  "tags": {},
+  "updated_at": null
+}

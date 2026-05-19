@@ -1,0 +1,18 @@
+# ClawZ Enterprise KMS
+# This service fronts a regulated provider boundary and speaks POST /derive-key.
+
+NODE_ENV=production
+CLAWZ_RUNTIME_ENV=production
+HOST=0.0.0.0
+PORT=8791
+
+CLAWZ_ENTERPRISE_KMS_API_KEY=replace_with_long_random_enterprise_kms_token
+CLAWZ_ENTERPRISE_KMS_PROVIDER_MODE=command-adapter
+
+# Trusted operator-owned command. It receives the derive request JSON on stdin
+# and returns {"keyBase64","keyVersion","auditId","provider"} on stdout.
+CLAWZ_ENTERPRISE_KMS_COMMAND=node /opt/clawz/scripts/example-hsm-command.mjs
+CLAWZ_ENTERPRISE_KMS_COMMAND_TIMEOUT_MS=8000
+
+CLAWZ_DATA_DIR=/var/lib/clawz
+CLAWZ_ENTERPRISE_KMS_AUDIT_FILE=/var/lib/clawz/enterprise-kms/audit/derive-key.jsonl

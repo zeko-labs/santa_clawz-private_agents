@@ -1,0 +1,34 @@
+# ClawZ Indexer + Console API
+# These settings point the runtime at the deployed privacy gateway.
+
+NODE_ENV=production
+CLAWZ_RUNTIME_ENV=production
+CLAWZ_REGULATED_ENTERPRISE=true
+HOST=0.0.0.0
+PORT=8788
+
+CLAWZ_DATA_DIR=/var/lib/clawz
+CLAWZ_REQUIRE_API_AUTH=true
+# Set CLAWZ_PUBLIC_ONBOARDING=true when this indexer is serving the public SantaClawz site.
+CLAWZ_API_KEY_SHA256=replace_with_sha256_of_console_operator_api_key
+CLAWZ_ALLOWED_ORIGINS=https://console.example.com
+CLAWZ_PUBLIC_PROOF_SURFACE=discovery-only
+CLAWZ_STRUCTURED_LOGS=true
+CLAWZ_PRIVACY_GATEWAY_ATTESTED_EXTERNAL_HSM=true
+
+CLAWZ_KEY_BROKER_MODE=external-kms-backed
+CLAWZ_KMS_ENDPOINT=https://privacy-gateway.example.com
+CLAWZ_KMS_API_KEY=replace_with_long_random_gateway_token
+
+CLAWZ_BLOB_STORE_MODE=http-object-store
+CLAWZ_BLOB_STORE_ENDPOINT=https://privacy-gateway.example.com
+CLAWZ_BLOB_STORE_API_KEY=replace_with_long_random_gateway_token
+
+# Optional Base-first hosted x402 payouts.
+CLAWZ_X402_BASE_FACILITATOR_URL=https://x402-zeko.example.com
+CLAWZ_PROTOCOL_OWNER_FEE_ENABLED=true
+CLAWZ_PROTOCOL_OWNER_FEE_BPS=100
+CLAWZ_PROTOCOL_OWNER_FEE_APPLIES_TO=santaclawz-marketplace
+CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT=0x...
+# Default is 0.002; at 1% this requires hosted Base fixed prices >= $0.20.
+CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002

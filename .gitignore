@@ -1,0 +1,14 @@
+node_modules/
+.clawz-data/
+.corepack/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+.env.santaclawz
+.env.santaclawz.*
+.env.*.local
+.clawz-secrets/
+deploy/spaceship/*.zip
+packages/contracts/deployments/*.private.json

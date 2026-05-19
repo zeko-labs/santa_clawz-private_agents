@@ -1,0 +1,16 @@
+{
+  "name": "@clawz/key-broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/key-broker/src/index.js",
+  "types": "./dist/key-broker/src/index.d.ts",
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@clawz/protocol": "workspace:*"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "label": "SocialAnchorKernel",
+  "networkId": "testnet",
+  "mina": "https://testnet.zeko.io/graphql",
+  "archive": "https://archive.testnet.zeko.io/graphql",
+  "fee": "100000000",
+  "deployerPublicKey": "B62qqpyJPDGci2uxpapnXQmrFr77b47wRx1v2GDRnAHMUFJFjJv4YPb",
+  "socialAnchorPublicKey": "B62qrsViMaVNm1oQDFejiMsgNp54wS54gNSKbFv9pnw4eSH9AR4xGsR",
+  "socialAnchorPrivateKey": "[redacted]",
+  "txHash": "5JuRPU66Eh55VVCafzWX7WzqVZAbiNBLxcyRHzF1P1Aj4CjyWXhM",
+  "generatedAtIso": "2026-05-01T22:49:54.350Z",
+  "fundedNewAccount": true
+}

@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santaclawz.ai/schemas/santaclawz-verified-return.schema.json",
+  "title": "SantaClawz Verified Return",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "status",
+    "agent_private"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "santaclawz-return/1.0"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^hire_[A-Za-z0-9_.:-]{6,120}$"
+    },
+    "status": {
+      "enum": ["quoted", "completed", "failed"]
+    },
+    "agent_private": {
+      "const": true
+    },
+    "execution_mode": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "real_work_executed": {
+      "type": "boolean"
+    },
+    "buyer_visible": {
+      "type": "boolean"
+    },
+    "marketplace_completion_credit": {
+      "type": "boolean"
+    },
+    "zeko_attestation_payload": {
+      "type": "object"
+    },
+    "quote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount_usd", "currency", "expires_at_iso", "summary"],
+      "properties": {
+        "amount_usd": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]{1,6})?$"
+        },
+        "currency": {
+          "const": "USDC"
+        },
+        "expires_at_iso": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "verified_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package_hash", "hash_algorithm", "verification_manifest", "deliverables"],
+      "properties": {
+        "package_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "hash_algorithm": {
+          "const": "sha256"
+        },
+        "verification_manifest": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "input_digest_sha256",
+            "checks_performed",
+            "files_produced",
+            "blocked_suspicious_instructions"
+          ],
+          "properties": {
+            "input_digest_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "checks_performed": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "files_produced": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "sha256"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "content_type": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              }
+            },
+            "blocked_suspicious_instructions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 500
+              }
+            }
+          }
+        },
+        "deliverables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sha256"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "content_type": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "uri": {
+                "type": "string",
+                "maxLength": 2048
+              }
+            }
+          }
+        },
+        "artifact_manifest_url": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "artifact_bundle_digest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "verification_manifest_digest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "buyer_visible_outputs": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "content_type": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 8000
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        "zeko_attestation": {
+          "type": "object"
+        }
+      }
+    },
+    "incident_id": {
+      "type": "string",
+      "maxLength": 120
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "quoted"
+          }
+        }
+      },
+      "then": {
+        "required": ["quote"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "required": ["verified_output"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "required": ["incident_id"]
+      }
+    }
+  ]
+}

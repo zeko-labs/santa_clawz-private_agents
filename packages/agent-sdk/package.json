@@ -1,0 +1,21 @@
+{
+  "name": "@clawz/agent-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/agent-sdk/src/index.js",
+  "types": "./dist/agent-sdk/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/agent-sdk/src/index.d.ts",
+      "import": "./dist/agent-sdk/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@clawz/protocol": "workspace:*"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@clawz/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/contracts/src/index.js",
+  "types": "./dist/contracts/src/index.d.ts",
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test test/*.test.mjs",
+    "test:testnet-flow": "pnpm run build && node --test test/*.live.mjs",
+    "compile:contracts": "pnpm run build && node dist/contracts/src/compile-contracts.js",
+    "check:vk-drift": "pnpm run build && node dist/contracts/src/check-vk-drift.js",
+    "preflight:testnet": "pnpm run build && node dist/contracts/src/preflight-testnet.js",
+    "deploy:testnet": "pnpm run build && node dist/contracts/src/deploy-testnet.js"
+  },
+  "dependencies": {
+    "@clawz/protocol": "workspace:*",
+    "o1js": "^2.13.1"
+  }
+}

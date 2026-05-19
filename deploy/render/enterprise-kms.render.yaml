@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: clawz-enterprise-kms
+    runtime: node
+    plan: standard
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/enterprise-kms build
+    startCommand: pnpm --filter @clawz/enterprise-kms start
+    healthCheckPath: /health
+    disk:
+      name: clawz-enterprise-kms-data
+      mountPath: /var/lib/clawz
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLAWZ_RUNTIME_ENV
+        value: production
+      - key: CLAWZ_DATA_DIR
+        value: /var/lib/clawz
+      - key: CLAWZ_ENTERPRISE_KMS_PROVIDER_MODE
+        value: command-adapter
+      - key: CLAWZ_ENTERPRISE_KMS_API_KEY
+        sync: false
+      - key: CLAWZ_ENTERPRISE_KMS_COMMAND
+        sync: false
+      - key: CLAWZ_ENTERPRISE_KMS_COMMAND_TIMEOUT_MS
+        value: "8000"

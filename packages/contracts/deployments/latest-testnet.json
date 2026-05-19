@@ -1,0 +1,61 @@
+{
+  "networkId": "testnet",
+  "mina": "https://testnet.zeko.io/graphql",
+  "archive": "https://archive.testnet.zeko.io/graphql",
+  "fee": "100000000",
+  "deployer": "B62qqpyJPDGci2uxpapnXQmrFr77b47wRx1v2GDRnAHMUFJFjJv4YPb",
+  "generatedAt": "2026-04-22T21:55:03.626Z",
+  "results": [
+    {
+      "label": "RegistryKernel",
+      "address": "B62qpJpqP1gWd1muvVSW84hQ18osrJ3jwiFFEDJBDZZgkeHcb2RfuCX",
+      "status": "deployed",
+      "fundedNewAccount": false,
+      "txHash": "5JtxJ3HTW6qKc2pPoBVQb3uehBAZF41dxmdTfj51UyCQXGAHMm5N",
+      "secretSource": "env"
+    },
+    {
+      "label": "SessionKernel",
+      "address": "B62qqf8udhPzeZmghb4i6KHiRu2eDB22yJEjpexUuMEpoKtbGqXEcb7",
+      "status": "deployed",
+      "fundedNewAccount": false,
+      "txHash": "5Juzv76k33229H8cp93hjqJSpDvn7Cyj3GpZmk5S4SemfXDwnX7m",
+      "secretSource": "env"
+    },
+    {
+      "label": "TurnKernel",
+      "address": "B62qmLW6vSjz1XTxJYo2dKyvviHgUUVXyRkSo7rKnyrvKNtU4C3mNmM",
+      "status": "deployed",
+      "fundedNewAccount": false,
+      "txHash": "5Jtb6bYxJNLYmqtkaPFxvWqUsgnRPb8beeLcd6xw2meHta2dij9T",
+      "secretSource": "env"
+    },
+    {
+      "label": "ApprovalKernel",
+      "address": "B62qiTaQAB7DTp5XDNyxRs74PXc3yDm7xFU6QijPdWizFX9LBzXs8JG",
+      "status": "deployed",
+      "fundedNewAccount": false,
+      "txHash": "5Jugh8mWtwyzT793BBpP7gTfTAmD5UUjzAuZYbLMKFemysv1c1aU",
+      "secretSource": "env"
+    },
+    {
+      "label": "DisclosureKernel",
+      "address": "B62qocEjG3W8XkcToc112cAywb4AeJpWZgtrJQfXgbzfTbfxq6bHjpE",
+      "status": "deployed",
+      "fundedNewAccount": false,
+      "txHash": "5Jv4ZrrfZpQkz5M2BUhd2Yjv4uX7dudA72TAcudnYSq7DU8H1raY",
+      "secretSource": "env"
+    },
+    {
+      "label": "EscrowKernel",
+      "address": "B62qpWjRAvsrKQEPkRcN8UbAzFutLrsxc6w2ntFa4dgdR5ZF63RPHWt",
+      "status": "deployed",
+      "fundedNewAccount": false,
+      "txHash": "5Juzpdj9QVUaTy5wYuvryRTQzRgFkaX6w8tHN5NE1ghqKfMr3EiJ",
+      "secretSource": "env"
+    }
+  ],
+  "witnessPlanPath": "/Users/evankereiakes/Documents/Codex/clawz/packages/contracts/deployments/latest-witness-plan.json",
+  "preparedContractCalls": 25,
+  "preparedProofCalls": 4
+}

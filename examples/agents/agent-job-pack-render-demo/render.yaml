@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: santaclawz-agent-job-pack-demo
+    runtime: python
+    plan: starter
+    buildCommand: "python3 --version"
+    startCommand: "./bin/start.sh"
+    healthCheckPath: "/"
+    envVars:
+      - key: WORKER_TIMEOUT_SECONDS
+        value: "25"

@@ -1,0 +1,31 @@
+{
+  "name": "@clawz/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm run dev:compiled",
+    "dev:compiled": "pnpm run build && pnpm run start",
+    "dev:tsx": "tsx watch src/server.ts",
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node test/server-api.test.mjs",
+    "start": "node dist/apps/indexer/src/server.js",
+    "verify:proof": "pnpm run build && node dist/apps/indexer/src/verify-agent-proof.js"
+  },
+  "dependencies": {
+    "@clawz/blob-store": "workspace:*",
+    "@clawz/contracts": "workspace:*",
+    "@clawz/key-broker": "workspace:*",
+    "@clawz/protocol": "workspace:*",
+    "@clawz/worker-runtime": "workspace:*",
+    "express": "^4.21.2",
+    "viem": "2.48.8",
+    "zeko-x402": "github:Evan-k-global/x402-zeko#faca86f60cd31fafcdd01ec7884f82daa08f6641"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santaclawz.ai/schemas/santaclawz-hire-request.schema.json",
+  "title": "SantaClawz Hire Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "agent_id",
+    "session_id",
+    "caller_type",
+    "service",
+    "service_key",
+    "verification_required",
+    "return_channel",
+    "request_type",
+    "pricing_mode",
+    "payment_status",
+    "paid_or_escrowed",
+    "payment",
+    "input"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "santaclawz-request/1.0"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^hire_[A-Za-z0-9_.:-]{6,120}$"
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^session_agent_[A-Za-z0-9]+$"
+    },
+    "caller_type": {
+      "enum": ["human", "agent", "operator"]
+    },
+    "service": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_:-]{0,79}$"
+    },
+    "service_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_:-]{0,79}$"
+    },
+    "verification_required": {
+      "type": "boolean"
+    },
+    "return_channel": {
+      "const": "santaclawz"
+    },
+    "request_type": {
+      "enum": ["quote_intake", "paid_execution", "free_test"]
+    },
+    "pricing_mode": {
+      "enum": ["quote-required", "fixed-exact", "free-test"]
+    },
+    "payment_status": {
+      "enum": ["quote_requested", "settled", "paid", "escrowed", "free_test"]
+    },
+    "settled_amount_usd": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]{1,6})?$"
+    },
+    "paid_or_escrowed": {
+      "type": "boolean"
+    },
+    "payment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["quote_requested", "settled", "paid", "escrowed", "free_test"]
+        },
+        "rail": {
+          "enum": ["base-usdc", "ethereum-usdc", "zeko-native"]
+        },
+        "amount_usd": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]{1,6})?$"
+        },
+        "authorization_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "settlement_reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "payment_payload_digest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "payment_response_digest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "client_request", "requester_contact", "provided_inputs", "requested_deliverables"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "client_request": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "requester_contact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "provided_inputs": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "type": "string",
+            "maxLength": 240
+          }
+        },
+        "requested_deliverables": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "type": "string",
+            "maxLength": 240
+          }
+        },
+        "budget": {
+          "type": "string",
+          "maxLength": 120
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "request_type": {
+            "const": "free_test"
+          }
+        }
+      },
+      "then": {
+        "required": ["request_type", "pricing_mode", "payment_status"],
+        "properties": {
+          "pricing_mode": {
+            "const": "free-test"
+          },
+          "payment_status": {
+            "const": "free_test"
+          },
+          "paid_or_escrowed": {
+            "const": false
+          },
+          "payment": {
+            "properties": {
+              "status": {
+                "const": "free_test"
+              }
+            }
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": ["settled_amount_usd"]
+            },
+            {
+              "required": ["payment"],
+              "properties": {
+                "payment": {
+                  "required": ["rail"]
+                }
+              }
+            },
+            {
+              "required": ["payment"],
+              "properties": {
+                "payment": {
+                  "required": ["amount_usd"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "request_type": {
+            "const": "quote_intake"
+          }
+        }
+      },
+      "then": {
+        "required": ["request_type", "pricing_mode", "payment_status"],
+        "properties": {
+          "pricing_mode": {
+            "const": "quote-required"
+          },
+          "payment_status": {
+            "const": "quote_requested"
+          },
+          "paid_or_escrowed": {
+            "const": false
+          },
+          "payment": {
+            "properties": {
+              "status": {
+                "const": "quote_requested"
+              }
+            }
+          }
+        },
+        "not": {
+          "required": ["settled_amount_usd"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "request_type": {
+            "const": "paid_execution"
+          }
+        }
+      },
+      "then": {
+        "required": ["request_type", "pricing_mode", "payment_status", "settled_amount_usd"],
+        "properties": {
+          "pricing_mode": {
+            "const": "fixed-exact"
+          },
+          "payment_status": {
+            "enum": ["settled", "paid", "escrowed"]
+          },
+          "paid_or_escrowed": {
+            "const": true
+          },
+          "payment": {
+            "properties": {
+              "status": {
+                "enum": ["settled", "paid", "escrowed"]
+              }
+            },
+            "required": ["status", "rail", "amount_usd"]
+          }
+        }
+      }
+    }
+  ]
+}
