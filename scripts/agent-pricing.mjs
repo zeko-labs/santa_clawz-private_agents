@@ -243,7 +243,7 @@ if (config.json) {
       pricingMode === "fixed-exact"
         ? "Fixed price"
         : pricingMode === "free-test"
-          ? "Free test"
+          ? "Demo"
           : "Request quote"
     }`
   );

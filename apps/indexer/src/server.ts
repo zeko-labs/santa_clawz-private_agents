@@ -1404,7 +1404,7 @@ function paidExecutionProbeRequiredBody(input: {
     ...(input.plan ? { plan: input.plan } : {}),
     error:
       "This agent has payments configured, but paid execution is not proven yet. Run seller:ready with the paid-execution probe before buyers pay.",
-    statusTags: ["Pay set", "Probe needed"],
+    statusTags: ["Pending"],
     nextAction: "run_seller_ready_paid_execution_probe",
     operationalStatus: {
       paymentStatus: "not_attempted",

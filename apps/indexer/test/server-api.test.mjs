@@ -2336,7 +2336,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(unprovenPaidHire.status, 409);
     assert.equal(unprovenPaidHire.payload.code, "paid_execution_probe_required");
     assert.equal(unprovenPaidHire.payload.paymentRequested, false);
-    assert.deepEqual(unprovenPaidHire.payload.statusTags, ["Pay set", "Probe needed"]);
+    assert.deepEqual(unprovenPaidHire.payload.statusTags, ["Pending"]);
 
     const provenPaidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
       method: "POST",

@@ -530,7 +530,7 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
     return "Publish first";
   }
   if (agent.pricingMode === "free-test") {
-    return "Free test";
+    return "Demo";
   }
   if (!agent.paymentsEnabled) {
     return "Not open for work";
@@ -693,9 +693,9 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.ownershipVerified ? "owner ownership verified control" : "",
     agent.missionAuthVerified ? "mission auth oauth enterprise web2 verified" : "",
     agent.published ? "published zeko live" : "",
-    agent.paidJobsEnabled ? "pay set hire paid jobs" : "",
-    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true ? "paid proven" : "",
-    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven !== true ? "probe needed" : "",
+    agent.paidJobsEnabled ? "pending live hire paid jobs for hire" : "",
+    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true ? "live for hire" : "",
+    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven !== true ? "pending setup readiness" : "",
     agent.paymentsEnabled ? "open for work quote required reference price" : ""
   ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
@@ -911,23 +911,29 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (agent.paidJobsEnabled) {
-    return agent.readiness?.paidExecutionProven === true ? "Paid proven" : "Probe needed";
+  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+    return "Demo";
   }
-  if (agent.paymentsEnabled) {
-    return "Pay set";
+  if (agent.runtimeStatus === "offline") {
+    return "Offline";
   }
-  if (agent.published) {
-    return "Published";
+  if (agent.readiness?.hireable === true || (agent.published && !agent.paidJobsEnabled && agent.runtimeStatus === "live")) {
+    return "Live";
   }
-  return "Registered";
+  return "Pending";
 }
 
 function activityLineForAgent(agent: AgentRegistryEntry) {
+  if (isStarterAgent(agent) || agent.pricingMode === "free-test") {
+    return `Starter/demo agent • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+  }
+  if (agent.runtimeStatus === "offline") {
+    return `Offline • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+  }
   if (agent.paidJobsEnabled) {
     return agent.readiness?.paidExecutionProven === true
       ? `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`
-      : `Pay set • probe needed • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+      : `Pending readiness • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.paymentsEnabled) {
     return `${referencePriceLine(agent)} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
@@ -983,7 +989,7 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
     return agent.readiness?.paidExecutionProven === true
       ? `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`
-      : `${agent.agentName} has payments configured and still needs a paid execution probe.`;
+      : `${agent.agentName} is pending readiness before buyers should pay.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.agentName} is open for quote requests. Buyers and agents can inspect the profile before starting work.`;
@@ -1020,7 +1026,7 @@ function dispatchLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
     return agent.readiness?.paidExecutionProven === true
       ? `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`
-      : `${agent.headline} Payments are configured; paid execution proof is still needed.`;
+      : `${agent.headline} Pending readiness before paid work is accepted.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.headline} Open for quote requests with ${referencePriceLine(agent).toLowerCase()}.`;
@@ -1118,7 +1124,7 @@ function pricingModeLabel(mode: AgentProfileState["paymentProfile"]["pricingMode
     return "Fixed price";
   }
   if (mode === "free-test") {
-    return "Free test";
+    return "Demo";
   }
   return "Request quote";
 }
@@ -1134,7 +1140,7 @@ function referencePriceLine(input: {
     return fixedAmount ? `Fixed price: $${fixedAmount}` : "Fixed price";
   }
   if (input.pricingMode === "free-test") {
-    return "Free test";
+    return "Demo";
   }
   const amount = input.referencePriceUsd?.trim();
   if (!amount) {
@@ -2964,13 +2970,13 @@ export function App() {
     : !published
       ? "Publish first"
       : freeTestMode
-        ? "Free test"
+        ? "Demo"
       : !savedPaymentsEnabled
         ? "Not open for work"
         : savedPaymentProfileReady && paidJobsEnabled && paidExecutionProven
           ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}`
-          : savedPaymentProfileReady && paidJobsEnabled
-            ? "Pay set • probe needed"
+        : savedPaymentProfileReady && paidJobsEnabled
+            ? "Pending readiness"
           : savedPaymentProfileReady
             ? referencePriceLine(state.profile.paymentProfile)
             : "Finish work setup";
@@ -4219,14 +4225,14 @@ export function App() {
                       {agentArchived
                         ? "Archived"
                         : paidJobsEnabled && paidExecutionProven
-                          ? "Paid proven"
+                          ? "Live"
                           : paidJobsEnabled
-                            ? "Probe needed"
+                            ? "Pending"
                           : savedPaymentsEnabled
-                            ? "Pay set"
+                            ? "Pending"
                             : published
-                              ? "Published"
-                      : "Registered"}
+                              ? "Live"
+                      : "Pending"}
                     </span>
                   </div>
                 </div>
