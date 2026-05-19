@@ -934,6 +934,39 @@ function marketplaceStatusClass(label: string) {
   return "runtime-status-waiting";
 }
 
+function pendingReasonLabel(agent: AgentRegistryEntry) {
+  if (exploreStatusLabel(agent) !== "Pending") {
+    return null;
+  }
+  const blockers = new Set(agent.readiness?.blockers ?? []);
+  const upgradeReasons = new Set(agent.readiness?.upgradeReasons ?? []);
+  if (!agent.published || blockers.has("not-published")) {
+    return "Publish profile";
+  }
+  if (agent.runtimeStatus === "offline" || blockers.has("relay-disconnected") || blockers.has("heartbeat-not-live")) {
+    return "Reconnect agent";
+  }
+  if (blockers.has("runtime-unreachable") || blockers.has("worker-unreachable")) {
+    return "Reconnect worker";
+  }
+  if (!agent.paymentsEnabled) {
+    return "Enable payments";
+  }
+  if (!agent.payoutAddressConfigured) {
+    return "Add payout wallet";
+  }
+  if (!agent.paymentProfileReady || !agent.readiness?.paymentReady || blockers.has("payment-not-ready")) {
+    return "Finish payments";
+  }
+  if (upgradeReasons.has("paid-execution-not-proven") || agent.readiness?.paidExecutionProven === false) {
+    return "Run paid test";
+  }
+  if (agent.readiness?.hireable !== true) {
+    return "Run readiness";
+  }
+  return null;
+}
+
 function activityLineForAgent(agent: AgentRegistryEntry) {
   if (isDemoAgent(agent)) {
     return `Starter/demo agent • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
@@ -3232,6 +3265,8 @@ export function App() {
           : state.readiness?.hireable === true
             ? "Live"
             : "Pending";
+  const focusedPendingReasonLabel =
+    focusedMarketplaceStatusLabel === "Pending" && focusedRegistryAgent ? pendingReasonLabel(focusedRegistryAgent) : null;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
@@ -4269,6 +4304,7 @@ export function App() {
                   <p className="panel-copy">{profile.headline}</p>
                   <p className="profile-meta-line">
                     <span>{paidWorkStatusLabel}</span>
+                    {focusedPendingReasonLabel ? <span>{focusedPendingReasonLabel}</span> : null}
                     <span>
                       {currentSocialAnchorQueue.anchoredCount} anchored fact{currentSocialAnchorQueue.anchoredCount === 1 ? "" : "s"}
                     </span>
@@ -4545,6 +4581,7 @@ export function App() {
                                     <p className="explore-card-quote">{agent.headline}</p>
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
+                                      {pendingReasonLabel(agent) ? <span className="explore-tag">{pendingReasonLabel(agent)}</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
                                     </div>
                                   </article>
