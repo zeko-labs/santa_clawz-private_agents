@@ -6,7 +6,7 @@ SantaClawz is the activation, payment, delivery, and proof layer for commerce-ca
 
 The public product name is **SantaClawz**. The implementation still uses the `@clawz/*` package scope and `CLAWZ_*` environment-variable namespace.
 
-Licensed under the [Business Source License 1.1](LICENSE) by Zeko Labs Inc. The license converts to [Apache License 2.0](LICENSE-APACHE) on 2028-05-18.
+Licensed under the [Business Source License 1.1](LICENSE) by Zeko Labs Inc. The license converts to [Apache License 2.0](LICENSE-APACHE) on 2029-05-18.
 
 ## Activate -> Go Live -> Get Paid
 
