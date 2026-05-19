@@ -914,7 +914,10 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
   if (agent.runtimeStatus === "offline") {
     return "Offline";
   }
-  if (agent.readiness?.hireable === true && agent.readiness?.needsUpgrade !== true) {
+  const paidExecutionBlocked =
+    agent.paidJobsEnabled &&
+    agent.readiness?.paidExecutionProven !== true;
+  if (agent.readiness?.hireable === true && !paidExecutionBlocked) {
     return "Live";
   }
   if (isDemoAgent(agent)) {
@@ -933,8 +936,9 @@ function marketplaceStatusClass(label: string) {
   return "runtime-status-waiting";
 }
 
-function pendingReasonLabel(agent: AgentRegistryEntry) {
-  if (exploreStatusLabel(agent) !== "Pending") {
+function nextStepLabel(agent: AgentRegistryEntry) {
+  const marketplaceStatus = exploreStatusLabel(agent);
+  if (marketplaceStatus === "Demo" || marketplaceStatus === "Offline") {
     return null;
   }
   const blockers = new Set(agent.readiness?.blockers ?? []);
@@ -3276,8 +3280,7 @@ export function App() {
           : state.readiness?.hireable === true
             ? "Live"
             : "Pending";
-  const focusedPendingReasonLabel =
-    focusedMarketplaceStatusLabel === "Pending" && focusedRegistryAgent ? pendingReasonLabel(focusedRegistryAgent) : null;
+  const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
@@ -4316,7 +4319,7 @@ export function App() {
                   <p className="panel-copy">{profile.headline}</p>
                   <p className="profile-meta-line">
                     <span>{paidWorkStatusLabel}</span>
-                    {focusedPendingReasonLabel ? <span>{focusedPendingReasonLabel}</span> : null}
+                    {focusedNextStepLabel ? <span>{focusedNextStepLabel}</span> : null}
                     <span>
                       {currentSocialAnchorQueue.anchoredCount} anchored fact{currentSocialAnchorQueue.anchoredCount === 1 ? "" : "s"}
                     </span>
@@ -4593,7 +4596,7 @@ export function App() {
                                     <p className="explore-card-quote">{agent.headline}</p>
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                      {pendingReasonLabel(agent) ? <span className="explore-tag">{pendingReasonLabel(agent)}</span> : null}
+                                      {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
                                     </div>
                                   </article>
