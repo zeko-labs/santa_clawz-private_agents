@@ -4911,7 +4911,10 @@ button:disabled {
   }
 
   .text-area.connect-headline-text-area {
-    min-height: 92px;
+    min-height: 64px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    line-height: 1.35;
   }
 
   .explore-aggregate-stats {
