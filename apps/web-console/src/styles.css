@@ -2031,6 +2031,44 @@ pre,
   grid-column: 1 / -1;
 }
 
+.agent-card-status-stack {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.agent-card-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.agent-card-status-pill::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.agent-card-status-pill.runtime-status-live,
+.agent-card-status-pill.runtime-status-waiting,
+.agent-card-status-pill.runtime-status-offline {
+  border-color: transparent;
+  background: transparent;
+}
+
 .explore-agent-list-card .explore-card-avatar {
   width: 32px;
   height: 32px;
