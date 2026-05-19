@@ -693,7 +693,9 @@ function matchesExploreQuery(agent: AgentRegistryEntry, query: string) {
     agent.ownershipVerified ? "owner ownership verified control" : "",
     agent.missionAuthVerified ? "mission auth oauth enterprise web2 verified" : "",
     agent.published ? "published zeko live" : "",
-    agent.paidJobsEnabled ? "payouts live hire paid jobs" : "",
+    agent.paidJobsEnabled ? "pay set hire paid jobs" : "",
+    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true ? "paid proven" : "",
+    agent.paidJobsEnabled && agent.readiness?.paidExecutionProven !== true ? "probe needed" : "",
     agent.paymentsEnabled ? "open for work quote required reference price" : ""
   ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
@@ -910,10 +912,10 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
-    return "Payouts live";
+    return agent.readiness?.paidExecutionProven === true ? "Paid proven" : "Probe needed";
   }
   if (agent.paymentsEnabled) {
-    return "Open for work";
+    return "Pay set";
   }
   if (agent.published) {
     return "Published";
@@ -923,7 +925,9 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
 
 function activityLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
-    return `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
+    return agent.readiness?.paidExecutionProven === true
+      ? `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`
+      : `Pay set • probe needed • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.paymentsEnabled) {
     return `${referencePriceLine(agent)} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
@@ -977,7 +981,9 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.agentName} is offline right now, but its public proof history stays visible.`;
   }
   if (agent.paidJobsEnabled) {
-    return `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`;
+    return agent.readiness?.paidExecutionProven === true
+      ? `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`
+      : `${agent.agentName} has payments configured and still needs a paid execution probe.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.agentName} is open for quote requests. Buyers and agents can inspect the profile before starting work.`;
@@ -1012,7 +1018,9 @@ function dispatchLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.headline} Default starter service for agents that want the latest guidance on getting hired, pricing work, and improving their public trust surface.`;
   }
   if (agent.paidJobsEnabled) {
-    return `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`;
+    return agent.readiness?.paidExecutionProven === true
+      ? `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`
+      : `${agent.headline} Payments are configured; paid execution proof is still needed.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.headline} Open for quote requests with ${referencePriceLine(agent).toLowerCase()}.`;
@@ -2931,6 +2939,7 @@ export function App() {
   const savedPaymentsEnabled = state.paymentsEnabled;
   const savedPaymentProfileReady = state.paymentProfileReady;
   const paidJobsEnabled = state.paidJobsEnabled;
+  const paidExecutionProven = state.readiness?.paidExecutionProven === true;
   const quoteRequestMode =
     savedPaymentsEnabled &&
     state.profile.paymentProfile.pricingMode === "quote-required";
@@ -2958,8 +2967,10 @@ export function App() {
         ? "Free test"
       : !savedPaymentsEnabled
         ? "Not open for work"
-        : savedPaymentProfileReady && paidJobsEnabled
+        : savedPaymentProfileReady && paidJobsEnabled && paidExecutionProven
           ? `${referencePriceLine(state.profile.paymentProfile)} on ${railLabel(defaultPaymentRail)}`
+          : savedPaymentProfileReady && paidJobsEnabled
+            ? "Pay set • probe needed"
           : savedPaymentProfileReady
             ? referencePriceLine(state.profile.paymentProfile)
             : "Finish work setup";
@@ -4207,10 +4218,12 @@ export function App() {
                     <span className="subtle-pill">
                       {agentArchived
                         ? "Archived"
-                        : paidJobsEnabled
-                          ? "Payouts live"
+                        : paidJobsEnabled && paidExecutionProven
+                          ? "Paid proven"
+                          : paidJobsEnabled
+                            ? "Probe needed"
                           : savedPaymentsEnabled
-                            ? "Open for work"
+                            ? "Pay set"
                             : published
                               ? "Published"
                       : "Registered"}

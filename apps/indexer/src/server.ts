@@ -1097,7 +1097,11 @@ function parseAgentHeartbeatRequest(body: unknown): AgentHeartbeatRequestBody {
         note: body.note,
         relayAgentProtocolVersion: body.relayAgentProtocolVersion,
         relayAgentBuild: body.relayAgentBuild,
-        relayAgentFeatures: body.relayAgentFeatures
+        relayAgentFeatures: body.relayAgentFeatures,
+        relayAgentWorkerRoutes: body.relayAgentWorkerRoutes,
+        relayAgentWorkerWarnings: body.relayAgentWorkerWarnings,
+        relayAgentWorkerTiming: body.relayAgentWorkerTiming,
+        paidExecutionProbe: body.paidExecutionProbe
       }
     : {};
 }
@@ -1360,17 +1364,55 @@ function pricingReadinessNotes(input: {
   pricingMode: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number]["pricingMode"];
   quoteReady: boolean;
   paidExecutionReady: boolean;
+  paidExecutionProven?: boolean;
 }) {
   if (input.pricingMode === "fixed-exact") {
-    return input.paidExecutionReady ? ["fixed-paid-execution-ready"] : ["fixed-paid-execution-not-ready"];
+    if (input.paidExecutionReady) {
+      return ["fixed-paid-execution-ready"];
+    }
+    return input.paidExecutionProven === false ? ["paid-execution-not-proven"] : ["fixed-paid-execution-not-ready"];
   }
   if (input.pricingMode === "quote-required") {
     return [
       input.quoteReady ? "quote-intake-ready" : "quote-intake-not-ready",
-      input.paidExecutionReady ? "quote-payment-required-before-execution" : "quote-intake-only"
+      input.paidExecutionReady
+        ? "quote-payment-required-before-execution"
+        : input.paidExecutionProven === false
+          ? "paid-execution-not-proven"
+          : "quote-intake-only"
     ];
   }
   return input.paidExecutionReady ? ["free-test-ready"] : ["free-test-not-ready"];
+}
+
+function paidExecutionProvenFromReadiness(readiness?: { paidExecutionProven?: boolean }) {
+  return readiness?.paidExecutionProven === true;
+}
+
+function paidExecutionProbeRequiredBody(input: {
+  agentId?: string;
+  intent?: unknown;
+  plan?: unknown;
+}) {
+  return {
+    ok: false,
+    code: "paid_execution_probe_required",
+    retryable: false,
+    paymentRequested: false,
+    ...(input.agentId ? { agentId: input.agentId } : {}),
+    ...(input.intent ? { intent: input.intent } : {}),
+    ...(input.plan ? { plan: input.plan } : {}),
+    error:
+      "This agent has payments configured, but paid execution is not proven yet. Run seller:ready with the paid-execution probe before buyers pay.",
+    statusTags: ["Pay set", "Probe needed"],
+    nextAction: "run_seller_ready_paid_execution_probe",
+    operationalStatus: {
+      paymentStatus: "not_attempted",
+      settlementStatus: "not_attempted",
+      relayDeliveryStatus: "not_attempted",
+      agentExecutionStatus: "not_started"
+    }
+  };
 }
 
 async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number]) {
@@ -1381,10 +1423,19 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     plan = undefined;
   }
   const quoteReady = agent.paymentProfileReady && agent.pricingMode === "quote-required";
+  const paidExecutionProven = paidExecutionProvenFromReadiness(agent.readiness);
   const paidExecutionReady =
     agent.pricingMode === "free-test" ||
-    (agent.paymentProfileReady && agent.paidJobsEnabled && (agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required"));
-  const pricingReadiness = pricingReadinessNotes({ pricingMode: agent.pricingMode, quoteReady, paidExecutionReady });
+    (agent.paymentProfileReady &&
+      agent.paidJobsEnabled &&
+      paidExecutionProven &&
+      (agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required"));
+  const pricingReadiness = pricingReadinessNotes({
+    pricingMode: agent.pricingMode,
+    quoteReady,
+    paidExecutionReady,
+    ...(agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required" ? { paidExecutionProven } : {})
+  });
   const capabilityTags = agentCapabilityTags(agent, { quoteReady, paidExecutionReady });
   return {
     schemaVersion: "santaclawz-agent-directory-entry/1.0",
@@ -1403,7 +1454,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     paymentsReady: agent.paymentProfileReady,
     quoteReady,
     paidExecutionReady,
-    paidExecutionProven: agent.readiness?.paidExecutionProven === true,
+    paidExecutionProven,
     needsUpgrade: agent.readiness?.needsUpgrade === true,
     ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
     ...(agent.readiness?.readinessWarnings?.length ? { readinessWarnings: agent.readiness.readinessWarnings } : {}),
@@ -1426,7 +1477,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
       paymentsReady: agent.paymentProfileReady,
       quoteReady,
       paidExecutionReady,
-      paidExecutionProven: agent.readiness?.paidExecutionProven === true,
+      paidExecutionProven,
       needsUpgrade: agent.readiness?.needsUpgrade === true,
       ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
       ...(agent.readiness?.readinessWarnings?.length ? { readinessWarnings: agent.readiness.readinessWarnings } : {}),
@@ -2262,10 +2313,19 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
     const plan = (await buildX402PlanFromOptions(baseUrl, { agentId })).plan;
     const pricingMode = consoleState.profile.paymentProfile.pricingMode;
     const quoteReady = consoleState.paymentProfileReady && pricingMode === "quote-required";
+    const paidExecutionProven = paidExecutionProvenFromReadiness(consoleState.readiness);
     const paidExecutionReady =
       pricingMode === "free-test" ||
-      (consoleState.paymentProfileReady && consoleState.paidJobsEnabled && (pricingMode === "fixed-exact" || pricingMode === "quote-required"));
-    const pricingReadiness = pricingReadinessNotes({ pricingMode, quoteReady, paidExecutionReady });
+      (consoleState.paymentProfileReady &&
+        consoleState.paidJobsEnabled &&
+        paidExecutionProven &&
+        (pricingMode === "fixed-exact" || pricingMode === "quote-required"));
+    const pricingReadiness = pricingReadinessNotes({
+      pricingMode,
+      quoteReady,
+      paidExecutionReady,
+      ...(pricingMode === "fixed-exact" || pricingMode === "quote-required" ? { paidExecutionProven } : {})
+    });
     const relayAgentWorkerWarnings = availability.heartbeat.relayAgentWorkerWarnings ?? [];
     const relayAgentWorkerTiming = availability.heartbeat.relayAgentWorkerTiming;
     response.json({
@@ -2278,7 +2338,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       paymentsReady: consoleState.paymentProfileReady,
       quoteReady,
       paidExecutionReady,
-      paidExecutionProven: consoleState.readiness?.paidExecutionProven === true,
+      paidExecutionProven,
       needsUpgrade: consoleState.readiness?.needsUpgrade === true,
       ...(consoleState.readiness?.upgradeReasons?.length ? { upgradeReasons: consoleState.readiness.upgradeReasons } : {}),
       ...(consoleState.readiness?.readinessWarnings?.length ? { readinessWarnings: consoleState.readiness.readinessWarnings } : {}),
@@ -3639,6 +3699,10 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       });
       return;
     }
+    if (!paidExecutionProvenFromReadiness(context.consoleState.readiness)) {
+      response.status(409).json(paidExecutionProbeRequiredBody({ intent: context.intent }));
+      return;
+    }
 
     const paymentHeaderValue = request.header("payment-signature");
     const paymentPayload = parseAgentX402PaymentPayload({
@@ -4646,6 +4710,10 @@ const handleAgentHireRequest = route(async (request, response) => {
         return;
       }
       if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
+        return;
+      }
+      if (!paidExecutionProvenFromReadiness(consoleState.readiness)) {
+        response.status(409).json(paidExecutionProbeRequiredBody({ agentId, plan }));
         return;
       }
 

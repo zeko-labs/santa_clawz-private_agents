@@ -2321,7 +2321,7 @@ function buildAgentReadinessState(input: {
     workerReachable,
     paymentReady: input.paymentReady,
     published: input.published,
-    hireable: blockers.length === 0,
+    hireable: blockers.length === 0 && !needsUpgrade,
     ...(paidExecutionProven !== undefined ? { paidExecutionProven } : {}),
     ...(needsUpgrade ? { needsUpgrade, upgradeReasons } : {}),
     ...(readinessWarnings.length ? { readinessWarnings } : {}),
@@ -9287,6 +9287,18 @@ export class ClawzControlPlane {
             "SantaClawz will not submit paid execution while the agent heartbeat is stale or near stale.",
             heartbeat.reason ?? ""
           ].filter(Boolean).join(": ")
+        );
+      }
+      const paidExecutionProven =
+        heartbeat.paidExecutionProbe?.ok === true ||
+        hasVerifiedPaidExecutionForSession(hireRequests, sessionId, { includePrivate: true });
+      if (!paidExecutionProven) {
+        throw new Error(
+          [
+            "paid_execution_probe_required",
+            "This agent has payments configured, but paid execution is not proven yet.",
+            "Run seller:ready with the paid-execution probe before buyers pay."
+          ].join(": ")
         );
       }
     }
