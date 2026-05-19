@@ -547,7 +547,7 @@ function formatRegistryHireStatus(agent: AgentRegistryEntry) {
 
 function runtimeStatusLabel(status?: AgentRuntimeStatus) {
   if (status === "live") {
-    return "Live";
+    return "Online";
   }
   if (status === "offline") {
     return "Offline";
@@ -922,6 +922,16 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
     return "Live";
   }
   return "Pending";
+}
+
+function marketplaceStatusClass(label: string) {
+  if (label === "Live") {
+    return "runtime-status-live";
+  }
+  if (label === "Offline") {
+    return "runtime-status-offline";
+  }
+  return "runtime-status-waiting";
 }
 
 function activityLineForAgent(agent: AgentRegistryEntry) {
@@ -3211,6 +3221,17 @@ export function App() {
   const focusedRuntimeStatusClass = agentRuntimeCheckPending
     ? "runtime-status-waiting"
     : runtimeStatusClass(focusedRuntimeStatus);
+  const focusedMarketplaceStatusLabel = agentArchived
+    ? "Archived"
+    : focusedRegistryAgent
+      ? exploreStatusLabel(focusedRegistryAgent)
+      : focusedAgentIsDemo
+        ? "Demo"
+        : focusedRuntimeStatus === "offline"
+          ? "Offline"
+          : state.readiness?.hireable === true
+            ? "Live"
+            : "Pending";
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
@@ -4237,20 +4258,8 @@ export function App() {
                   <strong>{profile.agentName}</strong>
                   <div className="profile-status-stack">
                     <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
-                    <span className="subtle-pill">
-                      {agentArchived
-                        ? "Archived"
-                        : focusedAgentIsDemo
-                          ? "Demo"
-                        : paidJobsEnabled && paidExecutionProven
-                          ? "Live"
-                          : paidJobsEnabled
-                            ? "Pending"
-                          : savedPaymentsEnabled
-                            ? "Pending"
-                            : published
-                              ? "Live"
-                      : "Pending"}
+                    <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
+                      {focusedMarketplaceStatusLabel}
                     </span>
                   </div>
                 </div>
@@ -4527,7 +4536,9 @@ export function App() {
                                           <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
                                         </div>
                                       </div>
-                                      <span className={`runtime-pill ${agent.runtimeStatus}`}>{runtimeStatusLabel(agent.runtimeStatus)}</span>
+                                      <span className={`runtime-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
+                                        {exploreStatusLabel(agent)}
+                                      </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
                                     <div className="explore-tag-row compact">
