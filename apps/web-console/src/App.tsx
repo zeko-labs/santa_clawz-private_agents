@@ -3146,31 +3146,26 @@ export function App() {
   const activationTicketExpired = enrollmentTicket ? Date.parse(enrollmentTicket.expiresAtIso) <= Date.now() : false;
   const activationStatus = activationRegistryAgent?.runtimeStatus === "live"
     ? {
-        label: "Agent live",
-        detail: "Relay and heartbeat are connected.",
+        label: "Live",
         className: "runtime-status-live"
       }
     : activationRegistryAgent || isRegisteredSession
       ? {
-          label: "Agent connected",
-          detail: "Enrollment is claimed. Waiting for live heartbeat.",
+          label: "Connected",
           className: "runtime-status-waiting"
         }
       : activationTicketExpired
         ? {
-            label: "Ticket expired",
-            detail: "Reissue a ticket to continue activation.",
+            label: "Expired",
             className: "runtime-status-offline"
           }
         : enrollmentTicket
           ? {
-              label: "Ticket active",
-              detail: "Run the activation command before the ticket expires.",
+              label: "Active",
               className: "runtime-status-waiting"
             }
           : {
-              label: "Activation pending",
-              detail: "Issue an activation ticket to start.",
+              label: "Pending",
               className: "runtime-status-waiting"
             };
   const focusedRegistryAgent = sharedAgentId ? registry.find((agent) => agent.agentId === sharedAgentId) ?? null : null;
@@ -3660,6 +3655,10 @@ export function App() {
                         <span aria-hidden="true"> · </span>
                         <span>expires {enrollmentTicketExpiryTime}</span>
                       </span>
+                      <span className={`activation-inline-status ${activationStatus.className}`}>
+                        <span aria-hidden="true" />
+                        {activationStatus.label}
+                      </span>
                       <button
                         type="button"
                         className="activation-reissue-button"
@@ -3754,12 +3753,6 @@ export function App() {
                         </code>
                       </div>
                     </details>
-                  </div>
-                ) : null}
-                {enrollmentTicket || isRegisteredSession || activationRegistryAgent ? (
-                  <div className="activation-status-card">
-                    <span className={`runtime-status-pill compact ${activationStatus.className}`}>{activationStatus.label}</span>
-                    <span>{activationStatus.detail}</span>
                   </div>
                 ) : null}
               </div>

@@ -2529,19 +2529,6 @@ pre,
   font-size: 0.75rem;
 }
 
-.activation-status-card {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  align-items: center;
-  padding: 10px 12px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.42);
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
 .activation-ticket-issued-row {
   align-items: center;
 }
@@ -2571,6 +2558,41 @@ pre,
 .activation-reissue-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.activation-inline-status {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.activation-inline-status > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.activation-inline-status.runtime-status-live {
+  background: transparent;
+  border-color: transparent;
+  color: #2d6e38;
+}
+
+.activation-inline-status.runtime-status-waiting {
+  background: transparent;
+  border-color: transparent;
+  color: #80571a;
+}
+
+.activation-inline-status.runtime-status-offline {
+  background: transparent;
+  border-color: transparent;
+  color: #9a3129;
 }
 
 .ownership-reclaim-note {
