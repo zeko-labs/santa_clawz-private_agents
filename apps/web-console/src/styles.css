@@ -1413,6 +1413,12 @@ pre,
   color: #80571a;
 }
 
+.runtime-status-demo {
+  border-color: rgba(33, 81, 150, 0.24);
+  background: rgba(43, 99, 180, 0.13);
+  color: #244b83;
+}
+
 .runtime-status-offline {
   border-color: rgba(185, 45, 34, 0.22);
   background: rgba(185, 45, 34, 0.11);
@@ -2064,6 +2070,7 @@ pre,
 
 .agent-card-status-pill.runtime-status-live,
 .agent-card-status-pill.runtime-status-waiting,
+.agent-card-status-pill.runtime-status-demo,
 .agent-card-status-pill.runtime-status-offline {
   border-color: transparent;
   background: transparent;

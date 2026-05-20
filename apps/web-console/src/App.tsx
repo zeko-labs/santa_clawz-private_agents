@@ -949,6 +949,9 @@ function marketplaceStatusClass(label: string) {
   if (label === "Offline") {
     return "runtime-status-offline";
   }
+  if (label === "Demo") {
+    return "runtime-status-demo";
+  }
   return "runtime-status-waiting";
 }
 
