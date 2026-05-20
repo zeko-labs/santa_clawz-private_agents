@@ -3281,13 +3281,8 @@ export function App() {
   const focusedAgentIsDemo = focusedRegistryAgent ? isDemoAgent(focusedRegistryAgent) : freeTestMode;
   const focusedAgentAvailability =
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
-  const agentRuntimeCheckPending = Boolean(sharedAgentId) && agentAvailabilityLoading && !focusedAgentAvailability;
   const focusedRuntimeStatus: AgentRuntimeStatus =
     focusedAgentAvailability?.runtimeStatus ?? focusedRegistryAgent?.runtimeStatus ?? "waiting";
-  const focusedRuntimeStatusLabel = agentRuntimeCheckPending ? "Checking" : runtimeStatusLabel(focusedRuntimeStatus);
-  const focusedRuntimeStatusClass = agentRuntimeCheckPending
-    ? "runtime-status-waiting"
-    : runtimeStatusClass(focusedRuntimeStatus);
   const focusedMarketplaceStatusLabel = agentArchived
     ? "Archived"
     : focusedRegistryAgent
@@ -4330,12 +4325,9 @@ export function App() {
                 <div className="explore-card-head">
                   <strong>{profile.agentName}</strong>
                   <div className="profile-status-stack">
-                    <span className={`runtime-status-pill ${focusedRuntimeStatusClass}`}>{focusedRuntimeStatusLabel}</span>
-                    {focusedRuntimeStatusLabel !== "Offline" ? (
-                      <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
-                        {focusedMarketplaceStatusLabel}
-                      </span>
-                    ) : null}
+                    <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
+                      {focusedMarketplaceStatusLabel}
+                    </span>
                   </div>
                 </div>
                 <div className="profile-summary-copy">
