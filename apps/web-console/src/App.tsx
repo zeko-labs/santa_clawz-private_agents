@@ -564,6 +564,14 @@ function runtimeStatusClass(status?: AgentRuntimeStatus) {
   return "runtime-status-waiting";
 }
 
+function presenceStatusLabel(status?: AgentRuntimeStatus) {
+  return status === "live" ? "Online" : "Offline";
+}
+
+function presenceStatusClass(status?: AgentRuntimeStatus) {
+  return status === "live" ? "runtime-status-live" : "runtime-status-offline";
+}
+
 function runtimeStatusSearchCopy(agent: AgentRegistryEntry) {
   const label = runtimeStatusLabel(agent.runtimeStatus).toLowerCase();
   return `${label} heartbeat presence availability ${agent.runtimeStatusReason ?? ""}`;
@@ -932,66 +940,45 @@ function isPaidExecutionReady(agent: AgentRegistryEntry) {
   return agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true && !hasFixedPaidWorkerReadinessGap(agent);
 }
 
-function isMarketplaceLive(agent: AgentRegistryEntry) {
-  const paidExecutionBlocked =
-    agent.paidJobsEnabled &&
-    (agent.readiness?.paidExecutionProven !== true || hasFixedPaidWorkerReadinessGap(agent));
-  return (
-    agent.runtimeStatus !== "offline" &&
-    agent.readiness?.hireable === true &&
-    !paidExecutionBlocked &&
-    (!agent.paymentsEnabled || isPaidExecutionReady(agent))
-  );
-}
-
-function isMarketplaceReady(agent: AgentRegistryEntry) {
-  if (agent.runtimeStatus === "offline" || agent.readiness?.hireable !== true) {
+function isForHire(agent: AgentRegistryEntry) {
+  if (!agent.paymentsEnabled || !agent.paymentProfileReady || agent.readiness?.paymentReady !== true) {
     return false;
   }
-  if (isMarketplaceLive(agent)) {
+  if (isPaidExecutionReady(agent)) {
     return true;
   }
-  if (agent.quoteReady === true && (!agent.paymentsEnabled || agent.readiness?.paidExecutionProven === true)) {
+  if (agent.quoteReady === true && agent.readiness?.paidExecutionProven === true) {
     return true;
   }
-  return agent.paymentsEnabled && agent.paymentProfileReady && agent.readiness?.paymentReady === true && agent.readiness?.paidExecutionProven === true;
+  return agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true;
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (agent.runtimeStatus === "offline") {
-    return "Offline";
-  }
-  if (isMarketplaceLive(agent)) {
-    return "Live";
-  }
-  if (isMarketplaceReady(agent)) {
-    return "Ready";
-  }
   if (isDemoAgent(agent)) {
     return "Demo";
+  }
+  if (isForHire(agent)) {
+    return "For Hire";
   }
   return "Pending";
 }
 
 function marketplaceStatusClass(label: string) {
-  if (label === "Live") {
+  if (label === "For Hire") {
     return "runtime-status-live";
   }
-  if (label === "Offline") {
+  if (label === "Archived") {
     return "runtime-status-offline";
   }
   if (label === "Demo") {
     return "runtime-status-demo";
-  }
-  if (label === "Ready") {
-    return "runtime-status-ready";
   }
   return "runtime-status-waiting";
 }
 
 function nextStepLabel(agent: AgentRegistryEntry) {
   const marketplaceStatus = exploreStatusLabel(agent);
-  if (marketplaceStatus === "Demo" || marketplaceStatus === "Offline") {
+  if (marketplaceStatus === "Demo") {
     return null;
   }
   const blockers = new Set(agent.readiness?.blockers ?? []);
@@ -1042,7 +1029,7 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
     return `Offline • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.paidJobsEnabled) {
-    return isMarketplaceLive(agent)
+    return isForHire(agent)
       ? `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`
       : `Pending readiness • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
@@ -1124,7 +1111,7 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.agentName} is offline right now, but its public proof history stays visible.`;
   }
   if (agent.paidJobsEnabled) {
-    return isMarketplaceLive(agent)
+    return isForHire(agent)
       ? `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`
       : `${agent.agentName} is pending readiness before buyers should pay.`;
   }
@@ -1161,7 +1148,7 @@ function dispatchLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.headline} Default starter service for agents that want the latest guidance on getting hired, pricing work, and improving their public trust surface.`;
   }
   if (agent.paidJobsEnabled) {
-    return isMarketplaceLive(agent)
+    return isForHire(agent)
       ? `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`
       : `${agent.headline} Pending readiness before paid work is accepted.`;
   }
@@ -3300,7 +3287,7 @@ export function App() {
   const activationTicketExpired = enrollmentTicket ? Date.parse(enrollmentTicket.expiresAtIso) <= Date.now() : false;
   const activationStatus = activationRegistryAgent?.runtimeStatus === "live"
     ? {
-        label: "Live",
+        label: "Online",
         className: "runtime-status-live"
       }
     : activationRegistryAgent || isRegisteredSession
@@ -3334,11 +3321,9 @@ export function App() {
       ? exploreStatusLabel(focusedRegistryAgent)
       : focusedAgentIsDemo
         ? "Demo"
-        : focusedRuntimeStatus === "offline"
-          ? "Offline"
-          : state.readiness?.hireable === true
-            ? "Live"
-            : "Pending";
+        : savedPaymentProfileReady && state.readiness?.paymentReady === true
+          ? "For Hire"
+          : "Pending";
   const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
@@ -3371,7 +3356,7 @@ export function App() {
     { label: "Anchored", complete: currentSocialAnchorQueue.anchoredCount > 0 },
     { label: "Proof root", complete: Boolean(latestSocialAnchorBatch?.confirmedAtIso || latestSocialAnchorBatch?.settledAtIso) },
     { label: "Payments", complete: savedPaymentProfileReady },
-    { label: "Live", complete: focusedRuntimeStatus === "live" }
+    { label: "Online", complete: focusedRuntimeStatus === "live" }
   ];
   const agentTrustScore = Math.round(
     (agentTrustSignals.filter((signal) => signal.complete).length / agentTrustSignals.length) * 100
@@ -4373,6 +4358,9 @@ export function App() {
                     <span className={`subtle-pill ${marketplaceStatusClass(focusedMarketplaceStatusLabel)}`}>
                       {focusedMarketplaceStatusLabel}
                     </span>
+                    <span className={`subtle-pill ${presenceStatusClass(focusedRuntimeStatus)}`}>
+                      {presenceStatusLabel(focusedRuntimeStatus)}
+                    </span>
                   </div>
                 </div>
                 <div className="profile-summary-copy">
@@ -4613,7 +4601,7 @@ export function App() {
                                 setExploreAgentPage(1);
                               }}
                             >
-                              <option value="online">Online</option>
+                              <option value="online">Status</option>
                               <option value="jobs">Jobs</option>
                               <option value="payments">Payouts</option>
                             </select>
@@ -4652,6 +4640,9 @@ export function App() {
                                       <span className="agent-card-status-stack" aria-label="Agent status">
                                         <span className={`agent-card-status-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
                                           {exploreStatusLabel(agent)}
+                                        </span>
+                                        <span className={`agent-card-status-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
+                                          {presenceStatusLabel(agent.runtimeStatus)}
                                         </span>
                                       </span>
                                     </div>
