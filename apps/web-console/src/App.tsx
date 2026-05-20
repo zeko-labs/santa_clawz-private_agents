@@ -4613,20 +4613,9 @@ export function App() {
                                         </div>
                                       </div>
                                       <span className="agent-card-status-stack" aria-label="Agent status">
-                                        {agent.runtimeStatus === "offline" ? (
-                                          <span className={`agent-card-status-pill ${runtimeStatusClass(agent.runtimeStatus)}`}>
-                                            {runtimeStatusLabel(agent.runtimeStatus)}
-                                          </span>
-                                        ) : (
-                                          <>
-                                            <span className={`agent-card-status-pill ${runtimeStatusClass(agent.runtimeStatus)}`}>
-                                              {runtimeStatusLabel(agent.runtimeStatus)}
-                                            </span>
-                                            <span className={`agent-card-status-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
-                                              {exploreStatusLabel(agent)}
-                                            </span>
-                                          </>
-                                        )}
+                                        <span className={`agent-card-status-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
+                                          {exploreStatusLabel(agent)}
+                                        </span>
                                       </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
