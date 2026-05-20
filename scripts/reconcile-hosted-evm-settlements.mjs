@@ -19,7 +19,9 @@ function parseArgs(argv) {
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--commit") {
+    if (arg === "--") {
+      continue;
+    } else if (arg === "--commit") {
       args.commit = true;
     } else if (arg === "--dry-run") {
       args.commit = false;
