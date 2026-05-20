@@ -273,6 +273,62 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function x402SettlementIdentifier(paymentPayload: JsonRecord): string | undefined {
+  return optionalString(paymentPayload.idempotencyKey) ?? optionalString(paymentPayload.paymentId);
+}
+
+function hostedEvmSettlementIsCanonical(rail: AgentX402RailPlan): boolean {
+  return (
+    rail.settlementRail === "evm" &&
+    Boolean(rail.facilitatorUrl) &&
+    (rail.rail === "base-usdc" || rail.rail === "ethereum-usdc")
+  );
+}
+
+function budgetAssetForRail(rail: AgentX402RailPlan): JsonRecord {
+  return {
+    symbol: rail.assetSymbol,
+    decimals: rail.assetDecimals,
+    standard: rail.assetStandard,
+    ...(rail.assetAddress ? { address: rail.assetAddress } : {})
+  };
+}
+
+function hostedEvmCanonicalLedgerResult(input: {
+  rail: AgentX402RailPlan;
+  paymentPayload: JsonRecord;
+  remoteSettlement: JsonRecord;
+  remoteVerification: JsonRecord;
+  settlementEvents: ReturnType<typeof normalizedSettlementEvents>;
+}) {
+  const settledAtIso =
+    optionalString(input.remoteSettlement.settledAtIso) ??
+    (isRecord(input.remoteSettlement.receipt) ? optionalString(input.remoteSettlement.receipt.settledAtIso) : undefined) ??
+    new Date().toISOString();
+  const eventIds = input.settlementEvents.transactionHashes.length > 0
+    ? input.settlementEvents.transactionHashes
+    : input.settlementEvents.settlementReference
+      ? [input.settlementEvents.settlementReference]
+      : [];
+  return {
+    duplicate:
+      input.remoteSettlement.duplicate === true ||
+      input.remoteSettlement.settlementState === "already_settled" ||
+      input.remoteVerification.duplicate === true,
+    settlement: {
+      eventIds,
+      settledAtIso
+    },
+    remainingBudget: optionalString(input.remoteSettlement.remainingBudget),
+    sponsoredBudget: optionalString(input.remoteSettlement.sponsoredBudget),
+    budgetAsset: isRecord(input.paymentPayload.asset) ? input.paymentPayload.asset : budgetAssetForRail(input.rail)
+  };
+}
+
 function encodeBase64Json(value: JsonRecord): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
@@ -1730,6 +1786,24 @@ function resultError(result: JsonRecord | undefined): string | undefined {
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
+function parseAtomicAmount(value: unknown): bigint | undefined {
+  if (typeof value !== "string" || !/^\d+$/.test(value.trim())) {
+    return undefined;
+  }
+  return BigInt(value.trim());
+}
+
+function remoteVerificationFundingError(remoteVerification: JsonRecord): string | undefined {
+  const balance = parseAtomicAmount(remoteVerification.balance);
+  const feeSplit = isRecord(remoteVerification.feeSplit) ? remoteVerification.feeSplit : undefined;
+  const required = parseAtomicAmount(feeSplit?.grossAmount) ?? parseAtomicAmount(remoteVerification.amount);
+  if (balance === undefined || required === undefined || balance >= required) {
+    return undefined;
+  }
+  const assetSymbol = typeof remoteVerification.assetSymbol === "string" ? remoteVerification.assetSymbol : "USDC";
+  return `Payer does not hold enough ${assetSymbol} for the x402 payment.`;
+}
+
 function assertHostedFacilitatorPayloadShape(paymentPayload: JsonRecord, rail: AgentX402RailPlan): void {
   if (!rail.facilitatorUrl || rail.settlementRail !== "evm") {
     return;
@@ -1739,6 +1813,7 @@ function assertHostedFacilitatorPayloadShape(paymentPayload: JsonRecord, rail: A
   if (typeof paymentPayload.networkId !== "string") missing.push("networkId");
   if (typeof paymentPayload.settlementRail !== "string") missing.push("settlementRail");
   if (typeof paymentPayload.payTo !== "string") missing.push("payTo");
+  if (!x402SettlementIdentifier(paymentPayload)) missing.push("paymentId or idempotencyKey");
   const accepted = isRecord(paymentPayload.accepted) ? paymentPayload.accepted : undefined;
   if (!accepted) {
     missing.push("accepted");
@@ -1944,17 +2019,19 @@ export async function verifyAgentX402Payment(input: {
     paymentPayload: input.paymentPayload,
     paymentRequirements: input.runtime.paymentRequired
   })) as JsonRecord;
+  const fundingError = remoteVerificationFundingError(remoteVerification);
+  const remoteOk = remoteVerificationOk(remoteVerification) && !fundingError;
 
   return {
-    ok: remoteVerificationOk(remoteVerification),
+    ok: remoteOk,
     paymentRequired: verification.paymentRequired,
     paymentPayload: verification.paymentPayload,
     rail: verification.rail,
     localVerification: verification.localVerification,
     remoteVerification,
     headers: verification.headers,
-    ...(!remoteVerificationOk(remoteVerification) && resultError(remoteVerification)
-      ? { error: resultError(remoteVerification)! }
+    ...(!remoteOk && (fundingError || resultError(remoteVerification))
+      ? { error: fundingError ?? resultError(remoteVerification)! }
       : {})
   };
 }
@@ -1998,12 +2075,19 @@ export async function settleAgentX402Payment(input: {
         note: "The hosted facilitator settle path verifies the payment before broadcasting."
       };
   const settlementEvents = normalizedSettlementEvents(remoteSettlement);
-  const ledger = settlementLedgerForRail(verification.rail);
-  const ledgerResult = ledger.settle({
-    ...input.paymentPayload,
-    resource: input.runtime.paymentRequired.resource,
-    ...(settlementEvents.settlementReference ? { settlementReference: settlementEvents.settlementReference } : {})
-  }) as JsonRecord;
+  const ledgerResult = hostedEvmSettlementIsCanonical(verification.rail)
+    ? hostedEvmCanonicalLedgerResult({
+        rail: verification.rail,
+        paymentPayload: input.paymentPayload,
+        remoteSettlement,
+        remoteVerification,
+        settlementEvents
+      })
+    : settlementLedgerForRail(verification.rail).settle({
+        ...input.paymentPayload,
+        resource: input.runtime.paymentRequired.resource,
+        ...(settlementEvents.settlementReference ? { settlementReference: settlementEvents.settlementReference } : {})
+      }) as JsonRecord;
 
   const paymentResponse = requireZekoX402Module().buildSettlementResponse({
     payload: input.paymentPayload,
