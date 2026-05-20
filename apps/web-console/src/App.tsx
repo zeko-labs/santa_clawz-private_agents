@@ -911,14 +911,17 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
-  if (isDemoAgent(agent)) {
-    return "Demo";
-  }
   if (agent.runtimeStatus === "offline") {
     return "Offline";
   }
-  if (agent.readiness?.hireable === true || (agent.published && !agent.paidJobsEnabled && agent.runtimeStatus === "live")) {
+  const paidExecutionBlocked =
+    agent.paidJobsEnabled &&
+    agent.readiness?.paidExecutionProven !== true;
+  if (agent.readiness?.hireable === true && !paidExecutionBlocked) {
     return "Live";
+  }
+  if (isDemoAgent(agent)) {
+    return "Demo";
   }
   return "Pending";
 }
@@ -933,8 +936,9 @@ function marketplaceStatusClass(label: string) {
   return "runtime-status-waiting";
 }
 
-function pendingReasonLabel(agent: AgentRegistryEntry) {
-  if (exploreStatusLabel(agent) !== "Pending") {
+function nextStepLabel(agent: AgentRegistryEntry) {
+  const marketplaceStatus = exploreStatusLabel(agent);
+  if (marketplaceStatus === "Demo" || marketplaceStatus === "Offline") {
     return null;
   }
   const blockers = new Set(agent.readiness?.blockers ?? []);
@@ -1004,14 +1008,20 @@ function isDemoAgent(agent: AgentRegistryEntry) {
   const paidJobCount =
     (agent.jobActivityStats?.paidExecutionCount ?? 0) +
     (agent.completionScore?.evaluatedJobCount ?? 0);
+  const commercialAgent =
+    agent.paymentsEnabled ||
+    agent.paymentProfileReady ||
+    agent.payoutAddressConfigured ||
+    agent.paidJobsEnabled ||
+    paidJobCount > 0;
   const nonCommercialActivityAgent =
     !agent.paymentsEnabled &&
     !agent.paymentProfileReady &&
     !agent.payoutAddressConfigured &&
     paidJobCount === 0;
   return (
-    isStarterAgent(agent) ||
     agent.pricingMode === "free-test" ||
+    (isStarterAgent(agent) && !commercialAgent) ||
     nonCommercialActivityAgent
   );
 }
@@ -3270,8 +3280,7 @@ export function App() {
           : state.readiness?.hireable === true
             ? "Live"
             : "Pending";
-  const focusedPendingReasonLabel =
-    focusedMarketplaceStatusLabel === "Pending" && focusedRegistryAgent ? pendingReasonLabel(focusedRegistryAgent) : null;
+  const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
@@ -4310,7 +4319,7 @@ export function App() {
                   <p className="panel-copy">{profile.headline}</p>
                   <p className="profile-meta-line">
                     <span>{paidWorkStatusLabel}</span>
-                    {focusedPendingReasonLabel ? <span>{focusedPendingReasonLabel}</span> : null}
+                    {focusedNextStepLabel ? <span>{focusedNextStepLabel}</span> : null}
                     <span>
                       {currentSocialAnchorQueue.anchoredCount} anchored fact{currentSocialAnchorQueue.anchoredCount === 1 ? "" : "s"}
                     </span>
@@ -4580,14 +4589,19 @@ export function App() {
                                           <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
                                         </div>
                                       </div>
-                                      <span className={`runtime-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
-                                        {exploreStatusLabel(agent)}
+                                      <span className="agent-card-status-stack" aria-label="Agent status">
+                                        <span className={`agent-card-status-pill ${runtimeStatusClass(agent.runtimeStatus)}`}>
+                                          {runtimeStatusLabel(agent.runtimeStatus)}
+                                        </span>
+                                        <span className={`agent-card-status-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
+                                          {exploreStatusLabel(agent)}
+                                        </span>
                                       </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                      {pendingReasonLabel(agent) ? <span className="explore-tag">{pendingReasonLabel(agent)}</span> : null}
+                                      {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
                                     </div>
                                   </article>
