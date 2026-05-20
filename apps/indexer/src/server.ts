@@ -20,6 +20,7 @@ import {
   type ExecutionIntentSettlementModel,
   type ExecutionIntentStatus,
   type HireRelayTraceStep,
+  type PaymentLedgerEntry,
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
   type SantaClawzJobPrivacyPreference,
@@ -1833,6 +1834,252 @@ async function fetchBaseRelayerTransactions(input: {
   return result.filter(isRecord);
 }
 
+interface BaseUsdcTransferLog {
+  transactionHash: string;
+  blockNumber: number;
+  valueAtomic: string;
+  occurredAtIso: string;
+}
+
+function evmAddressTopic(address: string | undefined): string | undefined {
+  const trimmed = address?.trim().toLowerCase();
+  if (!trimmed || !/^0x[a-f0-9]{40}$/.test(trimmed)) {
+    return undefined;
+  }
+  return `0x${trimmed.slice(2).padStart(64, "0")}`;
+}
+
+function remoteVerificationForLedger(entry: PaymentLedgerEntry): Record<string, unknown> | undefined {
+  const summary = entry.facilitatorResponseSummary;
+  return isRecord(summary?.remoteVerification) ? summary.remoteVerification : undefined;
+}
+
+function feeSplitForLedger(entry: PaymentLedgerEntry): Record<string, unknown> | undefined {
+  const remoteVerification = remoteVerificationForLedger(entry);
+  return isRecord(remoteVerification?.feeSplit) ? remoteVerification.feeSplit : undefined;
+}
+
+function stringRecordValue(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isSponsoredBudgetSettlementFailure(entry: PaymentLedgerEntry): boolean {
+  return (
+    entry.paymentStatus === "settlement_failed" &&
+    entry.rail === "base-usdc" &&
+    entry.networkId === "eip155:8453" &&
+    entry.executionStatus === "completed" &&
+    entry.returnStatus === "accepted" &&
+    typeof entry.errorMessage === "string" &&
+    entry.errorMessage.includes("sponsored budget")
+  );
+}
+
+async function baseRpcCall<T>(method: string, params: unknown[]): Promise<T> {
+  const rpcUrl = process.env.CLAWZ_BASE_RPC_URL?.trim() || "https://mainnet.base.org";
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`Base RPC ${method} failed with HTTP ${response.status}.`);
+  }
+  const payload = await response.json() as unknown;
+  if (!isRecord(payload)) {
+    throw new Error(`Base RPC ${method} returned an invalid response.`);
+  }
+  if (isRecord(payload.error)) {
+    const message = typeof payload.error.message === "string" ? payload.error.message : JSON.stringify(payload.error);
+    throw new Error(`Base RPC ${method} failed: ${message}`);
+  }
+  return payload.result as T;
+}
+
+async function fetchBaseUsdcTransferLogs(input: {
+  fromTopic: string;
+  toTopic: string;
+  lookbackBlocks: number;
+}): Promise<BaseUsdcTransferLog[]> {
+  const latestHex = await baseRpcCall<string>("eth_blockNumber", []);
+  const latestBlock = Number.parseInt(latestHex, 16);
+  const startBlock = Math.max(0, latestBlock - input.lookbackBlocks);
+  const step = 9999;
+  const rawLogs: Record<string, unknown>[] = [];
+  for (let fromBlock = startBlock; fromBlock <= latestBlock; fromBlock += step + 1) {
+    const toBlock = Math.min(latestBlock, fromBlock + step);
+    const result = await baseRpcCall<unknown[]>("eth_getLogs", [
+      {
+        fromBlock: `0x${fromBlock.toString(16)}`,
+        toBlock: `0x${toBlock.toString(16)}`,
+        address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        topics: [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          input.fromTopic,
+          input.toTopic
+        ]
+      }
+    ]);
+    rawLogs.push(...result.filter(isRecord));
+  }
+  const blockTimestamps = new Map<number, string>();
+  const logs: BaseUsdcTransferLog[] = [];
+  for (const log of rawLogs) {
+    const transactionHash = typeof log.transactionHash === "string" ? log.transactionHash : "";
+    const blockHex = typeof log.blockNumber === "string" ? log.blockNumber : "";
+    const data = typeof log.data === "string" ? log.data : "";
+    if (!isEvmTransactionHash(transactionHash) || !blockHex || !data) {
+      continue;
+    }
+    const blockNumber = Number.parseInt(blockHex, 16);
+    if (!blockTimestamps.has(blockNumber)) {
+      const block = await baseRpcCall<Record<string, unknown>>("eth_getBlockByNumber", [blockHex, false]);
+      const timestampHex = typeof block.timestamp === "string" ? block.timestamp : "0x0";
+      blockTimestamps.set(blockNumber, new Date(Number(BigInt(timestampHex)) * 1000).toISOString());
+    }
+    logs.push({
+      transactionHash,
+      blockNumber,
+      valueAtomic: BigInt(data).toString(),
+      occurredAtIso: blockTimestamps.get(blockNumber)!
+    });
+  }
+  return logs;
+}
+
+async function reconcileSponsoredBudgetSettlementFailures(input: {
+  entries: PaymentLedgerEntry[];
+  commit: boolean;
+  lookbackBlocks: number;
+  matchBeforeMs: number;
+  matchAfterMs: number;
+}) {
+  const candidates = input.entries.filter(isSponsoredBudgetSettlementFailure);
+  const byRoute = new Map<string, {
+    payerTopic: string;
+    sellerTopic: string;
+    protocolTopic: string;
+    sellerLogs?: BaseUsdcTransferLog[];
+    protocolLogs?: BaseUsdcTransferLog[];
+  }>();
+  for (const entry of candidates) {
+    const remoteVerification = remoteVerificationForLedger(entry);
+    const feeSplit = feeSplitForLedger(entry);
+    const payerTopic = evmAddressTopic(stringRecordValue(remoteVerification, "payer"));
+    const sellerTopic = evmAddressTopic(stringRecordValue(feeSplit, "sellerPayTo") ?? entry.sellerPayTo);
+    const protocolTopic = evmAddressTopic(stringRecordValue(feeSplit, "protocolFeePayTo") ?? entry.protocolFeeRecipient);
+    if (!payerTopic || !sellerTopic || !protocolTopic) {
+      continue;
+    }
+    const key = `${payerTopic}:${sellerTopic}:${protocolTopic}`;
+    byRoute.set(key, { payerTopic, sellerTopic, protocolTopic });
+  }
+  for (const route of byRoute.values()) {
+    route.sellerLogs = await fetchBaseUsdcTransferLogs({
+      fromTopic: route.payerTopic,
+      toTopic: route.sellerTopic,
+      lookbackBlocks: input.lookbackBlocks
+    });
+    route.protocolLogs = await fetchBaseUsdcTransferLogs({
+      fromTopic: route.payerTopic,
+      toTopic: route.protocolTopic,
+      lookbackBlocks: input.lookbackBlocks
+    });
+  }
+
+  const usedSellerTransactions = new Set<string>();
+  const matches = [];
+  for (const entry of [...candidates].sort((left, right) => Date.parse(left.updatedAtIso) - Date.parse(right.updatedAtIso))) {
+    const remoteVerification = remoteVerificationForLedger(entry);
+    const feeSplit = feeSplitForLedger(entry);
+    const payerTopic = evmAddressTopic(stringRecordValue(remoteVerification, "payer"));
+    const sellerTopic = evmAddressTopic(stringRecordValue(feeSplit, "sellerPayTo") ?? entry.sellerPayTo);
+    const protocolTopic = evmAddressTopic(stringRecordValue(feeSplit, "protocolFeePayTo") ?? entry.protocolFeeRecipient);
+    const sellerAmount = stringRecordValue(feeSplit, "sellerAmount");
+    const protocolFeeAmount = stringRecordValue(feeSplit, "protocolFeeAmount");
+    const route = payerTopic && sellerTopic && protocolTopic
+      ? byRoute.get(`${payerTopic}:${sellerTopic}:${protocolTopic}`)
+      : undefined;
+    const candidateTimeMs = Date.parse(entry.updatedAtIso);
+    const sellerMatch = route?.sellerLogs
+      ?.filter((log) => (
+        log.valueAtomic === sellerAmount &&
+        !usedSellerTransactions.has(log.transactionHash.toLowerCase()) &&
+        Date.parse(log.occurredAtIso) >= candidateTimeMs - input.matchBeforeMs &&
+        Date.parse(log.occurredAtIso) <= candidateTimeMs + input.matchAfterMs
+      ))
+      .sort((left, right) => Math.abs(Date.parse(left.occurredAtIso) - candidateTimeMs) - Math.abs(Date.parse(right.occurredAtIso) - candidateTimeMs))[0];
+    const protocolMatch = sellerMatch
+      ? route?.protocolLogs
+        ?.filter((log) => (
+          log.valueAtomic === protocolFeeAmount &&
+          Math.abs(log.blockNumber - sellerMatch.blockNumber) <= 1
+        ))
+        .sort((left, right) => Math.abs(left.blockNumber - sellerMatch.blockNumber) - Math.abs(right.blockNumber - sellerMatch.blockNumber))[0]
+      : undefined;
+    if (!sellerMatch || !protocolMatch) {
+      matches.push({
+        ledgerId: entry.ledgerId,
+        requestId: entry.hireRequestId,
+        matched: false,
+        reason: "no_onchain_transfer_match"
+      });
+      continue;
+    }
+    usedSellerTransactions.add(sellerMatch.transactionHash.toLowerCase());
+    const match = {
+      ledgerId: entry.ledgerId,
+      requestId: entry.hireRequestId,
+      matched: true,
+      ledgerUpdatedAtIso: entry.updatedAtIso,
+      sellerSettlementTxHash: sellerMatch.transactionHash,
+      sellerSettlementBlock: sellerMatch.blockNumber,
+      sellerSettlementAtIso: sellerMatch.occurredAtIso,
+      protocolFeeTxHash: protocolMatch.transactionHash,
+      protocolFeeBlock: protocolMatch.blockNumber,
+      protocolFeeAtIso: protocolMatch.occurredAtIso
+    };
+    if (input.commit) {
+      await controlPlane.reconcilePaymentLedgerSettlement({
+        ledgerId: entry.ledgerId,
+        settlementReference: sellerMatch.transactionHash,
+        sellerSettlementTxHash: sellerMatch.transactionHash,
+        protocolFeeTxHash: protocolMatch.transactionHash,
+        transactionHashes: [sellerMatch.transactionHash, protocolMatch.transactionHash],
+        evidence: {
+          source: "base_rpc_usdc_transfer_logs",
+          priorErrorCode: entry.errorCode,
+          priorErrorMessage: entry.errorMessage,
+          sellerSettlementBlock: sellerMatch.blockNumber,
+          protocolFeeBlock: protocolMatch.blockNumber
+        }
+      });
+      if (entry.hireRequestId) {
+        await controlPlane.markHireRequestPaymentSettled({
+          requestId: entry.hireRequestId,
+          settlementReference: sellerMatch.transactionHash,
+          sellerSettlementTxHash: sellerMatch.transactionHash,
+          protocolFeeTxHash: protocolMatch.transactionHash,
+          transactionHashes: [sellerMatch.transactionHash, protocolMatch.transactionHash]
+        });
+      }
+    }
+    matches.push(match);
+  }
+  return {
+    candidateCount: candidates.length,
+    matchedCount: matches.filter((match) => match.matched).length,
+    reconciledCount: input.commit ? matches.filter((match) => match.matched).length : 0,
+    matches
+  };
+}
+
 async function buildX402PlanFromQuery(request: IndexerRequest) {
   const sessionId = queryString(request.query, "sessionId");
   const agentId = queryString(request.query, "agentId");
@@ -3594,8 +3841,22 @@ app.get("/api/admin/x402/ledger", route(async (request, response) => {
   }
 }));
 
-const handleX402Reconciliation = route(async (_request, response) => {
-  const initialLedger = await controlPlane.listPaymentLedger({ limit: 500 });
+const handleX402Reconciliation = route(async (request, response) => {
+  const agentId = queryString(request.query, "agentId");
+  const commit =
+    queryString(request.query, "commit") === "true" ||
+    (isRecord(request.body) && request.body.commit === true);
+  const sponsoredBudgetMode =
+    queryString(request.query, "sponsoredBudget") === "true" ||
+    (isRecord(request.body) && request.body.sponsoredBudget === true);
+  const lookbackBlocks =
+    Number.parseInt(queryString(request.query, "lookbackBlocks") ?? "", 10) ||
+    (isRecord(request.body) && typeof request.body.lookbackBlocks === "number" ? request.body.lookbackBlocks : undefined) ||
+    100_000;
+  const initialLedger = await controlPlane.listPaymentLedger({
+    ...(agentId ? { agentId } : {}),
+    limit: 500
+  });
   const settledTxHashes = new Set<string>();
   for (const entry of initialLedger.entries) {
     for (const hash of entry.transactionHashes) {
@@ -3648,7 +3909,10 @@ const handleX402Reconciliation = route(async (_request, response) => {
       });
     }
   }
-  const ledger = await controlPlane.listPaymentLedger({ limit: 500 });
+  const ledger = await controlPlane.listPaymentLedger({
+    ...(agentId ? { agentId } : {}),
+    limit: 500
+  });
   const orphanEntries = [];
   const incompleteEntries = [];
   for (const entry of ledger.entries) {
@@ -3663,6 +3927,15 @@ const handleX402Reconciliation = route(async (_request, response) => {
       incompleteEntries.push(entry);
     }
   }
+  const sponsoredBudgetReconciliation = sponsoredBudgetMode
+    ? await reconcileSponsoredBudgetSettlementFailures({
+        entries: ledger.entries,
+        commit,
+        lookbackBlocks,
+        matchBeforeMs: 5 * 60 * 1000,
+        matchAfterMs: 10 * 60 * 1000
+      })
+    : undefined;
   response.json({
     ok: true,
     mode: relayerAddress && basescanApiKey ? "basescan-backfill" : "ledger-local-summary",
@@ -3673,9 +3946,12 @@ const handleX402Reconciliation = route(async (_request, response) => {
     backfilledTransactionHashCount: backfilledHashes.length,
     backfilledTransactionHashes: backfilledHashes.slice(0, 50),
     trackedTransactionHashCount: settledTxHashes.size,
+    ...(agentId ? { agentId } : {}),
+    commit,
     totalLedgerEntryCount: ledger.totalLedgerEntryCount,
     orphanSettlementCount: orphanEntries.length,
     paidButIncompleteCount: incompleteEntries.length,
+    ...(sponsoredBudgetReconciliation ? { sponsoredBudgetReconciliation } : {}),
     orphanSettlements: orphanEntries.slice(0, 50),
     paidButIncomplete: incompleteEntries.slice(0, 50)
   });
