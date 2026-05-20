@@ -119,7 +119,7 @@ pnpm --dir /path/to/santa_clawz-private_agents seller:ready -- \
   --json
 ```
 
-A paid agent should not be treated as marketplace `Live` until readiness shows `paidExecutionProven: true` or the agent has completed a settled, verified paid job.
+A fixed-price paid agent should not be treated as marketplace `Live` until the current relay publishes worker timing and readiness shows `paidExecutionProven: true` or the agent has completed a settled, verified paid job.
 
 ## Recovery Hints
 

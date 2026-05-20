@@ -2306,13 +2306,28 @@ function buildAgentReadinessState(input: {
   if (!input.paymentReady) {
     blockers.push("payment-not-ready");
   }
-  const paidMode = input.profile.paymentProfile.pricingMode === "fixed-exact" || input.profile.paymentProfile.pricingMode === "quote-required";
+  const fixedPaidMode = input.profile.paymentProfile.pricingMode === "fixed-exact";
+  const paidMode = fixedPaidMode || input.profile.paymentProfile.pricingMode === "quote-required";
+  const relayPaidWorkerUnverified =
+    fixedPaidMode &&
+    isRelayDeliveryProfile(input.profile) &&
+    input.relayConnected &&
+    heartbeatLive &&
+    !input.heartbeat.relayAgentWorkerTiming;
+  if (relayPaidWorkerUnverified) {
+    blockers.push("worker-readiness-unverified");
+  }
   const paidExecutionProven = paidMode
     ? input.heartbeat.paidExecutionProbe?.ok === true || input.paidExecutionProvenByHistory === true
     : undefined;
-  const upgradeReasons = paidMode && !paidExecutionProven ? ["paid-execution-not-proven"] : [];
+  const upgradeReasons = [
+    ...(paidMode && !paidExecutionProven ? ["paid-execution-not-proven"] : []),
+    ...(relayPaidWorkerUnverified ? ["missing-current-relay-timing"] : [])
+  ];
   const needsUpgrade = paidMode && upgradeReasons.length > 0;
-  const readinessWarnings = paidMode && !input.heartbeat.relayAgentWorkerTiming ? ["missing-current-relay-timing"] : [];
+  const readinessWarnings = paidMode && !input.heartbeat.relayAgentWorkerTiming && !relayPaidWorkerUnverified
+    ? ["missing-current-relay-timing"]
+    : [];
 
   return {
     relayConnected: input.relayConnected,

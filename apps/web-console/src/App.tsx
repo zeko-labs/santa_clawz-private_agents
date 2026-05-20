@@ -910,14 +910,30 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
   return shorten(reference, 10, 8);
 }
 
+function hasFixedPaidWorkerReadinessGap(agent: AgentRegistryEntry) {
+  const blockers = new Set(agent.readiness?.blockers ?? []);
+  const upgradeReasons = new Set(agent.readiness?.upgradeReasons ?? []);
+  const readinessWarnings = new Set(agent.readiness?.readinessWarnings ?? []);
+  return (
+    agent.paidJobsEnabled &&
+    (blockers.has("worker-readiness-unverified") ||
+      upgradeReasons.has("missing-current-relay-timing") ||
+      readinessWarnings.has("missing-current-relay-timing"))
+  );
+}
+
+function isMarketplaceLive(agent: AgentRegistryEntry) {
+  const paidExecutionBlocked =
+    agent.paidJobsEnabled &&
+    (agent.readiness?.paidExecutionProven !== true || hasFixedPaidWorkerReadinessGap(agent));
+  return agent.runtimeStatus !== "offline" && agent.readiness?.hireable === true && !paidExecutionBlocked;
+}
+
 function exploreStatusLabel(agent: AgentRegistryEntry) {
   if (agent.runtimeStatus === "offline") {
     return "Offline";
   }
-  const paidExecutionBlocked =
-    agent.paidJobsEnabled &&
-    agent.readiness?.paidExecutionProven !== true;
-  if (agent.readiness?.hireable === true && !paidExecutionBlocked) {
+  if (isMarketplaceLive(agent)) {
     return "Live";
   }
   if (isDemoAgent(agent)) {
@@ -952,6 +968,9 @@ function nextStepLabel(agent: AgentRegistryEntry) {
   if (blockers.has("runtime-unreachable") || blockers.has("worker-unreachable")) {
     return "Reconnect worker";
   }
+  if (hasFixedPaidWorkerReadinessGap(agent)) {
+    return "Update relay";
+  }
   if (!agent.paymentsEnabled) {
     return "Enable payments";
   }
@@ -978,7 +997,7 @@ function activityLineForAgent(agent: AgentRegistryEntry) {
     return `Offline • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
   if (agent.paidJobsEnabled) {
-    return agent.readiness?.paidExecutionProven === true
+    return isMarketplaceLive(agent)
       ? `${referencePriceLine(agent)} on ${agent.paymentRail ? railLabel(agent.paymentRail) : "configured rail"} • ${formatRelativeTime(agent.lastUpdatedAtIso)}`
       : `Pending readiness • ${formatRelativeTime(agent.lastUpdatedAtIso)}`;
   }
@@ -1060,7 +1079,7 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.agentName} is offline right now, but its public proof history stays visible.`;
   }
   if (agent.paidJobsEnabled) {
-    return agent.readiness?.paidExecutionProven === true
+    return isMarketplaceLive(agent)
       ? `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`
       : `${agent.agentName} is pending readiness before buyers should pay.`;
   }
@@ -1097,7 +1116,7 @@ function dispatchLineForAgent(agent: AgentRegistryEntry) {
     return `${agent.headline} Default starter service for agents that want the latest guidance on getting hired, pricing work, and improving their public trust surface.`;
   }
   if (agent.paidJobsEnabled) {
-    return agent.readiness?.paidExecutionProven === true
+    return isMarketplaceLive(agent)
       ? `${agent.headline} Now taking paid jobs with ${agent.paymentRail ? railLabel(agent.paymentRail) : "its selected payout rail"}.`
       : `${agent.headline} Pending readiness before paid work is accepted.`;
   }
@@ -3817,8 +3836,12 @@ export function App() {
                     <details className="activation-command-details">
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
-                          <strong>Run activation command from your agent runtime folder containing package.json to go live</strong>
-                          <span>New setup? Use the activation guide first.</span>
+                          <strong>
+                            Run activation command from your agent runtime folder containing package.json to go live.{" "}
+                            <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                              Use activation guide to help with new agent setup.
+                            </a>
+                          </strong>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
@@ -4590,9 +4613,6 @@ export function App() {
                                         </div>
                                       </div>
                                       <span className="agent-card-status-stack" aria-label="Agent status">
-                                        <span className={`agent-card-status-pill ${runtimeStatusClass(agent.runtimeStatus)}`}>
-                                          {runtimeStatusLabel(agent.runtimeStatus)}
-                                        </span>
                                         <span className={`agent-card-status-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
                                           {exploreStatusLabel(agent)}
                                         </span>
