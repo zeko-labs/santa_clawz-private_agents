@@ -8160,6 +8160,15 @@ export class ClawzControlPlane {
           paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, sessionId, { includePrivate: true }),
           lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
         });
+        const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
+        const quoteReady = paymentReady && profile.paymentProfile.pricingMode === "quote-required";
+        const paidExecutionReady =
+          profile.paymentProfile.pricingMode === "free-test"
+            ? readiness.hireable
+            : paymentReady &&
+              paidJobsEnabled &&
+              readiness.paidExecutionProven === true &&
+              readiness.hireable;
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);
         const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId);
         return {
@@ -8203,7 +8212,9 @@ export class ClawzControlPlane {
           settlementTrigger: profile.paymentProfile.settlementTrigger,
           payoutAddressConfigured: hasPayoutAddress(profile),
           paymentProfileReady: hasReadyPaymentProfile(profile),
-          paidJobsEnabled: computePaidJobsEnabled(profile, published, deployment),
+          paidJobsEnabled,
+          quoteReady,
+          paidExecutionReady,
           missionAuthVerified: profile.missionAuthOverlay.status === "verified",
           ownershipVerified: ownership.status === "verified",
           availability: profile.availability,
