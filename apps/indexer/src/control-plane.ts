@@ -828,6 +828,15 @@ interface PaymentLedgerSettlementInput {
   settlementRetryable?: boolean;
 }
 
+interface PaymentLedgerSettlementReconciliationInput {
+  ledgerId: string;
+  settlementReference?: string;
+  sellerSettlementTxHash?: string;
+  protocolFeeTxHash?: string;
+  transactionHashes?: string[];
+  evidence?: Record<string, unknown>;
+}
+
 interface PaymentLedgerListOptions {
   agentId?: string;
   sessionId?: string;
@@ -5405,6 +5414,57 @@ export class ClawzControlPlane {
       ? file.entries.map((entry, index) => index === existingIndex ? nextEntry : entry)
       : [nextEntry, ...file.entries];
     await this.savePaymentLedgerFile({ entries: entries.slice(0, 2000) });
+    return nextEntry;
+  }
+
+  async reconcilePaymentLedgerSettlement(
+    input: PaymentLedgerSettlementReconciliationInput
+  ): Promise<PaymentLedgerEntry | undefined> {
+    const file = await this.loadPaymentLedgerFile();
+    const index = file.entries.findIndex((entry) => entry.ledgerId === input.ledgerId);
+    if (index < 0) {
+      return undefined;
+    }
+    const existing = file.entries[index]!;
+    const transactionHashes = uniqueTransactionHashes(
+      existing.transactionHashes,
+      input.transactionHashes,
+      input.sellerSettlementTxHash ? [input.sellerSettlementTxHash] : undefined,
+      input.protocolFeeTxHash ? [input.protocolFeeTxHash] : undefined
+    );
+    const sellerSettlementTxHash = input.sellerSettlementTxHash ?? existing.sellerSettlementTxHash;
+    const protocolFeeTxHash = input.protocolFeeTxHash ?? existing.protocolFeeTxHash;
+    const {
+      errorCode: _errorCode,
+      errorMessage: _errorMessage,
+      lifecycleStatus: _lifecycleStatus,
+      settlementRecovery: _settlementRecovery,
+      ...cleanExisting
+    } = existing;
+    const nextEntry: PaymentLedgerEntry = {
+      ...cleanExisting,
+      updatedAtIso: new Date().toISOString(),
+      ...(input.settlementReference ? { settlementReference: input.settlementReference } : {}),
+      ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+      ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
+      transactionHashes,
+      facilitatorResponseSummary: {
+        ...(existing.facilitatorResponseSummary ?? {}),
+        settlementReconciliation: {
+          reconciledAtIso: new Date().toISOString(),
+          reason: "onchain_usdc_transfer_match",
+          ...(input.evidence ?? {})
+        }
+      },
+      paymentStatus: inferPaymentLedgerSettlementStatus({
+        ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+        ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
+        transactionHashes
+      })
+    };
+    await this.savePaymentLedgerFile({
+      entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
+    });
     return nextEntry;
   }
 
