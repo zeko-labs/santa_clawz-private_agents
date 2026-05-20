@@ -922,11 +922,39 @@ function hasFixedPaidWorkerReadinessGap(agent: AgentRegistryEntry) {
   );
 }
 
+function isPaidExecutionReady(agent: AgentRegistryEntry) {
+  if (!agent.paymentsEnabled) {
+    return false;
+  }
+  if (agent.paidExecutionReady === true) {
+    return true;
+  }
+  return agent.paidJobsEnabled && agent.readiness?.paidExecutionProven === true && !hasFixedPaidWorkerReadinessGap(agent);
+}
+
 function isMarketplaceLive(agent: AgentRegistryEntry) {
   const paidExecutionBlocked =
     agent.paidJobsEnabled &&
     (agent.readiness?.paidExecutionProven !== true || hasFixedPaidWorkerReadinessGap(agent));
-  return agent.runtimeStatus !== "offline" && agent.readiness?.hireable === true && !paidExecutionBlocked;
+  return (
+    agent.runtimeStatus !== "offline" &&
+    agent.readiness?.hireable === true &&
+    !paidExecutionBlocked &&
+    (!agent.paymentsEnabled || isPaidExecutionReady(agent))
+  );
+}
+
+function isMarketplaceReady(agent: AgentRegistryEntry) {
+  if (agent.runtimeStatus === "offline" || agent.readiness?.hireable !== true) {
+    return false;
+  }
+  if (isMarketplaceLive(agent)) {
+    return true;
+  }
+  if (agent.quoteReady === true && (!agent.paymentsEnabled || agent.readiness?.paidExecutionProven === true)) {
+    return true;
+  }
+  return agent.paymentsEnabled && agent.paymentProfileReady && agent.readiness?.paymentReady === true && agent.readiness?.paidExecutionProven === true;
 }
 
 function exploreStatusLabel(agent: AgentRegistryEntry) {
@@ -935,6 +963,9 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
   }
   if (isMarketplaceLive(agent)) {
     return "Live";
+  }
+  if (isMarketplaceReady(agent)) {
+    return "Ready";
   }
   if (isDemoAgent(agent)) {
     return "Demo";
@@ -951,6 +982,9 @@ function marketplaceStatusClass(label: string) {
   }
   if (label === "Demo") {
     return "runtime-status-demo";
+  }
+  if (label === "Ready") {
+    return "runtime-status-ready";
   }
   return "runtime-status-waiting";
 }
@@ -982,6 +1016,14 @@ function nextStepLabel(agent: AgentRegistryEntry) {
   }
   if (!agent.paymentProfileReady || !agent.readiness?.paymentReady || blockers.has("payment-not-ready")) {
     return "Finish payments";
+  }
+  if (agent.paymentsEnabled && !isPaidExecutionReady(agent)) {
+    if (agent.pricingMode === "quote-required" && agent.quoteReady === true && agent.readiness?.paidExecutionProven === true) {
+      return null;
+    }
+    return agent.pricingMode === "quote-required" && agent.readiness?.paidExecutionProven === true
+      ? "Enable paid execution"
+      : "Run paid test";
   }
   if (upgradeReasons.has("paid-execution-not-proven") || agent.readiness?.paidExecutionProven === false) {
     return "Run paid test";

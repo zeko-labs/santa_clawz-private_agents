@@ -1422,14 +1422,15 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
   } catch {
     plan = undefined;
   }
-  const quoteReady = agent.paymentProfileReady && agent.pricingMode === "quote-required";
+  const quoteReady = agent.quoteReady ?? (agent.paymentProfileReady && agent.pricingMode === "quote-required");
   const paidExecutionProven = paidExecutionProvenFromReadiness(agent.readiness);
   const paidExecutionReady =
-    agent.pricingMode === "free-test" ||
-    (agent.paymentProfileReady &&
-      agent.paidJobsEnabled &&
-      paidExecutionProven &&
-      (agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required"));
+    agent.paidExecutionReady ??
+    (agent.pricingMode === "free-test" ||
+      (agent.paymentProfileReady &&
+        agent.paidJobsEnabled &&
+        paidExecutionProven &&
+        (agent.pricingMode === "fixed-exact" || agent.pricingMode === "quote-required")));
   const pricingReadiness = pricingReadinessNotes({
     pricingMode: agent.pricingMode,
     quoteReady,

@@ -618,6 +618,8 @@ export interface AgentRegistryEntry {
   payoutAddressConfigured: boolean;
   paymentProfileReady: boolean;
   paidJobsEnabled: boolean;
+  quoteReady?: boolean;
+  paidExecutionReady?: boolean;
   missionAuthVerified: boolean;
   ownershipVerified: boolean;
   availability: AgentProfileState["availability"];
