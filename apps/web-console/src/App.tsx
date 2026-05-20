@@ -944,12 +944,28 @@ function isMarketplaceLive(agent: AgentRegistryEntry) {
   );
 }
 
+function isMarketplaceReady(agent: AgentRegistryEntry) {
+  if (agent.runtimeStatus === "offline" || agent.readiness?.hireable !== true) {
+    return false;
+  }
+  if (isMarketplaceLive(agent)) {
+    return true;
+  }
+  if (agent.quoteReady === true && (!agent.paymentsEnabled || agent.readiness?.paidExecutionProven === true)) {
+    return true;
+  }
+  return agent.paymentsEnabled && agent.paymentProfileReady && agent.readiness?.paymentReady === true && agent.readiness?.paidExecutionProven === true;
+}
+
 function exploreStatusLabel(agent: AgentRegistryEntry) {
   if (agent.runtimeStatus === "offline") {
     return "Offline";
   }
   if (isMarketplaceLive(agent)) {
     return "Live";
+  }
+  if (isMarketplaceReady(agent)) {
+    return "Ready";
   }
   if (isDemoAgent(agent)) {
     return "Demo";
@@ -966,6 +982,9 @@ function marketplaceStatusClass(label: string) {
   }
   if (label === "Demo") {
     return "runtime-status-demo";
+  }
+  if (label === "Ready") {
+    return "runtime-status-ready";
   }
   return "runtime-status-waiting";
 }
@@ -999,6 +1018,9 @@ function nextStepLabel(agent: AgentRegistryEntry) {
     return "Finish payments";
   }
   if (agent.paymentsEnabled && !isPaidExecutionReady(agent)) {
+    if (agent.pricingMode === "quote-required" && agent.quoteReady === true && agent.readiness?.paidExecutionProven === true) {
+      return null;
+    }
     return agent.pricingMode === "quote-required" && agent.readiness?.paidExecutionProven === true
       ? "Enable paid execution"
       : "Run paid test";
