@@ -2546,6 +2546,17 @@ pre,
   text-transform: uppercase;
 }
 
+.activation-command-summary-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(18, 35, 54, 0.2);
+}
+
+.activation-command-summary-link:hover {
+  color: var(--ink);
+  border-color: rgba(18, 35, 54, 0.38);
+}
+
 .activation-command-summary-copy code {
   display: block;
   max-width: 100%;

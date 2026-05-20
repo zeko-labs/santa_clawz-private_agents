@@ -3817,8 +3817,12 @@ export function App() {
                     <details className="activation-command-details">
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
-                          <strong>Run activation command from your agent runtime folder containing package.json to go live</strong>
-                          <span>New setup? Use the activation guide first.</span>
+                          <strong>
+                            Run activation command from your agent runtime folder containing package.json to go live.{" "}
+                            <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                              Use activation guide to help with new agent setup.
+                            </a>
+                          </strong>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
