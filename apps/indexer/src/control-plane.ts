@@ -2235,30 +2235,38 @@ function buildAgentCompletionScore(
 
 function buildAgentJobActivityStats(
   hireRequests: HireRequestFile,
-  sessionId: string
+  sessionId: string,
+  nowMs = Date.now()
 ) {
   const requests = hireRequests.requests
     .filter((request) => request.sessionId === sessionId)
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
   const privateRequests = requests.filter(isPrivateHireRequest);
   const paidRequests = requests.filter((request) => request.requestType === "paid_execution");
-  const completedRequests = requests.filter((request) => request.status === "completed");
-  const failedRequests = requests.filter((request) => request.status === "failed");
+  const paidRequestOutcomes = paidRequests.map((request) => ({
+    request,
+    outcome: paidExecutionTerminalOutcome(request, nowMs)
+  }));
+  const completedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "completed");
+  const failedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "failed");
+  const privatePaidRequests = paidRequests.filter(isPrivateHireRequest);
   return {
     totalJobCount: requests.length,
     publicJobCount: requests.length - privateRequests.length,
     privateJobCount: privateRequests.length,
     paidExecutionCount: paidRequests.length,
-    privatePaidExecutionCount: paidRequests.filter(isPrivateHireRequest).length,
-    completedJobCount: completedRequests.length,
-    privateCompletedJobCount: privateRequests.filter((request) => request.status === "completed").length,
-    failedJobCount: failedRequests.length,
-    privateFailedJobCount: privateRequests.filter((request) => request.status === "failed").length,
+    privatePaidExecutionCount: privatePaidRequests.length,
+    completedJobCount: completedPaidRequests.length,
+    privateCompletedJobCount: completedPaidRequests.filter((entry) => isPrivateHireRequest(entry.request)).length,
+    failedJobCount: failedPaidRequests.length,
+    privateFailedJobCount: failedPaidRequests.filter((entry) => isPrivateHireRequest(entry.request)).length,
     ...(requests[0]?.submittedAtIso ? { lastJobAtIso: requests[0].submittedAtIso } : {}),
     label:
       requests.length === 0
         ? "No SantaClawz jobs yet"
-        : `${completedRequests.length}/${requests.length} jobs completed${privateRequests.length > 0 ? `, ${privateRequests.length} private` : ""}`
+        : paidRequests.length === 0
+          ? `No paid jobs yet${privateRequests.length > 0 ? `, ${privateRequests.length} private` : ""}`
+          : `${completedPaidRequests.length}/${paidRequests.length} paid jobs completed${privatePaidRequests.length > 0 ? `, ${privatePaidRequests.length} private` : ""}`
   };
 }
 
@@ -5191,7 +5199,7 @@ export class ClawzControlPlane {
         paidButNotCompleted,
         needsAttention: true,
         completionStatus: entry.executionStatus === "completed" ? "completed" : "not_started",
-        label: "Settlement failed"
+        label: "Settlement attempt failed"
       };
     }
     if (completed) {

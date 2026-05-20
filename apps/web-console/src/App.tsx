@@ -3338,15 +3338,23 @@ export function App() {
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
   const paidOutcomeFallbackCount = agentCompletionScore?.evaluatedJobCount ?? 0;
+  const paidJobActivityCount = agentJobActivityStats?.paidExecutionCount ?? paidOutcomeFallbackCount;
+  const paidCompletedActivityCount = agentJobActivityStats?.completedJobCount ?? agentCompletionScore?.completedJobCount ?? 0;
+  const paidIncompleteActivityCount = agentJobActivityStats?.failedJobCount ?? agentCompletionScore?.failedJobCount ?? 0;
+  const privatePaidActivityCount = agentJobActivityStats?.privatePaidExecutionCount ?? 0;
   const agentJobActivityLabel =
-    agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
-      ? `${agentJobActivityStats.totalJobCount} total jobs`
-      : paidOutcomeFallbackCount > 0
-        ? `${paidOutcomeFallbackCount} paid outcomes`
-        : "No job totals yet";
+    paidJobActivityCount > 0
+      ? `${paidJobActivityCount} paid jobs`
+      : agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
+        ? "No paid jobs yet"
+        : paidOutcomeFallbackCount > 0
+          ? `${paidOutcomeFallbackCount} paid outcomes`
+          : "No job totals yet";
   const agentJobActivityDetail =
-    agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
-      ? `${agentJobActivityStats.publicJobCount} public / ${agentJobActivityStats.privateJobCount} private`
+    paidJobActivityCount > 0
+      ? `${paidCompletedActivityCount} completed / ${paidIncompleteActivityCount} incomplete${privatePaidActivityCount > 0 ? ` • ${privatePaidActivityCount} private` : ""}`
+      : agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
+        ? `${agentJobActivityStats.totalJobCount} total activity records`
       : paidOutcomeFallbackCount > 0
         ? "Public/private split starts with new jobs"
         : "Public and private totals will appear here";
