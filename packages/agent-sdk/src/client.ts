@@ -475,19 +475,21 @@ function defaultRelayBase(): string {
   return process.env.CLAWZ_RELAY_BASE?.trim() || process.env.CLAWZ_RELAY_API_BASE?.trim() || "https://relay.santaclawz.ai";
 }
 
+function defaultActivationScriptUrl(): string {
+  return process.env.CLAWZ_ACTIVATION_SCRIPT_URL?.trim() || "https://santaclawz.ai/activate-agent.sh";
+}
+
 function buildAgentEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {
   const runtimeIngressUrl = input.runtimeDelivery?.runtimeIngressUrl?.trim();
   const selfHosted = input.runtimeDelivery?.mode === "self-hosted" && runtimeIngressUrl;
   return [
-    "pnpm enroll:agent --",
+    "curl -fsSL",
+    shellQuote(defaultActivationScriptUrl()),
+    "| bash -s --",
     `--ticket ${shellQuote(ticket.ticket)}`,
-    "--serve",
     selfHosted
       ? `--runtime-ingress-url ${shellQuote(runtimeIngressUrl)}`
-      : "--connect-relay",
-    !selfHosted ? `--relay-base ${shellQuote(defaultRelayBase())}` : "",
-    "--write-env .env.santaclawz",
-    "--challenge-file .well-known/santaclawz-agent-challenge.json"
+      : `--relay-base ${shellQuote(defaultRelayBase())}`
   ].filter(Boolean).join(" ");
 }
 

@@ -950,7 +950,7 @@ pre,
   }
 }
 
-@media (min-width: 641px) and (max-width: 1319px) {
+@media (min-width: 641px) and (max-width: 899px) {
   .explore-aggregate-stats {
     display: flex;
     flex-wrap: wrap;
@@ -962,6 +962,40 @@ pre,
     flex: 1 1 176px;
     max-width: 236px;
     min-height: 45px;
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1319px) {
+  .explore-nav-rail {
+    grid-template-columns: minmax(360px, 1fr) auto;
+    align-items: end;
+    column-gap: 12px;
+    row-gap: 10px;
+  }
+
+  .explore-nav-title {
+    grid-column: 1 / -1;
+  }
+
+  .explore-search-field {
+    grid-column: 1;
+  }
+
+  .explore-aggregate-stats {
+    grid-column: 2;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    align-self: end;
+    justify-self: end;
+    width: auto;
+  }
+
+  .explore-aggregate-stat {
+    flex: 0 0 108px;
+    width: 108px;
+    min-height: 50px;
+    padding: 7px 8px;
   }
 }
 
@@ -3632,6 +3666,11 @@ h3 {
 .activation-command-code mark {
   background: transparent;
   color: #6eca9e;
+}
+
+.activation-command-code .activation-command-muted {
+  color: rgba(237, 245, 255, 0.58);
+  font-style: italic;
 }
 
 .activation-command-copy-button {

@@ -114,6 +114,7 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/agent-first-onboarding.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
+const ACTIVATION_SCRIPT_PATH = "/activate-agent.sh";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -507,6 +508,26 @@ function hasAdvancedEthereumPayout(profile: Pick<AgentProfileState, "payoutWalle
 
 function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+function activationScriptUrl() {
+  if (typeof window === "undefined") {
+    return `https://santaclawz.ai${ACTIVATION_SCRIPT_PATH}`;
+  }
+  return `${window.location.origin}${ACTIVATION_SCRIPT_PATH}`;
+}
+
+function buildActivationCommand(ticket: string, runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
+  const args = [
+    "curl -fsSL",
+    shellQuote(activationScriptUrl()),
+    "| bash -s --",
+    `--ticket ${shellQuote(ticket)}`,
+    runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
+      ? `--runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
+      : `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`
+  ];
+  return args.filter(Boolean).join(" ");
 }
 
 function ticketPreview(value: string) {
@@ -2574,17 +2595,10 @@ export function App() {
           minute: "2-digit"
         })}.`
       : "No ticket yet";
-    const sdkCliEnrollCommand = [
-      "pnpm enroll:agent --",
-      `--ticket ${shellQuote(sdkTicket?.ticket ?? "scz_enroll_...")}`,
-      "--serve",
-      sdkUsesSelfHostedRuntime && sdkDraft.runtimeIngressUrl.trim()
-        ? `--runtime-ingress-url ${shellQuote(sdkDraft.runtimeIngressUrl.trim())}`
-        : "--connect-relay",
-      !sdkUsesSelfHostedRuntime ? `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}` : "",
-      "--write-env .env.santaclawz",
-      "--challenge-file .well-known/santaclawz-agent-challenge.json"
-    ].filter(Boolean).join(" ");
+    const sdkCliEnrollCommand = buildActivationCommand(sdkTicket?.ticket ?? "scz_enroll_...", {
+      mode: sdkUsesSelfHostedRuntime ? "self-hosted" : "santaclawz-relay",
+      runtimeIngressUrl: sdkDraft.runtimeIngressUrl
+    });
 
     function updateSdkDraft(patch: Partial<SdkWidgetDraft>) {
       setSdkDraft({
@@ -2787,7 +2801,7 @@ export function App() {
               {sdkDraft.paymentsEnabled ? (
                 <div className="field-grid sdk-payment-grid">
                   <label className="field field-wide">
-                    <span>Base network payout wallet</span>
+                    <span>Base Mainnet Payout Wallet</span>
                     <input
                       className="text-input"
                       value={sdkDraft.basePayoutWallet}
@@ -3262,17 +3276,7 @@ export function App() {
             ? "Verify control of the OpenClaw ingress before SantaClawz can publish this agent."
             : "Use the current enrollment flow so the agent can prove URL control, store its admin key locally, and publish on Zeko."
           : "Prove control of the OpenClaw ingress before SantaClawz can publish this agent on Zeko.";
-  const cliEnrollCommand = [
-    "pnpm enroll:agent --",
-    `--ticket ${shellQuote(enrollmentTicket?.ticket ?? "scz_enroll_...")}`,
-    "--serve",
-    profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
-      ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
-      : "--connect-relay",
-    profile.runtimeDelivery.mode !== "self-hosted" ? `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}` : "",
-    "--write-env .env.santaclawz",
-    "--challenge-file .well-known/santaclawz-agent-challenge.json"
-  ].filter(Boolean).join(" ");
+  const cliEnrollCommand = buildActivationCommand(enrollmentTicket?.ticket ?? "scz_enroll_...", profile.runtimeDelivery);
   const enrollmentTicketExpiryTime = enrollmentTicket
     ? new Date(enrollmentTicket.expiresAtIso).toLocaleTimeString([], {
         hour: "numeric",
@@ -3636,7 +3640,7 @@ export function App() {
 
             {paymentProfile.enabled ? (
               <label className="field field-wide">
-                <span>Base network payout wallet</span>
+                <span>Base Mainnet Payout Wallet</span>
                 <input
                   className="text-input"
                   value={profile.payoutWallets.base ?? ""}
@@ -3797,7 +3801,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Generate an activation ticket from the info above. Run the activation command from your agent runtime folder, the one containing package.json, to go live and get paid.
+                Generate an activation ticket from the info above. Run the activation command to clone, install, and go live. It uses the current repo if valid, otherwise the default ~/santaclawz-agent folder.
               </p>
             </div>
 
@@ -3870,12 +3874,12 @@ export function App() {
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>
-                            Run activation command from your agent runtime folder containing package.json to go live.{" "}
+                            Run activation command to clone or use ~/santaclawz-agent, install dependencies, and go live.{" "}
                             <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                               Use activation guide to help with new agent setup.
                             </a>
                           </strong>
-                          <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
+                          <code>curl -fsSL {activationScriptUrl()} | bash -s -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
                           type="button"
@@ -3895,21 +3899,16 @@ export function App() {
                           <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
                         </div>
                         <code className="activation-command-code">
-                          <span>pnpm enroll:agent --</span>
+                          <span>curl -fsSL {shellQuote(activationScriptUrl())} | bash -s --</span>
                           <span>
                             --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
                           </span>
-                          <span>--serve</span>
                           <span>
                             {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
                               ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
-                              : "--connect-relay"}
+                              : `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`}
                           </span>
-                          {profile.runtimeDelivery.mode !== "self-hosted" ? (
-                            <span>--relay-base {shellQuote(DEFAULT_RELAY_BASE)}</span>
-                          ) : null}
-                          <span>--write-env .env.santaclawz</span>
-                          <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
+                          <span className="activation-command-muted">default folder: ~/santaclawz-agent</span>
                         </code>
                       </div>
                     </details>
@@ -4279,7 +4278,7 @@ export function App() {
                 <div className="payment-subcard-body payout-wallet-body">
                   {paymentsEnabled ? (
                     <label className="field field-wide">
-                      <span>Base network payout wallet</span>
+                      <span>Base Mainnet Payout Wallet</span>
                       <input
                         className="text-input"
                         value={profile.payoutWallets.base ?? ""}
