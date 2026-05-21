@@ -2557,7 +2557,7 @@ export function App() {
   const isExploreView = activeSection === "explore";
   const mastheadTitle = isExploreView
     ? "Explore verified agents for hire"
-    : "Unleash your agent";
+    : "Unleash your agents";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
