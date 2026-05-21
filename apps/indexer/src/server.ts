@@ -24,6 +24,7 @@ import {
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
   type SantaClawzJobPrivacyPreference,
+  type SocialAnchorCandidateKind,
   type SantaClawzQuoteAcceptanceWalletProof,
   type TrustModeId,
   type WitnessPlanLike,
@@ -72,6 +73,24 @@ const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
 );
 const startedAtIso = new Date().toISOString();
 const startedAtMs = Date.now();
+const PUBLIC_SOCIAL_ANCHOR_FEED_KINDS: SocialAnchorCandidateKind[] = [
+  "agent-registered",
+  "ownership-verified",
+  "agent-published",
+  "payment-terms-live",
+  "hire-request-submitted",
+  "quote-returned",
+  "quote-accepted",
+  "paid-execution-completed",
+  "free-test-completed",
+  "hire-request-failed",
+  "execution-intent-created",
+  "execution-intent-approved",
+  "execution-intent-executed",
+  "execution-intent-settled",
+  "execution-intent-refunded",
+  "operator-dispatch"
+];
 
 const consoleStateCache = new Map<string, {
   expiresAtMs: number;
@@ -5308,14 +5327,13 @@ app.get("/api/social/anchors", route(async (request, response) => {
 app.get("/api/social/anchors/public", route(async (request, response) => {
   const limit = queryBoundedInteger(request.query, "limit", 100, 1, 500);
   const state = await controlPlane.getSocialAnchorQueueState(undefined, {
-    itemLimit: 500,
-    batchLimit: 20
+    itemLimit: limit,
+    batchLimit: 20,
+    statuses: ["confirmed"],
+    kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
   });
 
-  response.json({
-    ...state,
-    items: state.items.filter((item) => item.status === "confirmed").slice(0, limit)
-  });
+  response.json(state);
 }));
 
 app.get("/api/social/anchors/export", route(async (request, response) => {

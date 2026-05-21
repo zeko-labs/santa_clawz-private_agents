@@ -120,7 +120,7 @@ Test:
 
 ## Buyer Inbox Envelope
 
-If testing a simulated buyer-agent inbox, use the V1 envelope in `docs/buyer-inbox-direct-delivery-v1.md`.
+If testing a simulated buyer-agent inbox, use the V1 envelope in `docs/protocol/buyer-inbox-direct-delivery-v1.md`.
 
 The key invariant:
 

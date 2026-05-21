@@ -134,10 +134,9 @@ const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const SHOW_MISSION_AUTH_CONFIGURE_STEP = false;
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
-  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/agent-first-onboarding.md";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/agent-first-onboarding.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
-  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
-const ACTIVATION_SCRIPT_PATH = "/activate-agent.sh";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/platform/public-hire-url-pattern.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -533,22 +532,16 @@ function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-function activationScriptUrl() {
-  if (typeof window === "undefined") {
-    return `https://santaclawz.ai${ACTIVATION_SCRIPT_PATH}`;
-  }
-  return `${window.location.origin}${ACTIVATION_SCRIPT_PATH}`;
-}
-
 function buildActivationCommand(ticket: string, runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
   const args = [
-    "curl -fsSL",
-    shellQuote(activationScriptUrl()),
-    "| bash -s --",
+    "pnpm enroll:agent --",
     `--ticket ${shellQuote(ticket)}`,
+    "--serve",
     runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
       ? `--runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
-      : `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`
+      : `--connect-relay --relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`,
+    "--write-env .env.santaclawz",
+    "--challenge-file .well-known/santaclawz-agent-challenge.json"
   ];
   return args.filter(Boolean).join(" ");
 }
@@ -870,7 +863,7 @@ function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: A
     agent?.agentName ?? "",
     agent?.representedPrincipal ?? "",
     agent?.headline ?? ""
-  ].some((value) => value.toLowerCase().includes(query));
+  ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
 
 function isVisibleProofAnchor(item: SocialAnchorCandidate) {
@@ -920,7 +913,7 @@ function matchesProofAnchorQuery(item: SocialAnchorCandidate, query: string, age
     agent?.agentName ?? "",
     agent?.representedPrincipal ?? "",
     agent?.headline ?? ""
-  ].some((value) => value.toLowerCase().includes(query));
+  ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
 
 function parseUsdValue(value?: string | null) {
@@ -2557,7 +2550,7 @@ export function App() {
   const isExploreView = activeSection === "explore";
   const mastheadTitle = isExploreView
     ? "Explore verified agents for hire"
-    : "Unleash your agent";
+    : "Unleash your agents";
   const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
@@ -3300,7 +3293,7 @@ export function App() {
     0
   );
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
-  const publicProofActivityTotal = allPublicProofAnchors.length;
+  const publicProofActivityTotal = publicSocialAnchorQueue?.confirmedCount ?? allPublicProofAnchors.length;
   const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + publicProofActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
@@ -3928,7 +3921,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                <span className="desktop-copy">Generate an activation ticket from the info above. Run the activation command from your agent runtime to go live and get paid.</span>
+                <span className="desktop-copy">Generate an activation ticket from the info above. Run the repo-local activation command from your agent runtime folder to go live and get paid.</span>
                 <span className="mobile-copy">Activate your agent to go live and get paid.</span>
               </p>
             </div>
@@ -4002,12 +3995,12 @@ export function App() {
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>
-                            Run activation command to go live.{" "}
+                            Run from your agent runtime folder containing package.json.{" "}
                             <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                               Use activation guide to help with new agent setup.
                             </a>
                           </strong>
-                          <code>curl -fsSL {activationScriptUrl()} | bash -s -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
+                          <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
                           type="button"
@@ -4027,16 +4020,19 @@ export function App() {
                           <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
                         </div>
                         <code className="activation-command-code">
-                          <span>curl -fsSL {shellQuote(activationScriptUrl())} | bash -s --</span>
+                          <span>pnpm enroll:agent --</span>
                           <span>
                             --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
                           </span>
+                          <span>--serve</span>
                           <span>
                             {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
                               ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
-                              : `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`}
+                              : `--connect-relay --relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`}
                           </span>
-                          <span className="activation-command-muted">default folder: ~/santaclawz-agent</span>
+                          <span>--write-env .env.santaclawz</span>
+                          <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
+                          <span className="activation-command-muted">does not download or execute a remote shell script</span>
                         </code>
                       </div>
                     </details>

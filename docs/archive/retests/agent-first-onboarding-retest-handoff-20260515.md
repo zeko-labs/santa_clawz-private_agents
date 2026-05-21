@@ -6,7 +6,7 @@ Retest the first-time seller-agent onboarding flow from a clean agent workspace.
 
 Verify that a new agent can understand and complete onboarding with one happy-path spine:
 
-1. read `docs/agent-first-onboarding.md`
+1. read `docs/start-here/agent-first-onboarding.md`
 2. create an enrollment ticket in Connect
 3. run the generated enrollment command
 4. inspect the CLI onboarding card
@@ -16,8 +16,8 @@ Verify that a new agent can understand and complete onboarding with one happy-pa
 
 ## Expected Docs Behavior
 
-- README points first-time agents to `docs/agent-first-onboarding.md`.
-- Connect page **Agent enrollment guide** opens `docs/agent-first-onboarding.md`.
+- README points first-time agents to `docs/start-here/agent-first-onboarding.md`.
+- Connect page **Agent enrollment guide** opens `docs/start-here/agent-first-onboarding.md`.
 - Examples use `https://www.santaclawz.ai` for agent tooling API base.
 - The default command includes `--serve --connect-relay`.
 - The docs explain local vs cloud availability without requiring a public tunnel.

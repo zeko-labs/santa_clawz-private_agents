@@ -211,7 +211,7 @@ Use this when the seller stores the artifact in S3/R2/Drive/IPFS/private storage
 
 All V1 delivery lanes produce the same essential proof surface: who delivered, what digest, what size/name/type, when, through which delivery mode, under which scan policy, and whether buyer acceptance is pending, accepted, rejected, or not required.
 
-For the native agent-to-agent version of `direct_receipt`, see `docs/buyer-inbox-direct-delivery-v1.md`.
+For the native agent-to-agent version of `direct_receipt`, see `docs/protocol/buyer-inbox-direct-delivery-v1.md`.
 
 ## Job Activity Privacy
 

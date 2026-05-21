@@ -41,6 +41,7 @@ import {
   type AgentBoardState,
   type AgentBoardThread,
   type AgentCompletionScore,
+  type AgentJobActivityStats,
   type AgentProfileState,
   type AgentReadinessState,
   type HireDeliveryReceipt,
@@ -68,6 +69,7 @@ import {
   type SocialAnchorBatchExport,
   type SocialAnchorCandidate,
   type SocialAnchorCandidateKind,
+  type SocialAnchorCandidateStatus,
   type SocialAnchorQueueState,
   type SantaClawzQuoteAcceptanceWalletProof,
   type SantaClawzArtifactDeliveryPreference,
@@ -123,8 +125,32 @@ const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 const JOB_COMPLETION_SCORE_WINDOW_SIZE = 100;
 const JOB_COMPLETION_STALE_MS = 30 * 60 * 1000;
+const HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT = parseBoundedIntegerEnv(
+  "CLAWZ_HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT",
+  10_000,
+  200,
+  100_000
+);
+const HIRE_REQUEST_PER_AGENT_PAID_RETAIN_LIMIT = parseBoundedIntegerEnv(
+  "CLAWZ_HIRE_REQUEST_PER_AGENT_PAID_RETAIN_LIMIT",
+  JOB_COMPLETION_SCORE_WINDOW_SIZE,
+  JOB_COMPLETION_SCORE_WINDOW_SIZE,
+  1_000
+);
+const HIRE_REQUEST_GLOBAL_SAFETY_RETAIN_LIMIT = parseBoundedIntegerEnv(
+  "CLAWZ_HIRE_REQUEST_GLOBAL_SAFETY_RETAIN_LIMIT",
+  100_000,
+  HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT,
+  1_000_000
+);
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 type HireIngressRequestKind = SantaClawzHireRequestType;
+type SocialAnchorQueueStateOptions = {
+  itemLimit?: number;
+  batchLimit?: number;
+  statuses?: SocialAnchorCandidateStatus[];
+  kinds?: SocialAnchorCandidateKind[];
+};
 type HireCompletionClassification =
   | "agent_completed_verified"
   | "agent_completed_unverified"
@@ -956,6 +982,7 @@ function mergeHireRelayTrace(input: {
 
 interface HireRequestFile {
   requests: HireRequestRecord[];
+  jobActivityStatsBySessionId?: Record<string, AgentJobActivityStats>;
 }
 
 type JobStageStatus = "pending" | "active" | "blocked" | "completed" | "accepted" | "revision_requested";
@@ -1804,7 +1831,8 @@ function buildDefaultSponsorQueue(): SponsorQueueFile {
 
 function buildDefaultHireRequestFile(): HireRequestFile {
   return {
-    requests: []
+    requests: [],
+    jobActivityStatsBySessionId: {}
   };
 }
 
@@ -1873,6 +1901,14 @@ function retainSocialAnchorItems(items: SocialAnchorCandidate[]) {
 function integerEnv(name: string, fallback: number) {
   const value = Number(process.env[name] ?? fallback);
   return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : fallback;
+}
+
+function parseBoundedIntegerEnv(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
 function sanitizeAgentBoardProofIntent(value: unknown): AgentBoardProofIntent {
@@ -2207,6 +2243,32 @@ function hasVerifiedPaidExecutionForSession(
   );
 }
 
+function hireRequestRetentionKey(request: HireRequestRecord) {
+  return `${request.sessionId}:${request.requestId}`;
+}
+
+function retainHireRequests(requests: HireRequestRecord[]) {
+  const sorted = [...requests].sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
+  const retainedKeys = new Set(sorted.slice(0, HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT).map(hireRequestRetentionKey));
+  const paidRetainedBySessionId = new Map<string, number>();
+
+  for (const request of sorted) {
+    if (request.requestType !== "paid_execution") {
+      continue;
+    }
+    const retainedCount = paidRetainedBySessionId.get(request.sessionId) ?? 0;
+    if (retainedCount >= HIRE_REQUEST_PER_AGENT_PAID_RETAIN_LIMIT) {
+      continue;
+    }
+    retainedKeys.add(hireRequestRetentionKey(request));
+    paidRetainedBySessionId.set(request.sessionId, retainedCount + 1);
+  }
+
+  return sorted
+    .filter((request) => retainedKeys.has(hireRequestRetentionKey(request)))
+    .slice(0, HIRE_REQUEST_GLOBAL_SAFETY_RETAIN_LIMIT);
+}
+
 function buildAgentCompletionScore(
   hireRequests: HireRequestFile,
   sessionId: string,
@@ -2242,11 +2304,70 @@ function buildAgentCompletionScore(
   };
 }
 
+function buildAgentJobActivityStatsLabel(
+  stats: Pick<AgentJobActivityStats, "totalJobCount" | "privateJobCount" | "paidExecutionCount" | "privatePaidExecutionCount" | "completedJobCount">
+) {
+  return stats.totalJobCount === 0
+    ? "No SantaClawz jobs yet"
+    : stats.paidExecutionCount === 0
+      ? `No paid jobs yet${stats.privateJobCount > 0 ? `, ${stats.privateJobCount} private` : ""}`
+      : `${stats.completedJobCount}/${stats.paidExecutionCount} paid jobs completed${stats.privatePaidExecutionCount > 0 ? `, ${stats.privatePaidExecutionCount} private` : ""}`;
+}
+
+function emptyAgentJobActivityStats(): AgentJobActivityStats {
+  const stats: AgentJobActivityStats = {
+    totalJobCount: 0,
+    publicJobCount: 0,
+    privateJobCount: 0,
+    paidExecutionCount: 0,
+    privatePaidExecutionCount: 0,
+    completedJobCount: 0,
+    privateCompletedJobCount: 0,
+    failedJobCount: 0,
+    privateFailedJobCount: 0,
+    label: "No SantaClawz jobs yet"
+  };
+  return stats;
+}
+
+function incrementAgentJobActivityStats(
+  current: AgentJobActivityStats | undefined,
+  request: HireRequestRecord,
+  nowMs = Date.now()
+): AgentJobActivityStats {
+  const privateJob = isPrivateHireRequest(request);
+  const paidExecution = request.requestType === "paid_execution";
+  const paidOutcome = paidExecution ? paidExecutionTerminalOutcome(request, nowMs) : "pending";
+  const next: AgentJobActivityStats = {
+    ...(current ?? emptyAgentJobActivityStats()),
+    totalJobCount: (current?.totalJobCount ?? 0) + 1,
+    publicJobCount: (current?.publicJobCount ?? 0) + (privateJob ? 0 : 1),
+    privateJobCount: (current?.privateJobCount ?? 0) + (privateJob ? 1 : 0),
+    paidExecutionCount: (current?.paidExecutionCount ?? 0) + (paidExecution ? 1 : 0),
+    privatePaidExecutionCount: (current?.privatePaidExecutionCount ?? 0) + (paidExecution && privateJob ? 1 : 0),
+    completedJobCount: (current?.completedJobCount ?? 0) + (paidOutcome === "completed" ? 1 : 0),
+    privateCompletedJobCount: (current?.privateCompletedJobCount ?? 0) + (paidOutcome === "completed" && privateJob ? 1 : 0),
+    failedJobCount: (current?.failedJobCount ?? 0) + (paidOutcome === "failed" ? 1 : 0),
+    privateFailedJobCount: (current?.privateFailedJobCount ?? 0) + (paidOutcome === "failed" && privateJob ? 1 : 0),
+    lastJobAtIso: request.submittedAtIso,
+    label: ""
+  };
+  return {
+    ...next,
+    label: buildAgentJobActivityStatsLabel(next)
+  };
+}
+
 function buildAgentJobActivityStats(
   hireRequests: HireRequestFile,
   sessionId: string,
   nowMs = Date.now()
-) {
+): AgentJobActivityStats {
+  const persisted = hireRequests.jobActivityStatsBySessionId?.[sessionId];
+  if (persisted) {
+    return persisted;
+  }
+
   const requests = hireRequests.requests
     .filter((request) => request.sessionId === sessionId)
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
@@ -2259,7 +2380,7 @@ function buildAgentJobActivityStats(
   const completedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "completed");
   const failedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "failed");
   const privatePaidRequests = paidRequests.filter(isPrivateHireRequest);
-  return {
+  const stats: AgentJobActivityStats = {
     totalJobCount: requests.length,
     publicJobCount: requests.length - privateRequests.length,
     privateJobCount: privateRequests.length,
@@ -2270,12 +2391,11 @@ function buildAgentJobActivityStats(
     failedJobCount: failedPaidRequests.length,
     privateFailedJobCount: failedPaidRequests.filter((entry) => isPrivateHireRequest(entry.request)).length,
     ...(requests[0]?.submittedAtIso ? { lastJobAtIso: requests[0].submittedAtIso } : {}),
-    label:
-      requests.length === 0
-        ? "No SantaClawz jobs yet"
-        : paidRequests.length === 0
-          ? `No paid jobs yet${privateRequests.length > 0 ? `, ${privateRequests.length} private` : ""}`
-          : `${completedPaidRequests.length}/${paidRequests.length} paid jobs completed${privatePaidRequests.length > 0 ? `, ${privatePaidRequests.length} private` : ""}`
+    label: ""
+  };
+  return {
+    ...stats,
+    label: buildAgentJobActivityStatsLabel(stats)
   };
 }
 
@@ -3252,7 +3372,11 @@ export class ClawzControlPlane {
     await this.ensureDirs();
     const file = await readJsonFile<HireRequestFile>(this.hireRequestPath);
     if (file?.requests) {
-      return file;
+      return {
+        ...file,
+        requests: retainHireRequests(file.requests),
+        jobActivityStatsBySessionId: file.jobActivityStatsBySessionId ?? {}
+      };
     }
 
     const fallback = buildDefaultHireRequestFile();
@@ -3262,7 +3386,11 @@ export class ClawzControlPlane {
 
   private async saveHireRequestFile(file: HireRequestFile) {
     await this.ensureDirs();
-    await writeJsonFile(this.hireRequestPath, file);
+    await writeJsonFile(this.hireRequestPath, {
+      ...file,
+      requests: retainHireRequests(file.requests),
+      jobActivityStatsBySessionId: file.jobActivityStatsBySessionId ?? {}
+    });
   }
 
   private async loadJobCollaborationFile(): Promise<JobCollaborationFile> {
@@ -5591,6 +5719,7 @@ export class ClawzControlPlane {
       ...(nextPayment ? { payment: nextPayment } : {})
     };
     await this.saveHireRequestFile({
+      ...file,
       requests: file.requests.map((request, requestIndex) => requestIndex === index ? nextRecord : request)
     });
     return nextRecord;
@@ -6032,7 +6161,7 @@ export class ClawzControlPlane {
 
   async getSocialAnchorQueueState(
     sessionId?: string,
-    options: { itemLimit?: number; batchLimit?: number } = {}
+    options: SocialAnchorQueueStateOptions = {}
   ): Promise<SocialAnchorQueueState> {
     const queue = await this.loadSocialAnchorQueueFile();
     return this.buildSocialAnchorQueueState(queue, sessionId, options);
@@ -6048,13 +6177,16 @@ export class ClawzControlPlane {
   private buildSocialAnchorQueueState(
     queue: SocialAnchorQueueFile,
     sessionId?: string,
-    options: { itemLimit?: number; batchLimit?: number } = {}
+    options: SocialAnchorQueueStateOptions = {}
   ): SocialAnchorQueueState {
     const itemLimit = Math.max(1, Math.min(options.itemLimit ?? 16, 500));
     const batchLimit = Math.max(1, Math.min(options.batchLimit ?? 6, 100));
-    const visibleItems = (sessionId ? queue.items.filter((item) => item.sessionId === sessionId) : queue.items).sort((left, right) =>
-      right.occurredAtIso.localeCompare(left.occurredAtIso)
-    );
+    const statusFilter = options.statuses?.length ? new Set(options.statuses) : undefined;
+    const kindFilter = options.kinds?.length ? new Set(options.kinds) : undefined;
+    const visibleItems = (sessionId ? queue.items.filter((item) => item.sessionId === sessionId) : queue.items)
+      .filter((item) => !statusFilter || statusFilter.has(item.status))
+      .filter((item) => !kindFilter || kindFilter.has(item.kind))
+      .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso));
     const visibleBatches = queue.batches
       .filter((batch) => !sessionId || visibleItems.some((item) => item.batchId === batch.batchId))
       .sort((left, right) => right.settledAtIso.localeCompare(left.settledAtIso));
@@ -9530,7 +9662,15 @@ export class ClawzControlPlane {
     };
 
     await this.saveHireRequestFile({
-      requests: [nextRecord, ...hireRequests.requests].slice(0, 200)
+      ...hireRequests,
+      requests: [nextRecord, ...hireRequests.requests],
+      jobActivityStatsBySessionId: {
+        ...(hireRequests.jobActivityStatsBySessionId ?? {}),
+        [sessionId]: incrementAgentJobActivityStats(
+          hireRequests.jobActivityStatsBySessionId?.[sessionId] ?? buildAgentJobActivityStats(hireRequests, sessionId),
+          nextRecord
+        )
+      }
     });
     if (paymentAuthorization.ledgerId) {
       await this.updatePaymentLedgerExecution({

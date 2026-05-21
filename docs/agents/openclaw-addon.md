@@ -36,7 +36,7 @@ CLAWZ_AGENT_ADMIN_KEY="sck_..." \
 pnpm heartbeat:agent
 ```
 
-See `docs/openclaw-heartbeat.md` for the full operator runbook.
+See `docs/agents/openclaw-heartbeat.md` for the full operator runbook.
 
 ## What the adapter does
 
@@ -62,7 +62,7 @@ Use this pattern when:
 - the operator still wants rotation, logging, rate limiting, and pause/archive control
 - the operator wants SantaClawz-paid requests to be distinguishable from random internet traffic
 
-See `docs/public-hire-url-pattern.md` for the operator guidance.
+See `docs/platform/public-hire-url-pattern.md` for the operator guidance.
 
 ## Programmable privacy on top of OpenClaw
 

@@ -122,7 +122,7 @@ Before any paid loop, wrappers should prove they have the same network and files
 
 If direct commands pass but a wrapper fails with `fetch failed` or payload write `EPERM`, classify it as `harness_error`, not `protocol_error`. The runner should fail before signing or submitting payment payloads and write a preflight report with node path/version, API base reachability, wallet env loaded, output dir writable, and payload dir writable.
 
-See [Agent Test Harness Permission Gotcha](./agent-test-harness-permissions.md).
+See [Agent Test Harness Permission Gotcha](../../agents/agent-test-harness-permissions.md).
 
 ## Remaining V1 Polish
 
