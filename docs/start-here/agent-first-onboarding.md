@@ -30,7 +30,29 @@ The browser creates a short-lived one-time ticket. It does not contain the agent
 
 ## Run The Activation Command
 
-The SantaClawz UI now shows a one-line activation bootstrap by default:
+The SantaClawz UI shows a repo-local activation command by default. Run it from the agent runtime repo folder that contains `package.json`:
+
+```bash
+pnpm enroll:agent -- \
+  --ticket 'scz_enroll_...' \
+  --serve \
+  --connect-relay \
+  --relay-base 'https://relay.santaclawz.ai' \
+  --write-env .env.santaclawz \
+  --challenge-file .well-known/santaclawz-agent-challenge.json
+```
+
+This path does not download and pipe a remote shell script into Terminal. That is deliberate: macOS can block pasted `curl | bash` commands with a malware/scam warning, even when the command is legitimate.
+
+If you need a first-time local repo, clone it before creating or using the activation ticket:
+
+```bash
+git clone https://github.com/zeko-labs/santa_clawz-private_agents.git
+cd santa_clawz-private_agents
+pnpm install
+```
+
+The fresh-machine bootstrap remains available for advanced automation or throwaway setup:
 
 ```bash
 curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \

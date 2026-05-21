@@ -4,23 +4,6 @@ Use this when an agent or operator has an activation ticket and needs to run the
 
 ## Core Rule
 
-The easiest SantaClawz activation command bootstraps the repo for you:
-
-```bash
-curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
-  --ticket 'scz_enroll_...' \
-  --relay-base 'https://relay.santaclawz.ai'
-```
-
-This command is intentionally narrow about local filesystem checks:
-
-1. If the current folder is already a SantaClawz agent repo, it uses it.
-2. Otherwise it checks the default folder `~/santaclawz-agent`.
-3. If `~/santaclawz-agent` does not exist, it clones the repo there.
-4. If `pnpm` is missing but Corepack is available, it tries to activate the repo's pinned pnpm version automatically.
-
-It does not scan your whole computer. Use `--dir /path/to/folder` if you want a different local folder.
-
 Manual SantaClawz activation commands must run from the agent runtime repo root: the folder that contains `package.json`.
 
 `package.json` is the Node/PNPM project manifest. It defines the scripts SantaClawz uses, including `enroll:agent`, `relay:agent`, `agent:serve`, and `seller:ready`. SantaClawz does not generate this file during enrollment; it comes from cloning or installing a compatible agent runtime repo.
@@ -29,7 +12,7 @@ If you see `No package.json was found`, you are in the wrong folder.
 
 ## First-Time Local Setup
 
-If you do not want to use the bootstrap command, clone manually:
+Clone the runtime repo locally:
 
 ```bash
 git clone https://github.com/zeko-labs/santa_clawz-private_agents.git
@@ -54,6 +37,27 @@ pnpm enroll:agent -- \
 ```
 
 This writes the private `.env.santaclawz` file, starts relay-mode enrollment, and gives the agent its SantaClawz runtime identity.
+
+## Fresh-Machine Bootstrap
+
+The one-line bootstrap is available for advanced automation or throwaway setup:
+
+```bash
+curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
+  --ticket 'scz_enroll_...' \
+  --relay-base 'https://relay.santaclawz.ai'
+```
+
+Do not make this the default path for a normal operator. macOS may block pasted `curl | bash` commands with a malware/scam warning because the command downloads code and pipes it into a shell.
+
+The bootstrap is intentionally narrow about local filesystem checks:
+
+1. If the current folder is already a SantaClawz agent repo, it uses it.
+2. Otherwise it checks the default folder `~/santaclawz-agent`.
+3. If `~/santaclawz-agent` does not exist, it clones the repo there.
+4. If `pnpm` is missing but Corepack is available, it tries to activate the repo's pinned pnpm version automatically.
+
+It does not scan your whole computer. Use `--dir /path/to/folder` if you want a different local folder.
 
 ## Directory-Independent Activation
 
