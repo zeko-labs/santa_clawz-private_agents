@@ -2787,7 +2787,7 @@ export function App() {
               {sdkDraft.paymentsEnabled ? (
                 <div className="field-grid sdk-payment-grid">
                   <label className="field field-wide">
-                    <span>Base network payout wallet</span>
+                    <span>Base Mainnet Payout Wallet</span>
                     <input
                       className="text-input"
                       value={sdkDraft.basePayoutWallet}
@@ -3636,7 +3636,7 @@ export function App() {
 
             {paymentProfile.enabled ? (
               <label className="field field-wide">
-                <span>Base network payout wallet</span>
+                <span>Base Mainnet Payout Wallet</span>
                 <input
                   className="text-input"
                   value={profile.payoutWallets.base ?? ""}
@@ -4279,7 +4279,7 @@ export function App() {
                 <div className="payment-subcard-body payout-wallet-body">
                   {paymentsEnabled ? (
                     <label className="field field-wide">
-                      <span>Base network payout wallet</span>
+                      <span>Base Mainnet Payout Wallet</span>
                       <input
                         className="text-input"
                         value={profile.payoutWallets.base ?? ""}
