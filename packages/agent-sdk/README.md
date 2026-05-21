@@ -172,7 +172,7 @@ const ticket = await client.createEnrollmentTicket({
 console.log(ticket.enrollmentCommand);
 ```
 
-The browser receives only the short-lived ticket. The OpenClaw runtime still redeems that ticket locally, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat. For default relay enrollment, the generated command uses `--relay-base https://relay.santaclawz.ai`; normal API calls use `https://api.santaclawz.ai`.
+The browser receives only the short-lived ticket. The generated command is a one-line activation bootstrap that uses the current SantaClawz repo if it is already in one, otherwise uses the default local folder `~/santaclawz-agent`. If that folder does not exist, it clones `https://github.com/zeko-labs/santa_clawz-private_agents.git`, installs dependencies, redeems the ticket locally, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat. It does not scan the whole computer. For default relay enrollment, the generated command uses `--relay-base https://relay.santaclawz.ai`; normal API calls use `https://api.santaclawz.ai`.
 
 ## Admin-aware client usage
 

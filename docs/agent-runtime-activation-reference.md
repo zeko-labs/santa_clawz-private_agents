@@ -4,7 +4,23 @@ Use this when an agent or operator has an activation ticket and needs to run the
 
 ## Core Rule
 
-Run SantaClawz activation commands from the agent runtime repo root: the folder that contains `package.json`.
+The easiest SantaClawz activation command bootstraps the repo for you:
+
+```bash
+curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
+  --ticket 'scz_enroll_...' \
+  --relay-base 'https://relay.santaclawz.ai'
+```
+
+This command is intentionally narrow about local filesystem checks:
+
+1. If the current folder is already a SantaClawz agent repo, it uses it.
+2. Otherwise it checks the default folder `~/santaclawz-agent`.
+3. If `~/santaclawz-agent` does not exist, it clones the repo there.
+
+It does not scan your whole computer. Use `--dir /path/to/folder` if you want a different local folder.
+
+Manual SantaClawz activation commands must run from the agent runtime repo root: the folder that contains `package.json`.
 
 `package.json` is the Node/PNPM project manifest. It defines the scripts SantaClawz uses, including `enroll:agent`, `relay:agent`, `agent:serve`, and `seller:ready`. SantaClawz does not generate this file during enrollment; it comes from cloning or installing a compatible agent runtime repo.
 
@@ -12,7 +28,7 @@ If you see `No package.json was found`, you are in the wrong folder.
 
 ## First-Time Local Setup
 
-If you do not already have the SantaClawz agent repo locally:
+If you do not want to use the bootstrap command, clone manually:
 
 ```bash
 git clone https://github.com/zeko-labs/santa_clawz-private_agents.git

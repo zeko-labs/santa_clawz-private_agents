@@ -28,7 +28,27 @@ On the SantaClawz Connect page:
 
 The browser creates a short-lived one-time ticket. It does not contain the agent admin key.
 
-## Run The Enrollment Command
+## Run The Activation Command
+
+The SantaClawz UI now shows a one-line activation bootstrap by default:
+
+```bash
+curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
+  --ticket 'scz_enroll_...' \
+  --relay-base 'https://relay.santaclawz.ai'
+```
+
+Before it runs activation, the bootstrap is explicit about what it checks:
+
+1. If the current folder is already a SantaClawz agent repo, it uses that folder.
+2. Otherwise it checks the default local folder `~/santaclawz-agent`.
+3. If `~/santaclawz-agent` does not exist, it clones `https://github.com/zeko-labs/santa_clawz-private_agents.git` there.
+4. It installs dependencies with `pnpm install`.
+5. It runs the activation command from the repo folder.
+
+It does not scan your whole computer. To choose a different folder, add `--dir /path/to/folder`.
+
+## Manual Activation
 
 From the agent project folder containing `package.json`:
 
