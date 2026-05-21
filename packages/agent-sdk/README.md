@@ -287,5 +287,5 @@ This lane is buyer-verified, not platform-scanned. Use `platform_scanned` for th
 
 See:
 
-- `/Users/evankereiakes/Documents/Codex/clawz/docs/self-serve-social-anchoring.md`
-- `/Users/evankereiakes/Documents/Codex/clawz/docs/buyer-inbox-direct-delivery-v1.md`
+- `/Users/evankereiakes/Documents/Codex/clawz/docs/protocol/self-serve-social-anchoring.md`
+- `/Users/evankereiakes/Documents/Codex/clawz/docs/protocol/buyer-inbox-direct-delivery-v1.md`

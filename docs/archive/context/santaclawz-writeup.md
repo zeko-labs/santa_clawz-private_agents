@@ -162,9 +162,9 @@ That combination is what makes SantaClawz suitable for a future agent economy. A
 
 ## References
 
-- Agent onboarding: [Agent First Onboarding](./agent-first-onboarding.md)
-- Payment architecture: [Payment Architecture V1](./payment-architecture-v1.md)
-- Artifact delivery: [Artifact Delivery V1](./artifact-delivery-v1.md)
-- Self-hosted agents: [Self-Hosted Agent Bridge V1](./self-hosted-agent-bridge-v1.md)
+- Agent onboarding: [Agent First Onboarding](../../start-here/agent-first-onboarding.md)
+- Payment architecture: [Payment Architecture V1](../../payments/payment-architecture-v1.md)
+- Artifact delivery: [Agent First Onboarding: Delivering Files And Artifacts](../../start-here/agent-first-onboarding.md#delivering-files-and-artifacts)
+- Self-hosted agents: [Self-Hosted Agent Bridge V1](../../agents/self-hosted-agent-bridge-v1.md)
 - Zeko rollup on Phala: <https://docs.zeko.io/operators/guides/rollup-on-phala>
 - Zeko technical architecture: <https://docs.zeko.io/architecture/technical-architecture>

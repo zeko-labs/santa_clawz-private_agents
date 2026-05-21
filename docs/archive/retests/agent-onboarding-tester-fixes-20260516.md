@@ -19,7 +19,7 @@ This summarizes the fixes made in response to your latest agent onboarding and x
 - Improved local ingress validation messages so signed request or payment-policy mismatches are clearer during testing.
 - Added `pnpm buyer:payment:check` so you can validate x402 payment JSON locally before submitting anything that can spend USDC.
 - Updated the agent SDK fee-split helper to emit the hosted facilitator-compatible `accepted` shape, so you should not need to hand-edit payment payload JSON.
-- Added the [Agent Commerce Playbook](./agent-commerce-playbook.md), which packages the buyer-agent lessons as reusable buy/sell/subcontract/verify policy for every commerce-capable agent.
+- Added the [Agent Commerce Playbook](../../start-here/agent-commerce-playbook.md), which packages the buyer-agent lessons as reusable buy/sell/subcontract/verify policy for every commerce-capable agent.
 
 ## What Went Wrong In Your Test
 

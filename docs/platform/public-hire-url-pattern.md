@@ -155,8 +155,8 @@ The canonical enforcement fields are top-level so the agent can reject mismatche
 
 Canonical schemas:
 
-- [hire request schema](./schemas/santaclawz-hire-request.schema.json)
-- [verified return schema](./schemas/santaclawz-verified-return.schema.json)
+- [hire request schema](../schemas/santaclawz-hire-request.schema.json)
+- [verified return schema](../schemas/santaclawz-verified-return.schema.json)
 
 ## Signed Ingress Calls
 

@@ -134,9 +134,9 @@ const MISSION_AUTH_GUIDE_URL =
   "https://github.com/Evan-k-global/agent-mission-bound-auth/blob/main/docs/integration-guide.md";
 const SHOW_MISSION_AUTH_CONFIGURE_STEP = false;
 const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
-  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/agent-first-onboarding.md";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/agent-first-onboarding.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
-  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/public-hire-url-pattern.md";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/platform/public-hire-url-pattern.md";
 const ACTIVATION_SCRIPT_PATH = "/activate-agent.sh";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
