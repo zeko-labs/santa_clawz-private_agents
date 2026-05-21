@@ -2610,6 +2610,12 @@ pre,
   text-transform: uppercase;
 }
 
+.activation-command-reminder {
+  color: #4f6174;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 .activation-command-summary-link {
   color: inherit;
   text-decoration: none;
