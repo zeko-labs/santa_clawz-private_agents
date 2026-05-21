@@ -3995,11 +3995,14 @@ export function App() {
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>
-                            Run from your agent runtime folder containing package.json.{" "}
+                            Run from the cloned SantaClawz agent repo folder containing package.json.{" "}
                             <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                               Use activation guide to help with new agent setup.
                             </a>
                           </strong>
+                          <span className="activation-command-reminder">
+                            Fresh setup? Clone `zeko-labs/santa_clawz-private_agents`, run `pnpm install`, then paste this command from that repo folder.
+                          </span>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
