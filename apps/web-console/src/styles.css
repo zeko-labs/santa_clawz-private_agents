@@ -579,7 +579,8 @@ pre,
 .explore-forum-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0;
+  column-gap: 0;
+  row-gap: 18px;
   align-items: start;
 }
 
@@ -946,6 +947,21 @@ pre,
   .explore-topic-list-panel,
   .explore-mobile-hidden {
     display: none;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1319px) {
+  .explore-aggregate-stats {
+    display: flex;
+    flex-wrap: wrap;
+    width: min(100%, 760px);
+    gap: 8px;
+  }
+
+  .explore-aggregate-stat {
+    flex: 1 1 176px;
+    max-width: 236px;
+    min-height: 45px;
   }
 }
 
@@ -4911,7 +4927,7 @@ button:disabled {
   .explore-nav-rail {
     position: static;
     width: 100%;
-    margin-bottom: 14px;
+    margin-bottom: 0;
   }
 }
 
@@ -4927,7 +4943,7 @@ button:disabled {
   .explore-nav-rail {
     position: static;
     width: 100%;
-    margin-bottom: 14px;
+    margin-bottom: 0;
   }
 }
 
