@@ -3811,7 +3811,8 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                Generate an activation ticket from the info above. Run the activation command to clone, install, and go live. It uses the current repo if valid, otherwise the default ~/santaclawz-agent folder.
+                <span className="desktop-copy">Generate an activation ticket from the info above. Run the activation command from your agent runtime to go live and get paid.</span>
+                <span className="mobile-copy">Activate your agent to go live and get paid.</span>
               </p>
             </div>
 
@@ -3884,7 +3885,7 @@ export function App() {
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>
-                            Run activation command to clone or use ~/santaclawz-agent, install dependencies, and go live.{" "}
+                            Run activation command to go live.{" "}
                             <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                               Use activation guide to help with new agent setup.
                             </a>
