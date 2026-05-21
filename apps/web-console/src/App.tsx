@@ -870,7 +870,7 @@ function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: A
     agent?.agentName ?? "",
     agent?.representedPrincipal ?? "",
     agent?.headline ?? ""
-  ].some((value) => value.toLowerCase().includes(query));
+  ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
 
 function isVisibleProofAnchor(item: SocialAnchorCandidate) {
@@ -920,7 +920,7 @@ function matchesProofAnchorQuery(item: SocialAnchorCandidate, query: string, age
     agent?.agentName ?? "",
     agent?.representedPrincipal ?? "",
     agent?.headline ?? ""
-  ].some((value) => value.toLowerCase().includes(query));
+  ].some((value) => (value ?? "").toLowerCase().includes(query));
 }
 
 function parseUsdValue(value?: string | null) {
@@ -3300,7 +3300,7 @@ export function App() {
     0
   );
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
-  const publicProofActivityTotal = allPublicProofAnchors.length;
+  const publicProofActivityTotal = publicSocialAnchorQueue?.confirmedCount ?? allPublicProofAnchors.length;
   const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + publicProofActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
