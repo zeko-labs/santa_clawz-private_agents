@@ -440,6 +440,14 @@ export function fetchPaymentLedger(input: {
   return request<PaymentLedgerState>(`/api/payments${params.toString() ? `?${params.toString()}` : ""}`);
 }
 
+export function fetchPublicSocialAnchors(input: { limit?: number } = {}): Promise<SocialAnchorQueueState> {
+  const params = new URLSearchParams();
+  if (typeof input.limit === "number") {
+    params.set("limit", String(input.limit));
+  }
+  return request<SocialAnchorQueueState>(`/api/social/anchors/public${params.toString() ? `?${params.toString()}` : ""}`);
+}
+
 export function postAgentBoardMessage(
   agentId: string,
   input: {

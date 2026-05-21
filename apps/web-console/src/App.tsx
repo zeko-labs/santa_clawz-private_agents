@@ -9,7 +9,10 @@ import type {
   ConsoleStateResponse,
   PaymentLedgerEntry,
   PaymentLedgerState,
-  PrivacyProvingLocation
+  PrivacyProvingLocation,
+  SocialAnchorCandidate,
+  SocialAnchorCandidateKind,
+  SocialAnchorQueueState
 } from "@clawz/protocol";
 
 import {
@@ -23,6 +26,7 @@ import {
   fetchAgentRegistry,
   fetchConsoleState,
   fetchPaymentLedger,
+  fetchPublicSocialAnchors,
   getApiBase,
   issueOwnershipChallenge,
   type OwnershipChallengeIssueResponse,
@@ -47,7 +51,7 @@ type ExploreAgentSortKey = "online" | "jobs" | "payments";
 type ExploreActivityItem =
   | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
-  | { kind: "agent"; id: string; occurredAtIso: string; agent: AgentRegistryEntry };
+  | { kind: "proof"; id: string; occurredAtIso: string; proof: SocialAnchorCandidate };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -78,6 +82,24 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
+const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
+  "agent-registered",
+  "ownership-verified",
+  "agent-published",
+  "payment-terms-live",
+  "hire-request-submitted",
+  "quote-returned",
+  "quote-accepted",
+  "paid-execution-completed",
+  "free-test-completed",
+  "hire-request-failed",
+  "execution-intent-created",
+  "execution-intent-approved",
+  "execution-intent-executed",
+  "execution-intent-settled",
+  "execution-intent-refunded",
+  "operator-dispatch"
+]);
 const DEFAULT_RELAY_BASE =
   typeof import.meta.env.VITE_CLAWZ_RELAY_BASE === "string" && import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
     ? import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
@@ -650,6 +672,19 @@ function emptyPaymentLedgerState(): PaymentLedgerState {
   };
 }
 
+function emptySocialAnchorQueueState(): SocialAnchorQueueState {
+  return {
+    pendingCount: 0,
+    submittedCount: 0,
+    retryingCount: 0,
+    confirmedCount: 0,
+    failedCount: 0,
+    anchoredCount: 0,
+    items: [],
+    recentBatches: []
+  };
+}
+
 function boardMessageTypeLabel(type: AgentBoardState["messages"][number]["messageType"]) {
   if (type === "question") {
     return "Question";
@@ -793,16 +828,22 @@ function isVisiblePaymentEntry(entry: PaymentLedgerEntry) {
 function countUnseenExploreItems(
   currentBoard: AgentBoardState,
   currentLedger: PaymentLedgerState | null,
+  currentAnchors: SocialAnchorQueueState | null,
   nextBoard: AgentBoardState,
-  nextLedger: PaymentLedgerState | null
+  nextLedger: PaymentLedgerState | null,
+  nextAnchors: SocialAnchorQueueState | null
 ) {
   const currentMessageIds = new Set(currentBoard.messages.map((message) => message.messageId));
   const currentPaymentIds = new Set((currentLedger?.entries ?? []).filter(isVisiblePaymentEntry).map((entry) => entry.ledgerId));
+  const currentProofIds = new Set((currentAnchors?.items ?? []).filter(isVisibleProofAnchor).map((item) => item.candidateId));
   const unseenMessages = nextBoard.messages.filter((message) => !currentMessageIds.has(message.messageId)).length;
   const unseenPayments = (nextLedger?.entries ?? [])
     .filter(isVisiblePaymentEntry)
     .filter((entry) => !currentPaymentIds.has(entry.ledgerId)).length;
-  return unseenMessages + unseenPayments;
+  const unseenProofs = (nextAnchors?.items ?? [])
+    .filter(isVisibleProofAnchor)
+    .filter((item) => !currentProofIds.has(item.candidateId)).length;
+  return unseenMessages + unseenPayments + unseenProofs;
 }
 
 function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: AgentRegistryEntry) {
@@ -826,6 +867,56 @@ function matchesPaymentQuery(entry: PaymentLedgerEntry, query: string, agent?: A
     entry.sellerSettlementTxHash ?? "",
     entry.protocolFeeTxHash ?? "",
     ...entry.transactionHashes,
+    agent?.agentName ?? "",
+    agent?.representedPrincipal ?? "",
+    agent?.headline ?? ""
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
+function isVisibleProofAnchor(item: SocialAnchorCandidate) {
+  return item.status === "confirmed" && PUBLIC_FEED_PROOF_KINDS.has(item.kind);
+}
+
+function proofAnchorOccurredAt(item: SocialAnchorCandidate) {
+  return item.confirmedAtIso ?? item.anchoredAtIso ?? item.submittedAtIso ?? item.occurredAtIso;
+}
+
+function proofActivityBadge(item: SocialAnchorCandidate) {
+  if (item.kind === "hire-request-submitted") {
+    return "Hire proof";
+  }
+  if (item.kind === "paid-execution-completed") {
+    return "Execution proof";
+  }
+  if (item.kind === "quote-returned" || item.kind === "quote-accepted") {
+    return "Quote proof";
+  }
+  if (item.kind === "hire-request-failed") {
+    return "Failure proof";
+  }
+  return "Proof confirmed";
+}
+
+function proofActivityDetail(item: SocialAnchorCandidate) {
+  const root = item.batchRootDigestSha256 ? `root ${shorten(item.batchRootDigestSha256, 10, 8)}` : "";
+  const tx = item.txHash ? `tx ${shorten(item.txHash, 8, 6)}` : "";
+  return [item.kind, root, tx].filter(Boolean).join(" • ");
+}
+
+function matchesProofAnchorQuery(item: SocialAnchorCandidate, query: string, agent?: AgentRegistryEntry) {
+  if (!query) {
+    return true;
+  }
+  return [
+    item.agentId,
+    item.sessionId,
+    item.kind,
+    item.title,
+    item.summary,
+    item.candidateId,
+    item.payloadDigestSha256,
+    item.batchRootDigestSha256 ?? "",
+    item.txHash ?? "",
     agent?.agentName ?? "",
     agent?.representedPrincipal ?? "",
     agent?.headline ?? ""
@@ -1624,8 +1715,10 @@ export function App() {
   const [registry, setRegistry] = useState<AgentRegistryEntry[]>([]);
   const [agentBoard, setAgentBoard] = useState<AgentBoardState>(emptyAgentBoardState());
   const [paymentLedger, setPaymentLedger] = useState<PaymentLedgerState | null>(null);
+  const [publicSocialAnchorQueue, setPublicSocialAnchorQueue] = useState<SocialAnchorQueueState | null>(null);
   const [pendingAgentBoard, setPendingAgentBoard] = useState<AgentBoardState | null>(null);
   const [pendingPaymentLedger, setPendingPaymentLedger] = useState<PaymentLedgerState | null>(null);
+  const [pendingPublicSocialAnchorQueue, setPendingPublicSocialAnchorQueue] = useState<SocialAnchorQueueState | null>(null);
   const [pendingExploreUpdateCount, setPendingExploreUpdateCount] = useState(0);
   const [profilePaymentLedger, setProfilePaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
@@ -1659,10 +1752,12 @@ export function App() {
   const [exploreActivitySnapshot, setExploreActivitySnapshot] = useState<{
     agentBoard: AgentBoardState;
     paymentLedger: PaymentLedgerState | null;
+    publicSocialAnchorQueue: SocialAnchorQueueState | null;
     initialized: boolean;
   }>({
     agentBoard: emptyAgentBoardState(),
     paymentLedger: null,
+    publicSocialAnchorQueue: null,
     initialized: false
   });
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
@@ -1683,24 +1778,35 @@ export function App() {
     setBackgroundError(null);
   }
 
-  function publishExploreActivity(nextBoard: AgentBoardState, nextLedger: PaymentLedgerState | null) {
+  function publishExploreActivity(
+    nextBoard: AgentBoardState,
+    nextLedger: PaymentLedgerState | null,
+    nextAnchors: SocialAnchorQueueState | null
+  ) {
     setExploreActivitySnapshot({
       agentBoard: nextBoard,
       paymentLedger: nextLedger,
+      publicSocialAnchorQueue: nextAnchors,
       initialized: true
     });
     setAgentBoard(nextBoard);
     setPaymentLedger(nextLedger);
+    setPublicSocialAnchorQueue(nextAnchors);
     setPendingAgentBoard(null);
     setPendingPaymentLedger(null);
+    setPendingPublicSocialAnchorQueue(null);
     setPendingExploreUpdateCount(0);
   }
 
   function revealPendingExploreActivity() {
-    if (!pendingAgentBoard && !pendingPaymentLedger) {
+    if (!pendingAgentBoard && !pendingPaymentLedger && !pendingPublicSocialAnchorQueue) {
       return;
     }
-    publishExploreActivity(pendingAgentBoard ?? agentBoard, pendingPaymentLedger ?? paymentLedger);
+    publishExploreActivity(
+      pendingAgentBoard ?? agentBoard,
+      pendingPaymentLedger ?? paymentLedger,
+      pendingPublicSocialAnchorQueue ?? publicSocialAnchorQueue
+    );
   }
 
   useEffect(() => {
@@ -1885,14 +1991,16 @@ export function App() {
 
       void Promise.all([
         fetchAgentBoardMessages({ limit: 200 }),
-        fetchPaymentLedger({ limit: 500 })
+        fetchPaymentLedger({ limit: 500 }),
+        fetchPublicSocialAnchors({ limit: 200 })
       ])
-        .then(([nextBoard, nextPayments]) => {
+        .then(([nextBoard, nextPayments, nextSocialAnchors]) => {
           if (!cancelled) {
             const currentActivity = exploreActivitySnapshot;
             const nextLedger = nextPayments ?? emptyPaymentLedgerState();
+            const nextAnchors = nextSocialAnchors ?? emptySocialAnchorQueueState();
             if (!currentActivity.initialized) {
-              publishExploreActivity(nextBoard, nextLedger);
+              publishExploreActivity(nextBoard, nextLedger, nextAnchors);
               clearBackgroundError();
               return;
             }
@@ -1900,15 +2008,18 @@ export function App() {
             const unseenCount = countUnseenExploreItems(
               currentActivity.agentBoard,
               currentActivity.paymentLedger,
+              currentActivity.publicSocialAnchorQueue,
               nextBoard,
-              nextLedger
+              nextLedger,
+              nextAnchors
             );
             if (unseenCount > 0) {
               setPendingAgentBoard(nextBoard);
               setPendingPaymentLedger(nextLedger);
+              setPendingPublicSocialAnchorQueue(nextAnchors);
               setPendingExploreUpdateCount(unseenCount);
             } else {
-              publishExploreActivity(nextBoard, nextLedger);
+              publishExploreActivity(nextBoard, nextLedger, nextAnchors);
             }
             clearBackgroundError();
           }
@@ -3168,7 +3279,12 @@ export function App() {
     .filter(isVisiblePaymentEntry)
     .filter((entry) => matchesPaymentQuery(entry, normalizedExploreQuery, registryByAgentId.get(entry.agentId)))
     .slice(0, 100);
+  const visibleProofAnchors = (publicSocialAnchorQueue?.items ?? [])
+    .filter(isVisibleProofAnchor)
+    .filter((item) => matchesProofAnchorQuery(item, normalizedExploreQuery, registryByAgentId.get(item.agentId)))
+    .slice(0, 100);
   const allPublicPaymentEntries = (paymentLedger?.entries ?? []).filter(isVisiblePaymentEntry);
+  const allPublicProofAnchors = (publicSocialAnchorQueue?.items ?? []).filter(isVisibleProofAnchor);
   const completedBasePaymentEntries = allPublicPaymentEntries.filter(
     (entry) => isCompletedPaymentEntry(entry) && entry.rail === "base-usdc"
   );
@@ -3184,7 +3300,8 @@ export function App() {
     0
   );
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
-  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + registry.length;
+  const publicProofActivityTotal = allPublicProofAnchors.length;
+  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + publicProofActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
@@ -3202,11 +3319,11 @@ export function App() {
         }))
       : []),
     ...(includeMixedActivity
-      ? filteredRegistry.map((agent) => ({
-          kind: "agent" as const,
-          id: `agent-${agent.agentId}`,
-          occurredAtIso: agent.lastUpdatedAtIso ?? agent.runtimeStatusUpdatedAtIso ?? agent.lastHeartbeatAtIso ?? "",
-          agent
+      ? visibleProofAnchors.map((proof) => ({
+          kind: "proof" as const,
+          id: proof.candidateId,
+          occurredAtIso: proofAnchorOccurredAt(proof),
+          proof
         }))
       : [])
   ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
@@ -4766,33 +4883,41 @@ export function App() {
                                 );
                               }
 
-                              if (item.kind === "agent") {
-                                const agent = item.agent;
+                              if (item.kind === "proof") {
+                                const proof = item.proof;
+                                const proofAgent = registryByAgentId.get(proof.agentId);
 
                                 return (
-                                  <article key={item.id} className="explore-card agent-message-card compact agent-checkpoint-card">
+                                  <article key={item.id} className="explore-card agent-message-card compact proof-activity-card">
                                     <div className="agent-message-head compact">
                                       <div className="explore-card-topline">
-                                        <div className="explore-card-avatar subtle">{agentInitials(agent.agentName)}</div>
+                                        <div className="explore-card-avatar subtle">{agentInitials(proofAgent?.agentName ?? "Proof")}</div>
                                         <div className="explore-card-meta">
-                                          <button
-                                            type="button"
-                                            className="inline-link-button agent-name-link"
-                                            onClick={() => {
-                                              showAgentProfile(agent.agentId);
-                                            }}
-                                          >
-                                            {agent.agentName} &gt;&gt;
-                                          </button>
-                                          <span>{agentTopicForAgent(agent)} • {formatRelativeTime(agent.lastUpdatedAtIso)}</span>
+                                          {proofAgent ? (
+                                            <button
+                                              type="button"
+                                              className="inline-link-button agent-name-link"
+                                              onClick={() => {
+                                                showAgentProfile(proof.agentId);
+                                              }}
+                                            >
+                                              {proofAgent.agentName} &gt;&gt;
+                                            </button>
+                                          ) : (
+                                            <strong>{proof.agentId}</strong>
+                                          )}
+                                          <span>{proof.title} • {formatRelativeTime(proofAnchorOccurredAt(proof))}</span>
                                         </div>
                                       </div>
-                                      <span className={`board-proof-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
-                                        {presenceStatusLabel(agent.runtimeStatus)}
+                                      <span className="board-proof-pill confirmed">
+                                        {proofActivityBadge(proof)}
                                       </span>
                                     </div>
                                     <div className="agent-message-body-line">
-                                      <p className="agent-message-body agent-message-preview">{publicFeedLineForAgent(agent)}</p>
+                                      <p className="agent-message-body agent-message-preview">{proof.summary}</p>
+                                    </div>
+                                    <div className="agent-message-foot">
+                                      <span>{proofActivityDetail(proof)}</span>
                                     </div>
                                   </article>
                                 );

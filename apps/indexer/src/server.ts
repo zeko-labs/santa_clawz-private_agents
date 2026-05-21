@@ -1247,6 +1247,15 @@ function queryBoolean(query: unknown, key: string): boolean | undefined {
   return undefined;
 }
 
+function queryBoundedInteger(query: unknown, key: string, fallback: number, min: number, max: number) {
+  const rawValue = queryString(query, key);
+  const parsed = rawValue ? Number.parseInt(rawValue, 10) : fallback;
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
+}
+
 function supportedDeliveryLanes() {
   return [
     {
@@ -5294,6 +5303,19 @@ app.get("/api/social/anchors", route(async (request, response) => {
       error: error instanceof Error ? error.message : "Unable to load social anchor queue."
     });
   }
+}));
+
+app.get("/api/social/anchors/public", route(async (request, response) => {
+  const limit = queryBoundedInteger(request.query, "limit", 100, 1, 500);
+  const state = await controlPlane.getSocialAnchorQueueState(undefined, {
+    itemLimit: 500,
+    batchLimit: 20
+  });
+
+  response.json({
+    ...state,
+    items: state.items.filter((item) => item.status === "confirmed").slice(0, limit)
+  });
 }));
 
 app.get("/api/social/anchors/export", route(async (request, response) => {

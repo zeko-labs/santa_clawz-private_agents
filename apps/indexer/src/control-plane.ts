@@ -6030,9 +6030,12 @@ export class ClawzControlPlane {
     };
   }
 
-  async getSocialAnchorQueueState(sessionId?: string): Promise<SocialAnchorQueueState> {
+  async getSocialAnchorQueueState(
+    sessionId?: string,
+    options: { itemLimit?: number; batchLimit?: number } = {}
+  ): Promise<SocialAnchorQueueState> {
     const queue = await this.loadSocialAnchorQueueFile();
-    return this.buildSocialAnchorQueueState(queue, sessionId);
+    return this.buildSocialAnchorQueueState(queue, sessionId, options);
   }
 
   async getOwnedSocialAnchorQueueState(options: OwnershipActionOptions = {}): Promise<SocialAnchorQueueState> {
@@ -6042,7 +6045,13 @@ export class ClawzControlPlane {
     return this.getSocialAnchorQueueState(sessionId);
   }
 
-  private buildSocialAnchorQueueState(queue: SocialAnchorQueueFile, sessionId?: string): SocialAnchorQueueState {
+  private buildSocialAnchorQueueState(
+    queue: SocialAnchorQueueFile,
+    sessionId?: string,
+    options: { itemLimit?: number; batchLimit?: number } = {}
+  ): SocialAnchorQueueState {
+    const itemLimit = Math.max(1, Math.min(options.itemLimit ?? 16, 500));
+    const batchLimit = Math.max(1, Math.min(options.batchLimit ?? 6, 100));
     const visibleItems = (sessionId ? queue.items.filter((item) => item.sessionId === sessionId) : queue.items).sort((left, right) =>
       right.occurredAtIso.localeCompare(left.occurredAtIso)
     );
@@ -6064,8 +6073,8 @@ export class ClawzControlPlane {
       ...(latestConfirmedBatch?.settledAtIso ? { lastSettledAtIso: latestConfirmedBatch.settledAtIso } : {}),
       ...(queue.lastError ? { lastError: queue.lastError } : {}),
       ...(queue.lastErrorAtIso ? { lastErrorAtIso: queue.lastErrorAtIso } : {}),
-      items: visibleItems.slice(0, 16),
-      recentBatches: visibleBatches.slice(0, 6)
+      items: visibleItems.slice(0, itemLimit),
+      recentBatches: visibleBatches.slice(0, batchLimit)
     };
   }
 

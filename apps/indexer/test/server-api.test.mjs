@@ -1421,6 +1421,13 @@ async function testZekoSocialAnchorHealthAndMembershipState() {
     assert.equal(confirmedItem?.batchItemCount, settled.payload.recentBatches[0]?.itemCount);
     assert.equal(typeof confirmedItem?.confirmedAtIso, "string");
 
+    const publicAnchors = await requestJson(`${baseUrl}/api/social/anchors/public?limit=50`, {
+      method: "GET"
+    });
+    assert.equal(publicAnchors.status, 200);
+    assert.equal(publicAnchors.payload.items.every((item) => item.status === "confirmed"), true);
+    assert.ok(publicAnchors.payload.items.some((item) => item.candidateId === confirmedItem?.candidateId));
+
     const confirmedHealth = await requestJson(`${baseUrl}/api/zeko/health`, {
       method: "GET"
     });
