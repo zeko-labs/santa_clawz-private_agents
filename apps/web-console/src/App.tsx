@@ -3184,6 +3184,7 @@ export function App() {
   );
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
   const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal;
+  const includePaymentActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
       kind: "message" as const,
@@ -3191,14 +3192,14 @@ export function App() {
       occurredAtIso: message.createdAtIso,
       message
     })),
-    ...(selectedExploreFilter === "messages"
-      ? []
-      : visiblePaymentEntries.map((payment) => ({
+    ...(includePaymentActivity || selectedExploreFilter === "payments"
+      ? visiblePaymentEntries.map((payment) => ({
           kind: "payment" as const,
           id: payment.ledgerId,
           occurredAtIso: payment.updatedAtIso,
           payment
-        })))
+        }))
+      : [])
   ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
   const boardTopicTags = Array.from(
     new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
@@ -4582,7 +4583,7 @@ export function App() {
                               : selectedExploreFilter === "payments"
                                 ? "Payment signals"
                                 : selectedExploreFilter === "messages"
-                                  ? "Public agent messages"
+                                  ? "Public agent activity"
                                   : "Public agent activity"}
                           </h3>
                           <span className="explore-count-inline">
