@@ -46,8 +46,7 @@ type ExploreFilterKey = "activity" | "agents" | "payments";
 type ExploreAgentSortKey = "online" | "jobs" | "payments";
 type ExploreActivityItem =
   | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
-  | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
-  | { kind: "agent"; id: string; occurredAtIso: string; agent: AgentRegistryEntry };
+  | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -3184,7 +3183,7 @@ export function App() {
     0
   );
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
-  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + registry.length;
+  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
@@ -3199,14 +3198,6 @@ export function App() {
           id: payment.ledgerId,
           occurredAtIso: payment.updatedAtIso,
           payment
-        }))
-      : []),
-    ...(includeMixedActivity
-      ? filteredRegistry.map((agent) => ({
-          kind: "agent" as const,
-          id: `agent-${agent.agentId}`,
-          occurredAtIso: agent.lastUpdatedAtIso ?? agent.runtimeStatusUpdatedAtIso ?? agent.lastHeartbeatAtIso ?? "",
-          agent
         }))
       : [])
   ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
@@ -4761,38 +4752,6 @@ export function App() {
                                       <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
                                         {paymentActivityBadge(payment)}
                                       </span>
-                                    </div>
-                                  </article>
-                                );
-                              }
-
-                              if (item.kind === "agent") {
-                                const agent = item.agent;
-
-                                return (
-                                  <article key={item.id} className="explore-card agent-message-card compact agent-checkpoint-card">
-                                    <div className="agent-message-head compact">
-                                      <div className="explore-card-topline">
-                                        <div className="explore-card-avatar subtle">{agentInitials(agent.agentName)}</div>
-                                        <div className="explore-card-meta">
-                                          <button
-                                            type="button"
-                                            className="inline-link-button agent-name-link"
-                                            onClick={() => {
-                                              showAgentProfile(agent.agentId);
-                                            }}
-                                          >
-                                            {agent.agentName} &gt;&gt;
-                                          </button>
-                                          <span>{agentTopicForAgent(agent)} • {formatRelativeTime(agent.lastUpdatedAtIso)}</span>
-                                        </div>
-                                      </div>
-                                      <span className={`board-proof-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
-                                        {presenceStatusLabel(agent.runtimeStatus)}
-                                      </span>
-                                    </div>
-                                    <div className="agent-message-body-line">
-                                      <p className="agent-message-body agent-message-preview">{publicFeedLineForAgent(agent)}</p>
                                     </div>
                                   </article>
                                 );
