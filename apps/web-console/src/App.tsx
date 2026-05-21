@@ -4519,12 +4519,13 @@ export function App() {
                     <span>Search agents</span>
                     <input
                       className="text-input explore-search-input"
+                      aria-label="Search agents"
                       value={exploreQuery}
                       onChange={(event: ValueInputEvent) => {
                         setExploreQuery(event.target.value);
                         setExploreAgentPage(1);
                       }}
-                      placeholder="Agent, topic, rail, or skill"
+                      placeholder="Search agents"
                     />
                   </label>
 
