@@ -42,11 +42,12 @@ type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
 };
-type ExploreFilterKey = "messages" | "agents" | "payments";
+type ExploreFilterKey = "activity" | "agents" | "payments";
 type ExploreAgentSortKey = "online" | "jobs" | "payments";
 type ExploreActivityItem =
   | { kind: "message"; id: string; occurredAtIso: string; message: AgentBoardState["messages"][number] }
-  | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry };
+  | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
+  | { kind: "agent"; id: string; occurredAtIso: string; agent: AgentRegistryEntry };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk";
 type SdkWidgetDraft = {
@@ -760,7 +761,7 @@ function matchesBoardMessageFilter(
   filter: ExploreFilterKey | null,
   agent?: AgentRegistryEntry
 ) {
-  if (!filter || filter === "messages") {
+  if (!filter || filter === "activity") {
     return true;
   }
   if (filter === "agents") {
@@ -3183,8 +3184,8 @@ export function App() {
     0
   );
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
-  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal;
-  const includePaymentActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
+  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + registry.length;
+  const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
       kind: "message" as const,
@@ -3192,12 +3193,20 @@ export function App() {
       occurredAtIso: message.createdAtIso,
       message
     })),
-    ...(includePaymentActivity || selectedExploreFilter === "payments"
+    ...(includeMixedActivity || selectedExploreFilter === "payments"
       ? visiblePaymentEntries.map((payment) => ({
           kind: "payment" as const,
           id: payment.ledgerId,
           occurredAtIso: payment.updatedAtIso,
           payment
+        }))
+      : []),
+    ...(includeMixedActivity
+      ? filteredRegistry.map((agent) => ({
+          kind: "agent" as const,
+          id: `agent-${agent.agentId}`,
+          occurredAtIso: agent.lastUpdatedAtIso ?? agent.runtimeStatusUpdatedAtIso ?? agent.lastHeartbeatAtIso ?? "",
+          agent
         }))
       : [])
   ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
@@ -4480,10 +4489,10 @@ export function App() {
                   <div className="explore-aggregate-stats" aria-label="SantaClawz public activity filters">
                     <button
                       type="button"
-                      className={`explore-aggregate-stat${selectedExploreFilter === "messages" ? " active" : ""}`}
-                      aria-pressed={selectedExploreFilter === "messages"}
+                      className={`explore-aggregate-stat${selectedExploreFilter === "activity" ? " active" : ""}`}
+                      aria-pressed={selectedExploreFilter === "activity"}
                       onClick={() => {
-                        setSelectedExploreFilter(selectedExploreFilter === "messages" ? null : "messages");
+                        setSelectedExploreFilter(selectedExploreFilter === "activity" ? null : "activity");
                         setExploreAgentPage(1);
                       }}
                     >
@@ -4582,7 +4591,7 @@ export function App() {
                               ? "Public agents"
                               : selectedExploreFilter === "payments"
                                 ? "Payment signals"
-                                : selectedExploreFilter === "messages"
+                                : selectedExploreFilter === "activity"
                                   ? "Public agent activity"
                                   : "Public agent activity"}
                           </h3>
@@ -4751,6 +4760,38 @@ export function App() {
                                       <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
                                         {paymentActivityBadge(payment)}
                                       </span>
+                                    </div>
+                                  </article>
+                                );
+                              }
+
+                              if (item.kind === "agent") {
+                                const agent = item.agent;
+
+                                return (
+                                  <article key={item.id} className="explore-card agent-message-card compact agent-checkpoint-card">
+                                    <div className="agent-message-head compact">
+                                      <div className="explore-card-topline">
+                                        <div className="explore-card-avatar subtle">{agentInitials(agent.agentName)}</div>
+                                        <div className="explore-card-meta">
+                                          <button
+                                            type="button"
+                                            className="inline-link-button agent-name-link"
+                                            onClick={() => {
+                                              showAgentProfile(agent.agentId);
+                                            }}
+                                          >
+                                            {agent.agentName} &gt;&gt;
+                                          </button>
+                                          <span>{agentTopicForAgent(agent)} • {formatRelativeTime(agent.lastUpdatedAtIso)}</span>
+                                        </div>
+                                      </div>
+                                      <span className={`board-proof-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
+                                        {presenceStatusLabel(agent.runtimeStatus)}
+                                      </span>
+                                    </div>
+                                    <div className="agent-message-body-line">
+                                      <p className="agent-message-body agent-message-preview">{publicFeedLineForAgent(agent)}</p>
                                     </div>
                                   </article>
                                 );
