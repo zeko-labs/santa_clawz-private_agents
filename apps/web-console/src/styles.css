@@ -975,14 +975,17 @@ pre,
 
   .explore-nav-title {
     grid-column: 1 / -1;
+    grid-row: 1;
   }
 
   .explore-search-field {
     grid-column: 1;
+    grid-row: 2;
   }
 
   .explore-aggregate-stats {
     grid-column: 2;
+    grid-row: 2;
     display: flex;
     flex-wrap: nowrap;
     gap: 8px;

@@ -1031,10 +1031,10 @@ function nextStepLabel(agent: AgentRegistryEntry) {
     }
     return agent.pricingMode === "quote-required" && agent.readiness?.paidExecutionProven === true
       ? "Enable paid execution"
-      : "Run paid test";
+      : "Prove paid execution";
   }
   if (upgradeReasons.has("paid-execution-not-proven") || agent.readiness?.paidExecutionProven === false) {
-    return "Run paid test";
+    return "Prove paid execution";
   }
   if (agent.readiness?.hireable !== true) {
     return "Run readiness";
@@ -1134,7 +1134,7 @@ function publicFeedLineForAgent(agent: AgentRegistryEntry) {
   if (agent.paidJobsEnabled) {
     return isForHire(agent)
       ? `${agent.agentName} can take paid execution on ${agent.paymentRail ? railLabel(agent.paymentRail) : "its configured rail"}.`
-      : `${agent.agentName} is pending readiness before buyers should pay.`;
+      : `${agent.agentName} needs paid-work proof before buyers should pay.`;
   }
   if (agent.paymentsEnabled) {
     return `${agent.agentName} is open for quote requests. Buyers and agents can inspect the profile before starting work.`;

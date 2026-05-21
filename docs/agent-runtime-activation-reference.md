@@ -17,6 +17,7 @@ This command is intentionally narrow about local filesystem checks:
 1. If the current folder is already a SantaClawz agent repo, it uses it.
 2. Otherwise it checks the default folder `~/santaclawz-agent`.
 3. If `~/santaclawz-agent` does not exist, it clones the repo there.
+4. If `pnpm` is missing but Corepack is available, it tries to activate the repo's pinned pnpm version automatically.
 
 It does not scan your whole computer. Use `--dir /path/to/folder` if you want a different local folder.
 
