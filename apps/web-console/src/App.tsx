@@ -1630,7 +1630,6 @@ export function App() {
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
   const [agentAvailabilityLoading, setAgentAvailabilityLoading] = useState(false);
   const [exploreQuery, setExploreQuery] = useState("");
-  const [compactExploreSearch, setCompactExploreSearch] = useState(false);
   const [selectedExploreFilter, setSelectedExploreFilter] = useState<ExploreFilterKey | null>(null);
   const [exploreAgentSort, setExploreAgentSort] = useState<ExploreAgentSortKey>("online");
   const [exploreAgentPage, setExploreAgentPage] = useState(1);
@@ -1702,31 +1701,6 @@ export function App() {
     }
     publishExploreActivity(pendingAgentBoard ?? agentBoard, pendingPaymentLedger ?? paymentLedger);
   }
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-
-    const mediaQuery = window.matchMedia("(min-width: 900px) and (max-width: 1319px)");
-    const updateCompactSearch = () => {
-      setCompactExploreSearch(mediaQuery.matches);
-    };
-
-    updateCompactSearch();
-
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", updateCompactSearch);
-      return () => {
-        mediaQuery.removeEventListener("change", updateCompactSearch);
-      };
-    }
-
-    mediaQuery.addListener(updateCompactSearch);
-    return () => {
-      mediaQuery.removeListener(updateCompactSearch);
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -4551,7 +4525,7 @@ export function App() {
                         setExploreQuery(event.target.value);
                         setExploreAgentPage(1);
                       }}
-                      placeholder={compactExploreSearch ? "Search agents" : "Agent, topic, rail, or skill"}
+                      placeholder="Search agents"
                     />
                   </label>
 

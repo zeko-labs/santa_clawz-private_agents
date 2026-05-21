@@ -981,11 +981,6 @@ pre,
   .explore-search-field {
     grid-column: 1;
     grid-row: 2;
-    gap: 0;
-  }
-
-  .explore-search-field > span {
-    display: none;
   }
 
   .explore-aggregate-stats {
@@ -1233,7 +1228,11 @@ pre,
 }
 
 .explore-search-field {
-  gap: 10px;
+  gap: 0;
+}
+
+.explore-search-field > span {
+  display: none;
 }
 
 .explore-search-input {
