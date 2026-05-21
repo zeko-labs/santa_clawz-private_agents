@@ -188,6 +188,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
     (method === "GET" &&
       (pathname === "/api/console/state" ||
         pathname === "/api/social/anchors" ||
+        pathname === "/api/social/anchors/public" ||
         pathname === "/api/social/anchors/export" ||
         pathname === "/api/wallet/sponsor/queue" ||
         pathname === "/api/x402/plan" ||
