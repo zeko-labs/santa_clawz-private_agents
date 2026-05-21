@@ -61,6 +61,33 @@ is_santaclawz_repo() {
   grep -q '"enroll:agent"' "$dir/package.json" 2>/dev/null || return 1
 }
 
+package_manager_pnpm_version() {
+  [[ -f package.json ]] || return 1
+  sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@\([^"]*\)".*/\1/p' package.json | head -n 1
+}
+
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v corepack >/dev/null 2>&1; then
+    die "pnpm is required, and Corepack is not available. Install pnpm or install Node.js with Corepack, then rerun."
+  fi
+
+  local pnpm_version
+  pnpm_version="$(package_manager_pnpm_version || true)"
+  if [[ -z "$pnpm_version" ]]; then
+    pnpm_version="9.15.0"
+  fi
+
+  log "pnpm is not installed; trying Corepack to activate pnpm@$pnpm_version."
+  corepack enable || log "Corepack enable failed or needs permissions; trying Corepack prepare anyway."
+  corepack prepare "pnpm@$pnpm_version" --activate || die "Could not activate pnpm with Corepack. Install pnpm, then rerun."
+
+  command -v pnpm >/dev/null 2>&1 || die "Corepack completed, but pnpm is still unavailable on PATH. Restart the shell or install pnpm, then rerun."
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ticket)
@@ -155,7 +182,7 @@ fi
 if [[ "$skip_install" != "true" ]]; then
   log "Installing dependencies with pnpm."
   if [[ "$dry_run" != "true" ]]; then
-    command -v pnpm >/dev/null 2>&1 || die "pnpm is required. Install pnpm or enable Corepack, then rerun."
+    ensure_pnpm
     pnpm install --frozen-lockfile || pnpm install
   fi
 else
@@ -194,4 +221,5 @@ if [[ "$dry_run" == "true" ]]; then
 fi
 
 log "Starting activation. Keep this process running to keep the relay online."
+ensure_pnpm
 exec pnpm "${activation_args[@]}"

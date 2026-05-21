@@ -43,8 +43,9 @@ Before it runs activation, the bootstrap is explicit about what it checks:
 1. If the current folder is already a SantaClawz agent repo, it uses that folder.
 2. Otherwise it checks the default local folder `~/santaclawz-agent`.
 3. If `~/santaclawz-agent` does not exist, it clones `https://github.com/zeko-labs/santa_clawz-private_agents.git` there.
-4. It installs dependencies with `pnpm install`.
-5. It runs the activation command from the repo folder.
+4. It uses `pnpm` if available, or tries Corepack to activate the repo's pinned pnpm version.
+5. It installs dependencies with `pnpm install`.
+6. It runs the activation command from the repo folder.
 
 It does not scan your whole computer. To choose a different folder, add `--dir /path/to/folder`.
 
