@@ -1031,10 +1031,10 @@ function nextStepLabel(agent: AgentRegistryEntry) {
     }
     return agent.pricingMode === "quote-required" && agent.readiness?.paidExecutionProven === true
       ? "Enable paid execution"
-      : "Prove paid work";
+      : "Prove paid execution";
   }
   if (upgradeReasons.has("paid-execution-not-proven") || agent.readiness?.paidExecutionProven === false) {
-    return "Prove paid work";
+    return "Prove paid execution";
   }
   if (agent.readiness?.hireable !== true) {
     return "Run readiness";
