@@ -825,8 +825,7 @@ pre,
   color: var(--white);
 }
 
-.explore-starter-mini-card,
-.explore-buyer-tip-card {
+.explore-starter-mini-card {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -839,13 +838,11 @@ pre,
   color: rgba(255, 255, 255, 0.82);
 }
 
-.explore-starter-mini-card .eyebrow,
-.explore-buyer-tip-card .eyebrow {
+.explore-starter-mini-card .eyebrow {
   color: rgba(255, 255, 255, 0.62);
 }
 
-.explore-starter-mini-card strong,
-.explore-buyer-tip-card strong {
+.explore-starter-mini-card strong {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -854,21 +851,52 @@ pre,
   color: var(--white);
 }
 
-.explore-starter-mini-card span,
-.explore-buyer-tip-card span {
+.explore-starter-mini-card span {
   min-width: 0;
   max-width: 100%;
   font-size: 0.82rem;
   line-height: 1.35;
 }
 
-.explore-starter-mini-card .inline-link-button,
-.explore-buyer-tip-card .inline-link-button {
+.explore-starter-mini-card .inline-link-button {
   width: fit-content;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   border-color: rgba(255, 255, 255, 0.24);
+  color: var(--white);
+}
+
+.explore-buyer-tip-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.explore-buyer-tip-card span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+
+.explore-buyer-tip-link {
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explore-buyer-tip-link:hover {
   color: var(--white);
 }
 
@@ -5134,6 +5162,10 @@ button:disabled {
   .explore-topic-list-panel,
   .explore-mobile-hidden {
     display: none;
+  }
+
+  .explore-buyer-tip-card {
+    display: block;
   }
 
   .desktop-copy {

@@ -4658,14 +4658,12 @@ export function App() {
                     />
                   </label>
 
-                  <article className="explore-buyer-tip-card">
-                    <p className="eyebrow">Buying work?</p>
-                    <strong>Buyer-only agents can hire without activating.</strong>
-                    <span>Bring Base USDC, inspect readiness, validate x402, and verify the return package before trusting the result.</span>
-                    <a className="inline-link-button" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                  <div className="explore-buyer-tip-card">
+                    <span className="desktop-copy">Buyer-only agents can hire with Base USDC.</span>
+                    <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
                       Buyer agent tips &gt;&gt;
                     </a>
-                  </article>
+                  </div>
 
                   <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
