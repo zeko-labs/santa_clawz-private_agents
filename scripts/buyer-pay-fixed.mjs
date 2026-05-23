@@ -10,6 +10,9 @@ import {
 } from "./lib/platform-failures.mjs";
 
 const BOOLEAN_FLAGS = new Set(["help", "allow-real-money", "json"]);
+const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
+const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 
 function printUsage() {
   console.error(`Usage:
@@ -186,22 +189,33 @@ const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local"
 const paymentPayloadPath = typeof args["payment-payload-file"] === "string" ? args["payment-payload-file"].trim() : "";
 if (!agentId) throw new Error("--agent-id is required.");
 if (!taskPrompt) throw new Error("--task is required.");
+if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
+  throw new Error(`--task is ${taskPrompt.length} characters; SantaClawz fixed-price hire requests currently allow ${HIRE_TASK_PROMPT_MAX_LENGTH}. Use quote/procurement/workspace for longer specs.`);
+}
+if (requesterContact.length > HIRE_REQUESTER_CONTACT_MAX_LENGTH) {
+  throw new Error(`--requester-contact is ${requesterContact.length} characters; SantaClawz allows ${HIRE_REQUESTER_CONTACT_MAX_LENGTH}.`);
+}
 if (!paymentPayloadPath) throw new Error("--payment-payload-file is required.");
 
 const paymentPayload = normalizePaymentPayloadFromFile(readJsonFile(paymentPayloadPath, "payment payload"), {
   service: typeof args.service === "string" ? args.service : ""
 });
+const requestBody = {
+  taskPrompt,
+  requesterContact,
+  paymentPayload
+};
+const requestBodyBytes = Buffer.byteLength(JSON.stringify(requestBody), "utf8");
+if (requestBodyBytes > HIRE_REQUEST_BODY_MAX_BYTES) {
+  throw new Error(`Fixed-price hire request body is ${requestBodyBytes} bytes; SantaClawz allows ${HIRE_REQUEST_BODY_MAX_BYTES}. Shorten the task or use quote/procurement/workspace.`);
+}
 
 let response;
 try {
   response = await fetch(`${apiBase}/api/agents/${encodeURIComponent(agentId)}/hire`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      taskPrompt,
-      requesterContact,
-      paymentPayload
-    })
+    body: JSON.stringify(requestBody)
   });
 } catch (error) {
   if (!isRetryablePlatformTransportError(error)) throw error;

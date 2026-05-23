@@ -68,6 +68,11 @@ const securityConfig = resolveSecurityConfig();
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
+const HIRE_REQUEST_LIMITS = Object.freeze({
+  taskPromptMaxChars: HIRE_TASK_PROMPT_MAX_LENGTH,
+  requesterContactMaxChars: HIRE_REQUESTER_CONTACT_MAX_LENGTH,
+  bodyMaxBytes: HIRE_REQUEST_BODY_MAX_BYTES
+});
 const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
   0,
   Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_TTL_MS ?? "0"))
@@ -1413,6 +1418,41 @@ function supportedPrivacyModes() {
   ];
 }
 
+function hireRequestLimits() {
+  return { ...HIRE_REQUEST_LIMITS };
+}
+
+function hireRequestErrorBody(code: string, error: string, extra: Record<string, unknown> = {}) {
+  return {
+    ok: false,
+    code,
+    error,
+    retryable: false,
+    limits: hireRequestLimits(),
+    ...extra
+  };
+}
+
+function hireRequestFailureBody(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unable to submit hire request.";
+  if (/taskPrompt must be/i.test(message)) {
+    return hireRequestErrorBody("task_prompt_too_long", message);
+  }
+  if (/requesterContact must be/i.test(message)) {
+    return hireRequestErrorBody("requester_contact_too_long", message);
+  }
+  if (/artifactDelivery\./i.test(message) || /^artifactDelivery\.mode/i.test(message)) {
+    return hireRequestErrorBody("artifact_delivery_invalid", message);
+  }
+  if (/jobPrivacy\./i.test(message)) {
+    return hireRequestErrorBody("job_privacy_invalid", message);
+  }
+  if (/taskPrompt and requesterContact are required/i.test(message)) {
+    return hireRequestErrorBody("task_prompt_or_requester_contact_missing", message);
+  }
+  return hireRequestErrorBody("hire_request_invalid", message);
+}
+
 function costEstimateFromPlan(plan: Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"]) {
   return {
     pricingMode: plan.pricingMode,
@@ -1584,6 +1624,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
       ...(agent.referencePriceUnit ? { referencePriceUnit: agent.referencePriceUnit } : {}),
       ...(plan ? { costEstimate: costEstimateFromPlan(plan) } : {})
     },
+    limits: hireRequestLimits(),
     readiness: {
       online: agent.runtimeStatus === "live",
       paymentsReady: agent.paymentProfileReady,
@@ -2712,6 +2753,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
           ? { paid_execution: consoleState.profile.runtimeDelivery.runtimeRoutes.paid_execution }
           : {})
       },
+      limits: hireRequestLimits(),
       deliveryLanes: supportedDeliveryLanes(),
       scannerReady: scannerHealth.reachable,
       scanner: {
@@ -4986,14 +5028,14 @@ app.post("/api/ownership/reclaim", route(async (request, response) => {
 const handleAgentHireRequest = route(async (request, response) => {
   const agentId = request.params.agentId;
   if (!agentId) {
-    response.status(400).json({ error: "agentId is required." });
+    response.status(400).json(hireRequestErrorBody("agent_id_required", "agentId is required."));
     return;
   }
 
   const body = parseHireRequest(request.body ?? null);
   try {
     if (Buffer.byteLength(JSON.stringify(request.body ?? {}), "utf8") > HIRE_REQUEST_BODY_MAX_BYTES) {
-      response.status(413).json({ error: "Hire request body is too large." });
+      response.status(413).json(hireRequestErrorBody("hire_request_body_too_large", "Hire request body is too large."));
       return;
     }
     const bodyRecord = body as Record<string, unknown>;
@@ -5020,11 +5062,19 @@ const handleAgentHireRequest = route(async (request, response) => {
     const jobPrivacy = parseJobPrivacyPreference(body.jobPrivacy ?? body.activityPrivacy);
     const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
     if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
-      response.status(400).json({ error: `taskPrompt must be ${HIRE_TASK_PROMPT_MAX_LENGTH} characters or less.` });
+      response.status(400).json(hireRequestErrorBody(
+        "task_prompt_too_long",
+        `taskPrompt must be ${HIRE_TASK_PROMPT_MAX_LENGTH} characters or less.`,
+        { actualChars: taskPrompt.length }
+      ));
       return;
     }
     if (requesterContact.length > HIRE_REQUESTER_CONTACT_MAX_LENGTH) {
-      response.status(400).json({ error: `requesterContact must be ${HIRE_REQUESTER_CONTACT_MAX_LENGTH} characters or less.` });
+      response.status(400).json(hireRequestErrorBody(
+        "requester_contact_too_long",
+        `requesterContact must be ${HIRE_REQUESTER_CONTACT_MAX_LENGTH} characters or less.`,
+        { actualChars: requesterContact.length }
+      ));
       return;
     }
 
@@ -5312,9 +5362,7 @@ const handleAgentHireRequest = route(async (request, response) => {
       throw error;
     }
   } catch (error) {
-    response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to submit hire request."
-    });
+    response.status(400).json(hireRequestFailureBody(error));
   }
 });
 
