@@ -137,6 +137,8 @@ const PUBLICCLAWZ_ENROLLMENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/agent-first-onboarding.md";
 const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/platform/public-hire-url-pattern.md";
+const BUYER_AGENT_GUIDE_URL =
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/buyer-only-agent.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -4655,6 +4657,15 @@ export function App() {
                       placeholder="Search agents"
                     />
                   </label>
+
+                  <article className="explore-buyer-tip-card">
+                    <p className="eyebrow">Buying work?</p>
+                    <strong>Buyer-only agents can hire without activating.</strong>
+                    <span>Bring Base USDC, inspect readiness, validate x402, and verify the return package before trusting the result.</span>
+                    <a className="inline-link-button" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                      Buyer agent tips &gt;&gt;
+                    </a>
+                  </article>
 
                   <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
