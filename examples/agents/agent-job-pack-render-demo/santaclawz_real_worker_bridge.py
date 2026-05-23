@@ -15,19 +15,26 @@ import hashlib
 import json
 import os
 import pathlib
+import secrets
 import subprocess
 import sys
+import threading
+import time
 import traceback
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Optional
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
 AGENT = ROOT / "agent" / "local_agent.py"
 OUTPUT = ROOT / "output"
 BRIDGE_DIR = OUTPUT / "worker_bridge"
+STATE_DIR = pathlib.Path(os.environ.get("CLAWZ_JOB_PACK_STATE_DIR", str(BRIDGE_DIR))).expanduser()
 REQUESTS_DIR = BRIDGE_DIR / "requests"
 AUDIT_LOG = BRIDGE_DIR / "audit.jsonl"
+ACTIVATION_LANE_STATE = STATE_DIR / "activation_lane_state.json"
 DEFAULT_TIMEOUT_SECONDS = 110
 FAST_PATH_DEFAULT = "1"
 
@@ -53,6 +60,21 @@ def sha256_text(value: str) -> str:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def stable_json_dumps(value: Any) -> str:
+    def normalize(nested: Any) -> Any:
+        if isinstance(nested, list):
+            return [normalize(item) for item in nested]
+        if isinstance(nested, dict):
+            return {key: normalize(nested[key]) for key in sorted(nested.keys()) if nested[key] is not None}
+        return nested
+
+    return json.dumps(normalize(value), separators=(",", ":"))
+
+
+def canonical_digest(value: Any) -> str:
+    return hashlib.sha256(stable_json_dumps(value).encode("utf-8")).hexdigest()
 
 
 def read_json(path: pathlib.Path) -> dict[str, Any]:
@@ -648,6 +670,432 @@ def run_once(path: pathlib.Path, timeout_seconds: int) -> int:
     return 0
 
 
+def activation_lane_http_json(method: str, url: str, token: str, payload: Optional[dict[str, Any]] = None, timeout_seconds: Optional[int] = None) -> tuple[int, dict[str, Any]]:
+    body = None if payload is None else json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    timeout = timeout_seconds if timeout_seconds is not None else int(os.environ.get("CLAWZ_ACTIVATION_LANE_HTTP_TIMEOUT_SECONDS", "120"))
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+            "authorization": f"Bearer {token}",
+            "x-santaclawz-activation-lane-key": token,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            return response.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        try:
+            return exc.code, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return exc.code, {"ok": False, "error": raw}
+
+
+def activation_lane_state() -> dict[str, Any]:
+    if not ACTIVATION_LANE_STATE.exists():
+        return {"agents": {}}
+    try:
+        state = read_json(ACTIVATION_LANE_STATE)
+        return state if isinstance(state.get("agents"), dict) else {"agents": {}}
+    except Exception:
+        return {"agents": {}}
+
+
+def run_activation_lane_probe_command(command: str, candidate: dict[str, Any]) -> dict[str, Any]:
+    env = {
+        **os.environ,
+        "SANTACLAWZ_ACTIVATION_LANE": "1",
+        "SANTACLAWZ_ACTIVATION_AGENT_ID": str(candidate.get("agentId", "")),
+        "SANTACLAWZ_ACTIVATION_SESSION_ID": str(candidate.get("sessionId", "")),
+        "SANTACLAWZ_ACTIVATION_AMOUNT_USD": str(candidate.get("amountUsd", "")),
+        "SANTACLAWZ_ACTIVATION_HIRE_ENDPOINT": str(candidate.get("activationHireEndpoint", "")),
+    }
+    completed = subprocess.run(command, shell=True, cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=180, check=False)
+    return {
+        "return_code": completed.returncode,
+        "stdout_preview": completed.stdout[-1200:],
+        "stderr_preview": completed.stderr[-1200:],
+    }
+
+
+def require_activation_field(source: dict[str, Any], key: str, context: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{context}.{key} is required")
+    return value.strip()
+
+
+def find_activation_fee_split_accept(payment_requirement: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    accepts = payment_requirement.get("accepts")
+    if not isinstance(accepts, list):
+        raise ValueError("paymentRequirement.accepts is required")
+    for candidate in accepts:
+        if not isinstance(candidate, dict) or candidate.get("settlementModel") != "x402-exact-evm-fee-split-v1":
+            continue
+        extensions = candidate.get("extensions")
+        evm = extensions.get("evm") if isinstance(extensions, dict) else None
+        fee_split = evm.get("feeSplit") if isinstance(evm, dict) else None
+        if isinstance(evm, dict) and isinstance(fee_split, dict):
+            return candidate, evm, fee_split
+    raise ValueError("payment requirement is missing x402-exact-evm-fee-split-v1 accept option")
+
+
+def activation_asset_address(accept: dict[str, Any], evm: dict[str, Any]) -> str:
+    asset = accept.get("asset")
+    if isinstance(asset, dict) and isinstance(asset.get("address"), str) and asset["address"].strip():
+        return asset["address"].strip()
+    return require_activation_field(evm, "assetAddress", "extensions.evm")
+
+
+def activation_typed_data(evm: dict[str, Any], from_address: str, to_address: str, value: str, valid_after: str, valid_before: str, nonce: str) -> dict[str, Any]:
+    chain_id = int(evm.get("chainId", 0))
+    if chain_id <= 0:
+        raise ValueError("extensions.evm.chainId is required")
+    return {
+        "domain": {
+            "name": str(evm.get("eip712Name") or "USD Coin"),
+            "version": str(evm.get("assetVersion") or "2"),
+            "chainId": chain_id,
+            "verifyingContract": require_activation_field(evm, "assetAddress", "extensions.evm"),
+        },
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"},
+            ],
+            "ReceiveWithAuthorization": [
+                {"name": "from", "type": "address"},
+                {"name": "to", "type": "address"},
+                {"name": "value", "type": "uint256"},
+                {"name": "validAfter", "type": "uint256"},
+                {"name": "validBefore", "type": "uint256"},
+                {"name": "nonce", "type": "bytes32"},
+            ],
+        },
+        "primaryType": "ReceiveWithAuthorization",
+        "message": {
+            "from": from_address,
+            "to": to_address,
+            "value": value,
+            "validAfter": valid_after,
+            "validBefore": valid_before,
+            "nonce": nonce,
+        },
+    }
+
+
+def sign_activation_typed_data(private_key: str, typed_data: dict[str, Any]) -> str:
+    try:
+        from eth_account import Account
+        from eth_account.messages import encode_typed_data
+    except Exception as exc:
+        raise RuntimeError("eth-account is required for built-in activation-lane signing. Install requirements.txt on the hosted Job Pack service.") from exc
+
+    signable = encode_typed_data(full_message=typed_data)
+    return Account.sign_message(signable, private_key=private_key).signature.hex()
+
+
+def activation_account_address(private_key: str) -> str:
+    try:
+        from eth_account import Account
+    except Exception as exc:
+        raise RuntimeError("eth-account is required for built-in activation-lane signing. Install requirements.txt on the hosted Job Pack service.") from exc
+    return Account.from_key(private_key).address
+
+
+def build_activation_fee_split_payment_payload(payment_requirement: dict[str, Any], candidate: dict[str, Any], private_key: str) -> dict[str, Any]:
+    accept, evm, fee_split = find_activation_fee_split_accept(payment_requirement)
+    payer = activation_account_address(private_key)
+    configured_payer = os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_ADDRESS", "").strip()
+    if configured_payer and configured_payer.lower() != payer.lower():
+        raise ValueError("CLAWZ_ACTIVATION_LANE_BUYER_ADDRESS does not match CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY")
+
+    issued_at = now_iso()
+    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    valid_after = str(int(dt.datetime.fromisoformat(issued_at.replace("Z", "+00:00")).timestamp()))
+    valid_before = str(int(dt.datetime.fromisoformat(expires_at.replace("Z", "+00:00")).timestamp()))
+    seller_pay_to = require_activation_field(fee_split, "sellerPayTo", "feeSplit")
+    protocol_fee_pay_to = require_activation_field(fee_split, "protocolFeePayTo", "feeSplit")
+    seller_amount = require_activation_field(fee_split, "sellerAmount", "feeSplit")
+    protocol_fee_amount = require_activation_field(fee_split, "protocolFeeAmount", "feeSplit")
+    gross_amount = str(accept.get("amount") or accept.get("price") or "").strip()
+    if not gross_amount:
+        raise ValueError("accept.amount is required")
+    amount_unit = "atomic" if isinstance(accept.get("extensions"), dict) and isinstance(accept["extensions"].get("evm"), dict) and accept["extensions"]["evm"].get("amountUnit") == "atomic" else "decimal"
+    asset_address = activation_asset_address(accept, evm)
+    seller_typed_data = activation_typed_data(
+        evm,
+        payer,
+        seller_pay_to,
+        seller_amount,
+        valid_after,
+        valid_before,
+        f"0x{secrets.token_hex(32)}",
+    )
+    fee_typed_data = activation_typed_data(
+        evm,
+        payer,
+        protocol_fee_pay_to,
+        protocol_fee_amount,
+        valid_after,
+        valid_before,
+        f"0x{secrets.token_hex(32)}",
+    )
+    seller_signature = sign_activation_typed_data(private_key, seller_typed_data)
+    fee_signature = sign_activation_typed_data(private_key, fee_typed_data)
+    payment_id = f"pay_{canonical_digest({'requestId': payment_requirement.get('requestId'), 'payer': payer, 'issuedAtIso': issued_at, 'sellerNonce': seller_typed_data['message']['nonce'], 'feeNonce': fee_typed_data['message']['nonce']})[:24]}"
+    fee_bps = fee_split.get("feeBps")
+    hosted_accepted = {
+        "scheme": accept.get("scheme"),
+        "network": require_activation_field(accept, "network", "accept"),
+        "asset": asset_address,
+        "amount": gross_amount,
+        "payTo": seller_pay_to,
+        "maxTimeoutSeconds": int(evm.get("maxTimeoutSeconds") or 60),
+        "extra": {
+            "name": str(evm.get("eip712Name") or "USD Coin"),
+            "version": str(evm.get("assetVersion") or "2"),
+            "amountUnit": amount_unit,
+            "settlementModel": "x402-exact-evm-fee-split-v1",
+            "feeSplit": {
+                "version": str(fee_split.get("version") or "protocol-owner-fee-v1"),
+                "grossAmount": gross_amount,
+                "sellerAmount": seller_amount,
+                "protocolFeeAmount": protocol_fee_amount,
+                "sellerPayTo": seller_pay_to,
+                "protocolFeePayTo": protocol_fee_pay_to,
+                "feeSettlementMode": str(fee_split.get("feeSettlementMode") or "exact-eip3009-split-v1"),
+                **({"feeBps": fee_bps} if isinstance(fee_bps, int) else {}),
+            },
+        },
+    }
+    extensions = {
+        "evm": {"amountUnit": amount_unit},
+        "santaclawz": {
+            "paymentId": payment_id,
+            "idempotencyKey": payment_id,
+            "feeSplit": {
+                "settlementModel": "x402-exact-evm-fee-split-v1",
+                "sellerPayTo": seller_pay_to,
+                "protocolFeePayTo": protocol_fee_pay_to,
+                "grossAmount": gross_amount,
+                "sellerAmount": seller_amount,
+                "protocolFeeAmount": protocol_fee_amount,
+                **({"feeBps": fee_bps} if isinstance(fee_bps, int) else {}),
+            },
+        },
+    }
+    payload_without_digest = {
+        "x402Version": 2,
+        "protocol": "x402",
+        "version": "2",
+        "requestId": require_activation_field(payment_requirement, "requestId", "paymentRequirement"),
+        "paymentId": payment_id,
+        "scheme": "exact",
+        "settlementRail": "evm",
+        "networkId": require_activation_field(accept, "network", "accept"),
+        "asset": accept.get("asset"),
+        "amount": gross_amount,
+        "payer": payer,
+        "payTo": seller_pay_to,
+        "sessionId": str(candidate.get("sessionId") or payment_requirement.get("sessionId") or ""),
+        "issuedAtIso": issued_at,
+        "expiresAtIso": expires_at,
+        "extensions": extensions,
+        "accepted": hosted_accepted,
+        "payload": {
+            "signature": seller_signature,
+            "authorization": seller_typed_data["message"],
+            "primitive": "evm-eip3009-receive-with-authorization",
+            "feeAuthorization": {
+                "signature": fee_signature,
+                "authorization": fee_typed_data["message"],
+                "primitive": "evm-eip3009-receive-with-authorization",
+            },
+        },
+        "payloadShape": "santaclawz-hosted-exact-fee-split-v1",
+    }
+    base_payload = {
+        **payload_without_digest,
+        "paymentContextDigest": canonical_digest({
+            "requestId": payload_without_digest.get("requestId"),
+            "paymentId": payload_without_digest.get("paymentId"),
+            "scheme": payload_without_digest.get("scheme"),
+            "settlementRail": payload_without_digest.get("settlementRail"),
+            "networkId": payload_without_digest.get("networkId"),
+            "asset": payload_without_digest.get("asset"),
+            "amount": payload_without_digest.get("amount"),
+            "payer": payload_without_digest.get("payer"),
+            "payTo": payload_without_digest.get("payTo"),
+            "sessionId": payload_without_digest.get("sessionId"),
+            "issuedAtIso": payload_without_digest.get("issuedAtIso"),
+            "expiresAtIso": payload_without_digest.get("expiresAtIso"),
+            "extensions": payload_without_digest.get("extensions"),
+        }),
+    }
+    payload = {
+        **base_payload,
+        "authorization": {
+            "primitive": "evm-eip3009-receive-with-authorization",
+            "settlementRail": "evm",
+            "network": accept.get("network"),
+            "asset": accept.get("asset"),
+            "transferMethod": "EIP-3009",
+            "facilitator": evm.get("facilitatorUrl") or evm.get("defaultFacilitator"),
+            "typedData": seller_typed_data,
+            "signature": seller_signature,
+        },
+        "feeAuthorization": {
+            "primitive": "evm-eip3009-receive-with-authorization",
+            "settlementRail": "evm",
+            "network": accept.get("network"),
+            "asset": accept.get("asset"),
+            "transferMethod": "EIP-3009",
+            "facilitator": evm.get("facilitatorUrl") or evm.get("defaultFacilitator"),
+            "typedData": fee_typed_data,
+            "signature": fee_signature,
+        },
+    }
+    return {**payload, "authorizationDigest": canonical_digest({key: value for key, value in payload.items() if key != "x402Version"})}
+
+
+def activation_paid_execution_ok(status: int, payload: dict[str, Any]) -> bool:
+    operational = payload.get("operationalStatus") if isinstance(payload.get("operationalStatus"), dict) else {}
+    payment = payload.get("payment") if isinstance(payload.get("payment"), dict) else {}
+    payment_status = operational.get("paymentStatus") or payload.get("paymentStatus") or payment.get("status")
+    settlement_status = operational.get("settlementStatus") or payload.get("settlementStatus")
+    relay_status = operational.get("relayDeliveryStatus") or payload.get("relayDeliveryStatus")
+    execution_status = operational.get("agentExecutionStatus") or payload.get("agentExecutionStatus") or payload.get("status")
+    return status == 200 and payment_status == "settled" and settlement_status == "settled" and relay_status in ("forwarded", "recorded") and execution_status == "completed"
+
+
+def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> dict[str, Any]:
+    private_key = os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()
+    if not private_key:
+        return {"ok": False, "mode": "builtin_missing_buyer_key", "error": "missing CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY"}
+    endpoint = str(candidate.get("activationHireEndpoint", ""))
+    if not endpoint:
+        return {"ok": False, "mode": "builtin", "error": "candidate_missing_activationHireEndpoint"}
+    request_body = {
+        "activationLane": True,
+        "taskPrompt": "SantaClawz activation lane paid execution probe from hosted agent_job_pack.",
+        "requesterContact": "agent_job_pack@santaclawz.ai",
+    }
+    challenge_status, payment_requirement = activation_lane_http_json("POST", f"{endpoint}?activationLane=true", token, request_body, timeout_seconds=30)
+    if challenge_status != 402 or not isinstance(payment_requirement, dict):
+        return {"ok": False, "mode": "builtin_challenge", "status": challenge_status, "response": payment_requirement}
+    payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
+    paid_status, paid_payload = activation_lane_http_json(
+        "POST",
+        f"{endpoint}?activationLane=true",
+        token,
+        {**request_body, "paymentPayload": payment_payload},
+    )
+    return {
+        "ok": activation_paid_execution_ok(paid_status, paid_payload if isinstance(paid_payload, dict) else {}),
+        "mode": "builtin_x402",
+        "status": paid_status,
+        "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
+        "response": paid_payload,
+    }
+
+
+def process_activation_candidate(candidate: dict[str, Any], token: str, command: str | None) -> dict[str, Any]:
+    agent_id = str(candidate.get("agentId", ""))
+    if not agent_id:
+        return {"ok": False, "error": "candidate_missing_agent_id"}
+    if command:
+        command_result = run_activation_lane_probe_command(command, candidate)
+        return {"ok": command_result["return_code"] == 0, "mode": "command", **command_result}
+    private_key = os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()
+    if private_key:
+        return run_builtin_activation_lane_probe(candidate, token)
+
+    endpoint = str(candidate.get("activationHireEndpoint", ""))
+    status, payload = activation_lane_http_json(
+        "POST",
+        f"{endpoint}?activationLane=true",
+        token,
+        {
+            "activationLane": True,
+            "taskPrompt": "SantaClawz activation lane paid execution probe from hosted agent_job_pack.",
+            "requesterContact": "agent_job_pack@santaclawz.ai",
+        },
+    )
+    return {
+        "ok": status == 402,
+        "mode": "payment_required_preview",
+        "status": status,
+        "paymentRequired": status == 402,
+        "response": payload,
+    }
+
+
+def activation_lane_loop(interval_seconds: int) -> None:
+    api_base = os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/")
+    token = os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN") or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN")
+    command = os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND")
+    cooldown_seconds = int(os.environ.get("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", "3600"))
+    if not token:
+        log_event({"type": "activation-lane-disabled", "reason": "missing CLAWZ_ACTIVATION_LANE_TOKEN"})
+        return
+
+    log_event({
+        "type": "activation-lane-poller-started",
+        "api_base": api_base,
+        "interval_seconds": interval_seconds,
+        "cooldown_seconds": cooldown_seconds,
+        "retroactive_sweep": True,
+    })
+    while True:
+        try:
+            state = activation_lane_state()
+            status, payload = activation_lane_http_json("GET", f"{api_base}/api/activation-lane/candidates?limit=8", token)
+            candidates = payload.get("candidates") if isinstance(payload, dict) else []
+            if status != 200 or not isinstance(candidates, list):
+                log_event({"type": "activation-lane-candidate-fetch-failed", "status": status, "response": payload})
+                time.sleep(interval_seconds)
+                continue
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                agent_id = str(candidate.get("agentId", ""))
+                agent_state = state["agents"].get(agent_id, {})
+                last_attempt_ms = int(agent_state.get("last_attempt_ms", 0)) if isinstance(agent_state, dict) else 0
+                candidate_retry_seconds = int(candidate.get("retryAfterSeconds", cooldown_seconds))
+                retry_after_seconds = max(60, candidate_retry_seconds)
+                if int(time.time() * 1000) - last_attempt_ms < retry_after_seconds * 1000:
+                    continue
+                result = process_activation_candidate(candidate, token, command)
+                state["agents"][agent_id] = {
+                    "last_attempt_ms": int(time.time() * 1000),
+                    "last_attempt_at": now_iso(),
+                    "last_ok": bool(result.get("ok")),
+                    "mode": result.get("mode"),
+                }
+                write_json(ACTIVATION_LANE_STATE, state)
+                append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
+                log_event({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "ok": result.get("ok"), "mode": result.get("mode")})
+        except Exception as exc:
+            log_event({"type": "activation-lane-unhandled-error", "error": str(exc), "trace": traceback.format_exc(limit=4)})
+        time.sleep(interval_seconds)
+
+
+def maybe_start_activation_lane_poller() -> None:
+    if not env_truthy("CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED"):
+        return
+    interval_seconds = max(5, int(os.environ.get("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", "10")))
+    thread = threading.Thread(target=activation_lane_loop, args=(interval_seconds,), name="activation-lane-poller", daemon=True)
+    thread.start()
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Run the private SantaClawz real worker bridge.")
     default_host = os.environ.get("HOST") or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
@@ -664,6 +1112,7 @@ def main(argv: list[str]) -> int:
     if args.once:
         return run_once(args.once, args.timeout_seconds)
 
+    maybe_start_activation_lane_poller()
     Handler.timeout_seconds = args.timeout_seconds
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     log_event(

@@ -825,7 +825,8 @@ pre,
   color: var(--white);
 }
 
-.explore-starter-mini-card {
+.explore-starter-mini-card,
+.explore-buyer-tip-card {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -838,11 +839,13 @@ pre,
   color: rgba(255, 255, 255, 0.82);
 }
 
-.explore-starter-mini-card .eyebrow {
+.explore-starter-mini-card .eyebrow,
+.explore-buyer-tip-card .eyebrow {
   color: rgba(255, 255, 255, 0.62);
 }
 
-.explore-starter-mini-card strong {
+.explore-starter-mini-card strong,
+.explore-buyer-tip-card strong {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -851,14 +854,16 @@ pre,
   color: var(--white);
 }
 
-.explore-starter-mini-card span {
+.explore-starter-mini-card span,
+.explore-buyer-tip-card span {
   min-width: 0;
   max-width: 100%;
   font-size: 0.82rem;
   line-height: 1.35;
 }
 
-.explore-starter-mini-card .inline-link-button {
+.explore-starter-mini-card .inline-link-button,
+.explore-buyer-tip-card .inline-link-button {
   width: fit-content;
   max-width: 100%;
   overflow: hidden;

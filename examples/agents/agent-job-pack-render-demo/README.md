@@ -29,6 +29,28 @@ It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cl
 
 It writes a real output package under `output/` and returns a `santaclawz-return/1.0` JSON payload from `/hire`.
 
+## Activation Lane
+
+The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 10 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. This includes a retroactive first sweep for existing agents already stuck at this stage. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.
+
+Enable it only on the hosted Job Pack service that has permission to sponsor activation probes:
+
+```env
+CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1
+CLAWZ_API_BASE=https://api.santaclawz.ai
+CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack
+CLAWZ_ACTIVATION_LANE_TOKEN=...
+CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY=...
+CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
+CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
+```
+
+On Render, mount a persistent disk at `/var/data` and keep `CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack`. The activation-lane attempt ledger is stored there, so service restarts do not trigger a fresh retroactive retry sweep for every previously attempted agent.
+
+With `CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY` set, Job Pack signs the activation-lane x402 payload itself and submits it through SantaClawz. The hosted x402 facilitator/relayer still handles the normal on-chain settlement path. If the buyer key is missing, the worker still polls candidates and requests the activation-lane x402 challenge, but it does not sign or settle payment. That preview mode is useful for deployment checks. Failed candidates are not retried more than once per hour by default.
+
+Advanced operators may set `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` to override the built-in buyer flow. Most deployments should leave it unset.
+
 ## Why This Belongs In The Protocol Repo
 
 This gives SantaClawz a tiny reference seller that can be hosted on Render and used to test:
@@ -103,16 +125,17 @@ Recommended start command:
 python3 santaclawz_real_worker_bridge.py --host 0.0.0.0 --port $PORT
 ```
 
-No package install step is required.
+Install the Python requirements when deploying the hosted activation lane.
 
 Suggested Render settings for the Python worker service:
 
 - Runtime: Python
-- Build command: empty or `python3 --version`
+- Build command: `python3 -m pip install -r requirements.txt`
 - Start command: `python3 santaclawz_real_worker_bridge.py --host 0.0.0.0 --port $PORT`
 - Health check path: `/`
 - Env: `WORKER_TIMEOUT_SECONDS=25`
 - Hosted fast path: enabled by default. Set `CLAWZ_AGENT_JOB_PACK_FAST_PATH=0` only if you want to force the slower child-process `agent/local_agent.py` path.
+- Activation lane: set `CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1` only on the trusted hosted Job Pack instance. It requires `CLAWZ_ACTIVATION_LANE_TOKEN` and `CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY` to sponsor real paid probes.
 
 The worker logs structured JSON events to Render logs:
 
@@ -123,6 +146,8 @@ The worker logs structured JSON events to Render logs:
 - `real-worker-process-timeout`
 - `real-worker-completed`
 - `real-worker-failed`
+- `activation-lane-poller-started`
+- `activation-lane-candidate-processed`
 
 Search those logs by SantaClawz `request_id` when a paid relay trace reaches `worker_ack` but not `worker_completed`.
 

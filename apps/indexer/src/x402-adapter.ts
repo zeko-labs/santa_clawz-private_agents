@@ -1719,6 +1719,68 @@ export async function buildQuoteIntentX402RuntimeContext(input: {
   };
 }
 
+export async function buildActivationLaneX402RuntimeContext(input: {
+  baseUrl: string;
+  consoleState: ConsoleStateResponse;
+  serviceNetworkId: string;
+  agentId: string;
+  amountUsd: string;
+}): Promise<AgentX402RuntimeContext | null> {
+  const activationPaymentProfile: ConsoleStateResponse["profile"]["paymentProfile"] = {
+    ...input.consoleState.profile.paymentProfile,
+    pricingMode: "fixed-exact",
+    fixedAmountUsd: input.amountUsd
+  };
+  const activationConsoleState: ConsoleStateResponse = {
+    ...input.consoleState,
+    profile: {
+      ...input.consoleState.profile,
+      paymentProfile: activationPaymentProfile
+    }
+  };
+  const activationPlan = await buildAgentX402PlanWithNetworkQuotes({
+    baseUrl: input.baseUrl,
+    consoleState: activationConsoleState
+  });
+  const activationResourceUrl = `${normalizeBaseUrl(input.baseUrl)}/api/activation-lane/agents/${encodeURIComponent(input.agentId)}/hire`;
+  const runtime = buildAgentX402RuntimeContext({
+    baseUrl: input.baseUrl,
+    plan: {
+      ...activationPlan,
+      serviceId: `${activationPlan.serviceId}:activation-lane`,
+      resourcePreviewUrl: activationResourceUrl,
+      verifyPaymentUrl: activationResourceUrl,
+      settlePaymentUrl: activationResourceUrl,
+      rails: activationPlan.rails.map((rail) => ({
+        ...rail,
+        amountUsd: input.amountUsd
+      }))
+    },
+    serviceNetworkId: input.serviceNetworkId
+  });
+
+  if (!runtime) {
+    return null;
+  }
+
+  const paymentContext = {
+    ...runtime.paymentContext,
+    resource: activationResourceUrl,
+    activationLane: true,
+    activationBuyer: "agent_job_pack",
+    description: "SantaClawz activation lane paid probe for proving seller execution."
+  } satisfies JsonRecord;
+
+  return {
+    ...runtime,
+    paymentContext,
+    paymentRequired: normalizePaymentRequiredEvmAmounts(
+      requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord
+    ),
+    catalog: requireZekoX402Module().buildCatalog(paymentContext) as JsonRecord
+  };
+}
+
 export function buildAgentX402Catalog(runtime: AgentX402RuntimeContext) {
   return runtime.catalog;
 }

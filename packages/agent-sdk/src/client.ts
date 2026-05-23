@@ -174,6 +174,11 @@ export interface ClawzAgentReadinessResponse extends Record<string, unknown> {
   needsUpgrade?: boolean;
   upgradeReasons?: string[];
   readinessWarnings?: string[];
+  limits?: {
+    taskPromptMaxChars?: number;
+    requesterContactMaxChars?: number;
+    bodyMaxBytes?: number;
+  };
   scannerReady: boolean;
 }
 

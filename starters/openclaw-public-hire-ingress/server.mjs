@@ -17,6 +17,8 @@ const SERVICE_KEY_PATTERN = /^[a-z0-9][a-z0-9_:-]{0,79}$/;
 
 const replayCache = new Map();
 const rateLimitBuckets = new Map();
+let draining = false;
+let inFlightRequests = 0;
 
 function parseArgs(argv) {
   const args = {};
@@ -439,7 +441,7 @@ function assertHirePolicy(payload) {
   if (!isRecord(payment) || payment.amount_usd !== payload.settled_amount_usd || !payment.rail) {
     throw Object.assign(new Error("payment object must match paid_execution policy fields"), { statusCode: 402 });
   }
-  if (pricingMode === "quote-required") {
+  if (pricingMode === "quote-required" && payload.activation_lane !== true && payment.activation_lane !== true) {
     const quoteRequestId = String(payload.quote_request_id ?? payment.quote_request_id ?? "");
     const intentId = String(payload.intent_id ?? payment.authorization_id ?? "");
     if (!quoteRequestId.startsWith("hire_") || !intentId.startsWith("exec_")) {
@@ -851,7 +853,19 @@ const server = createServer((request, response) => {
     return;
   }
   if (request.method === "POST" && isHirePostPath(url.pathname)) {
-    void handleHire(request, response, args);
+    if (draining) {
+      jsonResponse(response, 503, {
+        ok: false,
+        code: "worker_bridge_draining",
+        retryable: true,
+        error: "worker bridge is restarting; retry with the same idempotency key or payment payload"
+      });
+      return;
+    }
+    inFlightRequests += 1;
+    void handleHire(request, response, args).finally(() => {
+      inFlightRequests = Math.max(0, inFlightRequests - 1);
+    });
     return;
   }
   publicError(response, 404, "not found");
@@ -860,3 +874,30 @@ const server = createServer((request, response) => {
 server.listen(port, host, () => {
   console.error(`SantaClawz public hire ingress listening on http://${host}:${port}`);
 });
+
+function beginShutdown(signal) {
+  if (draining) {
+    return;
+  }
+  draining = true;
+  console.error(`SantaClawz public hire ingress received ${signal}; draining ${inFlightRequests} in-flight request(s).`);
+  server.close(() => {
+    console.error("SantaClawz public hire ingress stopped accepting connections.");
+  });
+  const deadline = setTimeout(() => {
+    console.error(`SantaClawz public hire ingress shutdown grace expired with ${inFlightRequests} in-flight request(s).`);
+    process.exit(0);
+  }, 30_000);
+  deadline.unref?.();
+  const waitForInflight = () => {
+    if (inFlightRequests <= 0) {
+      clearTimeout(deadline);
+      process.exit(0);
+    }
+    setTimeout(waitForInflight, 250).unref?.();
+  };
+  waitForInflight();
+}
+
+process.once("SIGTERM", () => beginShutdown("SIGTERM"));
+process.once("SIGINT", () => beginShutdown("SIGINT"));

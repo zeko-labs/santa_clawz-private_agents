@@ -48,7 +48,7 @@ curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
   --relay-base 'https://relay.santaclawz.ai'
 ```
 
-Do not make this the default path for a normal operator. macOS may block pasted `curl | bash` commands with a malware/scam warning because the command downloads code and pipes it into a shell.
+Do not make this the default path for a normal operator. The repo-local `pnpm enroll:agent` command is easier to inspect, easier to rerun, and smoother on macOS Terminal.
 
 The bootstrap is intentionally narrow about local filesystem checks:
 
@@ -58,6 +58,21 @@ The bootstrap is intentionally narrow about local filesystem checks:
 4. If `pnpm` is missing but Corepack is available, it tries to activate the repo's pinned pnpm version automatically.
 
 It does not scan your whole computer. Use `--dir /path/to/folder` if you want a different local folder.
+
+## Optional Enterprise Auth After Signup
+
+Enterprise Auth is not part of the default activation command. Enroll first, run `seller:ready`, and then attach a mission auth sidecar only when the operator needs enterprise policy, identity, or approval checks:
+
+```bash
+pnpm agent:enterprise-auth -- \
+  --env-file .env.santaclawz \
+  --authority-url https://auth-sidecar.example.com \
+  --provider custom-oidc \
+  --scopes "github:repo,drive.readonly" \
+  --check
+```
+
+This updates the agent profile with a mission auth overlay and verifies the sidecar discovery document plus mission authority JWKS when `--check` is set.
 
 ## Directory-Independent Activation
 

@@ -663,6 +663,7 @@ interface QuotePaymentContext {
 
 interface HirePaymentAuthorization {
   status: "not-required" | "authorized" | "settled";
+  activationLane?: boolean;
   rail?: string;
   amountUsd?: string;
   authorizationId?: string;
@@ -4349,6 +4350,12 @@ export class ClawzControlPlane {
       verification_required: true,
       return_channel: "santaclawz",
       request_type: requestType,
+      ...(requestType === "paid_execution" && input.paymentAuthorization.activationLane
+        ? {
+            activation_lane: true,
+            activation_lane_id: "agent_job_pack"
+          }
+        : {}),
       pricing_mode: input.profile.paymentProfile.pricingMode,
       payment_status: paymentStatus,
       ...(settledAmountUsd ? { settled_amount_usd: settledAmountUsd } : {}),
@@ -4373,6 +4380,12 @@ export class ClawzControlPlane {
           : {}),
         ...(requestType === "paid_execution" && input.paymentAuthorization.authorizationId
           ? { authorization_id: input.paymentAuthorization.authorizationId }
+          : {}),
+        ...(requestType === "paid_execution" && input.paymentAuthorization.activationLane
+          ? {
+              activation_lane: true,
+              activation_lane_id: "agent_job_pack"
+            }
           : {}),
         ...(requestType === "paid_execution" && input.paymentAuthorization.quoteRequestId
           ? { quote_request_id: input.paymentAuthorization.quoteRequestId }
@@ -9527,12 +9540,12 @@ export class ClawzControlPlane {
       const paidExecutionProven =
         heartbeat.paidExecutionProbe?.ok === true ||
         hasVerifiedPaidExecutionForSession(hireRequests, sessionId, { includePrivate: true });
-      if (!paidExecutionProven) {
+      if (!paidExecutionProven && paymentAuthorization.activationLane !== true) {
         throw new Error(
           [
             "paid_execution_probe_required",
             "This agent has payments configured, but paid execution is not proven yet.",
-            "Run seller:ready with the paid-execution probe before buyers pay."
+            "Use the activation lane or run seller:ready with the paid-execution probe before buyers pay."
           ].join(": ")
         );
       }

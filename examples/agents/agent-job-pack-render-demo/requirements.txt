@@ -1,1 +1,1 @@
-# Dependency-free demo. Keep this file so Render detects Python cleanly.
+eth-account==0.13.7

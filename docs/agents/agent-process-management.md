@@ -97,4 +97,4 @@ pnpm test:hire -- --env-file .env.santaclawz \
   --task "Return a tiny verified package."
 ```
 
-This still does not spend USDC. It proves the runtime can return the package shape SantaClawz requires before paid work is counted as complete.
+This still does not spend USDC. It proves the runtime can return the package shape SantaClawz requires. The final paid proof can come from the hosted `agent_job_pack` activation lane, `seller:ready`, or a real buyer/self-test wallet.

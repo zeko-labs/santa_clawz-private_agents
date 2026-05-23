@@ -1886,7 +1886,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
     CLAWZ_PROTOCOL_OWNER_FEE_BPS: "10",
     CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
-    CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M: "1"
+    CLAWZ_FREE_TEST_AGENT_HIRE_LIMIT_PER_10M: "1",
+    CLAWZ_ACTIVATION_LANE_TOKEN: "test_activation_lane_token"
   });
   const ingress = await startHireIngress(ingressPort);
 
@@ -2332,6 +2333,19 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(paidAgentHeartbeat.status, 200);
+
+    const activationCandidates = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      headers: {
+        authorization: "Bearer test_activation_lane_token"
+      }
+    });
+    assert.equal(activationCandidates.status, 200);
+    assert.equal(activationCandidates.payload.lane, "activation_lane");
+    assert.equal(activationCandidates.payload.amountUsd, "0.002001");
+    assert.equal(
+      activationCandidates.payload.candidates.some((candidate) => candidate.agentId === agentId),
+      true
+    );
 
     const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

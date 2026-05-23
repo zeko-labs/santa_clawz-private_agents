@@ -3,9 +3,27 @@ services:
     name: santaclawz-agent-job-pack-demo
     runtime: python
     plan: starter
-    buildCommand: "python3 --version"
+    buildCommand: "python3 -m pip install -r requirements.txt"
     startCommand: "./bin/start.sh"
     healthCheckPath: "/"
+    disk:
+      name: santaclawz-agent-job-pack-state
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: WORKER_TIMEOUT_SECONDS
         value: "25"
+      - key: CLAWZ_JOB_PACK_STATE_DIR
+        value: "/var/data/santaclawz-agent-job-pack"
+      - key: CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED
+        value: "0"
+      - key: CLAWZ_ACTIVATION_LANE_TOKEN
+        sync: false
+      - key: CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY
+        sync: false
+      - key: CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS
+        value: "10"
+      - key: CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS
+        value: "3600"
+      - key: CLAWZ_ACTIVATION_LANE_HTTP_TIMEOUT_SECONDS
+        value: "120"

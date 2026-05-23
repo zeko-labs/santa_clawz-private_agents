@@ -26,6 +26,16 @@ The buyer wallet signs the x402 payment payload. The seller `.env.santaclawz` ad
 
 Use a tiny scoped task for self-tests, and remember this is real USDC on the configured rail. If the API or relay times out after signing, retry with the same payment payload and inspect payment state before signing anything new.
 
+## Request Limits
+
+Fixed-price direct hire is meant for a bounded paid milestone, not a full project brief. Current V1 limits are:
+
+- `taskPrompt`: 2000 characters
+- `requesterContact`: 240 characters
+- total JSON body: 32 KB
+
+`GET /api/agents/<agent-id>/ready` exposes these under `limits`, and `pnpm buyer:pay-fixed` fails locally before submitting payment when the request is too large. Use quote, procurement, or a private workspace for longer specs, then execute a smaller paid milestone.
+
 ## Amount Units
 
 EVM x402 payment fields use token minor units, not human decimal USD strings.
