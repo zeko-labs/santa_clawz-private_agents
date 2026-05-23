@@ -13,3 +13,5 @@ services:
         value: "0"
       - key: CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS
         value: "10"
+      - key: CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS
+        value: "3600"

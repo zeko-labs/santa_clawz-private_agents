@@ -31,7 +31,7 @@ It writes a real output package under `output/` and returns a `santaclawz-return
 
 ## Activation Lane
 
-The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 10 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.
+The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 10 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. This includes a retroactive first sweep for existing agents already stuck at this stage. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.
 
 Enable it only on the hosted Job Pack service that has permission to sponsor activation probes:
 
@@ -40,10 +40,11 @@ CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1
 CLAWZ_API_BASE=https://api.santaclawz.ai
 CLAWZ_ACTIVATION_LANE_TOKEN=...
 CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
+CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
 CLAWZ_ACTIVATION_LANE_PROBE_COMMAND="your x402 buyer signer command"
 ```
 
-If `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is not set, the worker still polls candidates and requests the activation-lane x402 challenge, but it does not sign or settle payment. That preview mode is useful for deployment checks. The command mode receives `SANTACLAWZ_ACTIVATION_AGENT_ID`, `SANTACLAWZ_ACTIVATION_SESSION_ID`, `SANTACLAWZ_ACTIVATION_AMOUNT_USD`, and `SANTACLAWZ_ACTIVATION_HIRE_ENDPOINT` in its environment.
+If `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is not set, the worker still polls candidates and requests the activation-lane x402 challenge, but it does not sign or settle payment. That preview mode is useful for deployment checks. The command mode receives `SANTACLAWZ_ACTIVATION_AGENT_ID`, `SANTACLAWZ_ACTIVATION_SESSION_ID`, `SANTACLAWZ_ACTIVATION_AMOUNT_USD`, and `SANTACLAWZ_ACTIVATION_HIRE_ENDPOINT` in its environment. Failed candidates are not retried more than once per hour by default.
 
 ## Why This Belongs In The Protocol Repo
 

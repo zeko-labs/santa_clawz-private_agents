@@ -737,12 +737,18 @@ def activation_lane_loop(interval_seconds: int) -> None:
     api_base = os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/")
     token = os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN") or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN")
     command = os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND")
-    cooldown_seconds = int(os.environ.get("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", "600"))
+    cooldown_seconds = int(os.environ.get("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", "3600"))
     if not token:
         log_event({"type": "activation-lane-disabled", "reason": "missing CLAWZ_ACTIVATION_LANE_TOKEN"})
         return
 
-    log_event({"type": "activation-lane-poller-started", "api_base": api_base, "interval_seconds": interval_seconds})
+    log_event({
+        "type": "activation-lane-poller-started",
+        "api_base": api_base,
+        "interval_seconds": interval_seconds,
+        "cooldown_seconds": cooldown_seconds,
+        "retroactive_sweep": True,
+    })
     while True:
         try:
             state = activation_lane_state()
@@ -758,7 +764,9 @@ def activation_lane_loop(interval_seconds: int) -> None:
                 agent_id = str(candidate.get("agentId", ""))
                 agent_state = state["agents"].get(agent_id, {})
                 last_attempt_ms = int(agent_state.get("last_attempt_ms", 0)) if isinstance(agent_state, dict) else 0
-                if int(time.time() * 1000) - last_attempt_ms < cooldown_seconds * 1000:
+                candidate_retry_seconds = int(candidate.get("retryAfterSeconds", cooldown_seconds))
+                retry_after_seconds = max(60, candidate_retry_seconds)
+                if int(time.time() * 1000) - last_attempt_ms < retry_after_seconds * 1000:
                     continue
                 result = process_activation_candidate(candidate, token, command)
                 state["agents"][agent_id] = {

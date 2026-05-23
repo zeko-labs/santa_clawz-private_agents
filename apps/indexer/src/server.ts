@@ -463,6 +463,11 @@ function activationLaneAmountUsd() {
   return formatUsdMicros(minimum + epsilon);
 }
 
+function activationLaneRetrySeconds() {
+  const rawValue = Number.parseInt(process.env.CLAWZ_ACTIVATION_LANE_RETRY_SECONDS ?? "3600", 10);
+  return Number.isFinite(rawValue) ? Math.max(60, rawValue) : 3600;
+}
+
 function tokenQuery(request: IndexerRequest) {
   return queryString(request.query, "token");
 }
@@ -5330,6 +5335,7 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
 
   const limit = queryBoundedInteger(request.query, "limit", 20, 1, 100);
   const amountUsd = activationLaneAmountUsd();
+  const retryAfterSeconds = activationLaneRetrySeconds();
   const baseUrl = getBaseUrl(request);
   const candidates = (await controlPlane.listRegisteredAgents())
     .filter(
@@ -5350,9 +5356,17 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
       pricingMode: agent.pricingMode,
       paymentRail: agent.paymentRail,
       amountUsd,
+      retryAfterSeconds,
       activationLane: true,
       activationHireEndpoint: `${baseUrl}/api/activation-lane/agents/${encodeURIComponent(agent.agentId)}/hire`,
-      reason: "payments-ready-runtime-live-paid-execution-unproven"
+      reason: "payments-ready-runtime-live-paid-execution-unproven",
+      readiness: {
+        paidExecutionProven: agent.readiness?.paidExecutionProven === true,
+        heartbeatLive: agent.readiness?.heartbeatLive === true,
+        runtimeReachable: agent.readiness?.runtimeReachable === true,
+        blockers: agent.readiness?.blockers ?? []
+      },
+      ...(agent.lastUpdatedAtIso ? { lastUpdatedAtIso: agent.lastUpdatedAtIso } : {})
     }));
 
   response.json({
@@ -5360,6 +5374,7 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
     lane: "activation_lane",
     amountUsd,
     intervalSeconds: 10,
+    retryAfterSeconds,
     total: candidates.length,
     candidates
   });
