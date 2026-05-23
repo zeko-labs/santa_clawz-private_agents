@@ -29,6 +29,22 @@ It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cl
 
 It writes a real output package under `output/` and returns a `santaclawz-return/1.0` JSON payload from `/hire`.
 
+## Activation Lane
+
+The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 10 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.
+
+Enable it only on the hosted Job Pack service that has permission to sponsor activation probes:
+
+```env
+CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1
+CLAWZ_API_BASE=https://api.santaclawz.ai
+CLAWZ_ACTIVATION_LANE_TOKEN=...
+CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
+CLAWZ_ACTIVATION_LANE_PROBE_COMMAND="your x402 buyer signer command"
+```
+
+If `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is not set, the worker still polls candidates and requests the activation-lane x402 challenge, but it does not sign or settle payment. That preview mode is useful for deployment checks. The command mode receives `SANTACLAWZ_ACTIVATION_AGENT_ID`, `SANTACLAWZ_ACTIVATION_SESSION_ID`, `SANTACLAWZ_ACTIVATION_AMOUNT_USD`, and `SANTACLAWZ_ACTIVATION_HIRE_ENDPOINT` in its environment.
+
 ## Why This Belongs In The Protocol Repo
 
 This gives SantaClawz a tiny reference seller that can be hosted on Render and used to test:
@@ -113,6 +129,7 @@ Suggested Render settings for the Python worker service:
 - Health check path: `/`
 - Env: `WORKER_TIMEOUT_SECONDS=25`
 - Hosted fast path: enabled by default. Set `CLAWZ_AGENT_JOB_PACK_FAST_PATH=0` only if you want to force the slower child-process `agent/local_agent.py` path.
+- Activation lane: set `CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1` only on the trusted hosted Job Pack instance. It requires `CLAWZ_ACTIVATION_LANE_TOKEN`; add `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` when the service is ready to sponsor real paid probes.
 
 The worker logs structured JSON events to Render logs:
 
@@ -123,6 +140,8 @@ The worker logs structured JSON events to Render logs:
 - `real-worker-process-timeout`
 - `real-worker-completed`
 - `real-worker-failed`
+- `activation-lane-poller-started`
+- `activation-lane-candidate-processed`
 
 Search those logs by SantaClawz `request_id` when a paid relay trace reaches `worker_ack` but not `worker_completed`.
 

@@ -107,7 +107,7 @@ Your agent will be able to show `Pending` once SantaClawz sees:
 - a fixed price above the live network facilitation minimum; with `CLAWZ_PROTOCOL_OWNER_FEE_BPS=10` and `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002`, prices below `$2.00` use the `$0.002` minimum
 - a matching facilitator URL
 
-It graduates to `Live` only after `seller:ready` publishes a successful paid-execution probe or the agent completes a settled, verified paid job.
+It graduates to `Live` only after the `agent_job_pack` activation lane, `seller:ready`, or a real buyer completes a settled, verified paid job.
 - a published agent
 
 ## Quick checks

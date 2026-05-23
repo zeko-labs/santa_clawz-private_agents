@@ -17,7 +17,11 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
+import time
 import traceback
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -28,6 +32,7 @@ OUTPUT = ROOT / "output"
 BRIDGE_DIR = OUTPUT / "worker_bridge"
 REQUESTS_DIR = BRIDGE_DIR / "requests"
 AUDIT_LOG = BRIDGE_DIR / "audit.jsonl"
+ACTIVATION_LANE_STATE = BRIDGE_DIR / "activation_lane_state.json"
 DEFAULT_TIMEOUT_SECONDS = 110
 FAST_PATH_DEFAULT = "1"
 
@@ -648,6 +653,136 @@ def run_once(path: pathlib.Path, timeout_seconds: int) -> int:
     return 0
 
 
+def activation_lane_http_json(method: str, url: str, token: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+    body = None if payload is None else json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+            "authorization": f"Bearer {token}",
+            "x-santaclawz-activation-lane-key": token,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read().decode("utf-8")
+            return response.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        try:
+            return exc.code, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return exc.code, {"ok": False, "error": raw}
+
+
+def activation_lane_state() -> dict[str, Any]:
+    if not ACTIVATION_LANE_STATE.exists():
+        return {"agents": {}}
+    try:
+        state = read_json(ACTIVATION_LANE_STATE)
+        return state if isinstance(state.get("agents"), dict) else {"agents": {}}
+    except Exception:
+        return {"agents": {}}
+
+
+def run_activation_lane_probe_command(command: str, candidate: dict[str, Any]) -> dict[str, Any]:
+    env = {
+        **os.environ,
+        "SANTACLAWZ_ACTIVATION_LANE": "1",
+        "SANTACLAWZ_ACTIVATION_AGENT_ID": str(candidate.get("agentId", "")),
+        "SANTACLAWZ_ACTIVATION_SESSION_ID": str(candidate.get("sessionId", "")),
+        "SANTACLAWZ_ACTIVATION_AMOUNT_USD": str(candidate.get("amountUsd", "")),
+        "SANTACLAWZ_ACTIVATION_HIRE_ENDPOINT": str(candidate.get("activationHireEndpoint", "")),
+    }
+    completed = subprocess.run(command, shell=True, cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=180, check=False)
+    return {
+        "return_code": completed.returncode,
+        "stdout_preview": completed.stdout[-1200:],
+        "stderr_preview": completed.stderr[-1200:],
+    }
+
+
+def process_activation_candidate(candidate: dict[str, Any], token: str, command: str | None) -> dict[str, Any]:
+    agent_id = str(candidate.get("agentId", ""))
+    if not agent_id:
+        return {"ok": False, "error": "candidate_missing_agent_id"}
+    if command:
+        command_result = run_activation_lane_probe_command(command, candidate)
+        return {"ok": command_result["return_code"] == 0, "mode": "command", **command_result}
+
+    endpoint = str(candidate.get("activationHireEndpoint", ""))
+    status, payload = activation_lane_http_json(
+        "POST",
+        f"{endpoint}?activationLane=true",
+        token,
+        {
+            "activationLane": True,
+            "taskPrompt": "SantaClawz activation lane paid execution probe from hosted agent_job_pack.",
+            "requesterContact": "agent_job_pack@santaclawz.ai",
+        },
+    )
+    return {
+        "ok": status == 402,
+        "mode": "payment_required_preview",
+        "status": status,
+        "paymentRequired": status == 402,
+        "response": payload,
+    }
+
+
+def activation_lane_loop(interval_seconds: int) -> None:
+    api_base = os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/")
+    token = os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN") or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN")
+    command = os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND")
+    cooldown_seconds = int(os.environ.get("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", "600"))
+    if not token:
+        log_event({"type": "activation-lane-disabled", "reason": "missing CLAWZ_ACTIVATION_LANE_TOKEN"})
+        return
+
+    log_event({"type": "activation-lane-poller-started", "api_base": api_base, "interval_seconds": interval_seconds})
+    while True:
+        try:
+            state = activation_lane_state()
+            status, payload = activation_lane_http_json("GET", f"{api_base}/api/activation-lane/candidates?limit=8", token)
+            candidates = payload.get("candidates") if isinstance(payload, dict) else []
+            if status != 200 or not isinstance(candidates, list):
+                log_event({"type": "activation-lane-candidate-fetch-failed", "status": status, "response": payload})
+                time.sleep(interval_seconds)
+                continue
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                agent_id = str(candidate.get("agentId", ""))
+                agent_state = state["agents"].get(agent_id, {})
+                last_attempt_ms = int(agent_state.get("last_attempt_ms", 0)) if isinstance(agent_state, dict) else 0
+                if int(time.time() * 1000) - last_attempt_ms < cooldown_seconds * 1000:
+                    continue
+                result = process_activation_candidate(candidate, token, command)
+                state["agents"][agent_id] = {
+                    "last_attempt_ms": int(time.time() * 1000),
+                    "last_attempt_at": now_iso(),
+                    "last_ok": bool(result.get("ok")),
+                    "mode": result.get("mode"),
+                }
+                write_json(ACTIVATION_LANE_STATE, state)
+                append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
+                log_event({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "ok": result.get("ok"), "mode": result.get("mode")})
+        except Exception as exc:
+            log_event({"type": "activation-lane-unhandled-error", "error": str(exc), "trace": traceback.format_exc(limit=4)})
+        time.sleep(interval_seconds)
+
+
+def maybe_start_activation_lane_poller() -> None:
+    if not env_truthy("CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED"):
+        return
+    interval_seconds = max(5, int(os.environ.get("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", "10")))
+    thread = threading.Thread(target=activation_lane_loop, args=(interval_seconds,), name="activation-lane-poller", daemon=True)
+    thread.start()
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Run the private SantaClawz real worker bridge.")
     default_host = os.environ.get("HOST") or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
@@ -664,6 +799,7 @@ def main(argv: list[str]) -> int:
     if args.once:
         return run_once(args.once, args.timeout_seconds)
 
+    maybe_start_activation_lane_poller()
     Handler.timeout_seconds = args.timeout_seconds
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     log_event(

@@ -439,7 +439,7 @@ function assertHirePolicy(payload) {
   if (!isRecord(payment) || payment.amount_usd !== payload.settled_amount_usd || !payment.rail) {
     throw Object.assign(new Error("payment object must match paid_execution policy fields"), { statusCode: 402 });
   }
-  if (pricingMode === "quote-required") {
+  if (pricingMode === "quote-required" && payload.activation_lane !== true && payment.activation_lane !== true) {
     const quoteRequestId = String(payload.quote_request_id ?? payment.quote_request_id ?? "");
     const intentId = String(payload.intent_id ?? payment.authorization_id ?? "");
     if (!quoteRequestId.startsWith("hire_") || !intentId.startsWith("exec_")) {

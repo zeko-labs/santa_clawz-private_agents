@@ -50,6 +50,7 @@ import {
 import {
   buildAgentX402Catalog,
   buildAgentX402CatalogPreview,
+  buildActivationLaneX402RuntimeContext,
   buildAgentX402Headers,
   parseAgentX402PaymentPayload,
   buildAgentX402RuntimeContext,
@@ -71,6 +72,9 @@ const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
   0,
   Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_TTL_MS ?? "0"))
 );
+const USD_MICRO_SCALE = 1_000_000n;
+const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
+const ACTIVATION_LANE_DEFAULT_EPSILON_USD = "0.000001";
 const startedAtIso = new Date().toISOString();
 const startedAtMs = Date.now();
 const PUBLIC_SOCIAL_ANCHOR_FEED_KINDS: SocialAnchorCandidateKind[] = [
@@ -256,6 +260,8 @@ type HireRequestBody = {
   activityPrivacy?: unknown;
   artifactDelivery?: unknown;
   paymentPayload?: unknown;
+  activationLane?: unknown;
+  activation_lane?: unknown;
 };
 type ArtifactReceiptBody = {
   deliveryMode?: unknown;
@@ -386,6 +392,75 @@ function cacheKeyDigest(value: string) {
 
 function idempotencyKeyHeader(request: IndexerRequest) {
   return optionalString(request.header("idempotency-key") ?? request.header("x-idempotency-key"));
+}
+
+function bearerTokenHeader(request: IndexerRequest) {
+  const authorization = request.header("authorization");
+  const bearerPrefix = "bearer ";
+  if (typeof authorization === "string" && authorization.toLowerCase().startsWith(bearerPrefix)) {
+    return authorization.slice(bearerPrefix.length).trim();
+  }
+  return undefined;
+}
+
+function activationLaneTokenHeader(request: IndexerRequest) {
+  return optionalString(request.header("x-santaclawz-activation-lane-key")) ?? bearerTokenHeader(request);
+}
+
+function activationLaneToken() {
+  return optionalString(process.env.CLAWZ_ACTIVATION_LANE_TOKEN ?? process.env.CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN);
+}
+
+function requireActivationLaneAccess(request: IndexerRequest, response: IndexerResponse) {
+  const configuredToken = activationLaneToken();
+  if (!configuredToken) {
+    response.status(503).json({
+      ok: false,
+      code: "activation_lane_not_configured",
+      error: "SantaClawz activation lane is not configured on this deployment."
+    });
+    return false;
+  }
+  if (activationLaneTokenHeader(request) !== configuredToken) {
+    response.status(401).json({
+      ok: false,
+      code: "activation_lane_auth_required",
+      error: "Activation lane access requires the hosted Job Pack activation token."
+    });
+    return false;
+  }
+  return true;
+}
+
+function parseUsdMicros(value: string | undefined, fallback: string) {
+  const normalized = (value ?? fallback).trim();
+  const match = /^([0-9]+)(?:\.([0-9]{1,6}))?$/.exec(normalized);
+  if (!match) {
+    return parseUsdMicros(fallback, "0");
+  }
+  const whole = BigInt(match[1] ?? "0") * USD_MICRO_SCALE;
+  const fractional = BigInt((match[2] ?? "").padEnd(6, "0"));
+  return whole + fractional;
+}
+
+function formatUsdMicros(value: bigint) {
+  const whole = value / USD_MICRO_SCALE;
+  const fraction = value % USD_MICRO_SCALE;
+  const fractionText = fraction.toString().padStart(6, "0").replace(/0+$/, "");
+  return fractionText.length > 0 ? `${whole}.${fractionText}` : whole.toString();
+}
+
+function activationLaneAmountUsd() {
+  const explicit = optionalString(process.env.CLAWZ_ACTIVATION_LANE_AMOUNT_USD);
+  if (explicit) {
+    return formatUsdMicros(parseUsdMicros(explicit, "0.002001"));
+  }
+  const minimum = parseUsdMicros(
+    process.env.CLAWZ_MIN_PAID_JOB_AMOUNT_USD ?? process.env.CLAWZ_ACTIVATION_LANE_MIN_USD,
+    ACTIVATION_LANE_DEFAULT_MIN_USD
+  );
+  const epsilon = parseUsdMicros(process.env.CLAWZ_ACTIVATION_LANE_EPSILON_USD, ACTIVATION_LANE_DEFAULT_EPSILON_USD);
+  return formatUsdMicros(minimum + epsilon);
 }
 
 function tokenQuery(request: IndexerRequest) {
@@ -1028,7 +1103,9 @@ function parseHireRequest(body: unknown): HireRequestBody {
         jobPrivacy: body.jobPrivacy,
         activityPrivacy: body.activityPrivacy,
         artifactDelivery: body.artifactDelivery,
-        paymentPayload: body.paymentPayload
+        paymentPayload: body.paymentPayload,
+        activationLane: body.activationLane,
+        activation_lane: body.activation_lane
       }
     : {};
 }
@@ -1432,9 +1509,9 @@ function paidExecutionProbeRequiredBody(input: {
     ...(input.intent ? { intent: input.intent } : {}),
     ...(input.plan ? { plan: input.plan } : {}),
     error:
-      "This agent has payments configured, but paid execution is not proven yet. Run seller:ready with the paid-execution probe before buyers pay.",
+      "This agent has payments configured, but paid execution is not proven yet. Use the activation lane or run seller:ready with the paid-execution probe before buyers pay.",
     statusTags: ["Pending"],
-    nextAction: "run_seller_ready_paid_execution_probe",
+    nextAction: "prove_paid_execution_or_wait_for_activation_lane",
     operationalStatus: {
       paymentStatus: "not_attempted",
       settlementStatus: "not_attempted",
@@ -4914,8 +4991,27 @@ const handleAgentHireRequest = route(async (request, response) => {
       response.status(413).json({ error: "Hire request body is too large." });
       return;
     }
-    const taskPrompt = typeof body.taskPrompt === "string" ? body.taskPrompt.trim() : "";
-    const requesterContact = typeof body.requesterContact === "string" ? body.requesterContact.trim() : "";
+    const bodyRecord = body as Record<string, unknown>;
+    const activationLaneRequested =
+      queryBoolean(request.query, "activationLane") === true ||
+      bodyRecord.activationLane === true ||
+      bodyRecord.activation_lane === true;
+    if (activationLaneRequested && !requireActivationLaneAccess(request, response)) {
+      return;
+    }
+    const activationAmountUsd = activationLaneRequested ? activationLaneAmountUsd() : undefined;
+    const taskPrompt =
+      typeof body.taskPrompt === "string" && body.taskPrompt.trim().length > 0
+        ? body.taskPrompt.trim()
+        : activationLaneRequested
+          ? "SantaClawz activation lane paid execution probe. Return a compact verified package proving this agent can receive paid work, complete it, and return artifacts."
+          : "";
+    const requesterContact =
+      typeof body.requesterContact === "string" && body.requesterContact.trim().length > 0
+        ? body.requesterContact.trim()
+        : activationLaneRequested
+          ? "agent_job_pack@santaclawz.ai"
+          : "";
     const jobPrivacy = parseJobPrivacyPreference(body.jobPrivacy ?? body.activityPrivacy);
     const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
     if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
@@ -4965,9 +5061,9 @@ const handleAgentHireRequest = route(async (request, response) => {
 
     const quoteRequestMode =
       consoleState.paymentsEnabled &&
-      consoleState.profile.paymentProfile.pricingMode === "quote-required";
+      consoleState.profile.paymentProfile.pricingMode === "quote-required" &&
+      !activationLaneRequested;
     if (quoteRequestMode) {
-      const bodyRecord = body as Record<string, unknown>;
       const quotePaymentIntentId =
         queryString(request.query, "intentId") ||
         (typeof bodyRecord.intentId === "string" ? bodyRecord.intentId.trim() : "") ||
@@ -4999,13 +5095,21 @@ const handleAgentHireRequest = route(async (request, response) => {
       }
     }
 
-    if (consoleState.paymentsEnabled && !quoteRequestMode) {
-      const runtime = buildAgentX402RuntimeContext({
-        baseUrl: getBaseUrl(request),
-        plan,
-        serviceNetworkId: consoleState.deployment.networkId
-      });
-      if (!consoleState.paidJobsEnabled || !runtime) {
+    if (consoleState.paymentsEnabled && (!quoteRequestMode || activationLaneRequested)) {
+      const runtime = activationLaneRequested
+        ? await buildActivationLaneX402RuntimeContext({
+            baseUrl: getBaseUrl(request),
+            consoleState,
+            serviceNetworkId: consoleState.deployment.networkId,
+            agentId,
+            amountUsd: activationAmountUsd ?? "0.002001"
+          })
+        : buildAgentX402RuntimeContext({
+            baseUrl: getBaseUrl(request),
+            plan,
+            serviceNetworkId: consoleState.deployment.networkId
+          });
+      if ((!activationLaneRequested && !consoleState.paidJobsEnabled) || !runtime) {
         response.status(402).json({
           ok: false,
           paymentRequested: false,
@@ -5017,7 +5121,7 @@ const handleAgentHireRequest = route(async (request, response) => {
       if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
         return;
       }
-      if (!paidExecutionProvenFromReadiness(consoleState.readiness)) {
+      if (!activationLaneRequested && !paidExecutionProvenFromReadiness(consoleState.readiness)) {
         response.status(409).json(paidExecutionProbeRequiredBody({ agentId, plan }));
         return;
       }
@@ -5056,7 +5160,7 @@ const handleAgentHireRequest = route(async (request, response) => {
       const paymentLedgerEntry = await recordX402PaymentLedgerAuthorization({
         agentId,
         sessionId: consoleState.session.sessionId,
-        pricingMode: consoleState.profile.paymentProfile.pricingMode,
+        pricingMode: activationLaneRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
         railPlan: verification.rail,
         verification,
         paymentPayload,
@@ -5068,6 +5172,7 @@ const handleAgentHireRequest = route(async (request, response) => {
       });
       paymentAuthorization = {
         status: "authorized",
+        ...(activationLaneRequested ? { activationLane: true } : {}),
         rail: verification.rail.rail,
         ...(verification.rail.amountUsd ? { amountUsd: verification.rail.amountUsd } : {}),
         authorizationId: paymentPayloadDigestSha256,
@@ -5106,7 +5211,7 @@ const handleAgentHireRequest = route(async (request, response) => {
           settledLedger = await recordX402PaymentLedgerSettlement({
             agentId,
             sessionId: consoleState.session.sessionId,
-            pricingMode: consoleState.profile.paymentProfile.pricingMode,
+            pricingMode: activationLaneRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
             railPlan: settlement.rail,
             settlement,
             paymentPayload: paymentPayloadForDeferredSettlement,
@@ -5210,6 +5315,55 @@ const handleAgentHireRequest = route(async (request, response) => {
 
 app.post("/api/agents/:agentId/hire", handleAgentHireRequest);
 app.post("/agent/:agentId/hire", handleAgentHireRequest);
+app.post("/api/activation-lane/agents/:agentId/hire", (request, response) => {
+  request.query = {
+    ...request.query,
+    activationLane: "true"
+  };
+  handleAgentHireRequest(request, response);
+});
+
+app.get("/api/activation-lane/candidates", route(async (request, response) => {
+  if (!requireActivationLaneAccess(request, response)) {
+    return;
+  }
+
+  const limit = queryBoundedInteger(request.query, "limit", 20, 1, 100);
+  const amountUsd = activationLaneAmountUsd();
+  const baseUrl = getBaseUrl(request);
+  const candidates = (await controlPlane.listRegisteredAgents())
+    .filter(
+      (agent) =>
+        agent.availability === "active" &&
+        agent.published &&
+        agent.paymentsEnabled &&
+        agent.paymentProfileReady &&
+        agent.readiness?.paidExecutionProven !== true &&
+        agent.readiness?.heartbeatLive === true &&
+        agent.readiness?.runtimeReachable === true
+    )
+    .slice(0, limit)
+    .map((agent) => ({
+      agentId: agent.agentId,
+      sessionId: agent.sessionId,
+      agentName: agent.agentName,
+      pricingMode: agent.pricingMode,
+      paymentRail: agent.paymentRail,
+      amountUsd,
+      activationLane: true,
+      activationHireEndpoint: `${baseUrl}/api/activation-lane/agents/${encodeURIComponent(agent.agentId)}/hire`,
+      reason: "payments-ready-runtime-live-paid-execution-unproven"
+    }));
+
+  response.json({
+    ok: true,
+    lane: "activation_lane",
+    amountUsd,
+    intervalSeconds: 10,
+    total: candidates.length,
+    candidates
+  });
+}));
 
 app.post("/api/agents/:agentId/archive", route(async (request, response) => {
   const agentId = request.params.agentId;

@@ -9,3 +9,7 @@ services:
     envVars:
       - key: WORKER_TIMEOUT_SECONDS
         value: "25"
+      - key: CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED
+        value: "0"
+      - key: CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS
+        value: "10"

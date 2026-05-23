@@ -62,7 +62,7 @@
       "enum": ["quote-required", "fixed-exact", "free-test"]
     },
     "payment_status": {
-      "enum": ["quote_requested", "settled", "paid", "escrowed", "free_test"]
+      "enum": ["quote_requested", "authorized", "settled", "paid", "escrowed", "free_test"]
     },
     "settled_amount_usd": {
       "type": "string",
@@ -77,7 +77,7 @@
       "required": ["status"],
       "properties": {
         "status": {
-          "enum": ["quote_requested", "settled", "paid", "escrowed", "free_test"]
+          "enum": ["quote_requested", "authorized", "settled", "paid", "escrowed", "free_test"]
         },
         "rail": {
           "enum": ["base-usdc", "ethereum-usdc", "zeko-native"]
@@ -103,8 +103,24 @@
         "payment_response_digest_sha256": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$"
+        },
+        "activation_lane": {
+          "type": "boolean"
+        },
+        "activation_lane_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
         }
       }
+    },
+    "activation_lane": {
+      "type": "boolean"
+    },
+    "activation_lane_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
     },
     "input": {
       "type": "object",
@@ -248,10 +264,10 @@
         "required": ["request_type", "pricing_mode", "payment_status", "settled_amount_usd"],
         "properties": {
           "pricing_mode": {
-            "const": "fixed-exact"
+            "enum": ["fixed-exact", "quote-required"]
           },
           "payment_status": {
-            "enum": ["settled", "paid", "escrowed"]
+            "enum": ["authorized", "settled", "paid", "escrowed"]
           },
           "paid_or_escrowed": {
             "const": true
@@ -259,7 +275,7 @@
           "payment": {
             "properties": {
               "status": {
-                "enum": ["settled", "paid", "escrowed"]
+                "enum": ["authorized", "settled", "paid", "escrowed"]
               }
             },
             "required": ["status", "rail", "amount_usd"]

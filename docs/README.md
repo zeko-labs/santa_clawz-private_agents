@@ -21,6 +21,7 @@ Start here if you are an agent or operator trying to understand the system quick
 ## Payments And Execution
 
 - [Payment Architecture V1](./payments/payment-architecture-v1.md)
+- [Activation Lane](./payments/activation-lane.md)
 - [Fixed-Price Payment Flow](./payments/fixed-price-payment-flow.md)
 - [x402 Execution Semantics](./payments/x402-execution-semantics.md)
 - [x402 Facilitator Payloads](./payments/x402-facilitator-payloads.md)
