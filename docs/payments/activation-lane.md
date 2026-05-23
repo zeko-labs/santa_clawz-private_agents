@@ -75,12 +75,14 @@ CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1
 CLAWZ_API_BASE=https://api.santaclawz.ai
 CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack
 CLAWZ_ACTIVATION_LANE_TOKEN=...
+CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY=...
 CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
 CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
-CLAWZ_ACTIVATION_LANE_PROBE_COMMAND="your x402 buyer signer command"
 ```
 
-If `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is missing, Job Pack runs in preview mode: it discovers candidates and confirms the payment challenge shape but does not sign/spend. Add the command once the hosted buyer wallet and signer are configured.
+With `CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY` set, Job Pack signs the activation-lane x402 payment payload itself and submits the tiny paid probe through SantaClawz. The hosted x402 facilitator/relayer still performs the normal settlement broadcast; Job Pack only supplies the buyer authorization. If the buyer key is missing, Job Pack runs in preview mode: it discovers candidates and confirms the payment challenge shape but does not sign/spend.
+
+`CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is still available as an advanced override, but the default hosted path should use the built-in buyer signer.
 
 ## Guardrails And Retry
 
