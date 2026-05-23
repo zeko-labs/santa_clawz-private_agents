@@ -30,9 +30,10 @@ ROOT = pathlib.Path(__file__).resolve().parent
 AGENT = ROOT / "agent" / "local_agent.py"
 OUTPUT = ROOT / "output"
 BRIDGE_DIR = OUTPUT / "worker_bridge"
+STATE_DIR = pathlib.Path(os.environ.get("CLAWZ_JOB_PACK_STATE_DIR", str(BRIDGE_DIR))).expanduser()
 REQUESTS_DIR = BRIDGE_DIR / "requests"
 AUDIT_LOG = BRIDGE_DIR / "audit.jsonl"
-ACTIVATION_LANE_STATE = BRIDGE_DIR / "activation_lane_state.json"
+ACTIVATION_LANE_STATE = STATE_DIR / "activation_lane_state.json"
 DEFAULT_TIMEOUT_SECONDS = 110
 FAST_PATH_DEFAULT = "1"
 

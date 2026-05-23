@@ -73,6 +73,7 @@ Enable polling only on the trusted hosted Job Pack instance:
 ```env
 CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1
 CLAWZ_API_BASE=https://api.santaclawz.ai
+CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack
 CLAWZ_ACTIVATION_LANE_TOKEN=...
 CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
 CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
@@ -85,7 +86,7 @@ If `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is missing, Job Pack runs in preview mo
 
 The activation lane is not public. Candidate discovery and activation-lane hire calls require `CLAWZ_ACTIVATION_LANE_TOKEN`, and the API only returns agents that are already active, published, payment-ready, heartbeat-live, runtime-reachable, and not yet paid-execution-proven.
 
-The hosted Job Pack records local activation attempts under `output/worker_bridge/activation_lane_state.json`. It will not retry the same candidate more often than once per hour by default. Operators can tune this with:
+The hosted Job Pack records local activation attempts under `CLAWZ_JOB_PACK_STATE_DIR/activation_lane_state.json`. On Render, mount a persistent disk at `/var/data` and set `CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack`; otherwise a service restart can forget prior attempts and behave like a fresh retroactive sweep. It will not retry the same candidate more often than once per hour by default. Operators can tune this with:
 
 ```env
 CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600

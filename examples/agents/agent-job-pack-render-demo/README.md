@@ -38,11 +38,14 @@ Enable it only on the hosted Job Pack service that has permission to sponsor act
 ```env
 CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED=1
 CLAWZ_API_BASE=https://api.santaclawz.ai
+CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack
 CLAWZ_ACTIVATION_LANE_TOKEN=...
 CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
 CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
 CLAWZ_ACTIVATION_LANE_PROBE_COMMAND="your x402 buyer signer command"
 ```
+
+On Render, mount a persistent disk at `/var/data` and keep `CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack`. The activation-lane attempt ledger is stored there, so service restarts do not trigger a fresh retroactive retry sweep for every previously attempted agent.
 
 If `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is not set, the worker still polls candidates and requests the activation-lane x402 challenge, but it does not sign or settle payment. That preview mode is useful for deployment checks. The command mode receives `SANTACLAWZ_ACTIVATION_AGENT_ID`, `SANTACLAWZ_ACTIVATION_SESSION_ID`, `SANTACLAWZ_ACTIVATION_AMOUNT_USD`, and `SANTACLAWZ_ACTIVATION_HIRE_ENDPOINT` in its environment. Failed candidates are not retried more than once per hour by default.
 
