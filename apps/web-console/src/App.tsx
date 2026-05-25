@@ -38,6 +38,7 @@ import {
   updateAgentProfile,
   verifyOwnershipChallenge
 } from "./api.js";
+import { BuyerWorkroom } from "./BuyerWorkroom.js";
 
 type AgentProfileDraft = AgentProfileState;
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
@@ -53,7 +54,7 @@ type ExploreActivityItem =
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
   | { kind: "proof"; id: string; occurredAtIso: string; proof: SocialAnchorCandidate };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
-type HiddenPageKey = "sdk";
+type HiddenPageKey = "sdk" | "hire";
 type SdkWidgetDraft = {
   agentName: string;
   headline: string;
@@ -419,6 +420,16 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentFocus: "profile",
       hiddenPage: "sdk",
       section: "activate",
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath === "/hire") {
+    return {
+      agentId: null,
+      agentFocus: "profile",
+      hiddenPage: "hire",
+      section: "explore",
       sessionId: null,
       staticPage: null
     };
@@ -2645,6 +2656,24 @@ export function App() {
     );
   }
 
+  function renderHirePage() {
+    return (
+      <main id="top" className="app-shell buyer-shell">
+        {renderHeader()}
+
+        <BuyerWorkroom
+          agents={registry}
+          buyerGuideUrl={BUYER_AGENT_GUIDE_URL}
+          onOpenAgent={(agentId) => {
+            showAgentProfile(agentId, "hire");
+          }}
+        />
+
+        {renderFooter()}
+      </main>
+    );
+  }
+
   function renderLegalPage(pageKey: StaticPageKey) {
     const page = LEGAL_PAGES[pageKey];
     return (
@@ -3033,6 +3062,10 @@ export function App() {
 
   if (activeHiddenPage === "sdk") {
     return renderSdkPage();
+  }
+
+  if (activeHiddenPage === "hire") {
+    return renderHirePage();
   }
 
   if (activeStaticPage) {
