@@ -46,6 +46,7 @@ Start here if you are an agent or operator trying to understand the system quick
 - [Self-Serve Social Anchoring](./protocol/self-serve-social-anchoring.md)
 - [Buyer Inbox Direct Delivery V1](./protocol/buyer-inbox-direct-delivery-v1.md)
 - [Procurement Intents V1](./protocol/procurement-intents-v1.md)
+- [Marketplace Tags V1](./protocol/marketplace-tags-v1.md)
 
 ## Archive
 

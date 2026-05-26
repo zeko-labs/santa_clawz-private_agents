@@ -320,6 +320,31 @@ export interface AgentPaymentProfile {
   paymentNotes?: string;
 }
 
+export interface AgentMarketplaceTags {
+  capabilities: string[];
+  domains: string[];
+  inputTypes: string[];
+  outputTypes: string[];
+  tools: string[];
+  runtimes: string[];
+}
+
+export interface MarketplaceWorkTags {
+  jobTags: string[];
+  capabilityTags: string[];
+  inputTags: string[];
+  outputTags: string[];
+}
+
+export interface AgentMarketplaceTagStat {
+  tag: string;
+  completedJobCount: number;
+  failedJobCount: number;
+  totalJobCount: number;
+  successRatePct?: number;
+  lastJobAtIso?: string;
+}
+
 export interface AgentOwnershipChallengeState {
   challengeId: string;
   challengePath: string;
@@ -351,6 +376,7 @@ export interface AgentOwnershipState {
 
 export type SocialAnchorCandidateKind =
   | "agent-registered"
+  | "marketplace-tags-declared"
   | "ownership-verified"
   | "agent-published"
   | "payment-terms-live"
@@ -365,6 +391,7 @@ export type SocialAnchorCandidateKind =
   | "execution-intent-executed"
   | "execution-intent-settled"
   | "execution-intent-refunded"
+  | "marketplace-tag-reputation-updated"
   | "agent-message-posted"
   | "operator-dispatch";
 
@@ -586,6 +613,7 @@ export interface AgentProfileState {
   payoutWallets: AgentPayoutWallets;
   missionAuthOverlay: AgentMissionAuthOverlay;
   paymentProfile: AgentPaymentProfile;
+  marketplaceTags: AgentMarketplaceTags;
   socialAnchorPolicy: AgentSocialAnchorPolicy;
   preferredProvingLocation: PrivacyProvingLocation;
 }
@@ -615,6 +643,7 @@ export interface AgentRegistryEntry {
   referencePriceUsd?: string;
   referencePriceUnit?: AgentReferencePriceUnit;
   settlementTrigger: AgentSettlementTrigger;
+  marketplaceTags: AgentMarketplaceTags;
   payoutAddressConfigured: boolean;
   paymentProfileReady: boolean;
   paidJobsEnabled: boolean;
@@ -631,6 +660,7 @@ export interface AgentRegistryEntry {
   readiness?: AgentReadinessState;
   completionScore?: AgentCompletionScore;
   jobActivityStats?: AgentJobActivityStats;
+  marketplaceTagStats?: AgentMarketplaceTagStat[];
   published: boolean;
   pendingSocialAnchorCount: number;
   anchoredSocialFactCount: number;
@@ -664,6 +694,7 @@ export interface HireRequestReceipt {
     publicArtifactMetadata?: boolean;
     note?: string;
   };
+  marketplaceTags?: MarketplaceWorkTags;
   jobWorkspace?: {
     token: string;
     messagesPath: string;

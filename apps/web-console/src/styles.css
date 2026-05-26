@@ -533,9 +533,105 @@ pre,
   min-height: 120px;
 }
 
+.buyer-chat-window {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 20px;
+  background: rgba(18, 35, 54, 0.04);
+}
+
+.buyer-chat-message {
+  display: grid;
+  gap: 4px;
+  max-width: 88%;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+}
+
+.buyer-chat-message.buyer {
+  justify-self: end;
+  background: rgba(89, 210, 198, 0.14);
+}
+
+.buyer-chat-message span {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.buyer-chat-message p {
+  margin: 0;
+  color: inherit;
+}
+
+.buyer-chat-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.buyer-chat-input {
+  min-height: 68px;
+}
+
+.buyer-router-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
 .buyer-compact-fields {
   grid-template-columns: 0.7fr 1fr;
   margin-top: 0;
+}
+
+.buyer-tag-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.buyer-tag-panel > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: start;
+  padding: 11px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 18px;
+  background: rgba(18, 35, 54, 0.04);
+}
+
+.buyer-tag-panel span {
+  flex: 1 0 100%;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.buyer-tag-panel strong {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(18, 35, 54, 0.07);
+  color: rgba(18, 35, 54, 0.74);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .buyer-selected-agent {
@@ -576,6 +672,45 @@ pre,
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.buyer-candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.buyer-candidate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.buyer-candidate.active {
+  border-color: rgba(89, 210, 198, 0.34);
+  background: rgba(89, 210, 198, 0.12);
+}
+
+.buyer-candidate span,
+.buyer-candidate strong {
+  font-weight: 800;
+}
+
+.buyer-candidate em {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .buyer-lifecycle-card {
@@ -636,6 +771,18 @@ pre,
 .buyer-artifact-preview em {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.78rem;
+}
+
+.buyer-plan-json {
+  max-height: 360px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 18px;
+  background: #0e1a2b;
+  color: #eaf4ff;
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .masthead {
@@ -4755,6 +4902,11 @@ h3 {
     flex: 1 1 100%;
   }
 
+  .buyer-grid,
+  .buyer-output-grid {
+    grid-template-columns: 1fr;
+  }
+
   .payment-progress-card {
     width: 100%;
   }
@@ -4959,9 +5111,7 @@ button:disabled {
 @media (max-width: 1120px) {
   .hero-grid,
   .layout-grid,
-  .ops-grid,
-  .buyer-grid,
-  .buyer-output-grid {
+  .ops-grid {
     grid-template-columns: 1fr;
   }
 
@@ -5049,6 +5199,7 @@ button:disabled {
   .field-grid,
   .buyer-masthead-content,
   .buyer-compact-fields,
+  .buyer-tag-panel,
   .setup-grid,
   .meta-grid,
   .stat-grid,
@@ -5290,6 +5441,14 @@ button:disabled {
   .buyer-action-row .primary-button,
   .buyer-action-row .secondary-button {
     width: 100%;
+  }
+
+  .buyer-chat-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .buyer-chat-message {
+    max-width: 100%;
   }
 
   .explore-social-layout,

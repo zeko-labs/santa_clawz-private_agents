@@ -66,6 +66,8 @@ type SdkWidgetDraft = {
   referencePriceUsd: string;
   referencePriceUnit: NonNullable<AgentProfileState["paymentProfile"]["referencePriceUnit"]>;
   fixedAmountUsd: string;
+  capabilityTags: string;
+  outputTags: string;
   missionAuthEnabled: boolean;
   missionAuthUrl: string;
 };
@@ -1531,6 +1533,64 @@ function effectivePaymentProfile(profile: AgentProfileState): AgentProfileState[
   };
 }
 
+function emptyMarketplaceTags(): AgentProfileState["marketplaceTags"] {
+  return {
+    capabilities: [],
+    domains: [],
+    inputTypes: [],
+    outputTypes: [],
+    tools: [],
+    runtimes: []
+  };
+}
+
+function tagCsvToList(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((tag) =>
+          tag
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-_:./\s]/g, "")
+            .replace(/\s+/g, "-")
+            .slice(0, 64)
+        )
+        .filter(Boolean)
+    )
+  ).slice(0, 8);
+}
+
+function tagListToCsv(value: string[] | undefined): string {
+  return (value ?? []).join(", ");
+}
+
+function normalizeMarketplaceTags(input?: Partial<AgentProfileState["marketplaceTags"]> | null): AgentProfileState["marketplaceTags"] {
+  return {
+    capabilities: Array.isArray(input?.capabilities) ? input.capabilities.filter((tag): tag is string => typeof tag === "string") : [],
+    domains: Array.isArray(input?.domains) ? input.domains.filter((tag): tag is string => typeof tag === "string") : [],
+    inputTypes: Array.isArray(input?.inputTypes) ? input.inputTypes.filter((tag): tag is string => typeof tag === "string") : [],
+    outputTypes: Array.isArray(input?.outputTypes) ? input.outputTypes.filter((tag): tag is string => typeof tag === "string") : [],
+    tools: Array.isArray(input?.tools) ? input.tools.filter((tag): tag is string => typeof tag === "string") : [],
+    runtimes: Array.isArray(input?.runtimes) ? input.runtimes.filter((tag): tag is string => typeof tag === "string") : []
+  };
+}
+
+function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], limit = 6): string[] {
+  if (!tags) {
+    return [];
+  }
+  return Array.from(new Set([
+    ...tags.capabilities,
+    ...tags.outputTypes,
+    ...tags.inputTypes,
+    ...tags.domains,
+    ...tags.tools,
+    ...tags.runtimes
+  ])).slice(0, limit);
+}
+
 function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): AgentProfileDraft {
   const legacyPayoutAddress =
     typeof (input as { payoutAddress?: unknown } | undefined)?.payoutAddress === "string"
@@ -1685,6 +1745,7 @@ function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): Agent
     socialAnchorPolicy: {
       mode: "shared-batched"
     },
+    marketplaceTags: normalizeMarketplaceTags(input?.marketplaceTags),
     preferredProvingLocation:
       input?.preferredProvingLocation === "client" || input?.preferredProvingLocation === "sovereign-rollup"
         ? input.preferredProvingLocation
@@ -1749,6 +1810,8 @@ export function App() {
     referencePriceUsd: "",
     referencePriceUnit: "minimum",
     fixedAmountUsd: "1.00",
+    capabilityTags: "onboarding, pricing, setup",
+    outputTags: "markdown, checklist",
     missionAuthEnabled: false,
     missionAuthUrl: ""
   });
@@ -2377,6 +2440,7 @@ export function App() {
         : {}),
       missionAuthOverlay: profileForSave.missionAuthOverlay,
       paymentProfile: profileForSave.paymentProfile,
+      marketplaceTags: profileForSave.marketplaceTags,
       socialAnchorPolicy: profileForSave.socialAnchorPolicy,
       preferredProvingLocation: profileForSave.preferredProvingLocation
     };
@@ -2800,6 +2864,11 @@ export function App() {
             referencePriceUnit: "minimum",
             settlementTrigger: "upfront"
           },
+          marketplaceTags: {
+            ...emptyMarketplaceTags(),
+            capabilities: tagCsvToList(sdkDraft.capabilityTags),
+            outputTypes: tagCsvToList(sdkDraft.outputTags)
+          },
           missionAuthOverlay: {
             enabled: sdkDraft.missionAuthEnabled,
             status: sdkDraft.missionAuthEnabled ? "configured" : "disabled",
@@ -2915,6 +2984,31 @@ export function App() {
                   placeholder="Enter description: e.g. private research and verifiable outputs."
                 />
               </label>
+
+              <div className="field-grid sdk-agent-grid">
+                <label className="field">
+                  <span>Capability tags</span>
+                  <input
+                    className="text-input"
+                    value={sdkDraft.capabilityTags}
+                    onChange={(event: ValueInputEvent) => {
+                      updateSdkDraft({ capabilityTags: event.target.value });
+                    }}
+                    placeholder="onboarding, research, repo-review"
+                  />
+                </label>
+                <label className="field">
+                  <span>Output tags</span>
+                  <input
+                    className="text-input"
+                    value={sdkDraft.outputTags}
+                    onChange={(event: ValueInputEvent) => {
+                      updateSdkDraft({ outputTags: event.target.value });
+                    }}
+                    placeholder="markdown, json, artifact"
+                  />
+                </label>
+              </div>
 
               <button
                 type="button"
@@ -3772,6 +3866,43 @@ export function App() {
               />
             </label>
 
+            <div className="field-grid field-wide compact-field-grid marketplace-tag-grid">
+              <label className="field">
+                <span>Capability tags (optional)</span>
+                <input
+                  className="text-input"
+                  value={tagListToCsv(profile.marketplaceTags.capabilities)}
+                  onChange={(event: ValueInputEvent) => {
+                    setProfile({
+                      ...profile,
+                      marketplaceTags: {
+                        ...profile.marketplaceTags,
+                        capabilities: tagCsvToList(event.target.value)
+                      }
+                    });
+                  }}
+                  placeholder="repo-review, research, n8n"
+                />
+              </label>
+              <label className="field">
+                <span>Output tags (optional)</span>
+                <input
+                  className="text-input"
+                  value={tagListToCsv(profile.marketplaceTags.outputTypes)}
+                  onChange={(event: ValueInputEvent) => {
+                    setProfile({
+                      ...profile,
+                      marketplaceTags: {
+                        ...profile.marketplaceTags,
+                        outputTypes: tagCsvToList(event.target.value)
+                      }
+                    });
+                  }}
+                  placeholder="markdown, json, artifact"
+                />
+              </label>
+            </div>
+
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">
                 <span>Agent payments</span>
@@ -4544,6 +4675,13 @@ export function App() {
                     {currentSocialAnchorQueue.pendingCount > 0 ? <span>{currentSocialAnchorQueue.pendingCount} pending</span> : null}
                   </p>
                 </div>
+                {marketplaceTagsForDisplay(profile.marketplaceTags).length > 0 ? (
+                  <div className="explore-tag-row compact profile-marketplace-tags">
+                    {marketplaceTagsForDisplay(profile.marketplaceTags).map((tag) => (
+                      <span key={`profile-tag-${tag}`} className="explore-tag">{tag}</span>
+                    ))}
+                  </div>
+                ) : null}
                 {agentArchived ? (
                   <p className="panel-copy">
                     Archived on SantaClawz{archivedAtLabel}. This public profile and proof history stay online, but Explore listing and new hire requests are disabled.
@@ -4824,6 +4962,13 @@ export function App() {
                                       </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
+                                    {marketplaceTagsForDisplay(agent.marketplaceTags, 3).length > 0 ? (
+                                      <div className="explore-tag-row compact agent-marketplace-tags">
+                                        {marketplaceTagsForDisplay(agent.marketplaceTags, 3).map((tag) => (
+                                          <span key={`${agent.agentId}-tag-${tag}`} className="explore-tag">{tag}</span>
+                                        ))}
+                                      </div>
+                                    ) : null}
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
                                       {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}

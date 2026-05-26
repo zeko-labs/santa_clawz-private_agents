@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   type AgentBoardMessageType,
+  type AgentMarketplaceTags,
   type AgentPaymentRail,
   type AgentProfileState,
   type AgentRuntimeStatus,
@@ -20,6 +21,7 @@ import {
   type ExecutionIntentSettlementModel,
   type ExecutionIntentStatus,
   type HireRelayTraceStep,
+  type MarketplaceWorkTags,
   type PaymentLedgerEntry,
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
@@ -84,6 +86,7 @@ const startedAtIso = new Date().toISOString();
 const startedAtMs = Date.now();
 const PUBLIC_SOCIAL_ANCHOR_FEED_KINDS: SocialAnchorCandidateKind[] = [
   "agent-registered",
+  "marketplace-tags-declared",
   "ownership-verified",
   "agent-published",
   "payment-terms-live",
@@ -224,6 +227,7 @@ type RegisterAgentRequestBody = {
   payoutWallets?: unknown;
   missionAuthOverlay?: unknown;
   paymentProfile?: unknown;
+  marketplaceTags?: unknown;
   socialAnchorPolicy?: unknown;
   trustModeId?: unknown;
   preferredProvingLocation?: unknown;
@@ -244,6 +248,7 @@ type ProfileRequestBody = {
   payoutWallets?: unknown;
   missionAuthOverlay?: unknown;
   paymentProfile?: unknown;
+  marketplaceTags?: unknown;
   socialAnchorPolicy?: unknown;
   preferredProvingLocation?: unknown;
   sessionId?: unknown;
@@ -261,6 +266,7 @@ type HireRequestBody = {
   taskPrompt?: unknown;
   budgetMina?: unknown;
   requesterContact?: unknown;
+  marketplaceTags?: unknown;
   jobPrivacy?: unknown;
   activityPrivacy?: unknown;
   artifactDelivery?: unknown;
@@ -345,6 +351,7 @@ type ProcurementIntentBody = {
   requiredCapabilities?: unknown;
   preferredDeliveryModes?: unknown;
   preferredPrivacyModes?: unknown;
+  marketplaceTags?: unknown;
   jobPrivacy?: unknown;
   artifactDelivery?: unknown;
 };
@@ -488,6 +495,32 @@ function stringArray(value: unknown): string[] {
     : typeof value === "string"
       ? value.split(",").map((item) => item.trim()).filter(Boolean)
       : [];
+}
+
+function parseAgentMarketplaceTags(value: unknown): Partial<AgentMarketplaceTags> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const tags: Partial<AgentMarketplaceTags> = {};
+  if ("capabilities" in value) tags.capabilities = stringArray(value.capabilities);
+  if ("domains" in value) tags.domains = stringArray(value.domains);
+  if ("inputTypes" in value) tags.inputTypes = stringArray(value.inputTypes);
+  if ("outputTypes" in value) tags.outputTypes = stringArray(value.outputTypes);
+  if ("tools" in value) tags.tools = stringArray(value.tools);
+  if ("runtimes" in value) tags.runtimes = stringArray(value.runtimes);
+  return Object.keys(tags).length > 0 ? tags : undefined;
+}
+
+function parseMarketplaceWorkTags(value: unknown): Partial<MarketplaceWorkTags> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return {
+    jobTags: stringArray(value.jobTags),
+    capabilityTags: stringArray(value.capabilityTags),
+    inputTags: stringArray(value.inputTags),
+    outputTags: stringArray(value.outputTags)
+  };
 }
 
 function requestBaseUrl(request: IndexerRequest) {
@@ -1002,6 +1035,7 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
         payoutWallets: body.payoutWallets,
         missionAuthOverlay: body.missionAuthOverlay,
         paymentProfile: body.paymentProfile,
+        marketplaceTags: body.marketplaceTags,
         socialAnchorPolicy: body.socialAnchorPolicy,
         trustModeId: body.trustModeId,
         preferredProvingLocation: body.preferredProvingLocation
@@ -1023,6 +1057,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
   const payoutWallets = parsePayoutWallets(body.payoutWallets);
   const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
   const paymentProfile = parsePaymentProfile(body.paymentProfile);
+  const marketplaceTags = parseAgentMarketplaceTags(body.marketplaceTags);
   const runtimeDelivery = parseRuntimeDelivery(body.runtimeDelivery);
   const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
   const trustModeId: TrustModeId | undefined =
@@ -1053,6 +1088,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
     ...(payoutWallets ? { payoutWallets } : {}),
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
+    ...(marketplaceTags ? { marketplaceTags } : {}),
     ...(runtimeDelivery ? { runtimeDelivery } : {}),
     ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
     ...(typeof body.representedPrincipal === "string" ? { representedPrincipal: body.representedPrincipal } : {}),
@@ -1078,6 +1114,7 @@ function parseProfileRequest(body: unknown): ProfileRequestBody {
           payoutWallets: body.payoutWallets,
           missionAuthOverlay: body.missionAuthOverlay,
           paymentProfile: body.paymentProfile,
+          marketplaceTags: body.marketplaceTags,
           socialAnchorPolicy: body.socialAnchorPolicy,
           preferredProvingLocation: body.preferredProvingLocation,
           sessionId: body.sessionId
@@ -1110,6 +1147,7 @@ function parseHireRequest(body: unknown): HireRequestBody {
         taskPrompt: body.taskPrompt,
         budgetMina: body.budgetMina,
         requesterContact: body.requesterContact,
+        marketplaceTags: body.marketplaceTags,
         jobPrivacy: body.jobPrivacy,
         activityPrivacy: body.activityPrivacy,
         artifactDelivery: body.artifactDelivery,
@@ -1122,6 +1160,7 @@ function parseHireRequest(body: unknown): HireRequestBody {
 
 function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): CreateProcurementIntentOptions {
   const value = isRecord(body) ? body as ProcurementIntentBody : {};
+  const marketplaceTags = parseMarketplaceWorkTags(value.marketplaceTags);
   return {
     ...(idempotencyKey ? { idempotencyKey } : typeof value.idempotencyKey === "string" ? { idempotencyKey: value.idempotencyKey } : {}),
     taskPrompt: typeof value.taskPrompt === "string" ? value.taskPrompt : "",
@@ -1132,6 +1171,7 @@ function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): Cre
     requiredCapabilities: stringArray(value.requiredCapabilities),
     preferredDeliveryModes: stringArray(value.preferredDeliveryModes),
     preferredPrivacyModes: stringArray(value.preferredPrivacyModes),
+    ...(marketplaceTags ? { marketplaceTags } : {}),
     ...(parseJobPrivacyPreference(value.jobPrivacy) ? { jobPrivacy: parseJobPrivacyPreference(value.jobPrivacy)! } : {}),
     ...(parseArtifactDeliveryPreference(value.artifactDelivery)
       ? { artifactDelivery: parseArtifactDeliveryPreference(value.artifactDelivery)! }
@@ -1342,6 +1382,22 @@ function commaSet(value: string | undefined) {
   return new Set((value ?? "").split(",").map((item) => item.trim()).filter(Boolean));
 }
 
+function marketplaceTagSet(value: string | undefined) {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((item) =>
+        item
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9-_:./\s]/g, "")
+          .replace(/\s+/g, "-")
+          .slice(0, 64)
+      )
+      .filter(Boolean)
+  );
+}
+
 function queryBoolean(query: unknown, key: string): boolean | undefined {
   const value = queryString(query, key)?.toLowerCase();
   if (value === "true" || value === "1" || value === "yes") {
@@ -1505,6 +1561,16 @@ function agentCapabilityTags(
   if (entry.paidExecutionReady) {
     tags.add("paid_execution");
   }
+  for (const tag of [
+    ...agent.marketplaceTags.capabilities,
+    ...agent.marketplaceTags.domains,
+    ...agent.marketplaceTags.inputTypes,
+    ...agent.marketplaceTags.outputTypes,
+    ...agent.marketplaceTags.tools,
+    ...agent.marketplaceTags.runtimes
+  ]) {
+    tags.add(tag);
+  }
   for (const word of words) {
     tags.add(word.replace(/-/g, "_"));
   }
@@ -1611,6 +1677,8 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
     ...(agent.readiness?.readinessWarnings?.length ? { readinessWarnings: agent.readiness.readinessWarnings } : {}),
     capabilityTags,
+    marketplaceTags: agent.marketplaceTags,
+    marketplaceTagStats: agent.marketplaceTagStats ?? [],
     pricing: {
       pricingMode: agent.pricingMode,
       paymentsEnabled: agent.paymentsEnabled,
@@ -2631,6 +2699,7 @@ app.get("/api/agents/search", route(async (request, response) => {
     const rails = commaSet(queryString(request.query, "rail"));
     const deliveryModes = commaSet(queryString(request.query, "deliveryMode"));
     const privacyModes = commaSet(queryString(request.query, "privacyMode"));
+    const marketplaceTags = marketplaceTagSet(queryString(request.query, "tag"));
     const hireable = queryBoolean(request.query, "hireable");
     const online = queryBoolean(request.query, "online");
     const paymentsReady = queryBoolean(request.query, "paymentsReady");
@@ -2647,7 +2716,13 @@ app.get("/api/agents/search", route(async (request, response) => {
           agent.agentName,
           agent.representedPrincipal,
           agent.headline,
-          ...(agent.capabilityTags ?? [])
+          ...(agent.capabilityTags ?? []),
+          ...agent.marketplaceTags.capabilities,
+          ...agent.marketplaceTags.domains,
+          ...agent.marketplaceTags.inputTypes,
+          ...agent.marketplaceTags.outputTypes,
+          ...agent.marketplaceTags.tools,
+          ...agent.marketplaceTags.runtimes
         ].join(" ").toLowerCase();
         if (!haystack.includes(q)) {
           return false;
@@ -2664,6 +2739,20 @@ app.get("/api/agents/search", route(async (request, response) => {
       }
       if (privacyModes.size > 0 && !agent.privacyModes.some((mode) => privacyModes.has(mode.mode))) {
         return false;
+      }
+      if (marketplaceTags.size > 0) {
+        const agentTags = new Set([
+          ...(agent.capabilityTags ?? []),
+          ...agent.marketplaceTags.capabilities,
+          ...agent.marketplaceTags.domains,
+          ...agent.marketplaceTags.inputTypes,
+          ...agent.marketplaceTags.outputTypes,
+          ...agent.marketplaceTags.tools,
+          ...agent.marketplaceTags.runtimes
+        ]);
+        if (![...marketplaceTags].some((tag) => agentTags.has(tag))) {
+          return false;
+        }
       }
       if (hireable !== undefined && agent.hireable !== hireable) {
         return false;
@@ -4223,6 +4312,7 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         taskPrompt: context.quoteRequest.taskPrompt,
         requesterContact: context.quoteRequest.requesterContact,
         ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
+        ...(context.quoteRequest.marketplaceTags ? { marketplaceTags: context.quoteRequest.marketplaceTags } : {}),
         ...(context.quoteRequest.jobPrivacy ? { jobPrivacy: context.quoteRequest.jobPrivacy } : {}),
         ...(context.quoteRequest.artifactDelivery ? { artifactDelivery: context.quoteRequest.artifactDelivery } : {}),
         paymentAuthorization: {
@@ -4928,6 +5018,7 @@ app.post("/api/console/profile", route(async (request, response) => {
   const payoutWallets = parsePayoutWallets(body.payoutWallets);
   const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
   const paymentProfile = parsePaymentProfile(body.paymentProfile);
+  const marketplaceTags = parseAgentMarketplaceTags(body.marketplaceTags);
   const runtimeDelivery = parseRuntimeDelivery(body.runtimeDelivery);
   const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
   const preferredProvingLocation =
@@ -4948,6 +5039,7 @@ app.post("/api/console/profile", route(async (request, response) => {
     ...(payoutWallets ? { payoutWallets } : {}),
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
+    ...(marketplaceTags ? { marketplaceTags } : {}),
     ...(runtimeDelivery ? { runtimeDelivery } : {}),
     ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
     ...(typeof body.payoutAddress === "string"
@@ -5061,6 +5153,7 @@ const handleAgentHireRequest = route(async (request, response) => {
           : "";
     const jobPrivacy = parseJobPrivacyPreference(body.jobPrivacy ?? body.activityPrivacy);
     const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
+    const marketplaceTags = parseMarketplaceWorkTags(body.marketplaceTags);
     if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
       response.status(400).json(hireRequestErrorBody(
         "task_prompt_too_long",
@@ -5246,6 +5339,7 @@ const handleAgentHireRequest = route(async (request, response) => {
         taskPrompt,
         requesterContact,
         ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {}),
+        ...(marketplaceTags ? { marketplaceTags } : {}),
         ...(jobPrivacy ? { jobPrivacy } : {}),
         ...(artifactDelivery ? { artifactDelivery } : {}),
         ...(paymentAuthorization ? { paymentAuthorization } : {})
