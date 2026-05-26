@@ -566,6 +566,9 @@ export function submitHireRequest(
     requesterContact: string;
     budgetMina?: string;
     marketplaceTags?: MarketplaceWorkTags;
+    jobPrivacy?: Record<string, unknown>;
+    artifactDelivery?: Record<string, unknown>;
+    paymentPayload?: Record<string, unknown>;
   }
 ): Promise<HireRequestReceipt> {
   return request<HireRequestReceipt>(`/api/agents/${encodeURIComponent(agentId)}/hire`, {
@@ -579,6 +582,11 @@ export type ProcurementIntentResponse = {
   intent: Record<string, unknown> & { intentId: string; status: string };
   buyerToken: string;
   buyerTokenUsage?: string;
+  routingAnchor?: {
+    candidateId: string;
+    status: string;
+    payloadDigestSha256: string;
+  };
 };
 
 export function createProcurementIntent(input: {

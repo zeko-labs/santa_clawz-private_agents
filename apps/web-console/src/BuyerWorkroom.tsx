@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { AgentMarketplaceTagStat, AgentRegistryEntry, MarketplaceWorkTags } from "@clawz/protocol";
 
-import { ApiError, createProcurementIntent, type ProcurementIntentResponse } from "./api.js";
+import { ApiError, createProcurementIntent, submitHireRequest, type ProcurementIntentResponse } from "./api.js";
 
 type BuyerPersona = "human" | "agent";
 type RoutingMode = "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
@@ -35,6 +35,28 @@ type ChatMessage = {
   body: string;
 };
 
+type Eip1193Provider = {
+  request<T = unknown>(input: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<T>;
+  on?(event: string, handler: (...args: unknown[]) => void): void;
+  removeListener?(event: string, handler: (...args: unknown[]) => void): void;
+};
+
+type WalletState = {
+  address: string;
+  chainId: string;
+  status: "disconnected" | "connected" | "wrong-network";
+};
+
+type PaymentUiState = {
+  status: "idle" | "connecting" | "requesting" | "signing" | "submitting" | "quoted" | "completed" | "pending" | "error";
+  message: string;
+  requestId?: string;
+  paymentDigest?: string;
+  transactionHashes?: string[];
+  paymentStateUrl?: string;
+  proofDigest?: string;
+};
+
 type RoutingPlan = {
   schemaVersion: "santaclawz-routing-plan/1.0";
   buyerMode: BuyerPersona;
@@ -54,6 +76,309 @@ type RoutingPlan = {
 const BUYER_PERSONA_COOKIE = "santaclawz_buyer_persona";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const STARTER_AGENT_ID = "agent_job_pack";
+const BASE_CHAIN_ID_HEX = "0x2105";
+const BASE_CHAIN_ID_DECIMAL = 8453;
+const BASE_BLOCK_EXPLORER_TX = "https://basescan.org/tx/";
+
+declare global {
+  interface Window {
+    ethereum?: Eip1193Provider;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function shortAddress(value: string) {
+  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+}
+
+function randomNonceHex() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function stringField(source: Record<string, unknown>, key: string, context: string) {
+  const value = source[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${context}.${key} is required.`);
+  }
+  return value;
+}
+
+function findFeeSplitAccept(paymentRequirement: Record<string, unknown>) {
+  const accepts = Array.isArray(paymentRequirement.accepts) ? paymentRequirement.accepts : [];
+  const accept = accepts.find(
+    (candidate): candidate is Record<string, unknown> =>
+      isRecord(candidate) && candidate.settlementModel === "x402-exact-evm-fee-split-v1"
+  );
+  if (!accept) {
+    throw new Error("This browser buyer flow currently supports SantaClawz hosted Base fee-split payments only.");
+  }
+  const evm = isRecord(accept.extensions) && isRecord(accept.extensions.evm) ? accept.extensions.evm : undefined;
+  const feeSplit = evm && isRecord(evm.feeSplit) ? evm.feeSplit : undefined;
+  if (!evm || !feeSplit) {
+    throw new Error("The payment requirement is missing Base fee-split metadata.");
+  }
+  return { accept, evm, feeSplit };
+}
+
+function buildReceiveWithAuthorizationTypedData(input: {
+  evm: Record<string, unknown>;
+  from: string;
+  to: string;
+  value: string;
+  validAfter: string;
+  validBefore: string;
+  nonce: string;
+}) {
+  return {
+    domain: {
+      name: typeof input.evm.eip712Name === "string" ? input.evm.eip712Name : "USD Coin",
+      version: typeof input.evm.assetVersion === "string" ? input.evm.assetVersion : "2",
+      chainId: Number(input.evm.chainId ?? BASE_CHAIN_ID_DECIMAL),
+      verifyingContract: stringField(input.evm, "assetAddress", "extensions.evm")
+    },
+    types: {
+      ReceiveWithAuthorization: [
+        { name: "from", type: "address" },
+        { name: "to", type: "address" },
+        { name: "value", type: "uint256" },
+        { name: "validAfter", type: "uint256" },
+        { name: "validBefore", type: "uint256" },
+        { name: "nonce", type: "bytes32" }
+      ]
+    },
+    primaryType: "ReceiveWithAuthorization",
+    message: {
+      from: input.from,
+      to: input.to,
+      value: input.value,
+      validAfter: input.validAfter,
+      validBefore: input.validBefore,
+      nonce: input.nonce
+    }
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => {
+    return `${JSON.stringify(key)}:${stableJsonStringify((value as Record<string, unknown>)[key])}`;
+  }).join(",")}}`;
+}
+
+function simpleBrowserHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+async function sha256Hex(value: unknown) {
+  const bytes = new TextEncoder().encode(typeof value === "string" ? value : stableJsonStringify(value));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function paymentContextDigest(payload: Record<string, unknown>) {
+  return sha256Hex({
+    requestId: payload.requestId,
+    paymentId: payload.paymentId,
+    scheme: payload.scheme ?? "exact",
+    settlementRail: payload.settlementRail,
+    networkId: payload.networkId,
+    asset: payload.asset,
+    amount: payload.amount,
+    payer: payload.payer,
+    payTo: payload.payTo,
+    sessionId: payload.sessionId,
+    issuedAtIso: payload.issuedAtIso,
+    expiresAtIso: payload.expiresAtIso,
+    ...(isRecord(payload.extensions) ? { extensions: payload.extensions } : {})
+  });
+}
+
+async function authorizationDigest(payload: Record<string, unknown>) {
+  const { x402Version: _x402Version, ...digestPayload } = payload;
+  return sha256Hex(digestPayload);
+}
+
+function buildEip3009Authorization(input: {
+  accept: Record<string, unknown>;
+  evm: Record<string, unknown>;
+  typedData: ReturnType<typeof buildReceiveWithAuthorizationTypedData>;
+  signature: string;
+}) {
+  return {
+    primitive: "evm-eip3009-receive-with-authorization",
+    settlementRail: "evm",
+    network: input.accept.network,
+    asset: input.accept.asset,
+    transferMethod: "EIP-3009",
+    facilitator: input.evm.facilitatorUrl ?? input.evm.defaultFacilitator ?? null,
+    typedData: input.typedData,
+    signature: input.signature
+  };
+}
+
+function feeSplitAssetAddress(input: { accept: Record<string, unknown>; evm: Record<string, unknown> }) {
+  const asset = input.accept.asset;
+  if (isRecord(asset) && typeof asset.address === "string" && asset.address.trim().length > 0) {
+    return asset.address;
+  }
+  return stringField(input.evm, "assetAddress", "extensions.evm");
+}
+
+function paymentRequirementSessionId(paymentRequirement: Record<string, unknown>) {
+  if (typeof paymentRequirement.sessionId === "string") {
+    return paymentRequirement.sessionId;
+  }
+  if (isRecord(paymentRequirement.extensions) && typeof paymentRequirement.extensions.sessionId === "string") {
+    return paymentRequirement.extensions.sessionId;
+  }
+  return "";
+}
+
+async function buildBrowserFeeSplitPaymentPayload(input: {
+  paymentRequirement: Record<string, unknown>;
+  payer: string;
+  signTypedData(typedData: ReturnType<typeof buildReceiveWithAuthorizationTypedData>): Promise<string>;
+}) {
+  const { accept, evm, feeSplit } = findFeeSplitAccept(input.paymentRequirement);
+  const issuedAtIso = new Date().toISOString();
+  const expiresAtIso = new Date(Date.parse(issuedAtIso) + 15 * 60 * 1000).toISOString();
+  const validAfter = String(Math.floor(Date.parse(issuedAtIso) / 1000));
+  const validBefore = String(Math.floor(Date.parse(expiresAtIso) / 1000));
+  const sellerPayTo = stringField(feeSplit, "sellerPayTo", "feeSplit");
+  const protocolFeePayTo = stringField(feeSplit, "protocolFeePayTo", "feeSplit");
+  const sellerAmount = stringField(feeSplit, "sellerAmount", "feeSplit");
+  const protocolFeeAmount = stringField(feeSplit, "protocolFeeAmount", "feeSplit");
+  const grossAmount = typeof accept.amount === "string" && accept.amount.trim() ? accept.amount : stringField(accept, "price", "accept");
+  const assetAddress = feeSplitAssetAddress({ accept, evm });
+  const amountUnit = isRecord(accept.extensions) && isRecord(accept.extensions.evm) && accept.extensions.evm.amountUnit === "atomic"
+    ? "atomic"
+    : "decimal";
+  const sellerTypedData = buildReceiveWithAuthorizationTypedData({
+    evm,
+    from: input.payer,
+    to: sellerPayTo,
+    value: sellerAmount,
+    validAfter,
+    validBefore,
+    nonce: randomNonceHex()
+  });
+  const feeTypedData = buildReceiveWithAuthorizationTypedData({
+    evm,
+    from: input.payer,
+    to: protocolFeePayTo,
+    value: protocolFeeAmount,
+    validAfter,
+    validBefore,
+    nonce: randomNonceHex()
+  });
+  const sellerSignature = await input.signTypedData(sellerTypedData);
+  const feeSignature = await input.signTypedData(feeTypedData);
+  const paymentId = `pay_${(await sha256Hex({
+    requestId: input.paymentRequirement.requestId,
+    payer: input.payer,
+    issuedAtIso,
+    sellerNonce: sellerTypedData.message.nonce,
+    feeNonce: feeTypedData.message.nonce
+  })).slice(0, 24)}`;
+  const extensions = {
+    evm: { amountUnit },
+    santaclawz: {
+      paymentId,
+      idempotencyKey: paymentId,
+      feeSplit: {
+        settlementModel: "x402-exact-evm-fee-split-v1",
+        sellerPayTo,
+        protocolFeePayTo,
+        grossAmount,
+        sellerAmount,
+        protocolFeeAmount,
+        ...(Number.isInteger(feeSplit.feeBps) ? { feeBps: feeSplit.feeBps } : {})
+      }
+    }
+  };
+  const hostedAccepted = {
+    scheme: accept.scheme,
+    network: stringField(accept, "network", "accept"),
+    asset: assetAddress,
+    amount: grossAmount,
+    payTo: sellerPayTo,
+    maxTimeoutSeconds: isRecord(evm) && Number.isFinite(Number(evm.maxTimeoutSeconds)) ? Number(evm.maxTimeoutSeconds) : 60,
+    extra: {
+      name: typeof evm.eip712Name === "string" ? evm.eip712Name : "USD Coin",
+      version: typeof evm.assetVersion === "string" ? evm.assetVersion : "2",
+      amountUnit,
+      settlementModel: "x402-exact-evm-fee-split-v1",
+      feeSplit: {
+        version: typeof feeSplit.version === "string" ? feeSplit.version : "protocol-owner-fee-v1",
+        grossAmount,
+        sellerAmount,
+        protocolFeeAmount,
+        sellerPayTo,
+        protocolFeePayTo,
+        feeSettlementMode: typeof feeSplit.feeSettlementMode === "string" ? feeSplit.feeSettlementMode : "exact-eip3009-split-v1",
+        ...(Number.isInteger(feeSplit.feeBps) ? { feeBps: feeSplit.feeBps } : {})
+      }
+    }
+  };
+  const payloadWithoutDigest: Record<string, unknown> = {
+    x402Version: 2,
+    protocol: "x402",
+    version: "2",
+    requestId: stringField(input.paymentRequirement, "requestId", "paymentRequirement"),
+    paymentId,
+    scheme: "exact",
+    settlementRail: "evm",
+    networkId: stringField(accept, "network", "accept"),
+    asset: accept.asset,
+    amount: grossAmount,
+    payer: input.payer,
+    payTo: sellerPayTo,
+    sessionId: paymentRequirementSessionId(input.paymentRequirement),
+    issuedAtIso,
+    expiresAtIso,
+    extensions,
+    accepted: hostedAccepted,
+    payload: {
+      signature: sellerSignature,
+      authorization: sellerTypedData.message,
+      primitive: "evm-eip3009-receive-with-authorization",
+      feeAuthorization: {
+        signature: feeSignature,
+        authorization: feeTypedData.message,
+        primitive: "evm-eip3009-receive-with-authorization"
+      }
+    },
+    payloadShape: "santaclawz-browser-hosted-exact-fee-split-v1"
+  };
+  const basePayload = {
+    ...payloadWithoutDigest,
+    paymentContextDigest: await paymentContextDigest(payloadWithoutDigest)
+  };
+  const payload = {
+    ...basePayload,
+    authorization: buildEip3009Authorization({ accept, evm, typedData: sellerTypedData, signature: sellerSignature }),
+    feeAuthorization: buildEip3009Authorization({ accept, evm, typedData: feeTypedData, signature: feeSignature })
+  };
+  return {
+    ...payload,
+    authorizationDigest: await authorizationDigest(payload)
+  };
+}
 
 const ROUTE_RULES: RouteRule[] = [
   {
@@ -122,7 +447,7 @@ const LIFECYCLE_STEPS = [
 ];
 
 function readPersonaCookie(): BuyerPersona {
-  if (typeof document === "undefined") {
+  if (typeof document === "undefined" || typeof document.cookie !== "string") {
     return "human";
   }
   const cookie = document.cookie
@@ -134,7 +459,7 @@ function readPersonaCookie(): BuyerPersona {
 }
 
 function writePersonaCookie(persona: BuyerPersona) {
-  if (typeof document === "undefined") {
+  if (typeof document === "undefined" || typeof document.cookie !== "string") {
     return;
   }
   document.cookie = `${BUYER_PERSONA_COOKIE}=${persona}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}; SameSite=Lax`;
@@ -162,12 +487,12 @@ function addTags(target: string[], values?: string[]) {
 function marketplaceTagValues(agent: AgentRegistryEntry) {
   const tags = agent.marketplaceTags;
   return uniqueTags([
-    ...tags.capabilities,
-    ...tags.domains,
-    ...tags.inputTypes,
-    ...tags.outputTypes,
-    ...tags.tools,
-    ...tags.runtimes
+    ...(tags?.capabilities ?? []),
+    ...(tags?.domains ?? []),
+    ...(tags?.inputTypes ?? []),
+    ...(tags?.outputTypes ?? []),
+    ...(tags?.tools ?? []),
+    ...(tags?.runtimes ?? [])
   ]);
 }
 
@@ -374,6 +699,11 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
   const [postingProcurement, setPostingProcurement] = useState(false);
   const [procurementResult, setProcurementResult] = useState<ProcurementIntentResponse | null>(null);
   const [procurementError, setProcurementError] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<WalletState | null>(null);
+  const [paymentState, setPaymentState] = useState<PaymentUiState>({
+    status: "idle",
+    message: "Connect a Base wallet when you are ready to pay or request a quote."
+  });
 
   const marketplaceTags = useMemo(() => extractMarketplaceTags(requestSummary), [requestSummary]);
   const laneTags = useMemo(() => protocolLaneTags(privacyLane, requestSummary), [privacyLane, requestSummary]);
@@ -383,6 +713,9 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
     return [...agents]
       .filter((agent) => !agent.archivedAtIso)
       .sort((left, right) => {
+        if (left.agentId === right.agentId) {
+          return 0;
+        }
         if (left.agentId === STARTER_AGENT_ID) {
           return -1;
         }
@@ -432,14 +765,189 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
   }, [candidates, formatTags, laneTags, marketplaceTags, persona, routingMode]);
 
   useEffect(() => {
-    if (!selectedAgentId && selectedAgent) {
+    if (selectedAgent?.agentId && selectedAgentId !== selectedAgent.agentId) {
       setSelectedAgentId(selectedAgent.agentId);
     }
-  }, [selectedAgent, selectedAgentId]);
+  }, [selectedAgent?.agentId, selectedAgentId]);
+
+  const procurementIdempotencyKey = useMemo(() => {
+    const promptSlug = normalizeTag(requestSummary).slice(0, 64) || "request";
+    const digest = simpleBrowserHash(stableJsonStringify({
+      budget: budget.trim(),
+      persona,
+      requestSummary: requestSummary.trim()
+    }));
+    return `hire-ui:${persona}:${promptSlug}:${digest}`;
+  }, [budget, persona, requestSummary]);
 
   function updatePersona(nextPersona: BuyerPersona) {
     setPersona(nextPersona);
     writePersonaCookie(nextPersona);
+  }
+
+  async function connectBaseWallet() {
+    const provider = typeof window !== "undefined" ? window.ethereum : undefined;
+    if (!provider) {
+      setPaymentState({
+        status: "error",
+        message: "No EVM wallet was found. Install or unlock a Base-compatible wallet, then try again."
+      });
+      return null;
+    }
+    setPaymentState({ status: "connecting", message: "Connecting wallet and checking Base mainnet..." });
+    const accounts = await provider.request<string[]>({ method: "eth_requestAccounts" });
+    const address = accounts[0] ?? "";
+    if (!address) {
+      throw new Error("Wallet did not return an account.");
+    }
+    let chainId = await provider.request<string>({ method: "eth_chainId" });
+    if (chainId.toLowerCase() !== BASE_CHAIN_ID_HEX) {
+      try {
+        await provider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: BASE_CHAIN_ID_HEX }]
+        });
+      } catch (_error) {
+        await provider.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: BASE_CHAIN_ID_HEX,
+            chainName: "Base",
+            nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+            rpcUrls: ["https://mainnet.base.org"],
+            blockExplorerUrls: ["https://basescan.org"]
+          }]
+        });
+      }
+      chainId = await provider.request<string>({ method: "eth_chainId" });
+    }
+    const nextWallet: WalletState = {
+      address,
+      chainId,
+      status: chainId.toLowerCase() === BASE_CHAIN_ID_HEX ? "connected" : "wrong-network"
+    };
+    setWallet(nextWallet);
+    setPaymentState({
+      status: nextWallet.status === "connected" ? "idle" : "error",
+      message: nextWallet.status === "connected"
+        ? `${shortAddress(address)} connected on Base.`
+        : "Switch your wallet to Base mainnet before paying."
+    });
+    return nextWallet;
+  }
+
+  async function ensureBaseWallet() {
+    if (wallet?.status === "connected") {
+      return wallet;
+    }
+    return connectBaseWallet();
+  }
+
+  async function signTypedDataWithWallet(typedData: ReturnType<typeof buildReceiveWithAuthorizationTypedData>, payer: string) {
+    const provider = typeof window !== "undefined" ? window.ethereum : undefined;
+    if (!provider) {
+      throw new Error("Connect an EVM wallet first.");
+    }
+    return provider.request<string>({
+      method: "eth_signTypedData_v4",
+      params: [payer, JSON.stringify(typedData)]
+    });
+  }
+
+  function hireRequestBody(paymentPayload?: Record<string, unknown>) {
+    return {
+      taskPrompt: requestSummary,
+      requesterContact: buyerContact.trim() || safeContact(persona),
+      ...(budget.trim() ? { budgetMina: budget.trim() } : {}),
+      marketplaceTags,
+      jobPrivacy: {
+        visibility: privacyLane === "public-summary" ? "public" : "private",
+        publicAggregateStats: true,
+        publicLifecycleEvents: privacyLane !== "private",
+        publicArtifactMetadata: privacyLane !== "private"
+      },
+      artifactDelivery: {
+        mode: laneTags.includes("buyer-encrypted") ? "buyer_encrypted" : "platform_scanned",
+        scanPolicy: "platform_required",
+        digestRequired: true,
+        buyerAcceptanceRequired: true
+      },
+      ...(paymentPayload ? { paymentPayload } : {})
+    };
+  }
+
+  async function payOrRequestSelectedAgent() {
+    if (!selectedAgent) {
+      setPaymentState({ status: "error", message: "Select an agent first." });
+      return;
+    }
+    setProcurementError(null);
+    setPaymentState({
+      status: "requesting",
+      message: selectedAgent.pricingMode === "quote-required" ? "Requesting quote from selected agent..." : "Requesting exact Base payment requirement..."
+    });
+    try {
+      if (selectedAgent.pricingMode === "quote-required") {
+        const quote = await submitHireRequest(selectedAgent.agentId, hireRequestBody());
+        setPaymentState({
+          status: "quoted",
+          message: `Quote request sent. Request ${quote.requestId} is ready for review before payment.`,
+          requestId: quote.requestId,
+          ...(quote.protocolReturn?.digestSha256 ? { proofDigest: quote.protocolReturn.digestSha256 } : {})
+        });
+        return;
+      }
+
+      const connectedWallet = await ensureBaseWallet();
+      if (!connectedWallet || connectedWallet.status !== "connected") {
+        return;
+      }
+      let paymentRequirement: Record<string, unknown>;
+      try {
+        await submitHireRequest(selectedAgent.agentId, hireRequestBody());
+        setPaymentState({
+          status: "error",
+          message: "This agent did not return a payment requirement. Try requesting a quote or choose another live fixed-price agent."
+        });
+        return;
+      } catch (error) {
+        if (!(error instanceof ApiError) || !error.data) {
+          throw error;
+        }
+        paymentRequirement = error.data;
+      }
+      setPaymentState({ status: "signing", message: "Sign the Base USDC payment authorization in your wallet." });
+      const paymentPayload = await buildBrowserFeeSplitPaymentPayload({
+        paymentRequirement,
+        payer: connectedWallet.address,
+        signTypedData: (typedData) => signTypedDataWithWallet(typedData, connectedWallet.address)
+      });
+      const paymentDigest = typeof paymentPayload.authorizationDigest === "string"
+        ? paymentPayload.authorizationDigest
+        : await authorizationDigest(paymentPayload);
+      setPaymentState({ status: "submitting", message: "Submitting paid hire request to SantaClawz...", paymentDigest });
+      const receipt = await submitHireRequest(selectedAgent.agentId, hireRequestBody(paymentPayload));
+      const receiptRecord = receipt as unknown as Record<string, unknown>;
+      const payment = isRecord(receiptRecord.payment) ? receiptRecord.payment : {};
+      const transactionHashes = Array.isArray(payment.transactionHashes)
+        ? payment.transactionHashes.filter((hash: unknown): hash is string => typeof hash === "string")
+        : [];
+      setPaymentState({
+        status: receipt.status === "completed" ? "completed" : "pending",
+        message: receipt.status === "completed"
+          ? "Paid job completed. Review the returned package and proof trail."
+          : "Payment was accepted. SantaClawz is waiting for runtime completion.",
+        requestId: receipt.requestId,
+        paymentDigest,
+        transactionHashes,
+        ...(receipt.protocolReturn?.digestSha256 ? { proofDigest: receipt.protocolReturn.digestSha256 } : {})
+      });
+    } catch (error) {
+      setPaymentState({
+        status: "error",
+        message: error instanceof Error ? error.message : "Unable to complete wallet payment."
+      });
+    }
   }
 
   function sendRouterMessage() {
@@ -478,7 +986,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
       const result = await createProcurementIntent({
         taskPrompt: requestSummary,
         requesterContact: buyerContact.trim() || safeContact(persona),
-        idempotencyKey: `hire-ui:${persona}:${requestSummary}:${budget}`.slice(0, 160),
+        idempotencyKey: procurementIdempotencyKey,
         ...(budget.trim() ? { budgetUsd: budget.trim() } : {}),
         requiredCapabilities: marketplaceTags.capabilityTags,
         preferredDeliveryModes: formatTags,
@@ -555,7 +1063,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
           <section className="buyer-card buyer-router-card">
             <div className="buyer-card-head">
               <p className="eyebrow">Routing chat</p>
-              <span className="subtle-pill live">Local router</span>
+              <span className="subtle-pill live">agent_job_pack router</span>
             </div>
             <div className="buyer-chat-window" aria-live="polite">
               {messages.map((message) => (
@@ -577,7 +1085,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
               </button>
             </div>
             <p className="buyer-router-note">
-              Next step: route this same plan through agent_job_pack for model-assisted procurement coaching.
+              Job Pack is the default routing coach: it turns the brief into tags, candidate logic, and a bid/direct-hire path before money moves.
             </p>
           </section>
 
@@ -679,20 +1187,51 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
             </div>
 
             <div className="buyer-action-row">
-              <button type="button" className="primary-button" disabled>
-                Connect Base wallet
+              <button type="button" className="primary-button" onClick={connectBaseWallet}>
+                {wallet?.status === "connected" ? `${shortAddress(wallet.address)} · Base` : "Connect Base wallet"}
               </button>
-              <button type="button" className="secondary-button" disabled>
-                Preview x402 payment
+              <button
+                type="button"
+                className="secondary-button buyer-pay-button"
+                onClick={payOrRequestSelectedAgent}
+                disabled={!selectedAgent || paymentState.status === "requesting" || paymentState.status === "signing" || paymentState.status === "submitting"}
+              >
+                {selectedAgent?.pricingMode === "quote-required" ? "Request quote" : "Pay and hire"}
               </button>
               <button type="button" className="secondary-button" onClick={postProcurementIntent} disabled={postingProcurement || !requestSummary.trim()}>
                 {postingProcurement ? "Posting..." : "Post bidding request"}
               </button>
             </div>
 
+            {paymentState.message ? (
+              <div className={paymentState.status === "completed" || paymentState.status === "quoted" ? "status-banner status-banner-success" : "status-banner buyer-payment-status"}>
+                <strong>{paymentState.status === "idle" ? "Wallet" : paymentState.status.replace("-", " ")}</strong>
+                <span>{paymentState.message}</span>
+                {paymentState.transactionHashes?.length ? (
+                  <div className="buyer-proof-links">
+                    {paymentState.transactionHashes.map((hash) => (
+                      <a key={hash} href={`${BASE_BLOCK_EXPLORER_TX}${hash}`} target="_blank" rel="noreferrer">
+                        Base tx {hash.slice(0, 10)}...
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+                {paymentState.proofDigest ? (
+                  <div className="buyer-proof-links">
+                    <span>return digest {paymentState.proofDigest.slice(0, 12)}...</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {procurementResult ? (
               <div className="status-banner status-banner-success">
-                Procurement intent {procurementResult.intent.intentId} is open. Keep buyer token private for bid acceptance.
+                Procurement intent {procurementResult.intent.intentId} is open. Job Pack can use this as the routing spine; keep buyer token private for bid acceptance.
+                {procurementResult.routingAnchor ? (
+                  <div className="buyer-proof-links">
+                    <span>Zeko anchor {procurementResult.routingAnchor.payloadDigestSha256.slice(0, 12)}...</span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {procurementError ? <div className="status-banner">{procurementError}</div> : null}

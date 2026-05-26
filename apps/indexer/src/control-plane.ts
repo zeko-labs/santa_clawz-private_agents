@@ -2438,8 +2438,7 @@ function buildAgentMarketplaceTagStats(
       request.sessionId === sessionId &&
       request.requestType === "paid_execution" &&
       shouldPublishDetailedHireLifecycle(request.jobPrivacy)
-    )
-    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
+    );
 
   for (const request of requests) {
     const outcome = paidExecutionTerminalOutcome(request, nowMs);
@@ -2780,7 +2779,12 @@ function marketplaceWorkTagValues(tags: MarketplaceWorkTags | undefined): string
   if (!tags) {
     return [];
   }
-  return Array.from(new Set([...tags.jobTags, ...tags.capabilityTags, ...tags.inputTags, ...tags.outputTags]));
+  return Array.from(new Set([
+    ...(Array.isArray(tags.jobTags) ? tags.jobTags : []),
+    ...(Array.isArray(tags.capabilityTags) ? tags.capabilityTags : []),
+    ...(Array.isArray(tags.inputTags) ? tags.inputTags : []),
+    ...(Array.isArray(tags.outputTags) ? tags.outputTags : [])
+  ]));
 }
 
 function agentMarketplaceTagValues(tags: AgentMarketplaceTags | undefined): string[] {
@@ -2788,12 +2792,12 @@ function agentMarketplaceTagValues(tags: AgentMarketplaceTags | undefined): stri
     return [];
   }
   return Array.from(new Set([
-    ...tags.capabilities,
-    ...tags.domains,
-    ...tags.inputTypes,
-    ...tags.outputTypes,
-    ...tags.tools,
-    ...tags.runtimes
+    ...(Array.isArray(tags.capabilities) ? tags.capabilities : []),
+    ...(Array.isArray(tags.domains) ? tags.domains : []),
+    ...(Array.isArray(tags.inputTypes) ? tags.inputTypes : []),
+    ...(Array.isArray(tags.outputTypes) ? tags.outputTypes : []),
+    ...(Array.isArray(tags.tools) ? tags.tools : []),
+    ...(Array.isArray(tags.runtimes) ? tags.runtimes : [])
   ]));
 }
 
@@ -4088,12 +4092,7 @@ export class ClawzControlPlane {
       profile.headline,
       serviceKeySlug(profile.agentName),
       profile.openClawUrl,
-      ...profile.marketplaceTags.capabilities,
-      ...profile.marketplaceTags.domains,
-      ...profile.marketplaceTags.inputTypes,
-      ...profile.marketplaceTags.outputTypes,
-      ...profile.marketplaceTags.tools,
-      ...profile.marketplaceTags.runtimes
+      ...agentMarketplaceTagValues(profile.marketplaceTags)
     ]);
 
     if (profile.openClawUrl.trim().length > 0) {
@@ -5921,9 +5920,13 @@ export class ClawzControlPlane {
         : {}),
       ...(nextPayment ? { payment: nextPayment } : {})
     };
+    const nextRequests = file.requests.map((request, requestIndex) => requestIndex === index ? nextRecord : request);
+    const nextJobActivityStatsBySessionId = { ...(file.jobActivityStatsBySessionId ?? {}) };
+    delete nextJobActivityStatsBySessionId[existing.sessionId];
     await this.saveHireRequestFile({
       ...file,
-      requests: file.requests.map((request, requestIndex) => requestIndex === index ? nextRecord : request)
+      requests: nextRequests,
+      jobActivityStatsBySessionId: nextJobActivityStatsBySessionId
     });
     return nextRecord;
   }
@@ -8697,7 +8700,7 @@ export class ClawzControlPlane {
           readiness,
           completionScore,
           jobActivityStats,
-          marketplaceTags: profile.marketplaceTags,
+          marketplaceTags: sanitizeAgentMarketplaceTags(profile.marketplaceTags, emptyAgentMarketplaceTags()),
           marketplaceTagStats,
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
@@ -8715,12 +8718,7 @@ export class ClawzControlPlane {
             entry.representedPrincipal,
             entry.headline,
             entry.serviceKey,
-            ...entry.marketplaceTags.capabilities,
-            ...entry.marketplaceTags.domains,
-            ...entry.marketplaceTags.inputTypes,
-            ...entry.marketplaceTags.outputTypes,
-            ...entry.marketplaceTags.tools,
-            ...entry.marketplaceTags.runtimes
+            ...agentMarketplaceTagValues(entry.marketplaceTags)
           ]) &&
           entry.agentName.trim().length > 0 &&
           entry.headline.trim().length > 0
@@ -8830,6 +8828,49 @@ export class ClawzControlPlane {
     return `buy_${Buffer.from(createHmac("sha256", secret).update(idempotencyKey.trim()).digest("hex"), "hex").toString("base64url")}`;
   }
 
+  private jobPackRouterSession(state: ConsolePersistenceState): { sessionId: string; agentId: string } | undefined {
+    for (const [sessionId, profile] of Object.entries(state.profilesBySession)) {
+      if (state.deletedAgentRegistrationsBySession[sessionId]) {
+        continue;
+      }
+      const agentId = this.agentIdForSession(state, sessionId);
+      const serviceKey = enrolledServiceKeyForAgent(state.ingressSecretsBySession[sessionId], profile, agentId);
+      if (serviceKey === "agent_job_pack" || serviceKeyForAgent(profile, agentId) === "agent_job_pack") {
+        return { sessionId, agentId };
+      }
+    }
+    return undefined;
+  }
+
+  private async enqueueJobPackRoutingIntentAnchor(input: {
+    intent: ProcurementIntentRecord;
+    marketplaceTags: MarketplaceWorkTags;
+  }) {
+    const state = await this.loadState();
+    const router = this.jobPackRouterSession(state);
+    if (!router) {
+      return undefined;
+    }
+    return this.enqueueSocialAnchorCandidate({
+      sessionId: router.sessionId,
+      kind: "operator-dispatch",
+      title: "Job Pack routing intent opened",
+      summary: `agent_job_pack opened a buyer routing intent with ${input.intent.requiredCapabilities.slice(0, 4).join(", ") || "general"} tags.`,
+      payload: {
+        schemaVersion: "santaclawz-routing-intent/1.0",
+        routerAgentId: router.agentId,
+        intentId: input.intent.intentId,
+        budgetUsd: input.intent.budgetUsd ?? null,
+        taskPromptDigestSha256: sha256Hex(input.intent.taskPrompt),
+        requiredCapabilities: input.intent.requiredCapabilities,
+        preferredDeliveryModes: input.intent.preferredDeliveryModes,
+        preferredPrivacyModes: input.intent.preferredPrivacyModes,
+        marketplaceTags: input.marketplaceTags,
+        createdAtIso: input.intent.createdAtIso
+      }
+    });
+  }
+
   async createProcurementIntent(options: CreateProcurementIntentOptions) {
     const taskPrompt = options.taskPrompt.trim().slice(0, 4000);
     const requesterContact = options.requesterContact.trim().slice(0, 240);
@@ -8881,11 +8922,21 @@ export class ClawzControlPlane {
       declines: []
     };
     await this.saveProcurementIntentFile({ intents: [intent, ...file.intents].slice(0, 1000) });
+    const routingAnchor = await this.enqueueJobPackRoutingIntentAnchor({ intent, marketplaceTags });
     return {
       ok: true,
       intent: this.fullProcurementIntentView(intent),
       buyerToken,
-      buyerTokenUsage: "Use this token to accept a bid or close the procurement intent."
+      buyerTokenUsage: "Use this token to accept a bid or close the procurement intent.",
+      ...(routingAnchor
+        ? {
+            routingAnchor: {
+              candidateId: routingAnchor.candidateId,
+              status: routingAnchor.status,
+              payloadDigestSha256: routingAnchor.payloadDigestSha256
+            }
+          }
+        : {})
     };
   }
 
