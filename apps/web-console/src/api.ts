@@ -589,6 +589,62 @@ export type ProcurementIntentResponse = {
   };
 };
 
+export type BuyerRouterPlanResponse = {
+  ok: true;
+  plan: {
+    schemaVersion: "santaclawz-routing-plan/1.0";
+    intelligenceSource: string;
+    routerAgentId?: string;
+    generatedAtIso: string;
+    buyerMode: "human" | "agent";
+    routingIntent: "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
+    marketplaceTags: MarketplaceWorkTags;
+    protocolLaneTags: string[];
+    deliveryFormatTags: string[];
+    candidateAgents: Array<{
+      agentId: string;
+      agentName: string;
+      matchScore: number;
+      matchReasons: string[];
+      pricingMode?: string;
+      runtimeStatus?: string;
+      paidExecutionReady?: boolean;
+      quoteReady?: boolean;
+      completionScorePct?: number;
+      provenTags?: Array<{
+        tag: string;
+        totalJobCount: number;
+        completedJobCount: number;
+        successRatePct?: number;
+      }>;
+    }>;
+    recommendedNextAction: string;
+    warnings?: string[];
+    routePlanDigestSha256: string;
+  };
+  routerMessage: string;
+  routingAnchor?: {
+    candidateId: string;
+    status: string;
+    payloadDigestSha256: string;
+  };
+};
+
+export function createBuyerRouterPlan(input: {
+  taskPrompt: string;
+  buyerMode?: "human" | "agent";
+  requesterContact?: string;
+  budgetUsd?: string;
+  privacyLane?: "private" | "proof-only" | "public-summary";
+  marketplaceTags?: Partial<MarketplaceWorkTags>;
+  selectedAgentId?: string;
+}): Promise<BuyerRouterPlanResponse> {
+  return request<BuyerRouterPlanResponse>("/api/buyer-router/plan", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function createProcurementIntent(input: {
   taskPrompt: string;
   requesterContact: string;

@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { AgentMarketplaceTagStat, AgentRegistryEntry, MarketplaceWorkTags } from "@clawz/protocol";
 
-import { ApiError, createProcurementIntent, submitHireRequest, type ProcurementIntentResponse } from "./api.js";
+import {
+  ApiError,
+  createBuyerRouterPlan,
+  createProcurementIntent,
+  submitHireRequest,
+  type BuyerRouterPlanResponse,
+  type ProcurementIntentResponse
+} from "./api.js";
 
 type BuyerPersona = "human" | "agent";
 type RoutingMode = "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
@@ -59,6 +66,9 @@ type PaymentUiState = {
 
 type RoutingPlan = {
   schemaVersion: "santaclawz-routing-plan/1.0";
+  intelligenceSource?: string;
+  routerAgentId?: string;
+  generatedAtIso?: string;
   buyerMode: BuyerPersona;
   routingIntent: RoutingMode;
   marketplaceTags: MarketplaceWorkTags;
@@ -71,6 +81,8 @@ type RoutingPlan = {
     matchReasons: string[];
   }>;
   recommendedNextAction: string;
+  warnings?: string[];
+  routePlanDigestSha256?: string;
 };
 
 const BUYER_PERSONA_COOKIE = "santaclawz_buyer_persona";
@@ -696,6 +708,9 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
       body: "Tell me what you need done. I’ll turn it into marketplace tags, suggest a route, and show whether this should be direct hire, quote, or bidding."
     }
   ]);
+  const [serverRoutingPlan, setServerRoutingPlan] = useState<BuyerRouterPlanResponse["plan"] | null>(null);
+  const [routingAnchorDigest, setRoutingAnchorDigest] = useState("");
+  const [routingRequesting, setRoutingRequesting] = useState(false);
   const [postingProcurement, setPostingProcurement] = useState(false);
   const [procurementResult, setProcurementResult] = useState<ProcurementIntentResponse | null>(null);
   const [procurementError, setProcurementError] = useState<string | null>(null);
@@ -763,12 +778,21 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
       candidates
     });
   }, [candidates, formatTags, laneTags, marketplaceTags, persona, routingMode]);
+  const activeRoutingPlan = serverRoutingPlan ?? routingPlan;
+  const activeMarketplaceTags = activeRoutingPlan.marketplaceTags;
+  const activeLaneTags = activeRoutingPlan.protocolLaneTags;
+  const activeFormatTags = activeRoutingPlan.deliveryFormatTags;
 
   useEffect(() => {
     if (selectedAgent?.agentId && selectedAgentId !== selectedAgent.agentId) {
       setSelectedAgentId(selectedAgent.agentId);
     }
   }, [selectedAgent?.agentId, selectedAgentId]);
+
+  useEffect(() => {
+    setServerRoutingPlan(null);
+    setRoutingAnchorDigest("");
+  }, [budget, persona, privacyLane, requestSummary]);
 
   const procurementIdempotencyKey = useMemo(() => {
     const promptSlug = normalizeTag(requestSummary).slice(0, 64) || "request";
@@ -859,7 +883,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
       taskPrompt: requestSummary,
       requesterContact: buyerContact.trim() || safeContact(persona),
       ...(budget.trim() ? { budgetMina: budget.trim() } : {}),
-      marketplaceTags,
+      marketplaceTags: activeMarketplaceTags,
       jobPrivacy: {
         visibility: privacyLane === "public-summary" ? "public" : "private",
         publicAggregateStats: true,
@@ -867,7 +891,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
         publicArtifactMetadata: privacyLane !== "private"
       },
       artifactDelivery: {
-        mode: laneTags.includes("buyer-encrypted") ? "buyer_encrypted" : "platform_scanned",
+        mode: activeLaneTags.includes("buyer-encrypted") ? "buyer_encrypted" : "platform_scanned",
         scanPolicy: "platform_required",
         digestRequired: true,
         buyerAcceptanceRequired: true
@@ -950,33 +974,65 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
     }
   }
 
-  function sendRouterMessage() {
+  async function sendRouterMessage() {
     const trimmed = chatInput.trim();
     if (!trimmed) {
       return;
     }
     setRequestSummary(trimmed);
-    const nextTags = extractMarketplaceTags(trimmed);
-    const nextCandidates = agentOptions
-      .map((agent) => scoreAgent(agent, nextTags))
-      .sort((left, right) => right.score - left.score)
-      .slice(0, 3);
-    const mode = chooseRoutingMode({
-      candidateCount: nextCandidates.filter((candidate) => candidate.score >= 15).length,
-      prompt: trimmed,
-      ...(nextCandidates[0]?.agent ? { selectedAgent: nextCandidates[0].agent } : {}),
-      tags: nextTags
-    });
     setMessages((current) => [
       ...current,
-      { id: makeId(), role: "buyer", body: trimmed },
-      {
-        id: makeId(),
-        role: "router",
-        body: `I read this as ${workTagValues(nextTags).slice(0, 5).join(", ")}. Best route: ${mode.replace("-", " ")}. ${nextCandidates[0] ? `Top match: ${displayAgentName(nextCandidates[0].agent)} because ${nextCandidates[0].reasons[0]}.` : "I need more agent history before ranking sellers."}`
-      }
+      { id: makeId(), role: "buyer", body: trimmed }
     ]);
     setChatInput("");
+    setRoutingRequesting(true);
+    try {
+      const nextTags = extractMarketplaceTags(trimmed);
+      const response = await createBuyerRouterPlan({
+        taskPrompt: trimmed,
+        buyerMode: persona,
+        requesterContact: buyerContact.trim() || safeContact(persona),
+        ...(budget.trim() ? { budgetUsd: budget.trim() } : {}),
+        privacyLane: privacyLane === "public-summary" || privacyLane === "proof-only" ? privacyLane : "private",
+        marketplaceTags: nextTags,
+        ...(selectedAgentId ? { selectedAgentId } : {})
+      });
+      setServerRoutingPlan(response.plan);
+      setRoutingAnchorDigest(response.routingAnchor?.payloadDigestSha256 ?? "");
+      if (response.plan.candidateAgents[0]?.agentId) {
+        setSelectedAgentId(response.plan.candidateAgents[0].agentId);
+      }
+      setMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: "router",
+          body: `${response.routerMessage}${response.routingAnchor ? ` Anchored route-plan digest ${response.routingAnchor.payloadDigestSha256.slice(0, 12)}...` : ""}`
+        }
+      ]);
+    } catch (_error) {
+      const nextTags = extractMarketplaceTags(trimmed);
+      const nextCandidates = agentOptions
+        .map((agent) => scoreAgent(agent, nextTags))
+        .sort((left, right) => right.score - left.score)
+        .slice(0, 3);
+      const mode = chooseRoutingMode({
+        candidateCount: nextCandidates.filter((candidate) => candidate.score >= 15).length,
+        prompt: trimmed,
+        ...(nextCandidates[0]?.agent ? { selectedAgent: nextCandidates[0].agent } : {}),
+        tags: nextTags
+      });
+      setMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: "router",
+          body: `I used local routing while the protocol router was unavailable. I read this as ${workTagValues(nextTags).slice(0, 5).join(", ")}. Best route: ${mode.replace("-", " ")}. ${nextCandidates[0] ? `Top match: ${displayAgentName(nextCandidates[0].agent)} because ${nextCandidates[0].reasons[0]}.` : "I need more agent history before ranking sellers."}`
+        }
+      ]);
+    } finally {
+      setRoutingRequesting(false);
+    }
   }
 
   async function postProcurementIntent() {
@@ -988,10 +1044,10 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
         requesterContact: buyerContact.trim() || safeContact(persona),
         idempotencyKey: procurementIdempotencyKey,
         ...(budget.trim() ? { budgetUsd: budget.trim() } : {}),
-        requiredCapabilities: marketplaceTags.capabilityTags,
-        preferredDeliveryModes: formatTags,
-        preferredPrivacyModes: laneTags,
-        marketplaceTags,
+        requiredCapabilities: activeMarketplaceTags.capabilityTags,
+        preferredDeliveryModes: activeFormatTags,
+        preferredPrivacyModes: activeLaneTags,
+        marketplaceTags: activeMarketplaceTags,
         jobPrivacy: {
           visibility: privacyLane === "public-summary" ? "public" : "private",
           publicAggregateStats: true,
@@ -999,7 +1055,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
           publicArtifactMetadata: privacyLane !== "private"
         },
         artifactDelivery: {
-          mode: laneTags.includes("buyer-encrypted") ? "buyer_encrypted" : "platform_scanned",
+          mode: activeLaneTags.includes("buyer-encrypted") ? "buyer_encrypted" : "platform_scanned",
           scanPolicy: "platform_required",
           digestRequired: true,
           buyerAcceptanceRequired: true
@@ -1080,13 +1136,16 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
                 onChange={(event: ValueEvent) => setChatInput(event.target.value)}
                 placeholder="Tell SantaClawz what work you want routed..."
               />
-              <button type="button" className="primary-button" onClick={sendRouterMessage}>
-                Route request
+              <button type="button" className="primary-button" onClick={() => void sendRouterMessage()} disabled={routingRequesting}>
+                {routingRequesting ? "Routing..." : "Route request"}
               </button>
             </div>
             <p className="buyer-router-note">
-              Job Pack is the default routing coach: it turns the brief into tags, candidate logic, and a bid/direct-hire path before money moves.
+              Job Pack is the default routing coach: it turns the brief into live protocol tags, candidate logic, and a bid/direct-hire path before money moves.
             </p>
+            {routingAnchorDigest ? (
+              <p className="buyer-router-note">Route-plan anchor {routingAnchorDigest.slice(0, 12)}...</p>
+            ) : null}
           </section>
 
           <aside className="buyer-card buyer-lifecycle-card">
@@ -1294,7 +1353,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
               This is the compact plan shape the UI can hand to agent_job_pack, direct hire, or procurement bidding.
               The final digest can be anchored without exposing private prompt content.
             </p>
-            <pre className="buyer-plan-json">{JSON.stringify(routingPlan, null, 2)}</pre>
+            <pre className="buyer-plan-json">{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
           </section>
 
           <section className="buyer-card buyer-coach-card">

@@ -37,6 +37,7 @@ import {
   ClawzControlPlane,
   DuplicatePublicClawzUrlError,
   SelfServeSocialAnchoringDisabledError,
+  type CreateBuyerRouterPlanOptions,
   type CreateExecutionIntentOptions,
   type CreateProcurementIntentOptions,
   type ExecutionIntentTransitionOptions
@@ -356,6 +357,15 @@ type ProcurementIntentBody = {
   marketplaceTags?: unknown;
   jobPrivacy?: unknown;
   artifactDelivery?: unknown;
+};
+type BuyerRouterPlanBody = {
+  taskPrompt?: unknown;
+  buyerMode?: unknown;
+  requesterContact?: unknown;
+  budgetUsd?: unknown;
+  privacyLane?: unknown;
+  marketplaceTags?: unknown;
+  selectedAgentId?: unknown;
 };
 type ProcurementBidBody = {
   idempotencyKey?: unknown;
@@ -1178,6 +1188,22 @@ function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): Cre
     ...(parseArtifactDeliveryPreference(value.artifactDelivery)
       ? { artifactDelivery: parseArtifactDeliveryPreference(value.artifactDelivery)! }
       : {})
+  };
+}
+
+function parseBuyerRouterPlanBody(body: unknown): CreateBuyerRouterPlanOptions {
+  const value = isRecord(body) ? body as BuyerRouterPlanBody : {};
+  const marketplaceTags = parseMarketplaceWorkTags(value.marketplaceTags);
+  return {
+    taskPrompt: typeof value.taskPrompt === "string" ? value.taskPrompt : "",
+    ...(value.buyerMode === "agent" || value.buyerMode === "human" ? { buyerMode: value.buyerMode } : {}),
+    ...(typeof value.requesterContact === "string" ? { requesterContact: value.requesterContact } : {}),
+    ...(typeof value.budgetUsd === "string" ? { budgetUsd: value.budgetUsd } : {}),
+    ...(value.privacyLane === "private" || value.privacyLane === "proof-only" || value.privacyLane === "public-summary"
+      ? { privacyLane: value.privacyLane }
+      : {}),
+    ...(marketplaceTags ? { marketplaceTags } : {}),
+    ...(typeof value.selectedAgentId === "string" ? { selectedAgentId: value.selectedAgentId } : {})
   };
 }
 
@@ -3309,6 +3335,16 @@ app.get("/api/procurement/intents", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to list procurement intents."
+    });
+  }
+}));
+
+app.post("/api/buyer-router/plan", route(async (request, response) => {
+  try {
+    response.json(await controlPlane.createBuyerRouterPlan(parseBuyerRouterPlanBody(request.body ?? null)));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create buyer route plan."
     });
   }
 }));
