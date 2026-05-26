@@ -1040,14 +1040,16 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function hasFixedPaidWorkerReadinessGap(agent: AgentRegistryEntry) {
-  const blockers = new Set(agent.readiness?.blockers ?? []);
-  const upgradeReasons = new Set(agent.readiness?.upgradeReasons ?? []);
-  const readinessWarnings = new Set(agent.readiness?.readinessWarnings ?? []);
+  if (!agent.paidJobsEnabled) {
+    return false;
+  }
+  const blockers = agent.readiness?.blockers ?? [];
+  const upgradeReasons = agent.readiness?.upgradeReasons ?? [];
+  const readinessWarnings = agent.readiness?.readinessWarnings ?? [];
   return (
-    agent.paidJobsEnabled &&
-    (blockers.has("worker-readiness-unverified") ||
-      upgradeReasons.has("missing-current-relay-timing") ||
-      readinessWarnings.has("missing-current-relay-timing"))
+    blockers.includes("worker-readiness-unverified") ||
+    upgradeReasons.includes("missing-current-relay-timing") ||
+    readinessWarnings.includes("missing-current-relay-timing")
   );
 }
 
@@ -1190,6 +1192,7 @@ function isDemoAgent(agent: AgentRegistryEntry) {
     !agent.paymentsEnabled &&
     !agent.paymentProfileReady &&
     !agent.payoutAddressConfigured &&
+    !agent.paidJobsEnabled &&
     paidJobCount === 0;
   return (
     agent.pricingMode === "free-test" ||

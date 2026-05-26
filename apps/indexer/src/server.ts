@@ -75,6 +75,8 @@ const HIRE_REQUEST_LIMITS = Object.freeze({
   requesterContactMaxChars: HIRE_REQUESTER_CONTACT_MAX_LENGTH,
   bodyMaxBytes: HIRE_REQUEST_BODY_MAX_BYTES
 });
+const EVM_RECONCILIATION_FETCH_TIMEOUT_MS = 30_000;
+const MAX_EVM_RECONCILIATION_LOOKBACK_BLOCKS = 250_000;
 const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
   0,
   Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_TTL_MS ?? "0"))
@@ -1535,6 +1537,29 @@ function costEstimateFromPlan(plan: Awaited<ReturnType<typeof buildX402PlanFromO
   };
 }
 
+function normalizedAgentMarketplaceTags(input?: Partial<AgentMarketplaceTags>): AgentMarketplaceTags {
+  return {
+    capabilities: Array.isArray(input?.capabilities) ? input.capabilities : [],
+    domains: Array.isArray(input?.domains) ? input.domains : [],
+    inputTypes: Array.isArray(input?.inputTypes) ? input.inputTypes : [],
+    outputTypes: Array.isArray(input?.outputTypes) ? input.outputTypes : [],
+    tools: Array.isArray(input?.tools) ? input.tools : [],
+    runtimes: Array.isArray(input?.runtimes) ? input.runtimes : []
+  };
+}
+
+function agentMarketplaceTagValues(input?: Partial<AgentMarketplaceTags>): string[] {
+  const tags = normalizedAgentMarketplaceTags(input);
+  return [
+    ...tags.capabilities,
+    ...tags.domains,
+    ...tags.inputTypes,
+    ...tags.outputTypes,
+    ...tags.tools,
+    ...tags.runtimes
+  ];
+}
+
 function agentCapabilityTags(
   agent: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number],
   entry: { quoteReady: boolean; paidExecutionReady: boolean }
@@ -1561,14 +1586,7 @@ function agentCapabilityTags(
   if (entry.paidExecutionReady) {
     tags.add("paid_execution");
   }
-  for (const tag of [
-    ...agent.marketplaceTags.capabilities,
-    ...agent.marketplaceTags.domains,
-    ...agent.marketplaceTags.inputTypes,
-    ...agent.marketplaceTags.outputTypes,
-    ...agent.marketplaceTags.tools,
-    ...agent.marketplaceTags.runtimes
-  ]) {
+  for (const tag of agentMarketplaceTagValues(agent.marketplaceTags)) {
     tags.add(tag);
   }
   for (const word of words) {
@@ -1677,7 +1695,7 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
     ...(agent.readiness?.upgradeReasons?.length ? { upgradeReasons: agent.readiness.upgradeReasons } : {}),
     ...(agent.readiness?.readinessWarnings?.length ? { readinessWarnings: agent.readiness.readinessWarnings } : {}),
     capabilityTags,
-    marketplaceTags: agent.marketplaceTags,
+    marketplaceTags: normalizedAgentMarketplaceTags(agent.marketplaceTags),
     marketplaceTagStats: agent.marketplaceTagStats ?? [],
     pricing: {
       pricingMode: agent.pricingMode,
@@ -2037,7 +2055,9 @@ async function fetchBaseRelayerTransactions(input: {
   url.searchParams.set("endblock", input.endBlock ?? "99999999");
   url.searchParams.set("sort", input.sort ?? "desc");
   url.searchParams.set("apikey", input.apiKey);
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(EVM_RECONCILIATION_FETCH_TIMEOUT_MS)
+  });
   if (!response.ok) {
     throw new Error(`BaseScan reconciliation request failed with HTTP ${response.status}.`);
   }
@@ -2100,6 +2120,7 @@ async function baseRpcCall<T>(method: string, params: unknown[]): Promise<T> {
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
+    signal: AbortSignal.timeout(EVM_RECONCILIATION_FETCH_TIMEOUT_MS),
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -2128,7 +2149,8 @@ async function fetchBaseUsdcTransferLogs(input: {
 }): Promise<BaseUsdcTransferLog[]> {
   const latestHex = await baseRpcCall<string>("eth_blockNumber", []);
   const latestBlock = Number.parseInt(latestHex, 16);
-  const startBlock = Math.max(0, latestBlock - input.lookbackBlocks);
+  const lookbackBlocks = Math.min(input.lookbackBlocks, MAX_EVM_RECONCILIATION_LOOKBACK_BLOCKS);
+  const startBlock = Math.max(0, latestBlock - lookbackBlocks);
   const step = 9999;
   const rawLogs: Record<string, unknown>[] = [];
   for (let fromBlock = startBlock; fromBlock <= latestBlock; fromBlock += step + 1) {
@@ -2147,8 +2169,7 @@ async function fetchBaseUsdcTransferLogs(input: {
     ]);
     rawLogs.push(...result.filter(isRecord));
   }
-  const blockTimestamps = new Map<number, string>();
-  const logs: BaseUsdcTransferLog[] = [];
+  const parsedLogs: Array<Omit<BaseUsdcTransferLog, "occurredAtIso"> & { blockHex: string }> = [];
   for (const log of rawLogs) {
     const transactionHash = typeof log.transactionHash === "string" ? log.transactionHash : "";
     const blockHex = typeof log.blockNumber === "string" ? log.blockNumber : "";
@@ -2157,19 +2178,24 @@ async function fetchBaseUsdcTransferLogs(input: {
       continue;
     }
     const blockNumber = Number.parseInt(blockHex, 16);
-    if (!blockTimestamps.has(blockNumber)) {
-      const block = await baseRpcCall<Record<string, unknown>>("eth_getBlockByNumber", [blockHex, false]);
-      const timestampHex = typeof block.timestamp === "string" ? block.timestamp : "0x0";
-      blockTimestamps.set(blockNumber, new Date(Number(BigInt(timestampHex)) * 1000).toISOString());
-    }
-    logs.push({
+    parsedLogs.push({
       transactionHash,
       blockNumber,
       valueAtomic: BigInt(data).toString(),
-      occurredAtIso: blockTimestamps.get(blockNumber)!
+      blockHex
     });
   }
-  return logs;
+  const blockTimestamps = new Map(await Promise.all(
+    Array.from(new Map(parsedLogs.map((log) => [log.blockNumber, log.blockHex])).entries()).map(async ([blockNumber, blockHex]) => {
+      const block = await baseRpcCall<Record<string, unknown>>("eth_getBlockByNumber", [blockHex, false]);
+      const timestampHex = typeof block.timestamp === "string" ? block.timestamp : "0x0";
+      return [blockNumber, new Date(Number(BigInt(timestampHex)) * 1000).toISOString()] as const;
+    })
+  ));
+  return parsedLogs.map(({ blockHex: _blockHex, ...log }) => ({
+    ...log,
+    occurredAtIso: blockTimestamps.get(log.blockNumber) ?? new Date(0).toISOString()
+  }));
 }
 
 async function reconcileSponsoredBudgetSettlementFailures(input: {
@@ -2240,7 +2266,14 @@ async function reconcileSponsoredBudgetSettlementFailures(input: {
           log.valueAtomic === protocolFeeAmount &&
           Math.abs(log.blockNumber - sellerMatch.blockNumber) <= 1
         ))
-        .sort((left, right) => Math.abs(left.blockNumber - sellerMatch.blockNumber) - Math.abs(right.blockNumber - sellerMatch.blockNumber))[0]
+        .sort((left, right) => {
+          const leftSameTx = left.transactionHash.toLowerCase() === sellerMatch.transactionHash.toLowerCase();
+          const rightSameTx = right.transactionHash.toLowerCase() === sellerMatch.transactionHash.toLowerCase();
+          if (leftSameTx !== rightSameTx) {
+            return leftSameTx ? -1 : 1;
+          }
+          return Math.abs(left.blockNumber - sellerMatch.blockNumber) - Math.abs(right.blockNumber - sellerMatch.blockNumber);
+        })[0]
       : undefined;
     if (!sellerMatch || !protocolMatch) {
       matches.push({
@@ -2710,6 +2743,7 @@ app.get("/api/agents/search", route(async (request, response) => {
     const baseUrl = getBaseUrl(request);
     const agents = await Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)));
     const filtered = agents.filter((agent) => {
+      const tagValues = agentMarketplaceTagValues(agent.marketplaceTags);
       if (q) {
         const haystack = [
           agent.agentId,
@@ -2717,12 +2751,7 @@ app.get("/api/agents/search", route(async (request, response) => {
           agent.representedPrincipal,
           agent.headline,
           ...(agent.capabilityTags ?? []),
-          ...agent.marketplaceTags.capabilities,
-          ...agent.marketplaceTags.domains,
-          ...agent.marketplaceTags.inputTypes,
-          ...agent.marketplaceTags.outputTypes,
-          ...agent.marketplaceTags.tools,
-          ...agent.marketplaceTags.runtimes
+          ...tagValues
         ].join(" ").toLowerCase();
         if (!haystack.includes(q)) {
           return false;
@@ -2743,12 +2772,7 @@ app.get("/api/agents/search", route(async (request, response) => {
       if (marketplaceTags.size > 0) {
         const agentTags = new Set([
           ...(agent.capabilityTags ?? []),
-          ...agent.marketplaceTags.capabilities,
-          ...agent.marketplaceTags.domains,
-          ...agent.marketplaceTags.inputTypes,
-          ...agent.marketplaceTags.outputTypes,
-          ...agent.marketplaceTags.tools,
-          ...agent.marketplaceTags.runtimes
+          ...tagValues
         ]);
         if (![...marketplaceTags].some((tag) => agentTags.has(tag))) {
           return false;
@@ -4090,10 +4114,11 @@ const handleX402Reconciliation = route(async (request, response) => {
   const sponsoredBudgetMode =
     queryString(request.query, "sponsoredBudget") === "true" ||
     (isRecord(request.body) && request.body.sponsoredBudget === true);
-  const lookbackBlocks =
+  const requestedLookbackBlocks =
     Number.parseInt(queryString(request.query, "lookbackBlocks") ?? "", 10) ||
     (isRecord(request.body) && typeof request.body.lookbackBlocks === "number" ? request.body.lookbackBlocks : undefined) ||
     100_000;
+  const lookbackBlocks = Math.min(requestedLookbackBlocks, MAX_EVM_RECONCILIATION_LOOKBACK_BLOCKS);
   const initialLedger = await controlPlane.listPaymentLedger({
     ...(agentId ? { agentId } : {}),
     limit: 500

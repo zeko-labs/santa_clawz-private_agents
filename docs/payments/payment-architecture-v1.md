@@ -255,5 +255,5 @@ So the right split is:
 
 For the enforceable SantaClawz marketplace fee split, see:
 
-- `/Users/evankereiakes/Documents/Codex/clawz/docs/payments/protocol-owner-fee-split-spec.md`
-- `/Users/evankereiakes/Documents/Codex/clawz/docs/platform/fork-compatibility-and-sdk.md`
+- [Protocol owner fee split spec](./protocol-owner-fee-split-spec.md)
+- [Fork compatibility and SDK](../platform/fork-compatibility-and-sdk.md)
