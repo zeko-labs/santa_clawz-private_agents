@@ -9,6 +9,7 @@ import type {
   AgentRegistryEntry,
   ConsoleStateResponse,
   HireRequestReceipt,
+  MarketplaceWorkTags,
   PaymentLedgerState,
   PrivacyApprovalRecord,
   SocialAnchorBatchExport,
@@ -564,10 +565,37 @@ export function submitHireRequest(
     taskPrompt: string;
     requesterContact: string;
     budgetMina?: string;
+    marketplaceTags?: MarketplaceWorkTags;
   }
 ): Promise<HireRequestReceipt> {
   return request<HireRequestReceipt>(`/api/agents/${encodeURIComponent(agentId)}/hire`, {
     method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export type ProcurementIntentResponse = {
+  ok: true;
+  intent: Record<string, unknown> & { intentId: string; status: string };
+  buyerToken: string;
+  buyerTokenUsage?: string;
+};
+
+export function createProcurementIntent(input: {
+  taskPrompt: string;
+  requesterContact: string;
+  idempotencyKey?: string;
+  budgetUsd?: string;
+  requiredCapabilities?: string[];
+  preferredDeliveryModes?: string[];
+  preferredPrivacyModes?: string[];
+  marketplaceTags?: Partial<MarketplaceWorkTags>;
+  jobPrivacy?: Record<string, unknown>;
+  artifactDelivery?: Record<string, unknown>;
+}): Promise<ProcurementIntentResponse> {
+  return request<ProcurementIntentResponse>("/api/procurement/intents", {
+    method: "POST",
+    ...(input.idempotencyKey ? { headers: { "idempotency-key": input.idempotencyKey } } : {}),
     body: JSON.stringify(input)
   });
 }
