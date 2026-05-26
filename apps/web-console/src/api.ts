@@ -526,6 +526,7 @@ export function registerAgent(input: {
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
   paymentProfile?: AgentProfileState["paymentProfile"];
+  marketplaceTags?: AgentProfileState["marketplaceTags"];
   socialAnchorPolicy?: AgentProfileState["socialAnchorPolicy"];
   trustModeId?: TrustModeId;
   preferredProvingLocation?: AgentProfileState["preferredProvingLocation"];
@@ -546,6 +547,7 @@ export function createEnrollmentTicket(input: {
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
   paymentProfile?: AgentProfileState["paymentProfile"];
+  marketplaceTags?: AgentProfileState["marketplaceTags"];
   socialAnchorPolicy?: AgentProfileState["socialAnchorPolicy"];
   trustModeId?: TrustModeId;
   preferredProvingLocation?: AgentProfileState["preferredProvingLocation"];

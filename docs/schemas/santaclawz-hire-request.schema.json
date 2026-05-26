@@ -142,6 +142,48 @@
           "minLength": 1,
           "maxLength": 240
         },
+        "marketplace_tags": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "job_tags": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "capability_tags": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "input_tags": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "output_tags": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        },
         "provided_inputs": {
           "type": "array",
           "maxItems": 40,

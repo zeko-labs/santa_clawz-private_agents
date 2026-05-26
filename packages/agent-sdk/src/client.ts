@@ -130,6 +130,7 @@ export interface ClawzAgentSearchQuery {
   paymentsReady?: boolean;
   quoteReady?: boolean;
   paidExecutionReady?: boolean;
+  tag?: string;
   limit?: number;
 }
 
@@ -228,6 +229,12 @@ export interface ClawzProcurementIntentInput {
   requiredCapabilities?: string[];
   preferredDeliveryModes?: string[];
   preferredPrivacyModes?: string[];
+  marketplaceTags?: {
+    jobTags?: string[];
+    capabilityTags?: string[];
+    inputTags?: string[];
+    outputTags?: string[];
+  };
   jobPrivacy?: Record<string, unknown>;
   artifactDelivery?: Record<string, unknown>;
 }
@@ -315,6 +322,12 @@ export interface ClawzHireRequestInput {
   taskPrompt: string;
   requesterContact: string;
   budgetMina?: string;
+  marketplaceTags?: {
+    jobTags?: string[];
+    capabilityTags?: string[];
+    inputTags?: string[];
+    outputTags?: string[];
+  };
   jobPrivacy?: Record<string, unknown>;
   artifactDelivery?: Record<string, unknown>;
   paymentPayload?: Record<string, unknown>;
@@ -417,6 +430,7 @@ export interface ClawzEnrollmentTicketInput {
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: AgentProfileState["missionAuthOverlay"];
   paymentProfile?: AgentProfileState["paymentProfile"];
+  marketplaceTags?: AgentProfileState["marketplaceTags"];
   socialAnchorPolicy?: AgentProfileState["socialAnchorPolicy"];
   preferredProvingLocation?: AgentProfileState["preferredProvingLocation"];
 }
@@ -711,6 +725,7 @@ export class ClawzAgentClient {
           taskPrompt,
           requesterContact,
           ...(input.budgetMina?.trim() ? { budgetMina: input.budgetMina.trim() } : {}),
+          ...(input.marketplaceTags ? { marketplaceTags: input.marketplaceTags } : {}),
           ...(input.jobPrivacy ? { jobPrivacy: input.jobPrivacy } : {}),
           ...(input.artifactDelivery ? { artifactDelivery: input.artifactDelivery } : {}),
           ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {})
@@ -732,6 +747,7 @@ export class ClawzAgentClient {
         ...(typeof input.paymentsReady === "boolean" ? { paymentsReady: String(input.paymentsReady) } : {}),
         ...(typeof input.quoteReady === "boolean" ? { quoteReady: String(input.quoteReady) } : {}),
         ...(typeof input.paidExecutionReady === "boolean" ? { paidExecutionReady: String(input.paidExecutionReady) } : {}),
+        ...(input.tag ? { tag: input.tag } : {}),
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       })
     );
@@ -954,6 +970,7 @@ export class ClawzAgentClient {
       ...(input.payoutWallets ? { payoutWallets: input.payoutWallets } : {}),
       ...(input.missionAuthOverlay ? { missionAuthOverlay: input.missionAuthOverlay } : {}),
       ...(input.paymentProfile ? { paymentProfile: input.paymentProfile } : {}),
+      ...(input.marketplaceTags ? { marketplaceTags: input.marketplaceTags } : {}),
       ...(input.socialAnchorPolicy ? { socialAnchorPolicy: input.socialAnchorPolicy } : {}),
       ...(input.preferredProvingLocation ? { preferredProvingLocation: input.preferredProvingLocation } : {})
     });

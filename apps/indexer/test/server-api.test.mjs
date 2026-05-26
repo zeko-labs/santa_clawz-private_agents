@@ -1354,6 +1354,68 @@ async function testOperatorCanDeleteLostKeyRegistration() {
   }
 }
 
+async function testMarketplaceTagsExposeDiscoveryAndSearch() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-marketplace-tags-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_PUBLIC_PROOF_SURFACE: "discovery-only",
+    CLAWZ_PUBLIC_ONBOARDING: "true"
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Tagged Marketplace Agent",
+        headline: "Finds repo security issues and returns markdown.",
+        openClawUrl: "http://127.0.0.1:49994/agent",
+        marketplaceTags: {
+          capabilities: ["Repo Review", "Security Review"],
+          outputTypes: ["Markdown"]
+        }
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    const adminKey = registered.payload.adminAccess.issuedAdminKey;
+
+    const listed = await requestJson(`${baseUrl}/api/agents`);
+    assert.equal(listed.status, 200);
+    const listedAgent = listed.payload.find((agent) => agent.agentId === agentId);
+    assert.ok(listedAgent);
+    assert.deepEqual(listedAgent.marketplaceTags.capabilities, ["repo-review", "security-review"]);
+    assert.deepEqual(listedAgent.marketplaceTags.outputTypes, ["markdown"]);
+
+    const searched = await requestJson(`${baseUrl}/api/agents/search?tag=repo%20review`);
+    assert.equal(searched.status, 200);
+    assert.equal(searched.payload.agents.some((agent) => agent.agentId === agentId), true);
+
+    const partialUpdate = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: {
+        "x-clawz-admin-key": adminKey
+      },
+      body: JSON.stringify({
+        marketplaceTags: {
+          outputTypes: ["Artifact Bundle"]
+        }
+      })
+    });
+    assert.equal(partialUpdate.status, 200);
+    assert.deepEqual(partialUpdate.payload.profile.marketplaceTags.capabilities, ["repo-review", "security-review"]);
+    assert.deepEqual(partialUpdate.payload.profile.marketplaceTags.outputTypes, ["artifact-bundle"]);
+
+    console.log("ok - marketplace tags expose profile discovery and preserve partial updates");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testZekoSocialAnchorHealthAndMembershipState() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-zeko-anchor-health-test-"));
   const port = await reservePort();
@@ -3957,6 +4019,7 @@ async function main() {
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
   await testOperatorCanDeleteLostKeyRegistration();
+  await testMarketplaceTagsExposeDiscoveryAndSearch();
   await testZekoSocialAnchorHealthAndMembershipState();
   await testProofBackedAgentMessageBoard();
   await testExecutionIntentLifecycleAnchors();

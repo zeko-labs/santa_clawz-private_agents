@@ -42,6 +42,8 @@ import {
   type AgentBoardThread,
   type AgentCompletionScore,
   type AgentJobActivityStats,
+  type AgentMarketplaceTagStat,
+  type AgentMarketplaceTags,
   type AgentProfileState,
   type AgentReadinessState,
   type HireDeliveryReceipt,
@@ -65,6 +67,7 @@ import {
   type PaymentLedgerStatus,
   type PrivacyApprovalRecord,
   type PrivacyExceptionQueueItem,
+  type MarketplaceWorkTags,
   type SocialAnchorBatch,
   type SocialAnchorBatchExport,
   type SocialAnchorCandidate,
@@ -575,6 +578,7 @@ interface RegisterAgentOptions {
   payoutWallets?: AgentProfileState["payoutWallets"];
   missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
   paymentProfile?: Partial<AgentProfileState["paymentProfile"]>;
+  marketplaceTags?: Partial<AgentMarketplaceTags>;
   socialAnchorPolicy?: Partial<AgentProfileState["socialAnchorPolicy"]>;
   payoutAddress?: string;
   trustModeId?: TrustModeId;
@@ -624,10 +628,13 @@ interface DeleteAgentRegistrationOptions {
   reason?: string;
 }
 
-type AgentProfileInput = Partial<Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay" | "runtimeDelivery">> & {
+type AgentProfileInput = Partial<
+  Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay" | "runtimeDelivery" | "marketplaceTags">
+> & {
   missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
   paymentProfile?: Partial<AgentProfileState["paymentProfile"]>;
   runtimeDelivery?: Partial<AgentProfileState["runtimeDelivery"]>;
+  marketplaceTags?: Partial<AgentMarketplaceTags>;
   socialAnchorPolicy?: Partial<AgentProfileState["socialAnchorPolicy"]>;
   payoutAddress?: unknown;
 };
@@ -637,6 +644,7 @@ interface SubmitHireRequestOptions {
   taskPrompt: string;
   budgetMina?: string;
   requesterContact: string;
+  marketplaceTags?: Partial<MarketplaceWorkTags>;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   paymentAuthorization?: HirePaymentAuthorization;
@@ -800,6 +808,7 @@ interface HireRequestRecord {
   budgetMina?: string;
   requesterContact: string;
   jobAccessTokenHashSha256?: string;
+  marketplaceTags?: MarketplaceWorkTags;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   deliveryTarget: string;
@@ -1135,6 +1144,7 @@ interface ProcurementIntentRecord {
   requiredCapabilities: string[];
   preferredDeliveryModes: string[];
   preferredPrivacyModes: string[];
+  marketplaceTags?: MarketplaceWorkTags;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   createdAtIso: string;
@@ -1172,6 +1182,7 @@ export interface CreateProcurementIntentOptions {
   requiredCapabilities?: string[];
   preferredDeliveryModes?: string[];
   preferredPrivacyModes?: string[];
+  marketplaceTags?: Partial<MarketplaceWorkTags>;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
 }
@@ -1680,10 +1691,22 @@ function buildDefaultProfile(trustModeId: TrustModeId): AgentProfileState {
       referencePriceUnit: "minimum",
       settlementTrigger: "upfront"
     },
+    marketplaceTags: emptyAgentMarketplaceTags(),
     socialAnchorPolicy: {
       mode: "shared-batched"
     },
     preferredProvingLocation: trustMode.defaultProvingLocation
+  };
+}
+
+function emptyAgentMarketplaceTags(): AgentMarketplaceTags {
+  return {
+    capabilities: [],
+    domains: [],
+    inputTypes: [],
+    outputTypes: [],
+    tools: [],
+    runtimes: []
   };
 }
 
@@ -2400,6 +2423,60 @@ function buildAgentJobActivityStats(
   };
 }
 
+function buildAgentMarketplaceTagStats(
+  hireRequests: HireRequestFile,
+  sessionId: string,
+  nowMs = Date.now()
+): AgentMarketplaceTagStat[] {
+  const statsByTag = new Map<string, AgentMarketplaceTagStat>();
+  const requests = hireRequests.requests
+    .filter((request) => request.sessionId === sessionId && request.requestType === "paid_execution")
+    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
+
+  for (const request of requests) {
+    const outcome = paidExecutionTerminalOutcome(request, nowMs);
+    if (outcome === "pending") {
+      continue;
+    }
+    for (const tag of marketplaceWorkTagValues(request.marketplaceTags)) {
+      const current = statsByTag.get(tag) ?? {
+        tag,
+        completedJobCount: 0,
+        failedJobCount: 0,
+        totalJobCount: 0
+      };
+      const nextCompletedCount = current.completedJobCount + (outcome === "completed" ? 1 : 0);
+      const nextTotalCount = current.totalJobCount + 1;
+      const successRatePct = Math.round((nextCompletedCount / nextTotalCount) * 100);
+      const next: AgentMarketplaceTagStat = {
+        ...current,
+        completedJobCount: nextCompletedCount,
+        failedJobCount: current.failedJobCount + (outcome === "failed" ? 1 : 0),
+        totalJobCount: nextTotalCount,
+        successRatePct,
+        lastJobAtIso: current.lastJobAtIso && current.lastJobAtIso > request.submittedAtIso
+          ? current.lastJobAtIso
+          : request.submittedAtIso
+      };
+      statsByTag.set(tag, next);
+    }
+  }
+
+  return Array.from(statsByTag.values())
+    .sort((left, right) => {
+      const byCount = right.totalJobCount - left.totalJobCount;
+      if (byCount !== 0) {
+        return byCount;
+      }
+      const bySuccess = (right.successRatePct ?? -1) - (left.successRatePct ?? -1);
+      if (bySuccess !== 0) {
+        return bySuccess;
+      }
+      return left.tag.localeCompare(right.tag);
+    })
+    .slice(0, 24);
+}
+
 function buildAgentReadinessState(input: {
   profile: AgentProfileState;
   ownership: AgentOwnershipState;
@@ -2635,6 +2712,67 @@ function sanitizeAgentBoardFilterTag(value: unknown, maxLength = AGENT_BOARD_CAP
     .replace(/\s+/g, "-")
     .slice(0, maxLength);
   return normalized.length > 0 && !hasBlockedPublicTerm([normalized]) ? normalized : undefined;
+}
+
+function sanitizeMarketplaceTagList(input: unknown): string[] {
+  return sanitizeAgentBoardCapabilityTags(input);
+}
+
+function sanitizeAgentMarketplaceTags(
+  input: Partial<AgentMarketplaceTags> | undefined,
+  fallback: AgentMarketplaceTags
+): AgentMarketplaceTags {
+  if (!input) {
+    return {
+      capabilities: [...fallback.capabilities],
+      domains: [...fallback.domains],
+      inputTypes: [...fallback.inputTypes],
+      outputTypes: [...fallback.outputTypes],
+      tools: [...fallback.tools],
+      runtimes: [...fallback.runtimes]
+    };
+  }
+
+  return {
+    capabilities: Array.isArray(input.capabilities) ? sanitizeMarketplaceTagList(input.capabilities) : fallback.capabilities,
+    domains: Array.isArray(input.domains) ? sanitizeMarketplaceTagList(input.domains) : fallback.domains,
+    inputTypes: Array.isArray(input.inputTypes) ? sanitizeMarketplaceTagList(input.inputTypes) : fallback.inputTypes,
+    outputTypes: Array.isArray(input.outputTypes) ? sanitizeMarketplaceTagList(input.outputTypes) : fallback.outputTypes,
+    tools: Array.isArray(input.tools) ? sanitizeMarketplaceTagList(input.tools) : fallback.tools,
+    runtimes: Array.isArray(input.runtimes) ? sanitizeMarketplaceTagList(input.runtimes) : fallback.runtimes
+  };
+}
+
+function emptyMarketplaceWorkTags(): MarketplaceWorkTags {
+  return {
+    jobTags: [],
+    capabilityTags: [],
+    inputTags: [],
+    outputTags: []
+  };
+}
+
+function sanitizeMarketplaceWorkTags(input: Partial<MarketplaceWorkTags> | undefined): MarketplaceWorkTags {
+  if (!input) {
+    return emptyMarketplaceWorkTags();
+  }
+  return {
+    jobTags: sanitizeMarketplaceTagList(input.jobTags),
+    capabilityTags: sanitizeMarketplaceTagList(input.capabilityTags),
+    inputTags: sanitizeMarketplaceTagList(input.inputTags),
+    outputTags: sanitizeMarketplaceTagList(input.outputTags)
+  };
+}
+
+function marketplaceWorkTagsAreEmpty(tags: MarketplaceWorkTags): boolean {
+  return tags.jobTags.length === 0 && tags.capabilityTags.length === 0 && tags.inputTags.length === 0 && tags.outputTags.length === 0;
+}
+
+function marketplaceWorkTagValues(tags: MarketplaceWorkTags | undefined): string[] {
+  if (!tags) {
+    return [];
+  }
+  return Array.from(new Set([...tags.jobTags, ...tags.capabilityTags, ...tags.inputTags, ...tags.outputTags]));
 }
 
 function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
@@ -3916,7 +4054,13 @@ export class ClawzControlPlane {
       profile.representedPrincipal,
       profile.headline,
       serviceKeySlug(profile.agentName),
-      profile.openClawUrl
+      profile.openClawUrl,
+      ...profile.marketplaceTags.capabilities,
+      ...profile.marketplaceTags.domains,
+      ...profile.marketplaceTags.inputTypes,
+      ...profile.marketplaceTags.outputTypes,
+      ...profile.marketplaceTags.tools,
+      ...profile.marketplaceTags.runtimes
     ]);
 
     if (profile.openClawUrl.trim().length > 0) {
@@ -4303,6 +4447,7 @@ export class ClawzControlPlane {
     taskPrompt: string;
     requesterContact: string;
     budgetMina?: string;
+    marketplaceTags?: MarketplaceWorkTags;
     jobPrivacy?: SantaClawzJobPrivacyPreference;
     artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     paymentAuthorization: HirePaymentAuthorization;
@@ -4408,6 +4553,16 @@ export class ClawzControlPlane {
         title: input.taskPrompt.split(/\r?\n/)[0]?.trim().slice(0, 120) || "SantaClawz hire request",
         client_request: input.taskPrompt,
         requester_contact: input.requesterContact,
+        ...(input.marketplaceTags && !marketplaceWorkTagsAreEmpty(input.marketplaceTags)
+          ? {
+              marketplace_tags: {
+                job_tags: input.marketplaceTags.jobTags,
+                capability_tags: input.marketplaceTags.capabilityTags,
+                input_tags: input.marketplaceTags.inputTags,
+                output_tags: input.marketplaceTags.outputTags
+              }
+            }
+          : {}),
         ...(input.jobPrivacy ? { activity_privacy: toSnakeJobPrivacy(input.jobPrivacy) } : {}),
         ...(input.artifactDelivery
           ? {
@@ -4980,6 +5135,7 @@ export class ClawzControlPlane {
         ...(options.payoutWallets ? { payoutWallets: options.payoutWallets } : {}),
         ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
         ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
+        ...(options.marketplaceTags ? { marketplaceTags: options.marketplaceTags } : {}),
         ...(options.socialAnchorPolicy ? { socialAnchorPolicy: options.socialAnchorPolicy } : {}),
         ...(options.payoutAddress ? { payoutAddress: options.payoutAddress } : {}),
         ...(options.representedPrincipal ? { representedPrincipal: options.representedPrincipal } : {}),
@@ -5119,6 +5275,7 @@ export class ClawzControlPlane {
         ...(options.trustVerifiedMissionAuthInput ? { trustVerifiedInput: true } : {})
       }),
       paymentProfile: sanitizePaymentProfile(input.paymentProfile, fallback.paymentProfile),
+      marketplaceTags: sanitizeAgentMarketplaceTags(input.marketplaceTags, fallback.marketplaceTags),
       socialAnchorPolicy: sanitizeSocialAnchorPolicy(input.socialAnchorPolicy, fallback.socialAnchorPolicy),
       preferredProvingLocation
     };
@@ -8393,6 +8550,7 @@ export class ClawzControlPlane {
               readiness.hireable;
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);
         const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId);
+        const marketplaceTagStats = buildAgentMarketplaceTagStats(hireRequestFile, sessionId);
         return {
           agentId,
           sessionId,
@@ -8448,6 +8606,8 @@ export class ClawzControlPlane {
           readiness,
           completionScore,
           jobActivityStats,
+          marketplaceTags: profile.marketplaceTags,
+          marketplaceTagStats,
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
           anchoredSocialFactCount: sessionAnchors.filter((item) => item.status === "confirmed").length,
@@ -8459,7 +8619,18 @@ export class ClawzControlPlane {
         (entry) =>
           entry.availability === "active" &&
           this.profileForSession(state, entry.sessionId).openClawUrl.trim().length > 0 &&
-          !hasBlockedPublicTerm([entry.agentName, entry.representedPrincipal, entry.headline, entry.serviceKey]) &&
+          !hasBlockedPublicTerm([
+            entry.agentName,
+            entry.representedPrincipal,
+            entry.headline,
+            entry.serviceKey,
+            ...entry.marketplaceTags.capabilities,
+            ...entry.marketplaceTags.domains,
+            ...entry.marketplaceTags.inputTypes,
+            ...entry.marketplaceTags.outputTypes,
+            ...entry.marketplaceTags.tools,
+            ...entry.marketplaceTags.runtimes
+          ]) &&
           entry.agentName.trim().length > 0 &&
           entry.headline.trim().length > 0
       )
@@ -8543,6 +8714,7 @@ export class ClawzControlPlane {
       requiredCapabilities: intent.requiredCapabilities,
       preferredDeliveryModes: intent.preferredDeliveryModes,
       preferredPrivacyModes: intent.preferredPrivacyModes,
+      ...(intent.marketplaceTags ? { marketplaceTags: intent.marketplaceTags } : {}),
       ...(this.sanitizedProcurementArtifactDelivery(intent.artifactDelivery)
         ? { artifactDelivery: this.sanitizedProcurementArtifactDelivery(intent.artifactDelivery) }
         : {}),
@@ -8594,6 +8766,7 @@ export class ClawzControlPlane {
     }
     const nowIso = new Date().toISOString();
     const buyerToken = idempotencyKey ? this.procurementIdempotentBuyerToken(idempotencyKey) : randomBytes(32).toString("base64url");
+    const marketplaceTags = sanitizeMarketplaceWorkTags(options.marketplaceTags);
     const intent: ProcurementIntentRecord = {
       schemaVersion: "santaclawz-procurement-intent/1.0",
       intentId: `proc_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
@@ -8606,6 +8779,7 @@ export class ClawzControlPlane {
       requiredCapabilities: (options.requiredCapabilities ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 20),
       preferredDeliveryModes: (options.preferredDeliveryModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
       preferredPrivacyModes: (options.preferredPrivacyModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
+      ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       createdAtIso: nowIso,
@@ -8829,6 +9003,7 @@ export class ClawzControlPlane {
         suggestedHireBody: {
           taskPrompt: intent.taskPrompt,
           requesterContact: intent.requesterContact,
+          ...(intent.marketplaceTags ? { marketplaceTags: intent.marketplaceTags } : {}),
           ...(intent.jobPrivacy ? { jobPrivacy: intent.jobPrivacy } : {}),
           ...(intent.artifactDelivery ? { artifactDelivery: intent.artifactDelivery } : {})
         }
@@ -9076,6 +9251,7 @@ export class ClawzControlPlane {
         ...(options.payoutWallets ? { payoutWallets: options.payoutWallets } : {}),
         ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
         ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
+        ...(options.marketplaceTags ? { marketplaceTags: options.marketplaceTags } : {}),
         ...(options.socialAnchorPolicy ? { socialAnchorPolicy: options.socialAnchorPolicy } : {}),
         ...(options.payoutAddress ? { payoutAddress: options.payoutAddress } : {}),
         ...(options.representedPrincipal ? { representedPrincipal: options.representedPrincipal } : {}),
@@ -9474,6 +9650,7 @@ export class ClawzControlPlane {
     }
     const taskPrompt = options.taskPrompt.trim();
     const requesterContact = options.requesterContact.trim();
+    const marketplaceTags = sanitizeMarketplaceWorkTags(options.marketplaceTags);
     if (taskPrompt.length === 0 || requesterContact.length === 0) {
       throw new Error("taskPrompt and requesterContact are required.");
     }
@@ -9567,6 +9744,7 @@ export class ClawzControlPlane {
       submittedAtIso,
       taskPrompt,
       requesterContact,
+      ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
@@ -9656,6 +9834,7 @@ export class ClawzControlPlane {
         : {}),
       requesterContact,
       jobAccessTokenHashSha256: sha256Hex(jobAccessToken),
+      ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       deliveryTarget: publicDeliveryTarget,
@@ -9732,6 +9911,7 @@ export class ClawzControlPlane {
             requestType,
             pricingMode: profile.paymentProfile.pricingMode,
             paymentStatus,
+            ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
             ...(settledAmountUsd ? { settledAmountUsd } : {}),
             status: hireStatus
           }
@@ -9857,6 +10037,7 @@ export class ClawzControlPlane {
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
       relayTrace,
+      ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       jobWorkspace: this.buildJobWorkspace({ requestId, token: jobAccessToken }),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
