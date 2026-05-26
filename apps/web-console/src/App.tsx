@@ -1040,14 +1040,16 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
 }
 
 function hasFixedPaidWorkerReadinessGap(agent: AgentRegistryEntry) {
-  const blockers = new Set(agent.readiness?.blockers ?? []);
-  const upgradeReasons = new Set(agent.readiness?.upgradeReasons ?? []);
-  const readinessWarnings = new Set(agent.readiness?.readinessWarnings ?? []);
+  if (!agent.paidJobsEnabled) {
+    return false;
+  }
+  const blockers = agent.readiness?.blockers ?? [];
+  const upgradeReasons = agent.readiness?.upgradeReasons ?? [];
+  const readinessWarnings = agent.readiness?.readinessWarnings ?? [];
   return (
-    agent.paidJobsEnabled &&
-    (blockers.has("worker-readiness-unverified") ||
-      upgradeReasons.has("missing-current-relay-timing") ||
-      readinessWarnings.has("missing-current-relay-timing"))
+    blockers.includes("worker-readiness-unverified") ||
+    upgradeReasons.includes("missing-current-relay-timing") ||
+    readinessWarnings.includes("missing-current-relay-timing")
   );
 }
 
@@ -1190,6 +1192,7 @@ function isDemoAgent(agent: AgentRegistryEntry) {
     !agent.paymentsEnabled &&
     !agent.paymentProfileReady &&
     !agent.payoutAddressConfigured &&
+    !agent.paidJobsEnabled &&
     paidJobCount === 0;
   return (
     agent.pricingMode === "free-test" ||
@@ -4792,13 +4795,6 @@ export function App() {
                     />
                   </label>
 
-                  <div className="explore-buyer-tip-card">
-                    <span className="desktop-copy">Buyer-only agents can hire with Base USDC.</span>
-                    <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                      Buyer agent tips &gt;&gt;
-                    </a>
-                  </div>
-
                   <div className="explore-topic-panel explore-topic-list-panel">
                     <span className="eyebrow">Topics</span>
                     <div className="explore-topic-chip-row">
@@ -4861,30 +4857,35 @@ export function App() {
                               : `${exploreActivityItems.length} shown`}
                           </span>
                         </div>
-                        {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
-                          <button
-                            type="button"
-                            className="new-activity-button"
-                            onClick={revealPendingExploreActivity}
-                          >
-                            {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
-                          </button>
-                        ) : selectedExploreFilter === "agents" ? (
-                          <label className="agent-sort-select-wrap">
-                            <select
-                              className="select-input agent-sort-select"
-                              value={exploreAgentSort}
-                              onChange={(event: ValueInputEvent) => {
-                                setExploreAgentSort(event.target.value as ExploreAgentSortKey);
-                                setExploreAgentPage(1);
-                              }}
+                        <div className="explore-section-actions">
+                          <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                            Buyer agent tips &gt;&gt;
+                          </a>
+                          {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
+                            <button
+                              type="button"
+                              className="new-activity-button"
+                              onClick={revealPendingExploreActivity}
                             >
-                              <option value="online">Status</option>
-                              <option value="jobs">Jobs</option>
-                              <option value="payments">Payouts</option>
-                            </select>
-                          </label>
-                        ) : null}
+                              {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
+                            </button>
+                          ) : selectedExploreFilter === "agents" ? (
+                            <label className="agent-sort-select-wrap">
+                              <select
+                                className="select-input agent-sort-select"
+                                value={exploreAgentSort}
+                                onChange={(event: ValueInputEvent) => {
+                                  setExploreAgentSort(event.target.value as ExploreAgentSortKey);
+                                  setExploreAgentPage(1);
+                                }}
+                              >
+                                <option value="online">Status</option>
+                                <option value="jobs">Jobs</option>
+                                <option value="payments">Payouts</option>
+                              </select>
+                            </label>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="agent-board-grid">
                         <div className={selectedExploreFilter === "agents" ? "agent-board-feed agent-board-feed-agents" : "agent-board-feed"}>

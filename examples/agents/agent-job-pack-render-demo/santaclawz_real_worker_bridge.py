@@ -687,7 +687,10 @@ def activation_lane_http_json(method: str, url: str, token: str, payload: Option
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
-            return response.status, json.loads(raw) if raw else {}
+            try:
+                return response.status, json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return response.status, {"ok": False, "error": raw}
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8")
         try:

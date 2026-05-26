@@ -300,5 +300,5 @@ This lane is buyer-verified, not platform-scanned. Use `platform_scanned` for th
 
 See:
 
-- `/Users/evankereiakes/Documents/Codex/clawz/docs/protocol/self-serve-social-anchoring.md`
-- `/Users/evankereiakes/Documents/Codex/clawz/docs/protocol/buyer-inbox-direct-delivery-v1.md`
+- [Self-serve social anchoring](../../docs/protocol/self-serve-social-anchoring.md)
+- [Buyer inbox direct delivery](../../docs/protocol/buyer-inbox-direct-delivery-v1.md)

@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const DEFAULT_PROTOCOL_FEE_RECIPIENT = "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2";
+const RPC_TIMEOUT_MS = 30_000;
+const MAX_LOOKBACK_BLOCKS = 250_000;
 
 function parseArgs(argv) {
   const args = {
@@ -43,6 +45,7 @@ function parseArgs(argv) {
   if (!Number.isFinite(args.lookbackBlocks) || args.lookbackBlocks <= 0) {
     throw new Error("--lookback-blocks must be a positive integer.");
   }
+  args.lookbackBlocks = Math.min(args.lookbackBlocks, MAX_LOOKBACK_BLOCKS);
   return args;
 }
 
@@ -123,6 +126,7 @@ async function rpcCall(rpcUrl, method, params) {
       const response = await fetch(rpcUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
       });
       if (!response.ok) {
@@ -158,27 +162,31 @@ async function fetchTransferLogs(input) {
     rawLogs.push(...result.filter(isRecord));
   }
 
-  const blockTimes = new Map();
-  const logs = [];
+  const parsedLogs = [];
   for (const log of rawLogs) {
     const tx = stringValue(log.transactionHash);
     const blockHex = stringValue(log.blockNumber);
     const data = stringValue(log.data);
     if (!isTxHash(tx) || !blockHex || !data) continue;
     const blockNumber = Number.parseInt(blockHex, 16);
-    if (!blockTimes.has(blockNumber)) {
-      const block = await rpcCall(input.rpcUrl, "eth_getBlockByNumber", [blockHex, false]);
-      const timestampHex = stringValue(block?.timestamp) || "0x0";
-      blockTimes.set(blockNumber, new Date(Number(BigInt(timestampHex)) * 1000).toISOString());
-    }
-    logs.push({
+    parsedLogs.push({
       transactionHash: tx,
       blockNumber,
       valueAtomic: BigInt(data).toString(),
-      occurredAtIso: blockTimes.get(blockNumber)
+      blockHex
     });
   }
-  return logs;
+  const blockTimes = new Map(await Promise.all(
+    [...new Map(parsedLogs.map((log) => [log.blockNumber, log.blockHex])).entries()].map(async ([blockNumber, blockHex]) => {
+      const block = await rpcCall(input.rpcUrl, "eth_getBlockByNumber", [blockHex, false]);
+      const timestampHex = stringValue(block?.timestamp) || "0x0";
+      return [blockNumber, new Date(Number(BigInt(timestampHex)) * 1000).toISOString()];
+    })
+  ));
+  return parsedLogs.map(({ blockHex: _blockHex, ...log }) => ({
+    ...log,
+    occurredAtIso: blockTimes.get(log.blockNumber)
+  }));
 }
 
 function routeForEntry(entry) {
@@ -245,7 +253,12 @@ async function main() {
     const protocolMatch = sellerMatch
       ? loadedRoute?.protocolLogs
         ?.filter((log) => log.valueAtomic === protocolFeeAmount && Math.abs(log.blockNumber - sellerMatch.blockNumber) <= 1)
-        .sort((left, right) => Math.abs(left.blockNumber - sellerMatch.blockNumber) - Math.abs(right.blockNumber - sellerMatch.blockNumber))[0]
+        .sort((left, right) => {
+          const leftSameTx = left.transactionHash.toLowerCase() === sellerMatch.transactionHash.toLowerCase();
+          const rightSameTx = right.transactionHash.toLowerCase() === sellerMatch.transactionHash.toLowerCase();
+          if (leftSameTx !== rightSameTx) return leftSameTx ? -1 : 1;
+          return Math.abs(left.blockNumber - sellerMatch.blockNumber) - Math.abs(right.blockNumber - sellerMatch.blockNumber);
+        })[0]
       : undefined;
     if (!sellerMatch || !protocolMatch) {
       matches.push({

@@ -171,7 +171,9 @@ else
 fi
 
 if [[ "$dry_run" != "true" && -d .git ]]; then
-  if git diff --quiet && git diff --cached --quiet; then
+  if ! command -v git >/dev/null 2>&1; then
+    log "git is unavailable; skipping repo update."
+  elif git diff --quiet && git diff --cached --quiet; then
     log "Updating existing repo with git pull --ff-only."
     git pull --ff-only || log "Could not fast-forward; continuing with existing checkout."
   else
