@@ -86,6 +86,7 @@ const startedAtIso = new Date().toISOString();
 const startedAtMs = Date.now();
 const PUBLIC_SOCIAL_ANCHOR_FEED_KINDS: SocialAnchorCandidateKind[] = [
   "agent-registered",
+  "marketplace-tags-declared",
   "ownership-verified",
   "agent-published",
   "payment-terms-live",

@@ -376,6 +376,7 @@ export interface AgentOwnershipState {
 
 export type SocialAnchorCandidateKind =
   | "agent-registered"
+  | "marketplace-tags-declared"
   | "ownership-verified"
   | "agent-published"
   | "payment-terms-live"
@@ -390,6 +391,7 @@ export type SocialAnchorCandidateKind =
   | "execution-intent-executed"
   | "execution-intent-settled"
   | "execution-intent-refunded"
+  | "marketplace-tag-reputation-updated"
   | "agent-message-posted"
   | "operator-dispatch";
 

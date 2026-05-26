@@ -2089,6 +2089,8 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
   switch (kind) {
     case "agent-registered":
       return "Agent registered";
+    case "marketplace-tags-declared":
+      return "Marketplace tags declared";
     case "ownership-verified":
       return "Ownership verified";
     case "agent-published":
@@ -2117,6 +2119,8 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Execution intent settled";
     case "execution-intent-refunded":
       return "Execution intent refunded";
+    case "marketplace-tag-reputation-updated":
+      return "Tag reputation updated";
     case "agent-message-posted":
       return "Public agent message posted";
     case "operator-dispatch":
@@ -2430,7 +2434,11 @@ function buildAgentMarketplaceTagStats(
 ): AgentMarketplaceTagStat[] {
   const statsByTag = new Map<string, AgentMarketplaceTagStat>();
   const requests = hireRequests.requests
-    .filter((request) => request.sessionId === sessionId && request.requestType === "paid_execution")
+    .filter((request) =>
+      request.sessionId === sessionId &&
+      request.requestType === "paid_execution" &&
+      shouldPublishDetailedHireLifecycle(request.jobPrivacy)
+    )
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
 
   for (const request of requests) {
@@ -2773,6 +2781,31 @@ function marketplaceWorkTagValues(tags: MarketplaceWorkTags | undefined): string
     return [];
   }
   return Array.from(new Set([...tags.jobTags, ...tags.capabilityTags, ...tags.inputTags, ...tags.outputTags]));
+}
+
+function agentMarketplaceTagValues(tags: AgentMarketplaceTags | undefined): string[] {
+  if (!tags) {
+    return [];
+  }
+  return Array.from(new Set([
+    ...tags.capabilities,
+    ...tags.domains,
+    ...tags.inputTypes,
+    ...tags.outputTypes,
+    ...tags.tools,
+    ...tags.runtimes
+  ]));
+}
+
+function agentMarketplaceTagsAreEmpty(tags: AgentMarketplaceTags | undefined): boolean {
+  return agentMarketplaceTagValues(tags).length === 0;
+}
+
+function marketplaceTagsDigest(tags: AgentMarketplaceTags | MarketplaceWorkTags | undefined): string | undefined {
+  if (!tags) {
+    return undefined;
+  }
+  return canonicalDigest(tags).sha256Hex;
 }
 
 function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
@@ -7275,6 +7308,64 @@ export class ClawzControlPlane {
     return nextItem;
   }
 
+  private async enqueueMarketplaceTagDeclarationAnchor(
+    sessionId: string,
+    profile: Pick<AgentProfileState, "agentName" | "marketplaceTags">,
+    occurredAtIso = new Date().toISOString()
+  ): Promise<SocialAnchorCandidate | undefined> {
+    if (agentMarketplaceTagsAreEmpty(profile.marketplaceTags)) {
+      return undefined;
+    }
+
+    const tagValues = agentMarketplaceTagValues(profile.marketplaceTags);
+    return this.enqueueSocialAnchorCandidate({
+      sessionId,
+      kind: "marketplace-tags-declared",
+      summary: `${profile.agentName} declared marketplace tags: ${tagValues.slice(0, 6).join(", ")}.`,
+      occurredAtIso,
+      payload: {
+        agentId: this.agentIdForSession(await this.loadState(), sessionId),
+        marketplaceTags: profile.marketplaceTags,
+        marketplaceTagDigestSha256: marketplaceTagsDigest(profile.marketplaceTags)
+      }
+    });
+  }
+
+  private async enqueueMarketplaceTagReputationAnchor(input: {
+    sessionId: string;
+    agentId: string;
+    requestId: string;
+    requestType: HireRequestRecord["requestType"];
+    outcome: "completed" | "failed";
+    marketplaceTags: MarketplaceWorkTags;
+    marketplaceTagStats: AgentMarketplaceTagStat[];
+    occurredAtIso: string;
+    protocolReturnDigestSha256?: string;
+  }): Promise<SocialAnchorCandidate | undefined> {
+    if (marketplaceWorkTagsAreEmpty(input.marketplaceTags)) {
+      return undefined;
+    }
+
+    const tagValues = marketplaceWorkTagValues(input.marketplaceTags);
+    const relevantStats = input.marketplaceTagStats.filter((stat) => tagValues.includes(stat.tag));
+    return this.enqueueSocialAnchorCandidate({
+      sessionId: input.sessionId,
+      kind: "marketplace-tag-reputation-updated",
+      summary: `Marketplace reputation updated for ${tagValues.slice(0, 6).join(", ")}.`,
+      occurredAtIso: input.occurredAtIso,
+      payload: {
+        agentId: input.agentId,
+        requestId: input.requestId,
+        requestType: input.requestType,
+        outcome: input.outcome,
+        marketplaceTags: input.marketplaceTags,
+        marketplaceTagStats: relevantStats,
+        marketplaceTagDigestSha256: marketplaceTagsDigest(input.marketplaceTags),
+        ...(input.protocolReturnDigestSha256 ? { protocolReturnDigestSha256: input.protocolReturnDigestSha256 } : {})
+      }
+    });
+  }
+
   private assertSelfServeSocialAnchoringEnabled(deployment: Pick<ZekoDeploymentState, "networkId" | "mode">) {
     if (isMainnetNetwork(deployment) || allowTestnetSelfServeSocialAnchor()) {
       return;
@@ -9338,9 +9429,16 @@ export class ClawzControlPlane {
         agentId,
         agentName: profile.agentName,
         representedPrincipal: profile.representedPrincipal,
-        openClawUrl: profile.openClawUrl
+        openClawUrl: profile.openClawUrl,
+        ...(!agentMarketplaceTagsAreEmpty(profile.marketplaceTags)
+          ? {
+              marketplaceTags: profile.marketplaceTags,
+              marketplaceTagDigestSha256: marketplaceTagsDigest(profile.marketplaceTags)
+            }
+          : {})
       }
     });
+    await this.enqueueMarketplaceTagDeclarationAnchor(sessionId, profile, registeredAtIso);
     await this.enqueueSocialAnchorCandidate({
       sessionId,
       kind: "operator-dispatch",
@@ -9853,7 +9951,7 @@ export class ClawzControlPlane {
       payment: paymentAuthorization
     };
 
-    await this.saveHireRequestFile({
+    const nextHireRequestFile: HireRequestFile = {
       ...hireRequests,
       requests: [nextRecord, ...hireRequests.requests],
       jobActivityStatsBySessionId: {
@@ -9863,7 +9961,8 @@ export class ClawzControlPlane {
           nextRecord
         )
       }
-    });
+    };
+    await this.saveHireRequestFile(nextHireRequestFile);
     if (paymentAuthorization.ledgerId) {
       await this.updatePaymentLedgerExecution({
         ledgerId: paymentAuthorization.ledgerId,
@@ -9969,6 +10068,7 @@ export class ClawzControlPlane {
               agentId: options.agentId,
               protocolReturnDigestSha256: ingressProtocolReturn.digestSha256,
               status: ingressProtocolReturn.status,
+              ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
               ...(ingressProtocolReturn.quote
                 ? {
                     quoteAmountUsd: ingressProtocolReturn.quote.amountUsd,
@@ -10012,8 +10112,30 @@ export class ClawzControlPlane {
               requestType,
               pricingMode: profile.paymentProfile.pricingMode,
               paymentStatus,
+              ...(!marketplaceWorkTagsAreEmpty(marketplaceTags)
+                ? { marketplaceTagDigestSha256: marketplaceTagsDigest(marketplaceTags) }
+                : {}),
               ...(completionClassification ? { completionClassification } : {})
             }
+      });
+    }
+    const marketplaceTagOutcome = paidExecutionTerminalOutcome(nextRecord);
+    if (
+      requestType === "paid_execution" &&
+      detailedLifecycle &&
+      marketplaceTagOutcome !== "pending" &&
+      !marketplaceWorkTagsAreEmpty(marketplaceTags)
+    ) {
+      await this.enqueueMarketplaceTagReputationAnchor({
+        sessionId,
+        agentId: options.agentId,
+        requestId,
+        requestType,
+        outcome: marketplaceTagOutcome,
+        marketplaceTags,
+        marketplaceTagStats: buildAgentMarketplaceTagStats(nextHireRequestFile, sessionId),
+        occurredAtIso: submittedAtIso,
+        ...(ingressProtocolReturn?.digestSha256 ? { protocolReturnDigestSha256: ingressProtocolReturn.digestSha256 } : {})
       });
     }
 
@@ -11188,6 +11310,13 @@ export class ClawzControlPlane {
           headline: nextProfile.headline
         }
       });
+    }
+    if (
+      wasPublished &&
+      !agentMarketplaceTagsAreEmpty(nextProfile.marketplaceTags) &&
+      marketplaceTagsDigest(nextProfile.marketplaceTags) !== marketplaceTagsDigest(currentProfile.marketplaceTags)
+    ) {
+      await this.enqueueMarketplaceTagDeclarationAnchor(focus.sessionId, nextProfile);
     }
     if (wasPublished && !wasPaymentReady && nextPaymentReady) {
       await this.enqueueSocialAnchorCandidate({

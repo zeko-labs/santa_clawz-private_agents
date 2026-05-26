@@ -1390,6 +1390,14 @@ async function testMarketplaceTagsExposeDiscoveryAndSearch() {
     assert.deepEqual(listedAgent.marketplaceTags.capabilities, ["repo-review", "security-review"]);
     assert.deepEqual(listedAgent.marketplaceTags.outputTypes, ["markdown"]);
 
+    const anchors = await requestJson(`${baseUrl}/api/social/anchors?sessionId=${encodeURIComponent(sessionId)}`, {
+      headers: {
+        "x-clawz-admin-key": adminKey
+      }
+    });
+    assert.equal(anchors.status, 200);
+    assert.equal(anchors.payload.items.some((item) => item.kind === "marketplace-tags-declared"), true);
+
     const searched = await requestJson(`${baseUrl}/api/agents/search?tag=repo%20review`);
     assert.equal(searched.status, 200);
     assert.equal(searched.payload.agents.some((agent) => agent.agentId === agentId), true);
