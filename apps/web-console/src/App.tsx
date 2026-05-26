@@ -3866,43 +3866,6 @@ export function App() {
               />
             </label>
 
-            <div className="field-grid field-wide compact-field-grid marketplace-tag-grid">
-              <label className="field">
-                <span>Capability tags (optional)</span>
-                <input
-                  className="text-input"
-                  value={tagListToCsv(profile.marketplaceTags.capabilities)}
-                  onChange={(event: ValueInputEvent) => {
-                    setProfile({
-                      ...profile,
-                      marketplaceTags: {
-                        ...profile.marketplaceTags,
-                        capabilities: tagCsvToList(event.target.value)
-                      }
-                    });
-                  }}
-                  placeholder="repo-review, research, n8n"
-                />
-              </label>
-              <label className="field">
-                <span>Output tags (optional)</span>
-                <input
-                  className="text-input"
-                  value={tagListToCsv(profile.marketplaceTags.outputTypes)}
-                  onChange={(event: ValueInputEvent) => {
-                    setProfile({
-                      ...profile,
-                      marketplaceTags: {
-                        ...profile.marketplaceTags,
-                        outputTypes: tagCsvToList(event.target.value)
-                      }
-                    });
-                  }}
-                  placeholder="markdown, json, artifact"
-                />
-              </label>
-            </div>
-
             <div className="field field-wide open-work-toggle-field">
               <div className="field-label-row">
                 <span>Agent payments</span>
