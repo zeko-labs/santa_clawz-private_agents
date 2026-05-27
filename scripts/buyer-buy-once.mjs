@@ -893,8 +893,45 @@ const submit = await requestJson(hireUrl, {
   headers: { "content-type": "application/json" },
   body: JSON.stringify(submitBody)
 });
-const summary = paidExecutionSummary(submit.ok, submit.payload);
 const paymentPayloadDigestSha256 = digestJson(paymentPayload);
+const submittedRequestId =
+  submit.payload?.requestId ??
+  submit.payload?.paidExecution?.requestId ??
+  paymentPayload.requestId ??
+  paymentRequirement.requestId ??
+  null;
+const paymentStateUrl = `${apiBase}/api/x402/payment-state?paymentPayloadDigestSha256=${paymentPayloadDigestSha256}`;
+const resultStateUrl = submittedRequestId
+  ? `${apiBase}/api/executions/${encodeURIComponent(submittedRequestId)}/state`
+  : null;
+if (!submit.ok && submit.payload?.retryable === true) {
+  const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
+    code: "post_payment_state_unavailable_retryable",
+    paymentStatus: "authorized",
+    settlementStatus: "unknown",
+    relayDeliveryStatus: "not_confirmed",
+    agentExecutionStatus: "not_confirmed",
+    paymentPayloadDigestSha256,
+    ...(submittedRequestId ? { requestId: submittedRequestId } : {}),
+    paymentStateUrl,
+    ...(resultStateUrl ? { resultStateUrl } : {}),
+    safeToRetrySamePayload: true
+  });
+  const output = {
+    ...retryable,
+    paid: true,
+    status: submit.status,
+    agentId,
+    priceUsd: baseOutput.priceUsd,
+    manifestDir: runDir,
+    response: submit.payload
+  };
+  writeJson(path.join(runDir, "buyer-run.json"), output);
+  console.log(JSON.stringify(output, null, 2));
+  process.exitCode = 1;
+  process.exit();
+}
+const summary = paidExecutionSummary(submit.ok, submit.payload);
 const output = {
   ...summary,
   paid: true,
@@ -902,11 +939,9 @@ const output = {
   agentId,
   priceUsd: baseOutput.priceUsd,
   paymentPayloadDigestSha256,
-  requestId: submit.payload?.requestId ?? submit.payload?.paidExecution?.requestId ?? null,
-  stateUrl: submit.payload?.requestId
-    ? `${apiBase}/api/executions/${encodeURIComponent(submit.payload.requestId)}/state`
-    : null,
-  paymentStateUrl: `${apiBase}/api/x402/payment-state?paymentPayloadDigestSha256=${paymentPayloadDigestSha256}`,
+  requestId: submittedRequestId,
+  stateUrl: resultStateUrl,
+  paymentStateUrl,
   manifestDir: runDir,
   response: submit.payload
 };

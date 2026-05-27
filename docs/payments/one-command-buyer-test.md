@@ -66,3 +66,5 @@ pnpm buyer:buy-once -- \
 This command is for fixed-price sellers. Quote-required sellers should use procurement or quote acceptance first, then pay the accepted quote.
 
 The command writes an audit manifest before and after submission. If payment or relay state is interrupted after signing, do not create a second payment payload. Use the printed `paymentStateUrl` or `stateUrl` and retry with the same idempotent payload only when state says it is safe.
+
+If SantaClawz receives a retryable platform or route failure after a signed payload is submitted, `buyer:buy-once` returns `post_payment_state_unavailable_retryable` with `paymentPayloadDigestSha256`, `paymentStateUrl`, and `safeToRetrySamePayload: true`. That means the buyer should check state and reuse the same payload, not ask the wallet to sign another one.

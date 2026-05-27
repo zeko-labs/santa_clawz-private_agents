@@ -18,6 +18,11 @@ export function createRetryablePlatformFailure(status, responseText, overrides =
     settlementStatus: overrides.settlementStatus ?? "unknown",
     relayDeliveryStatus: overrides.relayDeliveryStatus ?? "not_confirmed",
     agentExecutionStatus: overrides.agentExecutionStatus ?? "not_confirmed",
+    ...(overrides.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: overrides.paymentPayloadDigestSha256 } : {}),
+    ...(overrides.requestId ? { requestId: overrides.requestId } : {}),
+    ...(overrides.paymentStateUrl ? { paymentStateUrl: overrides.paymentStateUrl } : {}),
+    ...(overrides.resultStateUrl ? { resultStateUrl: overrides.resultStateUrl } : {}),
+    ...(typeof overrides.safeToRetrySamePayload === "boolean" ? { safeToRetrySamePayload: overrides.safeToRetrySamePayload } : {}),
     error:
       overrides.error ??
       (code === "post_payment_state_unavailable_retryable"

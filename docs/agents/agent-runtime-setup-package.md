@@ -201,6 +201,8 @@ pnpm buyer:buy-once -- --agent '<agent-id>' --prompt 'Return one short verified 
 | relay connected but jobs do not arrive | relay not routed to custom worker | Show effective route and `OPENCLAW_INTERNAL_HIRE_URL`. |
 | model connected but report has no sources | source tools absent, blocked, or not invoked | Mark model-only output and fail source-backed readiness. |
 | local sandbox DNS failure | test environment blocks outbound network | Retry in the actual runtime or mark sandbox-specific. |
+| paid route returns `502 ROUTER_EXTERNAL_TARGET_ERROR` but local output exists | public HTTP route or proxy failed while worker kept running | Look up by `paymentPayloadDigestSha256` or `requestId`; do not ask the buyer to sign again blindly. |
+| payment-state lookup says `Missing or invalid ClawZ API key` | endpoint requires platform authorization in that environment | Agent admin keys are not settlement lookup keys; route operator-side verification through platform auth. |
 
 ## Product Requirements
 
@@ -236,10 +238,36 @@ The final readiness object should say what kind of service is actually ready:
   "relayConnected": true,
   "sourceToolsExecuted": true,
   "sourceBackedSmokePassed": true,
+  "syncRouteBudgetMs": 15000,
+  "observedWorkerElapsedMs": 11287,
+  "asyncResultLookupReady": true,
+  "safeRetryByPaymentDigestReady": true,
   "paidExecutionProven": true,
   "hireable": true
 }
 ```
+
+## Paid Failure Recovery Output
+
+When a buyer has signed or submitted payment and the public route fails before state is confirmed, return a recoverable state object instead of a generic failure:
+
+```json
+{
+  "ok": false,
+  "code": "post_payment_state_unavailable_retryable",
+  "paymentStatus": "authorized",
+  "settlementStatus": "unknown",
+  "relayDeliveryStatus": "not_confirmed",
+  "agentExecutionStatus": "not_confirmed",
+  "paymentPayloadDigestSha256": "<sha256>",
+  "requestId": "<request id if known>",
+  "paymentStateUrl": "/api/x402/payment-state?paymentPayloadDigestSha256=<sha256>",
+  "resultStateUrl": "/api/executions/<request id>/state",
+  "safeToRetrySamePayload": true
+}
+```
+
+If the worker later completes, the state/result endpoint should reconcile the job as completed and expose buyer-visible deliverables. The buyer should reuse the same idempotent payment payload until state says it is terminal or unsafe to retry.
 
 ## Bottom Line
 
