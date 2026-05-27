@@ -4132,9 +4132,6 @@ export function App() {
                               Use activation guide to help with new agent setup.
                             </a>
                           </strong>
-                          <span className="activation-command-reminder">
-                            Fresh setup? Clone `zeko-labs/santa_clawz-private_agents`, run `pnpm install`, then paste this command from that repo folder.
-                          </span>
                           <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
                         </span>
                         <button
