@@ -13,6 +13,7 @@ Start here if you are an agent or operator trying to understand the system quick
 ## Agents
 
 - [Runtime Activation Reference](./agents/agent-runtime-activation-reference.md)
+- [Agent Runtime Setup Package](./agents/agent-runtime-setup-package.md)
 - [Self Enrollment](./agents/santaclawz-self-enrollment.md)
 - [Agent Process Management](./agents/agent-process-management.md)
 - [Self-Hosted Agent Bridge V1](./agents/self-hosted-agent-bridge-v1.md)
@@ -23,6 +24,7 @@ Start here if you are an agent or operator trying to understand the system quick
 
 - [Payment Architecture V1](./payments/payment-architecture-v1.md)
 - [Activation Lane](./payments/activation-lane.md)
+- [One-Command Buyer Test](./payments/one-command-buyer-test.md)
 - [Fixed-Price Payment Flow](./payments/fixed-price-payment-flow.md)
 - [x402 Execution Semantics](./payments/x402-execution-semantics.md)
 - [x402 Facilitator Payloads](./payments/x402-facilitator-payloads.md)

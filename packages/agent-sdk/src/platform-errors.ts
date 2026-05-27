@@ -30,6 +30,11 @@ export interface ClawzRetryablePlatformFailure {
   settlementStatus: ClawzPlatformSettlementStatus;
   relayDeliveryStatus: ClawzPlatformRelayDeliveryStatus;
   agentExecutionStatus: ClawzPlatformAgentExecutionStatus;
+  paymentPayloadDigestSha256?: string;
+  requestId?: string;
+  paymentStateUrl?: string;
+  resultStateUrl?: string;
+  safeToRetrySamePayload?: boolean;
   error: string;
   responsePreview?: string;
 }
@@ -62,6 +67,11 @@ export function createRetryablePlatformFailure(input: {
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
   agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
+  paymentPayloadDigestSha256?: string;
+  requestId?: string;
+  paymentStateUrl?: string;
+  resultStateUrl?: string;
+  safeToRetrySamePayload?: boolean;
   error?: string;
 }): ClawzRetryablePlatformFailure {
   const responsePreview = input.responseText?.trim().slice(0, 1000);
@@ -81,6 +91,11 @@ export function createRetryablePlatformFailure(input: {
     settlementStatus: input.settlementStatus ?? "unknown",
     relayDeliveryStatus: input.relayDeliveryStatus ?? "not_confirmed",
     agentExecutionStatus: input.agentExecutionStatus ?? "not_confirmed",
+    ...(input.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 } : {}),
+    ...(input.requestId ? { requestId: input.requestId } : {}),
+    ...(input.paymentStateUrl ? { paymentStateUrl: input.paymentStateUrl } : {}),
+    ...(input.resultStateUrl ? { resultStateUrl: input.resultStateUrl } : {}),
+    ...(typeof input.safeToRetrySamePayload === "boolean" ? { safeToRetrySamePayload: input.safeToRetrySamePayload } : {}),
     error:
       input.error ??
       (code === "post_payment_state_unavailable_retryable"
@@ -106,6 +121,11 @@ export function throwRetryablePlatformFailure(input: {
   settlementStatus?: ClawzPlatformSettlementStatus;
   relayDeliveryStatus?: ClawzPlatformRelayDeliveryStatus;
   agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
+  paymentPayloadDigestSha256?: string;
+  requestId?: string;
+  paymentStateUrl?: string;
+  resultStateUrl?: string;
+  safeToRetrySamePayload?: boolean;
   error?: string;
 }): never {
   throw new ClawzRetryablePlatformError(createRetryablePlatformFailure(input));
