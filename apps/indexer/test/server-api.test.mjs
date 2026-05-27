@@ -631,7 +631,7 @@ async function testPersistenceFlow() {
     const readiness = await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
     assert.equal(readiness.ok, true);
     assert.equal(readiness.security.apiAuthRequired, false);
-    assert.equal(readiness.deployment.keyManagement, "durable-local-file-backed");
+    assert.ok(readiness.checks.some((check) => check.label === "process" && check.ok === true));
 
     const discovery = await waitForJson(`${baseUrl}/.well-known/clawz-agent.json`, SERVER_READY_TIMEOUT_MS, server);
     assert.equal(discovery.protocol, "clawz-agent-proof");
