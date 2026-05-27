@@ -448,14 +448,22 @@ const ROUTE_RULES: RouteRule[] = [
 ];
 
 const LIFECYCLE_STEPS = [
-  "Route intent",
-  "Select seller",
-  "Quote or bid",
-  "Authorize x402",
-  "Runtime accepted",
-  "Work completed",
-  "Artifacts scanned",
-  "Proof recorded"
+  "Describe work",
+  "Match agents",
+  "Confirm price",
+  "Pay safely",
+  "Track progress",
+  "Receive files",
+  "Verify proof"
+];
+
+const RETAIL_USE_CASES = [
+  "Competitive research",
+  "Repo review",
+  "Pricing teardown",
+  "Workflow automation",
+  "Data cleanup",
+  "Artifact package"
 ];
 
 function readPersonaCookie(): BuyerPersona {
@@ -1071,8 +1079,8 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
 
   const personaCopy =
     persona === "agent"
-      ? "Procure work programmatically, preserve payment intent state, verify artifacts, and keep useful counterparty memory."
-      : "Describe the work, choose an agent, pay with Base USDC, and receive scanned outputs in a single proof-aware workspace.";
+      ? "Give your agent a simple way to find specialists, preserve payment state, and verify the returned package."
+      : "Describe what you need, get matched to a capable agent, pay safely, and receive verified work back here.";
 
   return (
     <>
@@ -1080,20 +1088,45 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
         <div className="masthead-inner">
           <div className="masthead-content buyer-masthead-content">
             <div className="masthead-copy">
-              <p className="eyebrow">Hidden hire workroom</p>
-              <h1>Route work to agents</h1>
+              <p className="eyebrow">Hire workroom beta</p>
+              <h1>Give your agent a team of specialists.</h1>
               <p className="masthead-copyline">{personaCopy}</p>
+              <div className="buyer-hero-actions">
+                <a href="#buyer-task" className="primary-button">Start a task</a>
+                <a href={buyerGuideUrl} target="_blank" rel="noreferrer" className="secondary-button buyer-hero-link">
+                  Buyer agent tips &gt;&gt;
+                </a>
+              </div>
             </div>
 
-            <div className="buyer-persona-card" aria-label="Buyer mode">
-              <span>Buying as</span>
-              <div className="buyer-persona-toggle" role="group" aria-label="Choose buyer mode">
-                <button type="button" className={persona === "human" ? "active" : ""} onClick={() => updatePersona("human")}>
-                  Human
-                </button>
-                <button type="button" className={persona === "agent" ? "active" : ""} onClick={() => updatePersona("agent")}>
-                  Agent
-                </button>
+            <div className="buyer-demo-card" aria-label="Example agent task flow">
+              <div className="buyer-persona-card compact" aria-label="Buyer mode">
+                <span>Buying as</span>
+                <div className="buyer-persona-toggle" role="group" aria-label="Choose buyer mode">
+                  <button type="button" className={persona === "human" ? "active" : ""} onClick={() => updatePersona("human")}>
+                    Human
+                  </button>
+                  <button type="button" className={persona === "agent" ? "active" : ""} onClick={() => updatePersona("agent")}>
+                    Agent
+                  </button>
+                </div>
+              </div>
+              <div className="buyer-demo-thread">
+                <div className="buyer-demo-bubble buyer">
+                  Pull a launch-risk teardown and return markdown findings.
+                </div>
+                <div className="buyer-demo-bubble router">
+                  Scanning capability graph...
+                  <span>3 matches</span>
+                </div>
+                <div className="buyer-demo-match selected">
+                  <strong>{selectedAgent ? displayAgentName(selectedAgent) : "Verified specialist"}</strong>
+                  <span>{selectedAgent ? agentPriceLabel(selectedAgent) : "Quote-ready"} · {selectedAgent ? agentSuccessLabel(selectedAgent) : "proof history"}</span>
+                </div>
+                <div className="buyer-demo-result">
+                  <strong>Result package</strong>
+                  <span>manifest · digest · payout proof</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1103,23 +1136,32 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
       <section className="panel buyer-panel">
         <div className="section-head buyer-section-head">
           <div>
-            <p className="eyebrow">Buyer workroom</p>
-            <h2>Chat, route, bid, verify</h2>
+            <p className="eyebrow">From brief to result</p>
+            <h2>Start with a task. SantaClawz handles the route.</h2>
             <p>
-              The router converts buyer language into protocol tags, seller candidates, and a marketplace path.
-              Tag claims and tag reputation can be anchored on Zeko as work becomes real.
+              Tell the router what you need. It turns the brief into tags, recommends agents, and keeps payment,
+              delivery, and proof state in one flow.
             </p>
           </div>
-          <a className="buyer-guide-link" href={buyerGuideUrl} target="_blank" rel="noreferrer">
-            Buyer agent tips &gt;&gt;
-          </a>
+          <div className="buyer-credit-teaser" aria-label="Payment rails">
+            <span>Now</span>
+            <strong>Base USDC</strong>
+            <em>Credits + Stripe top-up next</em>
+          </div>
         </div>
 
-        <div className="buyer-grid">
+        <div className="buyer-retail-steps" aria-label="How hiring works">
+          <div><span>01</span><strong>Describe</strong><em>plain-language task</em></div>
+          <div><span>02</span><strong>Match</strong><em>agents ranked by proof</em></div>
+          <div><span>03</span><strong>Pay</strong><em>Base USDC or quote</em></div>
+          <div><span>04</span><strong>Receive</strong><em>files, digest, proof</em></div>
+        </div>
+
+        <div className="buyer-grid buyer-main-grid">
           <section className="buyer-card buyer-router-card">
             <div className="buyer-card-head">
-              <p className="eyebrow">Routing chat</p>
-              <span className="subtle-pill live">agent_job_pack router</span>
+              <p className="eyebrow">Smart brief</p>
+              <span className="subtle-pill live">Job Pack router</span>
             </div>
             <div className="buyer-chat-window" aria-live="polite">
               {messages.map((message) => (
@@ -1140,9 +1182,17 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
                 {routingRequesting ? "Routing..." : "Route request"}
               </button>
             </div>
-            <p className="buyer-router-note">
-              Job Pack is the default routing coach: it turns the brief into live protocol tags, candidate logic, and a bid/direct-hire path before money moves.
-            </p>
+            <div className="buyer-use-case-row">
+              {RETAIL_USE_CASES.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setChatInput(`I need ${item.toLowerCase()} with a concise deliverable and proof-backed output.`)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
             {routingAnchorDigest ? (
               <p className="buyer-router-note">Route-plan anchor {routingAnchorDigest.slice(0, 12)}...</p>
             ) : null}
@@ -1150,7 +1200,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
 
           <aside className="buyer-card buyer-lifecycle-card">
             <div className="buyer-card-head">
-              <p className="eyebrow">Recommended path</p>
+              <p className="eyebrow">Live workflow</p>
               <span className="subtle-pill">{routingMode.replace("-", " ")}</span>
             </div>
             <ol className="buyer-lifecycle-list">
@@ -1165,19 +1215,19 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
         </div>
 
         <div className="buyer-grid">
-          <form className="buyer-card buyer-request-card">
+          <form id="buyer-task" className="buyer-card buyer-request-card">
             <div className="buyer-card-head">
-              <p className="eyebrow">Structured request</p>
-              <span className="subtle-pill">Machine-readable</span>
+              <p className="eyebrow">Task checkout</p>
+              <span className="subtle-pill">Proof-aware</span>
             </div>
 
             <label className="field">
-              <span>Job brief</span>
+              <span>What do you need done?</span>
               <textarea
                 className="text-area buyer-brief-input"
                 value={requestSummary}
                 onChange={(event: ValueEvent) => setRequestSummary(event.target.value)}
-                placeholder="Describe the work you want done."
+                placeholder="Example: pull a competitor teardown and return a short positioning brief with sources."
               />
             </label>
 
@@ -1224,6 +1274,19 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
                   )}
                 </select>
               </label>
+            </div>
+
+            <div className="buyer-payment-rail-row">
+              <div className="active">
+                <span>Pay now</span>
+                <strong>Base USDC</strong>
+                <em>Wallet signs exact payment payload</em>
+              </div>
+              <div>
+                <span>Next</span>
+                <strong>Platform credits</strong>
+                <em>Stripe top-up, credit ledger, Zeko authorization</em>
+              </div>
             </div>
 
             <div className="buyer-tag-panel">
@@ -1298,7 +1361,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
 
           <aside className="buyer-card buyer-candidates-card">
             <div className="buyer-card-head">
-              <p className="eyebrow">Candidate agents</p>
+              <p className="eyebrow">Best matches</p>
               <span className="subtle-pill">{candidates.length || 0} matches</span>
             </div>
             <div className="buyer-candidate-list">
@@ -1347,18 +1410,35 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
 
         <div className="buyer-output-grid">
           <section className="buyer-card buyer-output-card">
-            <p className="eyebrow">Routing plan</p>
-            <h3>Zeko-ready marketplace intent</h3>
+            <p className="eyebrow">What comes back</p>
+            <h3>Verified output package</h3>
             <p>
-              This is the compact plan shape the UI can hand to agent_job_pack, direct hire, or procurement bidding.
-              The final digest can be anchored without exposing private prompt content.
+              After execution, the buyer should see the deliverable, artifact manifest, Base transaction, and Zeko-ready
+              proof digest in one simple receipt.
             </p>
-            <pre className="buyer-plan-json">{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
+            <div className="buyer-result-preview">
+              <div>
+                <span>Deliverable</span>
+                <strong>brief.md</strong>
+              </div>
+              <div>
+                <span>Proof</span>
+                <strong>{activeRoutingPlan.routePlanDigestSha256 ? `${activeRoutingPlan.routePlanDigestSha256.slice(0, 10)}...` : "pending route digest"}</strong>
+              </div>
+              <div>
+                <span>Settlement</span>
+                <strong>Base USDC</strong>
+              </div>
+            </div>
+            <details className="buyer-protocol-details">
+              <summary>View protocol route plan</summary>
+              <pre className="buyer-plan-json">{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
+            </details>
           </section>
 
           <section className="buyer-card buyer-coach-card">
             <p className="eyebrow">{persona === "agent" ? "Agent buyer mode" : "Human buyer mode"}</p>
-            <h3>{persona === "agent" ? "Procure safely" : "Ask clearly"}</h3>
+            <h3>{persona === "agent" ? "Procure safely" : "Easy mode for expert work"}</h3>
             <p>
               {persona === "agent"
                 ? "Use idempotent payment payloads, validate x402 units before signing, inspect readiness, and verify the returned package before trusting the result."

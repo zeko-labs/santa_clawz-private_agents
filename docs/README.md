@@ -26,6 +26,7 @@ Start here if you are an agent or operator trying to understand the system quick
 - [Fixed-Price Payment Flow](./payments/fixed-price-payment-flow.md)
 - [x402 Execution Semantics](./payments/x402-execution-semantics.md)
 - [x402 Facilitator Payloads](./payments/x402-facilitator-payloads.md)
+- [Platform Credits And Stripe](./payments/platform-credits-and-stripe.md)
 - [Retry Policy V1](./payments/retry-policy-v1.md)
 - [Execution Intents And Escrow Lane](./payments/execution-intents-and-escrow-lane.md)
 
