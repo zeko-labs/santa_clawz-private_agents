@@ -543,6 +543,24 @@ function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+type ActivationMethodId = "one-liner" | "pnpm" | "manual";
+type ActivationPlatformId = "unix" | "windows";
+
+const ACTIVATION_SCRIPT_URL = "https://www.santaclawz.ai/activate-agent.sh";
+const DEFAULT_RELAY_BASE = "https://relay.santaclawz.ai";
+const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
+
+const ACTIVATION_METHODS: Array<{ id: ActivationMethodId; label: string }> = [
+  { id: "one-liner", label: "One-liner" },
+  { id: "pnpm", label: "pnpm" },
+  { id: "manual", label: "Manual" }
+];
+
+const ACTIVATION_PLATFORMS: Array<{ id: ActivationPlatformId; label: string }> = [
+  { id: "unix", label: "macOS & Linux" },
+  { id: "windows", label: "Windows" }
+];
+
 function buildActivationCommand(runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
   const args = [
     "pnpm enroll:agent --",
@@ -552,6 +570,52 @@ function buildActivationCommand(runtimeDelivery: { mode: string; runtimeIngressU
       : ""
   ];
   return args.filter(Boolean).join(" ");
+}
+
+function buildTicketedActivationCommand(
+  method: ActivationMethodId,
+  platform: ActivationPlatformId,
+  ticket: string,
+  runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }
+) {
+  const runtimeIngressArg =
+    runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
+      ? ` --runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
+      : "";
+
+  if (method === "one-liner") {
+    if (platform === "windows") {
+      return [
+        "# Windows one-liner is coming soon.",
+        "# For now, use the pnpm tab from your cloned SantaClawz agent repo."
+      ].join("\n");
+    }
+    return `curl -fsSL ${ACTIVATION_SCRIPT_URL} | bash -s -- --ticket ${shellQuote(ticket)}${runtimeIngressArg}`;
+  }
+
+  if (method === "manual") {
+    return [
+      `ticket: ${ticket}`,
+      `api: ${getApiBase()}`,
+      `relay: ${DEFAULT_RELAY_BASE}`,
+      `challenge: ${DEFAULT_CHALLENGE_FILE}`,
+      "then: redeem ticket, write .env.santaclawz, serve challenge, connect relay, send heartbeat"
+    ].join("\n");
+  }
+
+  const quote = platform === "windows" ? (value: string) => `"${value.replace(/"/g, '\\"')}"` : shellQuote;
+  const args = [
+    "pnpm enroll:agent --",
+    "--ticket",
+    quote(ticket),
+    "--serve",
+    runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
+      ? `--runtime-ingress-url ${quote(runtimeDelivery.runtimeIngressUrl.trim())}`
+      : `--connect-relay --relay-base ${quote(DEFAULT_RELAY_BASE)}`,
+    "--write-env .env.santaclawz",
+    `--challenge-file ${DEFAULT_CHALLENGE_FILE}`
+  ];
+  return args.join(" \\\n  ");
 }
 
 function ticketPreview(value: string) {
@@ -1793,6 +1857,8 @@ export function App() {
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
+  const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("one-liner");
+  const [activationPlatform, setActivationPlatform] = useState<ActivationPlatformId>("unix");
   const [urlReservationSalt, setUrlReservationSalt] = useState<string>(createUrlReservationSalt());
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const [sdkDraft, setSdkDraft] = useState<SdkWidgetDraft>({
@@ -3529,6 +3595,24 @@ export function App() {
       })
     : "";
   const enrollmentTicketPreview = enrollmentTicket ? ticketPreview(enrollmentTicket.ticket) : "";
+  const activationCommand = enrollmentTicket
+    ? buildTicketedActivationCommand(activationMethod, activationPlatform, enrollmentTicket.ticket, profile.runtimeDelivery)
+    : cliEnrollCommand;
+  const activationCommandPreview = activationCommand.split("\n")[0];
+  const activationCopyLabel =
+    activationMethod === "manual"
+      ? copiedKey === "activation-command"
+        ? "Copied"
+        : "Copy setup values"
+      : copiedKey === "activation-command"
+        ? "Copied"
+        : "Copy command";
+  const activationMethodNote =
+    activationMethod === "one-liner"
+      ? "Installs or reuses ~/santaclawz-agent, then activates with this ticket."
+      : activationMethod === "pnpm"
+        ? "Run from a cloned SantaClawz agent repo with dependencies installed."
+        : "Use these values from any compatible runtime or framework.";
   const activationAgentId = registeredAgentId ?? enrollmentTicket?.reservedAgentId ?? autoPublicAgentId;
   const activationRegistryAgent = activationAgentId
     ? registry.find((agent) => agent.agentId === activationAgentId) ?? null
@@ -4043,7 +4127,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                <span className="desktop-copy">Generate an activation ticket from the info above. Run the repo-local activation command from your agent runtime folder to go live and get paid.</span>
+                <span className="desktop-copy">Generate an activation ticket from the info above. Choose the activation path that fits your agent runtime.</span>
                 <span className="mobile-copy">Activate your agent to go live and get paid.</span>
               </p>
             </div>
@@ -4113,40 +4197,61 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
-                    <details className="activation-command-details">
-                      <summary className="activation-command-summary">
+                    <div className="activation-method-tabs" aria-label="Activation method">
+                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
+                        {ACTIVATION_METHODS.map((method) => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            className={activationMethod === method.id ? "active" : ""}
+                            aria-selected={activationMethod === method.id}
+                            role="tab"
+                            onClick={() => {
+                              setActivationMethod(method.id);
+                            }}
+                          >
+                            {method.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="activation-tab-group platform-tabs" role="tablist" aria-label="Activation platform">
+                        {ACTIVATION_PLATFORMS.map((platform) => (
+                          <button
+                            key={platform.id}
+                            type="button"
+                            className={activationPlatform === platform.id ? "active" : ""}
+                            aria-selected={activationPlatform === platform.id}
+                            role="tab"
+                            onClick={() => {
+                              setActivationPlatform(platform.id);
+                            }}
+                          >
+                            {platform.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="activation-command-details">
+                      <div className="activation-command-summary">
                         <span className="activation-command-summary-copy">
-                          <strong>
-                            Type this from the cloned SantaClawz agent repo folder, then paste the ticket when prompted.{" "}
-                            <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                              Use activation guide to help with new agent setup.
-                            </a>
-                          </strong>
-                          <code>{cliEnrollCommand}</code>
+                          <strong>{activationMethodNote}</strong>
+                          <code>{activationCommandPreview}</code>
                         </span>
                         <button
                           type="button"
                           className="activation-command-copy-button"
-                          onClick={(event: ClickEvent) => {
-                            event.preventDefault();
-                            void copyValue("activation-ticket", enrollmentTicket.ticket);
+                          onClick={() => {
+                            void copyValue("activation-command", activationCommand);
                           }}
                         >
                           <span className="copy-icon" aria-hidden="true" />
-                          {copiedKey === "activation-ticket" ? "Ticket copied" : "Copy ticket"}
+                          {activationCopyLabel}
                         </button>
-                      </summary>
-                      <div className="command-strip compact-command-strip activation-command-strip">
-                        <code className="activation-command-code">
-                          <span>pnpm enroll:agent --</span>
-                          <span>--serve</span>
-                          {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim() ? (
-                            <span>--runtime-ingress-url {shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}</span>
-                          ) : null}
-                          <span className="activation-command-muted">When prompted, paste the copied scz_enroll_... ticket.</span>
-                        </code>
                       </div>
-                    </details>
+                      <div className="command-strip compact-command-strip activation-command-strip">
+                        <pre className="activation-command-code">{activationCommand}</pre>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </div>
