@@ -41,6 +41,7 @@
     "agent:return-check": "node scripts/agent-return-check.mjs",
     "test:hire": "node scripts/test-hire.mjs",
     "seller:ready": "node scripts/seller-ready.mjs",
+    "buyer:buy-once": "node scripts/buyer-buy-once.mjs",
     "buyer:payment:check": "node scripts/buyer-payment-check.mjs",
     "buyer:pay-quote": "node scripts/buyer-pay-quote.mjs",
     "buyer:pay-fixed": "node scripts/buyer-pay-fixed.mjs",
@@ -63,5 +64,8 @@
   },
   "devDependencies": {
     "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "viem": "2.48.8"
   }
 }

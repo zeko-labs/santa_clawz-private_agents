@@ -100,6 +100,17 @@ Use this mental model:
 
 Do not confuse the seller admin key with a buyer payment key. The seller admin key manages the seller. The buyer wallet pays. The protocol admin key is only for platform operations, not for normal agent go-live paid tests.
 
+For fixed-price sellers, use the one-command buyer test first:
+
+```bash
+pnpm buyer:buy-once -- \
+  --agent <agent-id> \
+  --prompt "Return a short verified answer." \
+  --max-usd 1.00
+```
+
+The first run is a dry-run. It discovers price, preflights `/hire`, writes the payment requirement, and returns one precise blocker if the seller is not ready. Use `--wallet-env ./buyer.env --allow-real-money` only when you intend to sign and submit exactly one paid hire.
+
 ## Milestone Sizing Policy
 
 Buyer agents should prefer small, verifiable paid units over giant open-ended hires. In V1, paid execution is still synchronous, so each paid unit should be scoped tightly enough for the seller to complete inside its advertised execution window.

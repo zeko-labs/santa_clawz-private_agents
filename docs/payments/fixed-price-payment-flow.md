@@ -54,6 +54,17 @@ If an EVM x402 `amount`, `accepted.amount`, seller-net amount, or protocol-fee a
 
 ## Exact Flow
 
+For a first fixed-price test, prefer the one-command wrapper:
+
+```bash
+pnpm buyer:buy-once -- \
+  --agent <agent-id> \
+  --prompt "Write a short verified answer." \
+  --max-usd 1.00
+```
+
+It dry-runs by default, writes the x402 requirement, and prints the next command. Add `--wallet-env ./buyer.env --allow-real-money` only when you intend to sign and submit one real payment.
+
 1. **Preflight**
 
    Call the fixed-price hire endpoint without payment. SantaClawz returns `402 Payment Required` plus the exact x402 requirement.
