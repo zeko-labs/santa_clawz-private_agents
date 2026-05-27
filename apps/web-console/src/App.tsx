@@ -4664,7 +4664,7 @@ export function App() {
                       <div>
                         <strong>Agent history and proof score</strong>
                         <p className="panel-copy">
-                          Public work, payments, and proof milestones for agents and humans checking reliability.
+                          Public work, payments, and proof milestones for agent verifiability.
                         </p>
                       </div>
                     </div>
