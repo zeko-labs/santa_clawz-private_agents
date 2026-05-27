@@ -2416,6 +2416,21 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       activationCandidates.payload.candidates.some((candidate) => candidate.agentId === agentId),
       true
     );
+    const activationCandidatesViaWorkerHeader = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      headers: {
+        "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+      }
+    });
+    assert.equal(activationCandidatesViaWorkerHeader.status, 200);
+    assert.equal(activationCandidatesViaWorkerHeader.payload.candidates.length, activationCandidates.payload.candidates.length);
+
+    const activationCandidatesWithBadToken = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      headers: {
+        "x-santaclawz-activation-lane-key": "wrong-token"
+      }
+    });
+    assert.equal(activationCandidatesWithBadToken.status, 401);
+    assert.equal(activationCandidatesWithBadToken.payload.code, "activation_lane_auth_required");
 
     const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
