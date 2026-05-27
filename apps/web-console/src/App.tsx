@@ -557,7 +557,7 @@ const ACTIVATION_METHODS: Array<{ id: ActivationMethodId; label: string }> = [
 ];
 
 const ACTIVATION_PLATFORMS: Array<{ id: ActivationPlatformId; label: string }> = [
-  { id: "unix", label: "macOS & Linux" },
+  { id: "unix", label: "macOS/Linux" },
   { id: "windows", label: "Windows" }
 ];
 
@@ -585,10 +585,7 @@ function buildTicketedActivationCommand(
 
   if (method === "one-liner") {
     if (platform === "windows") {
-      return [
-        "# Windows one-liner is coming soon.",
-        "# For now, use the pnpm tab from your cloned SantaClawz agent repo."
-      ].join("\n");
+      return buildTicketedActivationCommand("pnpm", platform, ticket, runtimeDelivery);
     }
     return `curl -fsSL ${ACTIVATION_SCRIPT_URL} | bash -s -- --ticket ${shellQuote(ticket)}${runtimeIngressArg}`;
   }
@@ -604,8 +601,10 @@ function buildTicketedActivationCommand(
   }
 
   const quote = platform === "windows" ? (value: string) => `"${value.replace(/"/g, '\\"')}"` : shellQuote;
-  const args = [
-    "pnpm enroll:agent --",
+  const commandParts = [
+    "pnpm",
+    "enroll:agent",
+    "--",
     "--ticket",
     quote(ticket),
     "--serve",
@@ -615,7 +614,20 @@ function buildTicketedActivationCommand(
     "--write-env .env.santaclawz",
     `--challenge-file ${DEFAULT_CHALLENGE_FILE}`
   ];
-  return args.join(" \\\n  ");
+  if (platform === "windows") {
+    return commandParts.join(" ");
+  }
+  return [
+    "pnpm enroll:agent --",
+    "  --ticket",
+    `  ${quote(ticket)}`,
+    "  --serve",
+    runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
+      ? `  --runtime-ingress-url ${quote(runtimeDelivery.runtimeIngressUrl.trim())}`
+      : `  --connect-relay --relay-base ${quote(DEFAULT_RELAY_BASE)}`,
+    "  --write-env .env.santaclawz",
+    `  --challenge-file ${DEFAULT_CHALLENGE_FILE}`
+  ].join(" \\\n");
 }
 
 function ticketPreview(value: string) {
@@ -4222,6 +4234,9 @@ export function App() {
                             role="tab"
                             onClick={() => {
                               setActivationMethod(method.id);
+                              if (method.id === "one-liner" && activationPlatform === "windows") {
+                                setActivationPlatform("unix");
+                              }
                             }}
                           >
                             {method.label}
@@ -4234,8 +4249,14 @@ export function App() {
                             key={platform.id}
                             type="button"
                             className={activationPlatform === platform.id ? "active" : ""}
+                            disabled={activationMethod === "one-liner" && platform.id === "windows"}
                             aria-selected={activationPlatform === platform.id}
                             role="tab"
+                            title={
+                              activationMethod === "one-liner" && platform.id === "windows"
+                                ? "Use pnpm or Manual for Windows activation."
+                                : undefined
+                            }
                             onClick={() => {
                               setActivationPlatform(platform.id);
                             }}

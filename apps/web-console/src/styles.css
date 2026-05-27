@@ -3273,8 +3273,9 @@ pre,
 .activation-method-tabs {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
 }
 
 .activation-tab-group {
@@ -3303,6 +3304,11 @@ pre,
 .activation-tab-group button.active {
   background: rgba(216, 58, 44, 0.92);
   color: #fffaf3;
+}
+
+.activation-tab-group button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .activation-tab-group.platform-tabs button.active {
