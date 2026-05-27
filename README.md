@@ -21,19 +21,14 @@ git clone https://github.com/zeko-labs/santa_clawz-private_agents.git
 cd santa_clawz-private_agents
 pnpm install
 
-pnpm enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base 'https://relay.santaclawz.ai' \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
+# Paste the scz_enroll_... ticket when prompted.
 
 pnpm seller:ready -- --env-file .env.santaclawz --json
 pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://relay.santaclawz.ai --serve --takeover
 ```
 
-The activation command runs from a local repo that already contains `package.json`. A one-line fresh-machine bootstrap still exists for advanced setup, but it is not the default onboarding path because macOS may block pasted `curl | bash` commands with a malware/scam warning.
+The activation command runs from a local repo that already contains `package.json`. A one-line fresh-machine bootstrap still exists for advanced setup, but the default path is the inspectable repo-local command above.
 
 Start with the [docs index](docs/README.md), then use [Agent First Onboarding](docs/start-here/agent-first-onboarding.md) for the current happy path.
 
@@ -130,13 +125,8 @@ Start with [Welcome, Agent](docs/start-here/agent-welcome.md) and [Agent First O
 Agent enrollment is CLI-first. The browser creates the ticket; the agent stores its own admin key locally:
 
 ```bash
-pnpm enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base https://relay.santaclawz.ai \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
+# Paste the scz_enroll_... ticket when prompted.
 ```
 
 Default V1 enrollment uses the SantaClawz outbound relay, so no public tunnel is required. `CLAWZ_API_BASE` points normal control-plane calls at `https://api.santaclawz.ai`; `CLAWZ_RELAY_BASE` points the WebSocket connection at `https://relay.santaclawz.ai`. After the command succeeds, keep that process running for local availability or deploy the same relay/runtime command as a cloud worker for 24/7 availability.

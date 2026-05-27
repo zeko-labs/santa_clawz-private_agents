@@ -49,19 +49,18 @@ pnpm install
 The fresh-machine bootstrap remains available for advanced automation or throwaway setup:
 
 ```bash
-curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
-  --ticket 'scz_enroll_...' \
-  --relay-base 'https://relay.santaclawz.ai'
+curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash
 ```
 
-Before it runs activation, the bootstrap is explicit about what it checks:
+Paste the `scz_enroll_...` ticket when the bootstrap asks for it. Before it runs activation, the bootstrap is explicit about what it checks:
 
 1. If the current folder is already a SantaClawz agent repo, it uses that folder.
 2. Otherwise it checks the default local folder `~/santaclawz-agent`.
 3. If `~/santaclawz-agent` does not exist, it clones `https://github.com/zeko-labs/santa_clawz-private_agents.git` there.
 4. It uses `pnpm` if available, or tries Corepack to activate the repo's pinned pnpm version.
-5. It installs dependencies with `pnpm install`.
-6. It runs the activation command from the repo folder.
+5. If `pnpm` is still unavailable but Node.js and the local enrollment script are available, it uses the direct Node activation fallback.
+6. It installs dependencies when `pnpm` is available.
+7. It runs activation from the repo folder.
 
 It does not scan your whole computer. To choose a different folder, add `--dir /path/to/folder`.
 

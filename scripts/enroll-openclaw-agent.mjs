@@ -49,6 +49,7 @@ function printUsage() {
     [--runtime-ingress-url https://your-agent.example.com/hire] \\
     [--api-base https://api.santaclawz.ai] \\
     [--relay-base https://relay.santaclawz.ai] \\
+    [--local-hire-url http://127.0.0.1:8797/hire] \\
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
@@ -65,6 +66,7 @@ Notes:
   enroll:openclaw remains available as a backwards-compatible alias.
   Default mode is the SantaClawz outbound relay: no public tunnel is required.
   --serve starts the starter local ingress and --connect-relay keeps an outbound relay open.
+  --local-hire-url routes relay jobs to an already running private /hire worker.
   --relay-base overrides only the websocket relay host. Use it when the public website/API
   host is a frontend proxy that does not support websocket upgrades.
   Advanced self-hosting can pass --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
@@ -112,6 +114,12 @@ async function promptForEnrollmentTicket() {
   } finally {
     rl.close();
   }
+}
+
+function normalizeEnrollmentTicketValue(value) {
+  const normalized = String(value ?? "").trim().replace(/\r/g, "");
+  const match = /scz_enroll_enr_[a-f0-9]{20}_[a-f0-9]{64}/i.exec(normalized);
+  return match ? match[0] : normalized;
 }
 
 function normalizeBaseUrl(value) {
@@ -304,6 +312,15 @@ function localHireUrlFor(baseUrl) {
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return "";
 }
 
 async function connectRelay(options) {
@@ -605,8 +622,16 @@ if (!ticket) {
   }
   if (!ticket) {
     printUsage();
-    throw new Error("ticket is required.");
+    console.error("Activation ticket is required. Run `pnpm enroll:agent -- --serve` and paste the scz_enroll_... ticket when prompted.");
+    process.exit(1);
   }
+}
+ticket = normalizeEnrollmentTicketValue(ticket);
+try {
+  parseEnrollmentTicket(ticket);
+} catch {
+  console.error("Activation ticket is malformed. Expected scz_enroll_enr_<20 hex chars>_<64 hex chars>. Copy the ticket value from SantaClawz Connect.");
+  process.exit(1);
 }
 
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);
@@ -629,6 +654,10 @@ const challengeFile =
 const ingressHost = typeof args["ingress-host"] === "string" ? args["ingress-host"].trim() : DEFAULT_INGRESS_HOST;
 const ingressPort = typeof args["ingress-port"] === "string" ? args["ingress-port"].trim() : DEFAULT_INGRESS_PORT;
 const shouldServe = Boolean(args.serve);
+const explicitLocalHireUrl =
+  typeof args["local-hire-url"] === "string" && args["local-hire-url"].trim().length > 0
+    ? args["local-hire-url"].trim()
+    : firstNonEmptyString(process.env.CLAWZ_LOCAL_HIRE_URL, process.env.OPENCLAW_LOCAL_HIRE_URL, process.env.OPENCLAW_INTERNAL_HIRE_URL);
 const requestedRuntimeIngressUrl = runtimeIngressUrlFromArgs(args, "");
 const shouldUseRelay = Boolean(args["connect-relay"]) || !requestedRuntimeIngressUrl;
 const shouldVerify = !args["no-verify"];
@@ -641,6 +670,20 @@ const allowIncomplete = Boolean(args["allow-incomplete"]);
 let ingress = null;
 let heartbeatInterval = null;
 let relay = null;
+
+function enrollmentErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/already been redeemed/i.test(message)) {
+    return "Ticket is already redeemed. Resume relay from the private .env.santaclawz file instead of retrying this one-time ticket.";
+  }
+  if (/expired/i.test(message)) {
+    return "Activation ticket expired. Create a fresh ticket in SantaClawz Connect, then run activation again.";
+  }
+  if (/ticket.*not found|ticket secret/i.test(message)) {
+    return "Activation ticket was rejected. Copy a fresh ticket from SantaClawz Connect and paste only the scz_enroll_... value.";
+  }
+  return message;
+}
 
 try {
   if (shouldServe) {
@@ -656,14 +699,16 @@ try {
   const localOnlyFallback = shouldServe && isLocalUrl(apiBase) ? ingress?.baseUrl : "";
   const runtimeIngressUrl = shouldUseRelay ? "" : runtimeIngressUrlFromArgs(args, localOnlyFallback);
   const relayLocalIngressTarget = shouldUseRelay
-    ? shouldServe && ingress?.baseUrl
-      ? ingress.baseUrl
-      : process.env.CLAWZ_LOCAL_INGRESS_URL?.trim() || process.env.OPENCLAW_LOCAL_INGRESS_URL?.trim() || ""
+    ? explicitLocalHireUrl
+      ? ""
+      : shouldServe && ingress?.baseUrl
+        ? ingress.baseUrl
+        : process.env.CLAWZ_LOCAL_INGRESS_URL?.trim() || process.env.OPENCLAW_LOCAL_INGRESS_URL?.trim() || ""
     : "";
-  if (shouldUseRelay && !relayLocalIngressTarget) {
-    throw new Error("Relay mode needs --serve or CLAWZ_LOCAL_INGRESS_URL so signed jobs have a local ingress target.");
+  if (shouldUseRelay && !relayLocalIngressTarget && !explicitLocalHireUrl) {
+    throw new Error("Relay mode needs --serve, --local-hire-url, or CLAWZ_LOCAL_INGRESS_URL so signed jobs have a worker target.");
   }
-  const relayLocalHireUrl = shouldUseRelay ? localHireUrlFor(relayLocalIngressTarget) : "";
+  const relayLocalHireUrl = shouldUseRelay ? localHireUrlFor(explicitLocalHireUrl || relayLocalIngressTarget) : "";
 
   const preEnrollmentChallenge = buildPreEnrollmentChallenge(ticket, runtimeIngressUrl);
   const preEnrollmentChallengePath = writePrivateFile(
@@ -810,6 +855,12 @@ try {
       }
     });
   }
+} catch (error) {
+  console.error(enrollmentErrorMessage(error));
+  if (process.env.CLAWZ_DEBUG) {
+    console.error(error);
+  }
+  process.exitCode = 1;
 } finally {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
