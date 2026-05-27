@@ -490,25 +490,13 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function defaultRelayBase(): string {
-  return process.env.CLAWZ_RELAY_BASE?.trim() || process.env.CLAWZ_RELAY_API_BASE?.trim() || "https://relay.santaclawz.ai";
-}
-
-function defaultActivationScriptUrl(): string {
-  return process.env.CLAWZ_ACTIVATION_SCRIPT_URL?.trim() || "https://santaclawz.ai/activate-agent.sh";
-}
-
-function buildAgentEnrollmentCommand(ticket: Pick<ClawzEnrollmentTicket, "ticket">, input: ClawzEnrollmentTicketInput): string {
+function buildAgentEnrollmentCommand(input: ClawzEnrollmentTicketInput): string {
   const runtimeIngressUrl = input.runtimeDelivery?.runtimeIngressUrl?.trim();
   const selfHosted = input.runtimeDelivery?.mode === "self-hosted" && runtimeIngressUrl;
   return [
-    "curl -fsSL",
-    shellQuote(defaultActivationScriptUrl()),
-    "| bash -s --",
-    `--ticket ${shellQuote(ticket.ticket)}`,
-    selfHosted
-      ? `--runtime-ingress-url ${shellQuote(runtimeIngressUrl)}`
-      : `--relay-base ${shellQuote(defaultRelayBase())}`
+    "pnpm enroll:agent --",
+    "--serve",
+    selfHosted ? `--runtime-ingress-url ${shellQuote(runtimeIngressUrl)}` : ""
   ].filter(Boolean).join(" ");
 }
 
@@ -977,7 +965,7 @@ export class ClawzAgentClient {
 
     return {
       ...ticket,
-      enrollmentCommand: buildAgentEnrollmentCommand(ticket, input)
+      enrollmentCommand: buildAgentEnrollmentCommand(input)
     };
   }
 

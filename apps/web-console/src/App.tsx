@@ -103,10 +103,6 @@ const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
   "execution-intent-refunded",
   "operator-dispatch"
 ]);
-const DEFAULT_RELAY_BASE =
-  typeof import.meta.env.VITE_CLAWZ_RELAY_BASE === "string" && import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
-    ? import.meta.env.VITE_CLAWZ_RELAY_BASE.trim()
-    : "https://relay.santaclawz.ai";
 const STARTER_AGENT_SERVICE_KEY = "agent_job_pack";
 const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
@@ -547,16 +543,13 @@ function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-function buildActivationCommand(ticket: string, runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
+function buildActivationCommand(runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
   const args = [
     "pnpm enroll:agent --",
-    `--ticket ${shellQuote(ticket)}`,
     "--serve",
     runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
       ? `--runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
-      : `--connect-relay --relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`,
-    "--write-env .env.santaclawz",
-    "--challenge-file .well-known/santaclawz-agent-challenge.json"
+      : ""
   ];
   return args.filter(Boolean).join(" ");
 }
@@ -2798,7 +2791,7 @@ export function App() {
           minute: "2-digit"
         })}.`
       : "No ticket yet";
-    const sdkCliEnrollCommand = buildActivationCommand(sdkTicket?.ticket ?? "scz_enroll_...", {
+    const sdkCliEnrollCommand = buildActivationCommand({
       mode: sdkUsesSelfHostedRuntime ? "self-hosted" : "santaclawz-relay",
       runtimeIngressUrl: sdkDraft.runtimeIngressUrl
     });
@@ -3528,7 +3521,7 @@ export function App() {
             ? "Verify control of the OpenClaw ingress before SantaClawz can publish this agent."
             : "Use the current enrollment flow so the agent can prove URL control, store its admin key locally, and publish on Zeko."
           : "Prove control of the OpenClaw ingress before SantaClawz can publish this agent on Zeko.";
-  const cliEnrollCommand = buildActivationCommand(enrollmentTicket?.ticket ?? "scz_enroll_...", profile.runtimeDelivery);
+  const cliEnrollCommand = buildActivationCommand(profile.runtimeDelivery);
   const enrollmentTicketExpiryTime = enrollmentTicket
     ? new Date(enrollmentTicket.expiresAtIso).toLocaleTimeString([], {
         hour: "numeric",
@@ -4127,40 +4120,33 @@ export function App() {
                       <summary className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>
-                            Run from the cloned SantaClawz agent repo folder containing package.json.{" "}
+                            Type this from the cloned SantaClawz agent repo folder, then paste the ticket when prompted.{" "}
                             <a className="activation-command-summary-link" href={PUBLICCLAWZ_ENROLLMENT_GUIDE_URL} target="_blank" rel="noreferrer">
                               Use activation guide to help with new agent setup.
                             </a>
                           </strong>
-                          <code>pnpm enroll:agent -- --ticket {shellQuote(enrollmentTicket.ticket)} ...</code>
+                          <code>{cliEnrollCommand}</code>
                         </span>
                         <button
                           type="button"
                           className="activation-command-copy-button"
                           onClick={(event: ClickEvent) => {
                             event.preventDefault();
-                            void copyValue("cli-enroll-command", cliEnrollCommand);
+                            void copyValue("activation-ticket", enrollmentTicket.ticket);
                           }}
                         >
                           <span className="copy-icon" aria-hidden="true" />
-                          {copiedKey === "cli-enroll-command" ? "Copied" : "Copy"}
+                          {copiedKey === "activation-ticket" ? "Ticket copied" : "Copy ticket"}
                         </button>
                       </summary>
                       <div className="command-strip compact-command-strip activation-command-strip">
                         <code className="activation-command-code">
                           <span>pnpm enroll:agent --</span>
-                          <span>
-                            --ticket <mark>{shellQuote(enrollmentTicket.ticket)}</mark>
-                          </span>
                           <span>--serve</span>
-                          <span>
-                            {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim()
-                              ? `--runtime-ingress-url ${shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}`
-                              : `--connect-relay --relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`}
-                          </span>
-                          <span>--write-env .env.santaclawz</span>
-                          <span>--challenge-file .well-known/santaclawz-agent-challenge.json</span>
-                          <span className="activation-command-muted">does not download or execute a remote shell script</span>
+                          {profile.runtimeDelivery.mode === "self-hosted" && profile.runtimeDelivery.runtimeIngressUrl?.trim() ? (
+                            <span>--runtime-ingress-url {shellQuote(profile.runtimeDelivery.runtimeIngressUrl.trim())}</span>
+                          ) : null}
+                          <span className="activation-command-muted">When prompted, paste the copied scz_enroll_... ticket.</span>
                         </code>
                       </div>
                     </details>

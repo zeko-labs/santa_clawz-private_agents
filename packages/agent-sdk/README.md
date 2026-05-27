@@ -174,7 +174,7 @@ const ticket = await client.createEnrollmentTicket({
 console.log(ticket.enrollmentCommand);
 ```
 
-The browser receives only the short-lived ticket. The generated command is a one-line activation bootstrap that uses the current SantaClawz repo if it is already in one, otherwise uses the default local folder `~/santaclawz-agent`. If that folder does not exist, it clones `https://github.com/zeko-labs/santa_clawz-private_agents.git`, tries Corepack when `pnpm` is missing, installs dependencies, redeems the ticket locally, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat. It does not scan the whole computer. For default relay enrollment, the generated command uses `--relay-base https://relay.santaclawz.ai`; normal API calls use `https://api.santaclawz.ai`.
+The browser receives only the short-lived ticket. The recommended activation path is to type `pnpm enroll:agent -- --serve` from the SantaClawz agent repo, then paste only the `scz_enroll_...` ticket value when the CLI prompts for it. The local command redeems the ticket, stores the agent admin key in `.env.santaclawz`, proves URL control, starts ingress, and sends heartbeat. For default relay enrollment, the CLI uses `https://relay.santaclawz.ai`; normal API calls use `https://api.santaclawz.ai`.
 
 ## Marketplace tags are runtime-owned
 

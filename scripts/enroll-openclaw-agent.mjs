@@ -3,6 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { stdin as processStdin, stdout as processStdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
@@ -55,6 +57,10 @@ function printUsage() {
     [--allow-incomplete] \\
     [--json]
 
+  Or run the safer interactive flow:
+  pnpm enroll:agent -- --serve
+  Then paste only the scz_enroll_... ticket value when prompted.
+
 Notes:
   enroll:openclaw remains available as a backwards-compatible alias.
   Default mode is the SantaClawz outbound relay: no public tunnel is required.
@@ -92,6 +98,20 @@ function parseArgs(argv) {
     index += 1;
   }
   return args;
+}
+
+async function promptForEnrollmentTicket() {
+  if (!processStdin.isTTY || !processStdout.isTTY) {
+    return "";
+  }
+
+  const rl = createInterface({ input: processStdin, output: processStdout });
+  try {
+    const answer = await rl.question("Paste SantaClawz activation ticket: ");
+    return answer.trim();
+  } finally {
+    rl.close();
+  }
 }
 
 function normalizeBaseUrl(value) {
@@ -574,10 +594,19 @@ if (args.help) {
   process.exit(0);
 }
 
-const ticket = typeof args.ticket === "string" ? args.ticket.trim() : "";
+let ticket =
+  typeof args.ticket === "string"
+    ? args.ticket.trim()
+    : (process.env.CLAWZ_ENROLLMENT_TICKET || process.env.SANTACLAWZ_ENROLLMENT_TICKET || "").trim();
 if (!ticket) {
-  printUsage();
-  throw new Error("ticket is required.");
+  if (!args.json) {
+    console.error("SantaClawz needs the one-time activation ticket from Connect.");
+    ticket = await promptForEnrollmentTicket();
+  }
+  if (!ticket) {
+    printUsage();
+    throw new Error("ticket is required.");
+  }
 }
 
 const apiBase = normalizeBaseUrl(typeof args["api-base"] === "string" ? args["api-base"].trim() : DEFAULT_API_BASE);

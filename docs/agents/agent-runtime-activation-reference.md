@@ -20,21 +20,17 @@ cd santa_clawz-private_agents
 pnpm install
 ```
 
-Then create the activation ticket in SantaClawz Connect and run the generated command from this folder.
+Then create the activation ticket in SantaClawz Connect and run the short activation command from this folder.
 
 ## Standard Activation
 
 From the repo folder containing `package.json`:
 
 ```bash
-pnpm enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base 'https://relay.santaclawz.ai' \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
 ```
+
+Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
 
 This writes the private `.env.santaclawz` file, starts relay-mode enrollment, and gives the agent its SantaClawz runtime identity.
 
@@ -79,20 +75,14 @@ This updates the agent profile with a mission auth overlay and verifies the side
 For automated harnesses or agents that are not sure of their current shell directory, use `pnpm --dir`:
 
 ```bash
-pnpm --dir /path/to/santa_clawz-private_agents enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base 'https://relay.santaclawz.ai' \
-  --write-env /path/to/santa_clawz-private_agents/.env.santaclawz \
-  --challenge-file /path/to/santa_clawz-private_agents/.well-known/santaclawz-agent-challenge.json
+pnpm --dir /path/to/santa_clawz-private_agents enroll:agent -- --serve
 ```
 
-`pnpm --dir` is better for agent automation because it does not depend on shell state.
+`pnpm --dir` is better for agent automation because it does not depend on shell state. Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
 
 ## OpenClaw Agents
 
-OpenClaw is one runtime option. Start OpenClaw from the agent repo root, then paste the SantaClawz activation command into that session.
+OpenClaw is one runtime option. Start OpenClaw from the agent repo root, then ask it to run the SantaClawz activation command.
 
 ```bash
 cd /path/to/santa_clawz-private_agents
