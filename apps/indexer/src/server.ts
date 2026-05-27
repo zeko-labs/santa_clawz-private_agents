@@ -80,7 +80,11 @@ const EVM_RECONCILIATION_FETCH_TIMEOUT_MS = 30_000;
 const MAX_EVM_RECONCILIATION_LOOKBACK_BLOCKS = 250_000;
 const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
   0,
-  Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_TTL_MS ?? "0"))
+  Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_TTL_MS ?? "2000"))
+);
+const CONSOLE_STATE_CACHE_MAX_ENTRIES = Math.max(
+  10,
+  Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_MAX_ENTRIES ?? "120"))
 );
 const USD_MICRO_SCALE = 1_000_000n;
 const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
@@ -111,6 +115,32 @@ const consoleStateCache = new Map<string, {
   expiresAtMs: number;
   payload: unknown;
 }>();
+const consoleStateInflight = new Map<string, {
+  epoch: number;
+  promise: Promise<unknown>;
+}>();
+let consoleStateCacheEpoch = 0;
+
+function clearConsoleStateCache() {
+  consoleStateCacheEpoch += 1;
+  consoleStateCache.clear();
+  consoleStateInflight.clear();
+}
+
+function pruneConsoleStateCache(nowMs = Date.now()) {
+  for (const [key, entry] of consoleStateCache.entries()) {
+    if (entry.expiresAtMs <= nowMs) {
+      consoleStateCache.delete(key);
+    }
+  }
+  while (consoleStateCache.size > CONSOLE_STATE_CACHE_MAX_ENTRIES) {
+    const oldest = consoleStateCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    consoleStateCache.delete(oldest.value);
+  }
+}
 
 function deploymentVersion() {
   return {
@@ -148,6 +178,13 @@ interface IndexerResponse<ResBody = unknown> {
   send(body: string | Buffer): IndexerResponse<ResBody>;
   status(code: number): IndexerResponse<ResBody>;
   type(contentType: string): IndexerResponse<ResBody>;
+}
+interface CacheInvalidationRequest {
+  method: string;
+}
+interface CacheInvalidationResponse {
+  statusCode: number;
+  on(eventName: "finish", handler: () => void): void;
 }
 
 function route<
@@ -190,6 +227,18 @@ app.options(
 );
 app.use(apiAuthMiddleware(securityConfig));
 app.use(express.json({ limit: "64kb" }));
+app.use((request: CacheInvalidationRequest, response: CacheInvalidationResponse, next: () => void) => {
+  if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") {
+    next();
+    return;
+  }
+  response.on("finish", () => {
+    if (response.statusCode >= 200 && response.statusCode < 400) {
+      clearConsoleStateCache();
+    }
+  });
+  next();
+});
 
 const clawzDataDir = process.env.CLAWZ_DATA_DIR?.trim() || path.join(process.cwd(), ".clawz-data");
 const controlPlane = await ClawzControlPlane.boot(clawzDataDir);
@@ -2573,58 +2622,26 @@ app.get("/version", route((_request, response) => {
   });
 }));
 
-app.get("/ready", route(async (_request, response) => {
-  try {
-    const deployment = await controlPlane.getDeploymentState();
-    const checks = [
-      {
-        label: "control-plane",
-        ok: true
-      },
-      {
-        label: "privacy-runtime",
-        ok: deployment.keyManagement !== "in-memory-default-export",
-        detail: deployment.keyManagement
-      },
-      {
-        label: "api-auth",
-        ok: !securityConfig.apiAuthRequired || securityConfig.apiKeyConfigured,
-        detail: securityConfig.apiAuthRequired ? "required" : "not-required"
-      },
-      {
-        label: "cors",
-        ok: !securityConfig.productionMode || securityConfig.allowedOrigins !== "*",
-        detail: securityConfig.allowedOrigins === "*" ? "*" : securityConfig.allowedOrigins.join(",")
-      },
-      {
-        label: "zeko-deployment",
-        ok: deployment.mode !== "local-runtime",
-        detail: deployment.mode
-      }
-    ];
-    const payload = {
-      ok: checks.every((check) => check.ok),
-      service: "clawz-indexer",
-      generatedAtIso: new Date().toISOString(),
-      version: deploymentVersion(),
-      security: publicSecurityStatus(securityConfig),
-      deployment: {
-        mode: deployment.mode,
-        networkId: deployment.networkId,
-        keyManagement: deployment.keyManagement,
-        privacyGrade: deployment.privacyGrade
-      },
-      checks
-    };
-
-    response.status(payload.ok ? 200 : 503).json(payload);
-  } catch (error) {
-    response.status(503).json({
-      ok: false,
-      service: "clawz-indexer",
-      error: error instanceof Error ? error.message : "Unable to evaluate readiness."
-    });
-  }
+app.get("/ready", route((_request, response) => {
+  const checks = [
+    {
+      label: "process",
+      ok: true
+    },
+    {
+      label: "api-auth",
+      ok: !securityConfig.apiAuthRequired || securityConfig.apiKeyConfigured,
+      detail: securityConfig.apiAuthRequired ? "required" : "not-required"
+    }
+  ];
+  response.json({
+    ok: true,
+    service: "clawz-indexer",
+    generatedAtIso: new Date().toISOString(),
+    version: deploymentVersion(),
+    security: publicSecurityStatus(securityConfig),
+    checks
+  });
 }));
 
 const handleDiscoveryDocument = route(async (request, response) => {
@@ -2717,26 +2734,31 @@ app.get("/api/console/state", route(async (request, response) => {
       response.json(cached.payload);
       return;
     }
-    const payload = await controlPlane.getConsoleState(
-      sessionId
-        ? { sessionId, ...(adminKey ? { adminKey } : {}) }
-        : agentId
-          ? { agentId, ...(adminKey ? { adminKey } : {}) }
-          : { ...(adminKey ? { adminKey } : {}) }
-    );
-    if (CONSOLE_STATE_CACHE_TTL_MS > 0) {
+    const cacheEpoch = consoleStateCacheEpoch;
+    const inflight = consoleStateInflight.get(cacheKey);
+    if (inflight && inflight.epoch === cacheEpoch) {
+      const payload = await inflight.promise;
+      response.set("x-santaclawz-cache", "inflight");
+      response.json(payload);
+      return;
+    }
+    const consoleStateOptions = sessionId
+      ? { sessionId, ...(adminKey ? { adminKey } : {}) }
+      : agentId
+        ? { agentId, ...(adminKey ? { adminKey } : {}) }
+        : { ...(adminKey ? { adminKey } : {}) };
+    const payloadPromise = controlPlane.getConsoleState(consoleStateOptions)
+      .finally(() => {
+        consoleStateInflight.delete(cacheKey);
+      });
+    consoleStateInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
+    const payload = await payloadPromise;
+    if (CONSOLE_STATE_CACHE_TTL_MS > 0 && cacheEpoch === consoleStateCacheEpoch) {
       consoleStateCache.set(cacheKey, {
         expiresAtMs: Date.now() + CONSOLE_STATE_CACHE_TTL_MS,
         payload
       });
-      if (consoleStateCache.size > 80) {
-        const nowMs = Date.now();
-        for (const [key, entry] of consoleStateCache.entries()) {
-          if (entry.expiresAtMs <= nowMs || consoleStateCache.size > 80) {
-            consoleStateCache.delete(key);
-          }
-        }
-      }
+      pruneConsoleStateCache();
     }
     response.set("x-santaclawz-cache", "miss");
     response.json(payload);
