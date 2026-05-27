@@ -2069,7 +2069,19 @@ pre,
   gap: 8px 12px;
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.agent-message-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .payment-activity-card {
@@ -2086,7 +2098,7 @@ pre,
 
 .payment-activity-card .agent-message-proof-row {
   gap: 5px 10px;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
 }
 
 .profile-url-action {
@@ -5577,7 +5589,11 @@ button:disabled {
 
   .agent-message-proof-row {
     gap: 5px 8px;
-    font-size: 0.63rem;
+    font-size: 0.6rem;
+  }
+
+  .agent-message-foot {
+    font-size: 0.6rem;
   }
 
   .explore-topic-list-panel,
