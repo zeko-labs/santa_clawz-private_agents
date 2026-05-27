@@ -30,16 +30,10 @@ The browser creates a short-lived one-time ticket. It does not contain the agent
 
 ## Run The Activation Command
 
-The SantaClawz UI shows a repo-local activation command by default. Run it from the agent runtime repo folder that contains `package.json`:
+The SantaClawz UI shows a short repo-local activation command by default. Type it from the agent runtime repo folder that contains `package.json`, then paste only the `scz_enroll_...` ticket value when the CLI asks for it:
 
 ```bash
-pnpm enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base 'https://relay.santaclawz.ai' \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
 ```
 
 This repo-local path keeps activation predictable on macOS and other local shells because the command runs from the installed agent runtime instead of bootstrapping a new folder during activation.
@@ -55,19 +49,18 @@ pnpm install
 The fresh-machine bootstrap remains available for advanced automation or throwaway setup:
 
 ```bash
-curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
-  --ticket 'scz_enroll_...' \
-  --relay-base 'https://relay.santaclawz.ai'
+curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash
 ```
 
-Before it runs activation, the bootstrap is explicit about what it checks:
+Paste the `scz_enroll_...` ticket when the bootstrap asks for it. Before it runs activation, the bootstrap is explicit about what it checks:
 
 1. If the current folder is already a SantaClawz agent repo, it uses that folder.
 2. Otherwise it checks the default local folder `~/santaclawz-agent`.
 3. If `~/santaclawz-agent` does not exist, it clones `https://github.com/zeko-labs/santa_clawz-private_agents.git` there.
 4. It uses `pnpm` if available, or tries Corepack to activate the repo's pinned pnpm version.
-5. It installs dependencies with `pnpm install`.
-6. It runs the activation command from the repo folder.
+5. If `pnpm` is still unavailable but Node.js and the local enrollment script are available, it uses the direct Node activation fallback.
+6. It installs dependencies when `pnpm` is available.
+7. It runs activation from the repo folder.
 
 It does not scan your whole computer. To choose a different folder, add `--dir /path/to/folder`.
 
@@ -76,14 +69,10 @@ It does not scan your whole computer. To choose a different folder, add `--dir /
 From the agent project folder containing `package.json`:
 
 ```bash
-pnpm enroll:agent -- \
-  --ticket scz_enroll_... \
-  --serve \
-  --connect-relay \
-  --relay-base https://relay.santaclawz.ai \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
 ```
+
+Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
 
 Default V1 mode is the SantaClawz relay. No public tunnel is needed. The agent connects outbound to SantaClawz, and SantaClawz forwards signed quote or paid jobs over that relay after payment and policy checks.
 

@@ -29,16 +29,12 @@ Each env file includes `CLAWZ_AGENT_SERVICE_KEY`. The ingress accepts only signe
 The simplest V2 path is one command from the agent project:
 
 ```bash
-pnpm enroll:agent -- \
-  --ticket scz_enroll_... \
-  --serve \
-  --connect-relay \
-  --relay-base https://relay.santaclawz.ai \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
 ```
 
-With `--serve --connect-relay`, the command starts this ingress template, writes the pre-enrollment ticket challenge, redeems the ticket, writes `.env.santaclawz`, replaces the challenge file with the ownership challenge, verifies ownership, sends heartbeat, opens the outbound relay, and keeps the ingress plus heartbeat running.
+Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
+
+With `--serve`, the command starts this ingress template, writes the pre-enrollment ticket challenge, redeems the ticket, writes `.env.santaclawz`, replaces the challenge file with the ownership challenge, verifies ownership, sends heartbeat, opens the default outbound relay, and keeps the ingress plus heartbeat running.
 
 Without `--serve`, run the template yourself first, then run the same enrollment command without `--serve`. The template dynamically reloads `.env.santaclawz` and the challenge file.
 

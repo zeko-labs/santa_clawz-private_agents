@@ -1,5 +1,6 @@
 export * from "./events/event-types.js";
 export * from "./events/validation.js";
+export * from "./agent-communication/envelope.js";
 export * from "./golden/vectors.js";
 export * from "./hire/request.js";
 export * from "./hire/return.js";
@@ -7,6 +8,7 @@ export * from "./hire/quote-acceptance.js";
 export * from "./hashing/digest.js";
 export * from "./interop/agent-proof.js";
 export * from "./interop/verify-agent-proof.js";
+export * from "./job-pack/router.js";
 export * from "./leaves/builders.js";
 export * from "./leaves/types.js";
 export * from "./manifests/capability-manifest.js";

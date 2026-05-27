@@ -11,6 +11,7 @@ target_dir="${SANTACLAWZ_AGENT_DIR:-$DEFAULT_DIR}"
 repo_url="${SANTACLAWZ_AGENT_REPO_URL:-$DEFAULT_REPO_URL}"
 relay_base="${SANTACLAWZ_RELAY_BASE:-$DEFAULT_RELAY_BASE}"
 runtime_ingress_url=""
+local_hire_url=""
 skip_install="false"
 no_enroll="false"
 dry_run="false"
@@ -20,7 +21,9 @@ usage() {
 SantaClawz agent activation bootstrap
 
 Usage:
-  bash activate-agent.sh --ticket scz_enroll_...
+  bash activate-agent.sh
+
+Then paste the scz_enroll_... activation ticket when prompted.
 
 What this script checks:
   1. If the current folder is already a SantaClawz agent repo, it uses it.
@@ -30,12 +33,13 @@ What this script checks:
 It does not scan your whole computer.
 
 Options:
-  --ticket <ticket>              Required activation ticket.
+  --ticket <ticket>              Optional activation ticket. Full old commands are accepted; the ticket is extracted.
   --dir <path>                   Override default folder. Default: ~/santaclawz-agent
   --repo-url <url>               Override repo URL.
   --relay-base <url>             Override relay URL.
   --runtime-ingress-url <url>    Use self-hosted runtime URL instead of SantaClawz relay.
-  --skip-install                 Skip pnpm install.
+  --local-hire-url <url>         Relay jobs to an already running private /hire worker.
+  --skip-install                 Skip dependency install.
   --no-enroll                    Clone/install only; do not run activation.
   --dry-run                      Print the plan and command without changing anything.
   -h, --help                     Show this help.
@@ -55,6 +59,24 @@ shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+normalize_ticket_value() {
+  printf '%s' "$1" | tr -d '\r' | sed -E -n 's/.*(scz_enroll_enr_[[:xdigit:]]{20}_[[:xdigit:]]{64}).*/\1/p' | head -n 1
+}
+
+prompt_for_ticket() {
+  printf '[SantaClawz] Paste activation ticket: '
+  IFS= read -r ticket
+}
+
+validate_ticket() {
+  local normalized
+  normalized="$(normalize_ticket_value "$ticket")"
+  if [[ -z "$normalized" ]]; then
+    die "Activation ticket is malformed. Expected scz_enroll_enr_<20 hex chars>_<64 hex chars>. Copy the ticket value from SantaClawz Connect."
+  fi
+  ticket="$normalized"
+}
+
 is_santaclawz_repo() {
   local dir="$1"
   [[ -f "$dir/package.json" ]] || return 1
@@ -66,13 +88,18 @@ package_manager_pnpm_version() {
   sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"pnpm@\([^"]*\)".*/\1/p' package.json | head -n 1
 }
 
-ensure_pnpm() {
+node_enrollment_available() {
+  command -v node >/dev/null 2>&1 || return 1
+  [[ -f scripts/enroll-openclaw-agent.mjs ]] || return 1
+}
+
+activate_pnpm() {
   if command -v pnpm >/dev/null 2>&1; then
     return 0
   fi
 
   if ! command -v corepack >/dev/null 2>&1; then
-    die "pnpm is required, and Corepack is not available. Install pnpm or install Node.js with Corepack, then rerun."
+    return 1
   fi
 
   local pnpm_version
@@ -83,9 +110,9 @@ ensure_pnpm() {
 
   log "pnpm is not installed; trying Corepack to activate pnpm@$pnpm_version."
   corepack enable || log "Corepack enable failed or needs permissions; trying Corepack prepare anyway."
-  corepack prepare "pnpm@$pnpm_version" --activate || die "Could not activate pnpm with Corepack. Install pnpm, then rerun."
+  corepack prepare "pnpm@$pnpm_version" --activate || return 1
 
-  command -v pnpm >/dev/null 2>&1 || die "Corepack completed, but pnpm is still unavailable on PATH. Restart the shell or install pnpm, then rerun."
+  command -v pnpm >/dev/null 2>&1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -115,6 +142,11 @@ while [[ $# -gt 0 ]]; do
       runtime_ingress_url="$2"
       shift 2
       ;;
+    --local-hire-url)
+      [[ $# -ge 2 ]] || die "--local-hire-url requires a value"
+      local_hire_url="$2"
+      shift 2
+      ;;
     --skip-install)
       skip_install="true"
       shift
@@ -137,7 +169,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$ticket" || "$no_enroll" == "true" ]] || die "--ticket is required"
+log "Activation starting."
+
+if [[ -z "$ticket" && "$no_enroll" != "true" ]]; then
+  prompt_for_ticket
+fi
+if [[ "$no_enroll" != "true" ]]; then
+  validate_ticket
+fi
 
 if is_santaclawz_repo "$PWD"; then
   repo_dir="$PWD"
@@ -170,6 +209,10 @@ else
   log "Would enter: $repo_dir"
 fi
 
+if [[ "$dry_run" != "true" && "$no_enroll" != "true" ]]; then
+  command -v node >/dev/null 2>&1 || die "Node.js was not found on PATH. Install Node.js, then rerun activation."
+fi
+
 if [[ "$dry_run" != "true" && -d .git ]]; then
   if ! command -v git >/dev/null 2>&1; then
     log "git is unavailable; skipping repo update."
@@ -181,41 +224,74 @@ if [[ "$dry_run" != "true" && -d .git ]]; then
   fi
 fi
 
+runner="pnpm"
+if [[ "$dry_run" != "true" ]]; then
+  if activate_pnpm; then
+    runner="pnpm"
+  elif node_enrollment_available; then
+    runner="node"
+    log "pnpm is unavailable; using direct Node activation fallback."
+  else
+    die "pnpm/Corepack are unavailable, and direct Node activation is not available. Install Node.js with Corepack or run this from the SantaClawz repo."
+  fi
+fi
+
 if [[ "$skip_install" != "true" ]]; then
-  log "Installing dependencies with pnpm."
-  if [[ "$dry_run" != "true" ]]; then
-    ensure_pnpm
+  if [[ "$dry_run" == "true" ]]; then
+    log "Would install dependencies with pnpm when available."
+  elif [[ "$runner" == "pnpm" ]]; then
+    log "Installing dependencies with pnpm."
     pnpm install --frozen-lockfile || pnpm install
+  else
+    log "Skipping dependency install because pnpm is unavailable and direct Node activation is available."
   fi
 else
   log "Skipping dependency install."
 fi
 
-activation_args=(
-  "enroll:agent"
-  "--"
-  "--ticket" "$ticket"
-  "--serve"
-)
-
-if [[ -n "$runtime_ingress_url" ]]; then
-  activation_args+=("--runtime-ingress-url" "$runtime_ingress_url")
-else
-  activation_args+=("--connect-relay" "--relay-base" "$relay_base")
-fi
-
-activation_args+=("--write-env" ".env.santaclawz" "--challenge-file" "$CHALLENGE_FILE")
-
-printf '[SantaClawz] Activation command:\n  pnpm'
-for arg in "${activation_args[@]}"; do
-  printf ' %s' "$(shell_quote "$arg")"
-done
-printf '\n'
-
 if [[ "$no_enroll" == "true" ]]; then
   log "Clone/install complete. Skipping activation because --no-enroll was provided."
   exit 0
 fi
+
+enroll_script_args=("--ticket" "$ticket")
+if [[ -n "$local_hire_url" ]]; then
+  enroll_script_args+=("--local-hire-url" "$local_hire_url")
+else
+  enroll_script_args+=("--serve")
+fi
+
+if [[ -n "$runtime_ingress_url" ]]; then
+  enroll_script_args+=("--runtime-ingress-url" "$runtime_ingress_url")
+else
+  enroll_script_args+=("--connect-relay" "--relay-base" "$relay_base")
+fi
+
+enroll_script_args+=("--write-env" ".env.santaclawz" "--challenge-file" "$CHALLENGE_FILE")
+
+pnpm_args=("enroll:agent" "--")
+for arg in "${enroll_script_args[@]}"; do
+  pnpm_args+=("$arg")
+done
+
+node_args=("scripts/enroll-openclaw-agent.mjs")
+for arg in "${enroll_script_args[@]}"; do
+  node_args+=("$arg")
+done
+
+printf '[SantaClawz] Activation command:\n  '
+if [[ "$runner" == "node" ]]; then
+  printf 'node'
+  for arg in "${node_args[@]}"; do
+    printf ' %s' "$(shell_quote "$arg")"
+  done
+else
+  printf 'pnpm'
+  for arg in "${pnpm_args[@]}"; do
+    printf ' %s' "$(shell_quote "$arg")"
+  done
+fi
+printf '\n'
 
 if [[ "$dry_run" == "true" ]]; then
   log "Dry run complete. Activation was not started."
@@ -223,5 +299,7 @@ if [[ "$dry_run" == "true" ]]; then
 fi
 
 log "Starting activation. Keep this process running to keep the relay online."
-ensure_pnpm
-exec pnpm "${activation_args[@]}"
+if [[ "$runner" == "node" ]]; then
+  exec node "${node_args[@]}"
+fi
+exec pnpm "${pnpm_args[@]}"

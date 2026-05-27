@@ -18,6 +18,7 @@ import {
   assertValidSantaClawzHireServiceIdentity,
   assertValidSantaClawzHirePolicy,
   buildSantaClawzQuoteAcceptanceMessage,
+  buildJobPackBuyerRoutePlan,
   canonicalDigest,
   paymentStatusForHireRequest,
   type AgentPaymentRail,
@@ -32,6 +33,7 @@ import {
   type ExecutionIntentState,
   type ExecutionIntentStatus,
   type ExecutionIntentTransitionType,
+  type JobPackBuyerRouterMode,
   type AgentOwnershipChallengeState,
   type AgentOwnershipState,
   type AgentOwnershipVerificationState,
@@ -1187,7 +1189,7 @@ export interface CreateProcurementIntentOptions {
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
 }
 
-export type BuyerRouterMode = "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
+export type BuyerRouterMode = JobPackBuyerRouterMode;
 
 export interface CreateBuyerRouterPlanOptions {
   taskPrompt: string;
@@ -2822,212 +2824,6 @@ function marketplaceTagsDigest(tags: AgentMarketplaceTags | MarketplaceWorkTags 
     return undefined;
   }
   return canonicalDigest(tags).sha256Hex;
-}
-
-function buyerRouterUniqueTags(values: Array<string | undefined>, limit = 12) {
-  return Array.from(new Set(sanitizeMarketplaceTagList(values.filter((value): value is string => Boolean(value))))).slice(0, limit);
-}
-
-function addBuyerRouterTags(target: string[], values?: string[]) {
-  if (values) {
-    target.push(...values);
-  }
-}
-
-const BUYER_ROUTER_RULES: Array<{
-  patterns: RegExp[];
-  jobTags?: string[];
-  capabilityTags?: string[];
-  inputTags?: string[];
-  outputTags?: string[];
-}> = [
-  {
-    patterns: [/repo/i, /code/i, /github/i, /pull request/i, /\bpr\b/i],
-    jobTags: ["repo-audit"],
-    capabilityTags: ["repo-review", "code-review"],
-    inputTags: ["github-url", "code"],
-    outputTags: ["markdown", "findings"]
-  },
-  {
-    patterns: [/security/i, /exploit/i, /vulnerability/i, /audit/i, /threat/i],
-    jobTags: ["security-review"],
-    capabilityTags: ["security-review", "risk-analysis"],
-    outputTags: ["markdown", "risk-register"]
-  },
-  {
-    patterns: [/research/i, /sources/i, /market/i, /compare/i, /summary/i],
-    jobTags: ["research"],
-    capabilityTags: ["research", "analysis"],
-    inputTags: ["web"],
-    outputTags: ["markdown", "source-list"]
-  },
-  {
-    patterns: [/image/i, /diagram/i, /mockup/i, /visual/i, /logo/i],
-    jobTags: ["image-generation"],
-    capabilityTags: ["image-generation", "design"],
-    outputTags: ["image", "artifact-manifest"]
-  },
-  {
-    patterns: [/video/i, /clip/i, /animation/i, /short-form/i],
-    jobTags: ["video-generation"],
-    capabilityTags: ["video", "creative-production"],
-    outputTags: ["video", "artifact-manifest"]
-  },
-  {
-    patterns: [/spreadsheet/i, /\bcsv\b/i, /excel/i, /table/i, /dataset/i],
-    jobTags: ["data-analysis"],
-    capabilityTags: ["data-analysis"],
-    inputTags: ["csv", "spreadsheet"],
-    outputTags: ["spreadsheet", "markdown"]
-  },
-  {
-    patterns: [/automation/i, /\bn8n\b/i, /workflow/i, /zapier/i],
-    jobTags: ["workflow-automation"],
-    capabilityTags: ["n8n-workflow", "automation"],
-    outputTags: ["json", "runbook"]
-  },
-  {
-    patterns: [/json/i, /schema/i, /api/i, /structured/i],
-    jobTags: ["structured-output"],
-    capabilityTags: ["api-integration"],
-    inputTags: ["json"],
-    outputTags: ["json"]
-  }
-];
-
-function inferBuyerRouterTags(prompt: string): MarketplaceWorkTags {
-  const jobTags: string[] = [];
-  const capabilityTags: string[] = [];
-  const inputTags: string[] = [];
-  const outputTags: string[] = [];
-  for (const rule of BUYER_ROUTER_RULES) {
-    if (rule.patterns.some((pattern) => pattern.test(prompt))) {
-      addBuyerRouterTags(jobTags, rule.jobTags);
-      addBuyerRouterTags(capabilityTags, rule.capabilityTags);
-      addBuyerRouterTags(inputTags, rule.inputTags);
-      addBuyerRouterTags(outputTags, rule.outputTags);
-    }
-  }
-  if (/patch|diff|fix|implement|bug/i.test(prompt)) {
-    outputTags.push("code-patch");
-  }
-  if (/manifest|artifact|download|file|zip|archive/i.test(prompt)) {
-    outputTags.push("artifact-manifest", "archive");
-  }
-  if (/private|confidential|sensitive|secret/i.test(prompt)) {
-    jobTags.push("private-job");
-  }
-  return {
-    jobTags: buyerRouterUniqueTags(jobTags.length > 0 ? jobTags : ["general-task"]),
-    capabilityTags: buyerRouterUniqueTags(capabilityTags),
-    inputTags: buyerRouterUniqueTags(inputTags),
-    outputTags: buyerRouterUniqueTags(outputTags.length > 0 ? outputTags : ["text"])
-  };
-}
-
-function mergeBuyerRouterTags(inferred: MarketplaceWorkTags, supplied: MarketplaceWorkTags): MarketplaceWorkTags {
-  return {
-    jobTags: buyerRouterUniqueTags([...supplied.jobTags, ...inferred.jobTags]),
-    capabilityTags: buyerRouterUniqueTags([...supplied.capabilityTags, ...inferred.capabilityTags]),
-    inputTags: buyerRouterUniqueTags([...supplied.inputTags, ...inferred.inputTags]),
-    outputTags: buyerRouterUniqueTags([...supplied.outputTags, ...inferred.outputTags])
-  };
-}
-
-function buyerRouterWorkTagValues(tags: MarketplaceWorkTags): string[] {
-  return buyerRouterUniqueTags([...tags.jobTags, ...tags.capabilityTags, ...tags.inputTags, ...tags.outputTags], 48);
-}
-
-function buyerRouterProtocolLaneTags(privacyLane: CreateBuyerRouterPlanOptions["privacyLane"] | undefined, prompt: string): string[] {
-  const lanes = [
-    privacyLane === "public-summary"
-      ? "public-summary"
-      : privacyLane === "proof-only"
-        ? "proof-trail-only"
-        : "private-job"
-  ];
-  if (/file|zip|archive|download|artifact|image|video|spreadsheet/i.test(prompt)) {
-    lanes.push("platform-scanned");
-  }
-  if (/encrypt|encrypted|confidential|sensitive/i.test(prompt)) {
-    lanes.push("buyer-encrypted");
-  }
-  return buyerRouterUniqueTags(lanes);
-}
-
-function buyerRouterDeliveryFormats(tags: MarketplaceWorkTags) {
-  return buyerRouterUniqueTags(tags.outputTags.length > 0 ? tags.outputTags : ["text"]);
-}
-
-function buyerRouterScoreAgent(agent: AgentRegistryEntry, requestedTags: string[]) {
-  const profileTags = agentMarketplaceTagValues(agent.marketplaceTags);
-  const provenTags = (agent.marketplaceTagStats ?? []).filter((stat) => requestedTags.includes(stat.tag));
-  const matchingProfileTags = requestedTags.filter((tag) => profileTags.includes(tag));
-  const reasons: string[] = [];
-  let score = 0;
-  if (agent.runtimeStatus === "live") {
-    score += 8;
-    reasons.push("live runtime");
-  }
-  if (agent.paidExecutionReady || agent.paidJobsEnabled) {
-    score += 6;
-    reasons.push("paid lane ready");
-  }
-  if (typeof agent.completionScore?.successRatePct === "number") {
-    score += Math.min(12, Math.round(agent.completionScore.successRatePct / 10));
-    reasons.push(`${agent.completionScore.successRatePct}% completion`);
-  }
-  if (matchingProfileTags.length > 0) {
-    score += matchingProfileTags.length * 5;
-    reasons.push(`declares ${matchingProfileTags.slice(0, 3).join(", ")}`);
-  }
-  if (provenTags.length > 0) {
-    score += provenTags.reduce((total, stat) => total + 10 + Math.min(8, stat.totalJobCount), 0);
-    reasons.push(`proven ${provenTags.map((stat) => `${stat.tag} ${stat.successRatePct ?? 0}%`).slice(0, 2).join(", ")}`);
-  }
-  if (agent.serviceKey === "agent_job_pack" || agent.agentId === "agent_job_pack") {
-    score += 4;
-    reasons.push("starter routing coach");
-  }
-  return {
-    agent,
-    score,
-    reasons: reasons.length > 0 ? reasons.slice(0, 4) : ["general marketplace candidate"],
-    provenTags
-  };
-}
-
-function buyerRouterMode(input: {
-  candidateCount: number;
-  prompt: string;
-  selectedAgent?: AgentRegistryEntry;
-  tags: MarketplaceWorkTags;
-}): BuyerRouterMode {
-  const broadPrompt = input.prompt.length > 420 || /compare|best|bid|who should|multiple|market|find someone/i.test(input.prompt);
-  const richMedia = input.tags.outputTags.some((tag) => tag === "image" || tag === "video" || tag === "archive");
-  if (broadPrompt || richMedia || input.candidateCount >= 3) {
-    return "procurement-bid";
-  }
-  if (input.selectedAgent?.pricingMode === "quote-required" || /quote|estimate|scope/i.test(input.prompt)) {
-    return "quote-request";
-  }
-  if (input.selectedAgent?.paidExecutionReady && input.selectedAgent.pricingMode === "fixed-exact") {
-    return "paid-execution";
-  }
-  return "direct-hire";
-}
-
-function buyerRouterNextAction(mode: BuyerRouterMode) {
-  if (mode === "procurement-bid") {
-    return "Create a procurement intent so multiple seller agents can bid before payment.";
-  }
-  if (mode === "quote-request") {
-    return "Request a quote from the selected agent before authorizing payment.";
-  }
-  if (mode === "paid-execution") {
-    return "Authorize x402 and submit a bounded paid execution.";
-  }
-  return "Direct-hire the selected agent if the price and delivery lane are clear.";
 }
 
 function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
@@ -9098,101 +8894,44 @@ export class ClawzControlPlane {
     if (budgetUsd) {
       assertUsdAmount(budgetUsd, "Buyer router budgetUsd");
     }
-    const suppliedTags = sanitizeMarketplaceWorkTags(options.marketplaceTags);
-    const inferredTags = inferBuyerRouterTags(taskPrompt);
-    const marketplaceTags = marketplaceWorkTagsAreEmpty(suppliedTags)
-      ? inferredTags
-      : mergeBuyerRouterTags(inferredTags, suppliedTags);
-    const requestedTags = buyerRouterWorkTagValues(marketplaceTags);
     const agents = await this.listRegisteredAgents();
-    const activeAgents = agents.filter((agent) => !agent.archivedAtIso);
-    const scoredCandidates = activeAgents
-      .map((agent) => buyerRouterScoreAgent(agent, requestedTags))
-      .filter((candidate) => candidate.score > 0)
-      .sort((left, right) => right.score - left.score)
-      .slice(0, 6);
-    const selectedAgent =
-      (options.selectedAgentId ? activeAgents.find((agent) => agent.agentId === options.selectedAgentId) : undefined) ??
-      scoredCandidates[0]?.agent ??
-      activeAgents[0];
-    const routingIntent = buyerRouterMode({
-      candidateCount: scoredCandidates.filter((candidate) => candidate.score >= 15).length,
-      prompt: taskPrompt,
-      ...(selectedAgent ? { selectedAgent } : {}),
-      tags: marketplaceTags
-    });
-    const protocolLaneTags = buyerRouterProtocolLaneTags(options.privacyLane, taskPrompt);
-    const deliveryFormatTags = buyerRouterDeliveryFormats(marketplaceTags);
-    const generatedAtIso = new Date().toISOString();
     const state = await this.loadState();
     const router = this.jobPackRouterSession(state);
-    const plan = {
-      schemaVersion: "santaclawz-routing-plan/1.0",
-      intelligenceSource: "protocol-state+agent-job-pack-router",
-      ...(router ? { routerAgentId: router.agentId } : {}),
-      generatedAtIso,
+    const { plan, requestedTags, routerMessage } = buildJobPackBuyerRoutePlan({
+      taskPrompt,
+      agents,
       buyerMode: options.buyerMode === "agent" ? "agent" : "human",
-      routingIntent,
-      marketplaceTags,
-      protocolLaneTags,
-      deliveryFormatTags,
-      candidateAgents: scoredCandidates.slice(0, 4).map((candidate) => ({
-        agentId: candidate.agent.agentId,
-        agentName: candidate.agent.agentName || candidate.agent.agentId,
-        matchScore: candidate.score,
-        matchReasons: candidate.reasons,
-        pricingMode: candidate.agent.pricingMode,
-        runtimeStatus: candidate.agent.runtimeStatus,
-        paidExecutionReady: candidate.agent.paidExecutionReady === true,
-        quoteReady: candidate.agent.quoteReady === true,
-        completionScorePct: candidate.agent.completionScore?.successRatePct,
-        provenTags: candidate.provenTags.slice(0, 4).map((stat) => ({
-          tag: stat.tag,
-          totalJobCount: stat.totalJobCount,
-          completedJobCount: stat.completedJobCount,
-          successRatePct: stat.successRatePct
-        }))
-      })),
-      recommendedNextAction: buyerRouterNextAction(routingIntent),
-      warnings: [
-        ...(scoredCandidates.length === 0 ? ["No strong seller match yet. Prefer procurement bidding or clarify the job brief."] : []),
-        ...(routingIntent === "paid-execution" ? ["Verify the x402 payload and keep the same idempotent payment payload on retry."] : [])
-      ],
-      routePlanDigestSha256: ""
-    };
-    const { routePlanDigestSha256: _emptyDigest, ...planForDigest } = plan;
-    const routePlanDigestSha256 = canonicalDigest(planForDigest).sha256Hex;
-    const finalPlan = { ...plan, routePlanDigestSha256 };
+      ...(options.privacyLane ? { privacyLane: options.privacyLane } : {}),
+      ...(options.marketplaceTags ? { marketplaceTags: options.marketplaceTags } : {}),
+      ...(options.selectedAgentId ? { selectedAgentId: options.selectedAgentId } : {}),
+      ...(router ? { routerAgentId: router.agentId } : {})
+    });
     const anchorCandidate = router
       ? await this.enqueueSocialAnchorCandidate({
           sessionId: router.sessionId,
           kind: "operator-dispatch",
           title: "Job Pack buyer route plan generated",
-          summary: `agent_job_pack routed buyer work as ${routingIntent} with ${requestedTags.slice(0, 4).join(", ") || "general"} tags.`,
+          summary: `agent_job_pack routed buyer work as ${plan.routingIntent} with ${requestedTags.slice(0, 4).join(", ") || "general"} tags.`,
           payload: {
             schemaVersion: "santaclawz-buyer-route-plan/1.0",
             routerAgentId: router.agentId,
-            routePlanDigestSha256,
+            routePlanDigestSha256: plan.routePlanDigestSha256,
             taskPromptDigestSha256: sha256Hex(taskPrompt),
-            buyerMode: finalPlan.buyerMode,
-            routingIntent,
-            marketplaceTags,
-            protocolLaneTags,
-            deliveryFormatTags,
-            candidateAgentIds: finalPlan.candidateAgents.map((candidate) => candidate.agentId),
+            buyerMode: plan.buyerMode,
+            routingIntent: plan.routingIntent,
+            marketplaceTags: plan.marketplaceTags,
+            protocolLaneTags: plan.protocolLaneTags,
+            deliveryFormatTags: plan.deliveryFormatTags,
+            candidateAgentIds: plan.candidateAgents.map((candidate) => candidate.agentId),
             ...(budgetUsd ? { budgetUsd } : {}),
-            generatedAtIso
+            generatedAtIso: plan.generatedAtIso
           }
         })
       : undefined;
     return {
       ok: true,
-      plan: finalPlan,
-      routerMessage: `I read this as ${requestedTags.slice(0, 5).join(", ") || "general work"}. Best route: ${routingIntent.replace(/-/g, " ")}. ${
-        finalPlan.candidateAgents[0]
-          ? `Top match: ${finalPlan.candidateAgents[0].agentName} because ${finalPlan.candidateAgents[0].matchReasons[0]}.`
-          : "I need more agent history before ranking sellers."
-      }`,
+      plan,
+      routerMessage,
       ...(anchorCandidate
         ? {
             routingAnchor: {

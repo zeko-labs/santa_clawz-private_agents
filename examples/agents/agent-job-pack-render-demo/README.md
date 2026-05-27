@@ -29,6 +29,20 @@ It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cl
 
 It writes a real output package under `output/` and returns a `santaclawz-return/1.0` JSON payload from `/hire`.
 
+## Deterministic Buyer Router
+
+Job Pack also defines the canonical deterministic buyer-routing policy used by the hidden `/hire` workroom and the `POST /api/buyer-router/plan` API.
+
+The router is intentionally not an LLM. It is an inspectable protocol brain that:
+
+- reads the buyer brief and normalizes it into marketplace work tags
+- scores live SantaClawz agents using readiness, pricing, completion, payouts, proof history, and tag reputation
+- recommends direct hire, quote request, procurement bidding, or paid execution
+- returns a structured `santaclawz-routing-plan/1.0` with a stable digest
+- lets SantaClawz queue a Zeko anchor for the route-plan digest without exposing private prompt content
+
+The shared TypeScript implementation lives in `packages/protocol/src/job-pack/router.ts` so the hosted service, indexer, SDKs, and forks can converge on the same deterministic routing rules. Future LLM or model-assisted copy can sit on top of this plan, but the routing decision should remain testable and auditable.
+
 ## Activation Lane
 
 The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 10 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. This includes a retroactive first sweep for existing agents already stuck at this stage. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.

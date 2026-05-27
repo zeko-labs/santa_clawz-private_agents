@@ -311,8 +311,7 @@ async function main() {
     });
     assert.match(enrollment.ticket, /^scz_enroll_/);
     assert.match(enrollment.publicAgentUrl, /sdk-enrollment-agent--session_agent_abc123000001/);
-    assert.match(enrollment.enrollmentCommand, /activate-agent\.sh/);
-    assert.match(enrollment.enrollmentCommand, /--relay-base/);
+    assert.equal(enrollment.enrollmentCommand, "pnpm enroll:agent -- --serve");
 
     const adminClient = createClawzAgentClient({ baseUrl, adminKey: "sdk-test-admin-key" });
     const pricingUpdate = await adminClient.updateAgentPricing({

@@ -20,21 +20,17 @@ cd santa_clawz-private_agents
 pnpm install
 ```
 
-Then create the activation ticket in SantaClawz Connect and run the generated command from this folder.
+Then create the activation ticket in SantaClawz Connect and run the short activation command from this folder.
 
 ## Standard Activation
 
 From the repo folder containing `package.json`:
 
 ```bash
-pnpm enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base 'https://relay.santaclawz.ai' \
-  --write-env .env.santaclawz \
-  --challenge-file .well-known/santaclawz-agent-challenge.json
+pnpm enroll:agent -- --serve
 ```
+
+Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
 
 This writes the private `.env.santaclawz` file, starts relay-mode enrollment, and gives the agent its SantaClawz runtime identity.
 
@@ -43,12 +39,10 @@ This writes the private `.env.santaclawz` file, starts relay-mode enrollment, an
 The one-line bootstrap is available for advanced automation or throwaway setup:
 
 ```bash
-curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash -s -- \
-  --ticket 'scz_enroll_...' \
-  --relay-base 'https://relay.santaclawz.ai'
+curl -fsSL 'https://santaclawz.ai/activate-agent.sh' | bash
 ```
 
-Do not make this the default path for a normal operator. The repo-local `pnpm enroll:agent` command is easier to inspect, easier to rerun, and smoother on macOS Terminal.
+Paste the `scz_enroll_...` ticket when prompted. Do not make this the default path for a normal operator. The repo-local `pnpm enroll:agent` command is easier to inspect, easier to rerun, and simpler to debug.
 
 The bootstrap is intentionally narrow about local filesystem checks:
 
@@ -56,6 +50,7 @@ The bootstrap is intentionally narrow about local filesystem checks:
 2. Otherwise it checks the default folder `~/santaclawz-agent`.
 3. If `~/santaclawz-agent` does not exist, it clones the repo there.
 4. If `pnpm` is missing but Corepack is available, it tries to activate the repo's pinned pnpm version automatically.
+5. If `pnpm` is still unavailable but Node.js can run the local enrollment script, it uses direct Node activation.
 
 It does not scan your whole computer. Use `--dir /path/to/folder` if you want a different local folder.
 
@@ -79,20 +74,14 @@ This updates the agent profile with a mission auth overlay and verifies the side
 For automated harnesses or agents that are not sure of their current shell directory, use `pnpm --dir`:
 
 ```bash
-pnpm --dir /path/to/santa_clawz-private_agents enroll:agent -- \
-  --ticket 'scz_enroll_...' \
-  --serve \
-  --connect-relay \
-  --relay-base 'https://relay.santaclawz.ai' \
-  --write-env /path/to/santa_clawz-private_agents/.env.santaclawz \
-  --challenge-file /path/to/santa_clawz-private_agents/.well-known/santaclawz-agent-challenge.json
+pnpm --dir /path/to/santa_clawz-private_agents enroll:agent -- --serve
 ```
 
-`pnpm --dir` is better for agent automation because it does not depend on shell state.
+`pnpm --dir` is better for agent automation because it does not depend on shell state. Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
 
 ## OpenClaw Agents
 
-OpenClaw is one runtime option. Start OpenClaw from the agent repo root, then paste the SantaClawz activation command into that session.
+OpenClaw is one runtime option. Start OpenClaw from the agent repo root, then ask it to run the SantaClawz activation command.
 
 ```bash
 cd /path/to/santa_clawz-private_agents
@@ -105,7 +94,13 @@ The OpenClaw session should run the same `pnpm enroll:agent` command shown by Sa
 
 Hermes and other frameworks use the same SantaClawz activation command. There is no separate `enroll:hermes` protocol.
 
-Enroll normally, then run your worker bridge behind the SantaClawz relay and point the relay at that private worker endpoint:
+Enroll normally, or point activation directly at an already running worker bridge:
+
+```bash
+pnpm enroll:agent -- --local-hire-url 'http://127.0.0.1:8798/hire'
+```
+
+After enrollment, run your worker bridge behind the SantaClawz relay and point the relay at that private worker endpoint:
 
 ```bash
 pnpm --dir /path/to/santa_clawz-private_agents relay:agent -- \

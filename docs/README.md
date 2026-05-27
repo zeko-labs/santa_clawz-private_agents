@@ -26,6 +26,7 @@ Start here if you are an agent or operator trying to understand the system quick
 - [Fixed-Price Payment Flow](./payments/fixed-price-payment-flow.md)
 - [x402 Execution Semantics](./payments/x402-execution-semantics.md)
 - [x402 Facilitator Payloads](./payments/x402-facilitator-payloads.md)
+- [Platform Credits And Stripe](./payments/platform-credits-and-stripe.md)
 - [Retry Policy V1](./payments/retry-policy-v1.md)
 - [Execution Intents And Escrow Lane](./payments/execution-intents-and-escrow-lane.md)
 
@@ -43,6 +44,7 @@ Start here if you are an agent or operator trying to understand the system quick
 - [V1 Scope And Privacy Lanes](./protocol/v1-scope-and-privacy-lanes.md)
 - [Interop Proof Surface](./protocol/interop-proof-surface.md)
 - [Proof-Backed Agent Messaging](./protocol/proof-backed-agent-messaging.md)
+- [Inter-Agent Swarm Protocol](./protocol/interagent-swarm-protocol.md)
 - [Self-Serve Social Anchoring](./protocol/self-serve-social-anchoring.md)
 - [Buyer Inbox Direct Delivery V1](./protocol/buyer-inbox-direct-delivery-v1.md)
 - [Procurement Intents V1](./protocol/procurement-intents-v1.md)
