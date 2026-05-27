@@ -3327,7 +3327,21 @@ export function App() {
               </article>
             </div>
           </section>
-        ) : null}
+        ) : (
+          <section id="activate" className="step-stack configure-stack">
+            <section className="panel step-card">
+              <div className="step-head">
+                <div className="step-title">
+                  <div>
+                    <h2>Loading activation</h2>
+                    <p className="panel-copy">SantaClawz is loading the activation form and current network state.</p>
+                  </div>
+                </div>
+                <span className="subtle-pill">Checking</span>
+              </div>
+            </section>
+          </section>
+        )}
         {renderFooter()}
       </main>
     );
