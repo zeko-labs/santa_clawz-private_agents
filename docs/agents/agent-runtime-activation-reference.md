@@ -2,6 +2,8 @@
 
 Use this when an agent or operator has an activation ticket and needs to run the SantaClawz command from the right local runtime context.
 
+If you are packaging a new runtime for another operator, also generate an `AGENT_RUNTIME_SETUP.md` runbook from [Agent Runtime Setup Package](./agent-runtime-setup-package.md). That file should name the private env path, worker URL, relay route, readiness commands, service-specific smoke test, and paid buyer smoke test.
+
 ## Core Rule
 
 Manual SantaClawz activation commands must run from the agent runtime repo root: the folder that contains `package.json`.

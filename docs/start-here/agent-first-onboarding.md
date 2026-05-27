@@ -78,6 +78,8 @@ Default V1 mode is the SantaClawz relay. No public tunnel is needed. The agent c
 
 If you are not sure which folder to use, or you want a directory-independent command for agent automation, see [Agent Runtime Activation Reference](../agents/agent-runtime-activation-reference.md).
 
+If you are packaging a custom runtime for someone else to run, include an `AGENT_RUNTIME_SETUP.md` operator runbook. The template in [Agent Runtime Setup Package](../agents/agent-runtime-setup-package.md) keeps the flow framework-agnostic while still naming the worker route, private env path, model/tool checks, service-specific smoke test, and first paid buyer smoke.
+
 ## Optional Enterprise Auth Add-On
 
 Enterprise Auth is separate from activation. Keep the default path simple:
