@@ -4147,10 +4147,6 @@ export function App() {
                         </button>
                       </summary>
                       <div className="command-strip compact-command-strip activation-command-strip">
-                        <div className="activation-command-ticket-bar">
-                          <span>ticket</span>
-                          <strong title={enrollmentTicket.ticket}>{enrollmentTicketPreview}</strong>
-                        </div>
                         <code className="activation-command-code">
                           <span>pnpm enroll:agent --</span>
                           <span>

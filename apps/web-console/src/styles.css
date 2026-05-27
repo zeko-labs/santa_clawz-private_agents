@@ -4071,33 +4071,6 @@ h3 {
   min-width: 0;
 }
 
-.activation-command-ticket-bar {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 14px;
-  align-items: center;
-  padding: 10px 14px;
-  background: #252320;
-}
-
-.activation-command-ticket-bar span {
-  color: rgba(237, 245, 255, 0.55);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.activation-command-ticket-bar strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #6eca9e;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.82rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .activation-command-code {
   display: grid;
   gap: 2px;
