@@ -3590,23 +3590,20 @@ export function App() {
   const paidJobActivityCount = agentJobActivityStats?.paidExecutionCount ?? paidOutcomeFallbackCount;
   const paidCompletedActivityCount = agentJobActivityStats?.completedJobCount ?? agentCompletionScore?.completedJobCount ?? 0;
   const paidIncompleteActivityCount = agentJobActivityStats?.failedJobCount ?? agentCompletionScore?.failedJobCount ?? 0;
-  const privatePaidActivityCount = agentJobActivityStats?.privatePaidExecutionCount ?? 0;
+  const publicJobActivityCount = agentJobActivityStats?.publicJobCount ?? paidOutcomeFallbackCount;
+  const privateJobActivityCount = agentJobActivityStats?.privateJobCount ?? 0;
   const agentJobActivityLabel =
-    paidJobActivityCount > 0
-      ? `${paidJobActivityCount} paid jobs`
-      : agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
-        ? "No paid jobs yet"
-        : paidOutcomeFallbackCount > 0
-          ? `${paidOutcomeFallbackCount} paid outcomes`
-          : "No job totals yet";
+    agentJobActivityStats || paidOutcomeFallbackCount > 0
+      ? `${publicJobActivityCount} public / ${privateJobActivityCount} private`
+      : "No job totals yet";
   const agentJobActivityDetail =
     paidJobActivityCount > 0
-      ? `${paidCompletedActivityCount} completed / ${paidIncompleteActivityCount} incomplete${privatePaidActivityCount > 0 ? ` • ${privatePaidActivityCount} private` : ""}`
+      ? `${paidCompletedActivityCount} completed / ${paidIncompleteActivityCount} incomplete`
       : agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
-        ? `${agentJobActivityStats.totalJobCount} total activity records`
-      : paidOutcomeFallbackCount > 0
-        ? "Public/private split starts with new jobs"
-        : "Public and private totals will appear here";
+        ? `${agentJobActivityStats.totalJobCount} total jobs`
+        : paidOutcomeFallbackCount > 0
+          ? "Visibility split starts with new jobs"
+          : "Public/private jobs will appear here";
   const agentTrustSignals = [
     { label: "Published", complete: published },
     { label: "Verified", complete: state.ownership.status === "verified" },

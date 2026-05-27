@@ -3081,6 +3081,35 @@ pre,
   justify-content: flex-end;
 }
 
+.profile-status-stack .subtle-pill {
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  font-weight: 800;
+}
+
+.profile-status-stack .subtle-pill.runtime-status-live {
+  border-color: rgba(71, 151, 84, 0.36);
+  background: rgba(94, 186, 111, 0.12);
+  color: #2d6e38;
+}
+
+.profile-status-stack .subtle-pill.runtime-status-waiting {
+  border-color: rgba(196, 136, 36, 0.36);
+  background: rgba(246, 191, 85, 0.14);
+  color: #80571a;
+}
+
+.profile-status-stack .subtle-pill.runtime-status-demo {
+  border-color: rgba(33, 81, 150, 0.34);
+  background: rgba(43, 99, 180, 0.12);
+  color: #244b83;
+}
+
+.profile-status-stack .subtle-pill.runtime-status-offline {
+  border-color: rgba(185, 45, 34, 0.32);
+  background: rgba(185, 45, 34, 0.1);
+  color: #9a3129;
+}
+
 .hire-title-row {
   margin-bottom: 4px;
 }
