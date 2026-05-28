@@ -181,6 +181,10 @@ pre,
   gap: 8px;
 }
 
+.site-mobile-social-links {
+  display: none;
+}
+
 .site-social-link {
   display: inline-flex;
   align-items: center;
@@ -209,6 +213,10 @@ pre,
   display: block;
   width: 21px;
   height: 21px;
+}
+
+.site-social-link.x svg {
+  transform: translateX(3px);
 }
 
 .site-social-link.discord svg {
@@ -6952,6 +6960,21 @@ button:disabled {
     width: 100%;
     justify-content: flex-start;
     flex: none;
+  }
+
+  .site-mobile-social-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 2px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 250, 243, 0.12);
+  }
+
+  .site-mobile-social-links .site-social-link {
+    width: 42px;
+    height: 38px;
   }
 
   .site-footer {

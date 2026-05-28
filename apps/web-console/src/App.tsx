@@ -2919,6 +2919,21 @@ export function App() {
           >
             Explore
           </button>
+          <div className="site-mobile-social-links" aria-label="Community links">
+            {SOCIAL_LINKS.map((link) => (
+              <a
+                key={link.label}
+                className={`site-social-link ${link.icon}`}
+                href={link.href}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={link.label}
+                title={link.label}
+              >
+                <SocialIcon icon={link.icon} />
+              </a>
+            ))}
+          </div>
         </nav>
 
         <div className="site-header-actions">
