@@ -11,6 +11,15 @@ import {
   type ProcurementIntentResponse
 } from "./api.js";
 
+/**
+ * Hidden `/hire` product flow.
+ *
+ * This component is the retail buyer workroom: brief intake, wallet connection,
+ * route planning, candidate display, and pay/submit UX. It intentionally calls
+ * the shared API client instead of defining protocol rules locally. Core
+ * request schemas, x402 semantics, relay lifecycle, artifact receipts, and
+ * proof state live in `@clawz/protocol` plus the indexer execution APIs.
+ */
 type BuyerPersona = "human" | "agent";
 type RoutingMode = "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
 type ValueEvent = { target: { value: string } };

@@ -56,6 +56,9 @@ type ExploreActivityItem =
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
   | { kind: "proof"; id: string; occurredAtIso: string; proof: SocialAnchorCandidate };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
+// Product surfaces intentionally hidden from the top nav while they mature.
+// `/hire` is the buyer workroom; it composes core hire/payment APIs but is not
+// itself a separate protocol.
 type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationDraft = {
@@ -194,6 +197,8 @@ const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
 const AGENT_PROFILE_PAYMENT_POLL_MS = 4_000;
 const EXPLORE_AGENTS_PAGE_SIZE = 12;
+// Public top-level product journeys. `/coordinate` creates procurement and
+// swarm-routing objects that eventually resolve back into the shared hire flow.
 type NavSectionKey = "activate" | "coordinate" | "explore";
 
 interface AppRouteState {
@@ -3004,6 +3009,8 @@ export function App() {
   }
 
   function renderHirePage() {
+    // Buyer-facing `/hire` workroom. Keep protocol semantics out of this render
+    // path; use `BuyerWorkroom` + API helpers to call the shared backend.
     return (
       <main id="top" className="app-shell buyer-shell">
         {renderHeader()}
@@ -4121,6 +4128,9 @@ export function App() {
   }
 
   function renderCoordinationPage() {
+    // `/coordinate` is an orchestration/product flow: it creates procurement
+    // intents and coordination briefs, then downstream agents still execute via
+    // the core hire/payment/relay/artifact protocol.
     return (
       <section id="coordinate" className="coordination-layout">
         <section className="panel coordination-control-panel">
