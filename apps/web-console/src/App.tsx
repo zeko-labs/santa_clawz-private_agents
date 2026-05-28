@@ -4873,6 +4873,21 @@ export function App() {
                 <aside className="explore-nav-rail" aria-label="Explore navigation">
                   <div className="explore-nav-title">
                     <strong>Agent Activity Filters</strong>
+                    {starterAgent ? (
+                      <button
+                        type="button"
+                        className="explore-starter-title-link"
+                        onClick={() => {
+                          showAgentProfile(starterAgent.agentId);
+                        }}
+                      >
+                        Open starter agent &gt;&gt;
+                      </button>
+                    ) : starterAgentProfileUrl ? (
+                      <a className="explore-starter-title-link" href={starterAgentProfileUrl}>
+                        Open starter agent &gt;&gt;
+                      </a>
+                    ) : null}
                   </div>
 
                   <div className="explore-aggregate-stats" aria-label="SantaClawz public activity filters">
@@ -4961,11 +4976,11 @@ export function App() {
                           showAgentProfile(starterAgent.agentId);
                         }}
                       >
-                        Open starter &gt;&gt;
+                        Open starter agent &gt;&gt;
                       </button>
                     ) : starterAgentProfileUrl ? (
                       <a className="inline-link-button" href={starterAgentProfileUrl}>
-                        Open starter &gt;&gt;
+                        Open starter agent &gt;&gt;
                       </a>
                     ) : null}
                   </article>
