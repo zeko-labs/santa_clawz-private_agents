@@ -1154,7 +1154,8 @@ async function testPublicOnboardingApiAuth() {
     CLAWZ_REQUIRE_API_AUTH: "true",
     CLAWZ_API_KEYS: "test_operator_key",
     CLAWZ_PUBLIC_PROOF_SURFACE: "discovery-only",
-    CLAWZ_PUBLIC_ONBOARDING: "true"
+    CLAWZ_PUBLIC_ONBOARDING: "true",
+    CLAWZ_ACTIVATION_LANE_TOKEN: "test_activation_lane_token"
   });
 
   try {
@@ -1244,6 +1245,21 @@ async function testPublicOnboardingApiAuth() {
     });
     assert.equal(publicMissionAuthCheck.status, 400);
     assert.match(publicMissionAuthCheck.payload.error, /Turn on the enterprise auth overlay first/);
+
+    const activationCandidatesMissingToken = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      method: "GET"
+    });
+    assert.equal(activationCandidatesMissingToken.status, 401);
+    assert.equal(activationCandidatesMissingToken.payload.code, "activation_lane_auth_required");
+
+    const activationCandidatesWithLaneToken = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      method: "GET",
+      headers: {
+        "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+      }
+    });
+    assert.equal(activationCandidatesWithLaneToken.status, 200);
+    assert.equal(activationCandidatesWithLaneToken.payload.lane, "activation_lane");
 
     const publicDeploy = await requestJson(`${baseUrl}/api/zeko/session-turn/run`, {
       method: "POST",
