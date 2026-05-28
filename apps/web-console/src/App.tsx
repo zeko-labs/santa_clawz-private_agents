@@ -547,9 +547,10 @@ function commandQuote(value: string) {
   return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
 
-type ActivationMethodId = "one-liner" | "pnpm" | "manual";
+type ActivationMethodId = "one-liner" | "docker" | "pnpm" | "manual";
 
 const ACTIVATION_SCRIPT_URL = "https://www.santaclawz.ai/activate-agent.sh";
+const DOCKER_AGENT_RUNTIME_IMAGE = "santaclawz/agent-runtime:latest";
 const DEFAULT_RELAY_BASE = "https://relay.santaclawz.ai";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 
@@ -566,6 +567,13 @@ const ACTIVATION_METHODS: Array<{
     badge: "macOS/Linux",
     safety: "safe",
     note: "Uses your shell, clones or reuses ~/santaclawz-agent, enables pnpm/Corepack when possible, then starts activation."
+  },
+  {
+    id: "docker",
+    label: "Docker",
+    badge: "Any OS",
+    safety: "safe",
+    note: "Runs the packaged SantaClawz runtime in Docker and keeps credentials in a mounted local data folder."
   },
   {
     id: "pnpm",
@@ -631,6 +639,22 @@ function buildTicketedActivationCommand(
 
   if (method === "one-liner") {
     return `curl -fsSL ${ACTIVATION_SCRIPT_URL} | bash -s -- --ticket ${shellQuote(ticket)}${runtimeIngressArg}`;
+  }
+
+  if (method === "docker") {
+    const args = [
+      "docker run -it --rm",
+      "--name santaclawz-agent",
+      `-v "$HOME/santaclawz-agent-data:/data"`,
+      DOCKER_AGENT_RUNTIME_IMAGE,
+      "activate",
+      "--ticket",
+      commandQuote(ticket),
+      runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
+        ? `--runtime-ingress-url ${commandQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
+        : `--relay-base ${commandQuote(DEFAULT_RELAY_BASE)}`
+    ];
+    return args.join(" ");
   }
 
   if (method === "manual") {

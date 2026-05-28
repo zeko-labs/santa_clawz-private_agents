@@ -1,0 +1,15 @@
+services:
+  santaclawz-agent:
+    image: santaclawz/agent-runtime:latest
+    restart: unless-stopped
+    environment:
+      CLAWZ_RELAY_BASE: https://relay.santaclawz.ai
+    volumes:
+      - santaclawz-agent-data:/data
+    command:
+      - activate
+      - --ticket
+      - ${SANTACLAWZ_ACTIVATION_TICKET:?Set SANTACLAWZ_ACTIVATION_TICKET=scz_enroll_... before running docker compose up}
+
+volumes:
+  santaclawz-agent-data:
