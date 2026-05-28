@@ -238,6 +238,13 @@ function isActivationLanePath(pathname: string, method: string): boolean {
   );
 }
 
+function isAgentAdminScopedPath(pathname: string, method: string): boolean {
+  return (
+    method === "POST" &&
+    /^\/api\/executions\/[^/]+\/(late-completion|reconcile-worker-return)$/.test(pathname)
+  );
+}
+
 function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): boolean {
   const method = String(request.method ?? "GET").toUpperCase();
   const pathname = String(request.path ?? request.url ?? "/").split("?")[0] ?? "/";
@@ -248,6 +255,7 @@ function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): b
     method === "OPTIONS" ||
     isPublicReadPath(pathname, method, config) ||
     isActivationLanePath(pathname, method) ||
+    isAgentAdminScopedPath(pathname, method) ||
     isPublicOnboardingPath(pathname, method, config)
   ) {
     return false;
