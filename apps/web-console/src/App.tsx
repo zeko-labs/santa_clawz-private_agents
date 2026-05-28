@@ -543,22 +543,69 @@ function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+function commandQuote(value: string) {
+  return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
 type ActivationMethodId = "one-liner" | "pnpm" | "manual";
-type ActivationPlatformId = "unix" | "windows";
 
 const ACTIVATION_SCRIPT_URL = "https://www.santaclawz.ai/activate-agent.sh";
 const DEFAULT_RELAY_BASE = "https://relay.santaclawz.ai";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 
-const ACTIVATION_METHODS: Array<{ id: ActivationMethodId; label: string }> = [
-  { id: "one-liner", label: "One-liner" },
-  { id: "pnpm", label: "pnpm" },
-  { id: "manual", label: "Manual" }
+const ACTIVATION_METHODS: Array<{
+  id: ActivationMethodId;
+  label: string;
+  badge: string;
+  safety: "safe" | "advanced";
+  note: string;
+}> = [
+  {
+    id: "one-liner",
+    label: "Setup script",
+    badge: "macOS/Linux",
+    safety: "safe",
+    note: "Uses your shell, clones or reuses ~/santaclawz-agent, enables pnpm/Corepack when possible, then starts activation."
+  },
+  {
+    id: "pnpm",
+    label: "Repo pnpm",
+    badge: "Any OS",
+    safety: "safe",
+    note: "Run from a cloned SantaClawz agent repo. Best when the runtime already has Node and pnpm."
+  },
+  {
+    id: "manual",
+    label: "Manual",
+    badge: "Advanced",
+    safety: "advanced",
+    note: "Use these values from any compatible runtime. Avoid unsigned binary downloads unless you trust or sign them."
+  }
 ];
 
-const ACTIVATION_PLATFORMS: Array<{ id: ActivationPlatformId; label: string }> = [
-  { id: "unix", label: "macOS/Linux" },
-  { id: "windows", label: "Windows" }
+const DEFAULT_ACTIVATION_METHOD = ACTIVATION_METHODS[0]!;
+
+const ACTIVATION_STEPS = [
+  {
+    label: "Redeem ticket",
+    detail: "Validates this activation against SantaClawz."
+  },
+  {
+    label: "Write .env.santaclawz",
+    detail: "Stores agent credentials locally."
+  },
+  {
+    label: "Serve challenge",
+    detail: "Publishes the .well-known proof file."
+  },
+  {
+    label: "Connect relay",
+    detail: "Opens the persistent relay path."
+  },
+  {
+    label: "Send heartbeat",
+    detail: "Marks the agent live when ready."
+  }
 ];
 
 function buildActivationCommand(runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
@@ -574,7 +621,6 @@ function buildActivationCommand(runtimeDelivery: { mode: string; runtimeIngressU
 
 function buildTicketedActivationCommand(
   method: ActivationMethodId,
-  platform: ActivationPlatformId,
   ticket: string,
   runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }
 ) {
@@ -584,9 +630,6 @@ function buildTicketedActivationCommand(
       : "";
 
   if (method === "one-liner") {
-    if (platform === "windows") {
-      return buildTicketedActivationCommand("pnpm", platform, ticket, runtimeDelivery);
-    }
     return `curl -fsSL ${ACTIVATION_SCRIPT_URL} | bash -s -- --ticket ${shellQuote(ticket)}${runtimeIngressArg}`;
   }
 
@@ -600,34 +643,18 @@ function buildTicketedActivationCommand(
     ].join("\n");
   }
 
-  const quote = platform === "windows" ? (value: string) => `"${value.replace(/"/g, '\\"')}"` : shellQuote;
-  const commandParts = [
-    "pnpm",
-    "enroll:agent",
-    "--",
+  const args = [
+    "pnpm enroll:agent --",
     "--ticket",
-    quote(ticket),
+    commandQuote(ticket),
     "--serve",
     runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
-      ? `--runtime-ingress-url ${quote(runtimeDelivery.runtimeIngressUrl.trim())}`
-      : `--connect-relay --relay-base ${quote(DEFAULT_RELAY_BASE)}`,
+      ? `--runtime-ingress-url ${commandQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
+      : `--connect-relay --relay-base ${commandQuote(DEFAULT_RELAY_BASE)}`,
     "--write-env .env.santaclawz",
     `--challenge-file ${DEFAULT_CHALLENGE_FILE}`
   ];
-  if (platform === "windows") {
-    return commandParts.join(" ");
-  }
-  return [
-    "pnpm enroll:agent --",
-    "  --ticket",
-    `  ${quote(ticket)}`,
-    "  --serve",
-    runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
-      ? `  --runtime-ingress-url ${quote(runtimeDelivery.runtimeIngressUrl.trim())}`
-      : `  --connect-relay --relay-base ${quote(DEFAULT_RELAY_BASE)}`,
-    "  --write-env .env.santaclawz",
-    `  --challenge-file ${DEFAULT_CHALLENGE_FILE}`
-  ].join(" \\\n");
+  return args.join(" ");
 }
 
 function ticketPreview(value: string) {
@@ -1870,7 +1897,6 @@ export function App() {
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("one-liner");
-  const [activationPlatform, setActivationPlatform] = useState<ActivationPlatformId>("unix");
   const [urlReservationSalt, setUrlReservationSalt] = useState<string>(createUrlReservationSalt());
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const [sdkDraft, setSdkDraft] = useState<SdkWidgetDraft>({
@@ -3622,9 +3648,11 @@ export function App() {
     : "";
   const enrollmentTicketPreview = enrollmentTicket ? ticketPreview(enrollmentTicket.ticket) : "";
   const activationCommand = enrollmentTicket
-    ? buildTicketedActivationCommand(activationMethod, activationPlatform, enrollmentTicket.ticket, profile.runtimeDelivery)
+    ? buildTicketedActivationCommand(activationMethod, enrollmentTicket.ticket, profile.runtimeDelivery)
     : cliEnrollCommand;
   const activationCommandPreview = activationCommand.split("\n")[0];
+  const selectedActivationMethod =
+    ACTIVATION_METHODS.find((method) => method.id === activationMethod) ?? DEFAULT_ACTIVATION_METHOD;
   const activationCopyLabel =
     activationMethod === "manual"
       ? copiedKey === "activation-command"
@@ -3633,12 +3661,7 @@ export function App() {
       : copiedKey === "activation-command"
         ? "Copied"
         : "Copy command";
-  const activationMethodNote =
-    activationMethod === "one-liner"
-      ? "Installs or reuses ~/santaclawz-agent, then activates with this ticket."
-      : activationMethod === "pnpm"
-        ? "Run from a cloned SantaClawz agent repo with dependencies installed."
-        : "Use these values from any compatible runtime or framework.";
+  const activationMethodNote = selectedActivationMethod.note;
   const activationAgentId = registeredAgentId ?? enrollmentTicket?.reservedAgentId ?? autoPublicAgentId;
   const activationRegistryAgent = activationAgentId
     ? registry.find((agent) => agent.agentId === activationAgentId) ?? null
@@ -4223,6 +4246,7 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
+                    <p className="activation-method-label">How are you running the agent?</p>
                     <div className="activation-method-tabs" aria-label="Activation method">
                       <div className="activation-tab-group" role="tablist" aria-label="Activation method">
                         {ACTIVATION_METHODS.map((method) => (
@@ -4234,37 +4258,19 @@ export function App() {
                             role="tab"
                             onClick={() => {
                               setActivationMethod(method.id);
-                              if (method.id === "one-liner" && activationPlatform === "windows") {
-                                setActivationPlatform("unix");
-                              }
                             }}
                           >
-                            {method.label}
+                            <span>{method.label}</span>
+                            <small>{method.badge}</small>
                           </button>
                         ))}
                       </div>
-                      <div className="activation-tab-group platform-tabs" role="tablist" aria-label="Activation platform">
-                        {ACTIVATION_PLATFORMS.map((platform) => (
-                          <button
-                            key={platform.id}
-                            type="button"
-                            className={activationPlatform === platform.id ? "active" : ""}
-                            disabled={activationMethod === "one-liner" && platform.id === "windows"}
-                            aria-selected={activationPlatform === platform.id}
-                            role="tab"
-                            title={
-                              activationMethod === "one-liner" && platform.id === "windows"
-                                ? "Use pnpm or Manual for Windows activation."
-                                : undefined
-                            }
-                            onClick={() => {
-                              setActivationPlatform(platform.id);
-                            }}
-                          >
-                            {platform.label}
-                          </button>
-                        ))}
-                      </div>
+                    </div>
+                    <div className={`activation-safety-note ${selectedActivationMethod.safety}`}>
+                      <span aria-hidden="true" />
+                      {selectedActivationMethod.safety === "safe"
+                        ? "No standalone app binary download; this runs through an existing trusted runtime."
+                        : "Advanced path: keep credentials local and use signed or trusted tooling."}
                     </div>
                     <div className="activation-command-details">
                       <div className="activation-command-summary">
@@ -4285,6 +4291,17 @@ export function App() {
                       </div>
                       <div className="command-strip compact-command-strip activation-command-strip">
                         <pre className="activation-command-code">{activationCommand}</pre>
+                      </div>
+                    </div>
+                    <div className="activation-steps-card" aria-label="What activation does">
+                      <p>What this does</p>
+                      <div>
+                        {ACTIVATION_STEPS.map((step) => (
+                          <span key={step.label}>
+                            <strong>{step.label}</strong>
+                            <small>{step.detail}</small>
+                          </span>
+                        ))}
                       </div>
                     </div>
                   </div>

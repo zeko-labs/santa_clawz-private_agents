@@ -3270,17 +3270,28 @@ pre,
   margin-top: 2px;
 }
 
+.activation-method-label {
+  margin: 0;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .activation-method-tabs {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-start;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .activation-tab-group {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
+  width: 100%;
   gap: 3px;
   padding: 4px;
   border: 1px solid rgba(17, 36, 56, 0.08);
@@ -3294,11 +3305,25 @@ pre,
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  display: grid;
+  gap: 1px;
+  flex: 1 1 120px;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.02em;
-  padding: 6px 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.activation-tab-group button small {
+  color: inherit;
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  opacity: 0.62;
+  text-transform: uppercase;
 }
 
 .activation-tab-group button.active {
@@ -3306,14 +3331,41 @@ pre,
   color: #fffaf3;
 }
 
-.activation-tab-group button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
+.activation-safety-note {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
-.activation-tab-group.platform-tabs button.active {
-  background: rgba(22, 113, 88, 0.14);
+.activation-safety-note span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.activation-safety-note.safe {
+  background: rgba(22, 113, 88, 0.1);
   color: var(--success);
+}
+
+.activation-safety-note.safe span {
+  background: var(--success);
+}
+
+.activation-safety-note.advanced {
+  background: rgba(184, 103, 30, 0.12);
+  color: #8a4f12;
+}
+
+.activation-safety-note.advanced span {
+  background: #a86618;
 }
 
 .activation-command-details {
@@ -4410,6 +4462,48 @@ h3 {
 .activation-command-code .activation-command-muted {
   color: rgba(237, 245, 255, 0.58);
   font-style: italic;
+}
+
+.activation-steps-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(17, 36, 56, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.activation-steps-card p {
+  margin: 0;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.activation-steps-card > div {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.activation-steps-card span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.activation-steps-card strong {
+  color: var(--ink);
+  font-size: 0.75rem;
+}
+
+.activation-steps-card small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.3;
 }
 
 .activation-command-copy-button {
@@ -5617,6 +5711,28 @@ button:disabled {
 
   .compact-head > div {
     min-width: 0;
+  }
+
+  .activation-tab-group {
+    flex-direction: column;
+  }
+
+  .activation-tab-group button {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .activation-command-summary {
+    flex-direction: column;
+  }
+
+  .activation-command-summary .activation-command-copy-button {
+    align-self: flex-start;
+    margin-left: 0;
+  }
+
+  .activation-steps-card > div {
+    grid-template-columns: 1fr;
   }
 
   .choice-chip {
