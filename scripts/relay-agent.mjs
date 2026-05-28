@@ -22,7 +22,7 @@ const DEFAULT_INGRESS_HOST = "127.0.0.1";
 const DEFAULT_INGRESS_PORT = "8797";
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const DEFAULT_LOCAL_HIRE_TIMEOUT_MS = 45_000;
-const MAX_LOCAL_HIRE_TIMEOUT_MS = 110_000;
+const MAX_LOCAL_HIRE_TIMEOUT_MS = 300_000;
 let CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = DEFAULT_LOCAL_HIRE_TIMEOUT_MS;
 let LOCAL_HIRE_TIMEOUT_MS = DEFAULT_LOCAL_HIRE_TIMEOUT_MS;
 const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
@@ -33,7 +33,9 @@ const RELAY_AGENT_FEATURES = [
   "worker_progress",
   "local_timeout_watchdog",
   "node_http_worker_forwarding",
-  "worker_response_telemetry"
+  "worker_response_telemetry",
+  "worker_return_parse_telemetry",
+  "five_minute_sync_window"
 ];
 const RELAY_AGENT_BUILD =
   process.env.RENDER_GIT_COMMIT?.trim() ||
@@ -86,7 +88,7 @@ Notes:
   Quote-required agents can route quote_intake and paid_execution separately
   with --local-quote-url and --local-paid-url.
   CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS caps local worker forwarding and defaults to 45000.
-  Model/work agents can set it higher, up to 110000, or pass --local-timeout-ms.
+  Model/work agents can set it higher, up to 300000, or pass --local-timeout-ms.
   Keep it below the platform relay response window so buyers receive a typed worker timeout
   instead of a platform relay timeout.
   A local per-agent lock prevents duplicate relay processes. Use --takeover only
@@ -704,6 +706,23 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     responded = true;
     return sendJson(payload);
   };
+  const sendWorkerProgress = (step, status = "completed", extra = {}) => {
+    sendJson({
+      type: "hire_worker_progress",
+      messageId: message.messageId,
+      requestId,
+      requestBodyDigestSha256,
+      step,
+      status,
+      occurredAtIso: new Date().toISOString(),
+      relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
+      relayAgentBuild: RELAY_AGENT_BUILD,
+      relayAgentFeatures: RELAY_AGENT_FEATURES,
+      localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
+      elapsedMs: Date.now() - receivedAtMs,
+      ...extra
+    });
+  };
   const timeoutEnvelope = () => ({
     type: "hire_response",
     messageId: message.messageId,
@@ -738,24 +757,31 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
   }, LOCAL_HIRE_TIMEOUT_MS + 250);
   try {
     if (relayStarterFastPathEnabled(agentId)) {
-      sendJson({
-        type: "hire_worker_progress",
-        messageId: message.messageId,
-        requestId,
-        step: "received_by_worker",
-        status: "completed",
-        occurredAtIso: new Date().toISOString(),
-        detail: "agent_job_pack deterministic relay fast path",
-        relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
-        relayAgentBuild: RELAY_AGENT_BUILD,
-        relayAgentFeatures: RELAY_AGENT_FEATURES,
-        localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS
+      sendWorkerProgress("received_by_worker", "completed", {
+        detail: "agent_job_pack deterministic relay fast path"
       });
       clearTimeout(watchdog);
       const body = buildStarterFastPathReturn(typeof request.body === "string" ? request.body : "{}");
+      sendWorkerProgress("worker_http_response_received", "completed", {
+        detail: "agent_job_pack deterministic worker response generated",
+        workerStatusCode: 200,
+        workerResponseBytes: Buffer.byteLength(body, "utf8"),
+        workerResponseDigestSha256: sha256Hex(body)
+      });
+      sendWorkerProgress("worker_return_parse_started", "completed", {
+        detail: "normalizing santaclawz-return payload"
+      });
       const normalized = normalizeWorkerResponseBody({
         body,
         requestBody: typeof request.body === "string" ? request.body : "{}"
+      });
+      sendWorkerProgress("worker_return_parse_completed", normalized.parseError ? "failed" : "completed", {
+        detail: normalized.normalized ? "worker response normalized" : "worker response already canonical",
+        workerStatusCode: 200,
+        workerResponseBytes: Buffer.byteLength(body, "utf8"),
+        workerResponseDigestSha256: sha256Hex(body),
+        relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
+        relayBodyDigestSha256: sha256Hex(normalized.body)
       });
       const responseEnvelope = {
           type: "hire_response",
@@ -771,6 +797,14 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
         relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
         relayBodyDigestSha256: sha256Hex(normalized.body)
       };
+      sendWorkerProgress("hire_response_prepared", "completed", {
+        detail: "prepared hire_response frame for API",
+        workerStatusCode: 200,
+        workerResponseBytes: Buffer.byteLength(body, "utf8"),
+        workerResponseDigestSha256: sha256Hex(body),
+        relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
+        relayBodyDigestSha256: sha256Hex(normalized.body)
+      });
       const sent = sendHireResponseOnce(responseEnvelope);
       console.error(JSON.stringify({
         event: "relay_starter_fast_path_completed",
@@ -784,18 +818,11 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       }));
       return;
     }
-    sendJson({
-      type: "hire_worker_progress",
-      messageId: message.messageId,
-      requestId,
-      step: "received_by_worker",
-      status: "completed",
-      occurredAtIso: new Date().toISOString(),
+    sendWorkerProgress("received_by_worker", "completed", {
       detail: `forwarding to ${targetUrl}`,
-      relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
-      relayAgentBuild: RELAY_AGENT_BUILD,
-      relayAgentFeatures: RELAY_AGENT_FEATURES,
-      localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS
+    });
+    sendWorkerProgress("worker_http_request_started", "completed", {
+      detail: `POST ${targetUrl}`
     });
     const response = await postWorkerRequest(targetUrl, {
       headers: request.headers && typeof request.headers === "object" ? request.headers : {},
@@ -804,11 +831,31 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     });
     clearTimeout(watchdog);
     const body = response.body;
+    sendWorkerProgress("worker_http_response_received", "completed", {
+      detail: `worker returned HTTP ${response.status}`,
+      workerStatusCode: response.status,
+      workerResponseBytes: Buffer.byteLength(body, "utf8"),
+      workerResponseDigestSha256: sha256Hex(body)
+    });
+    sendWorkerProgress("worker_return_parse_started", "completed", {
+      detail: "normalizing santaclawz-return payload",
+      workerStatusCode: response.status,
+      workerResponseBytes: Buffer.byteLength(body, "utf8"),
+      workerResponseDigestSha256: sha256Hex(body)
+    });
     const normalized = normalizeWorkerResponseBody({
       body,
       requestBody: typeof request.body === "string" ? request.body : "{}"
     });
     const bodyBytes = Buffer.byteLength(normalized.body, "utf8");
+    sendWorkerProgress("worker_return_parse_completed", normalized.parseError ? "failed" : "completed", {
+      detail: normalized.normalized ? "worker response normalized" : "worker response already canonical",
+      workerStatusCode: response.status,
+      workerResponseBytes: Buffer.byteLength(body, "utf8"),
+      workerResponseDigestSha256: sha256Hex(body),
+      relayBodyBytes: bodyBytes,
+      relayBodyDigestSha256: sha256Hex(normalized.body)
+    });
     const responseEnvelope = {
       type: "hire_response",
       messageId: message.messageId,
@@ -827,6 +874,14 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       relayBodyBytes: bodyBytes,
       relayBodyDigestSha256: sha256Hex(normalized.body)
     };
+    sendWorkerProgress("hire_response_prepared", "completed", {
+      detail: "prepared hire_response frame for API",
+      workerStatusCode: response.status,
+      workerResponseBytes: Buffer.byteLength(body, "utf8"),
+      workerResponseDigestSha256: sha256Hex(body),
+      relayBodyBytes: bodyBytes,
+      relayBodyDigestSha256: sha256Hex(normalized.body)
+    });
     const sent = sendHireResponseOnce(responseEnvelope);
     console.error(JSON.stringify({
       event: "relay_hire_response_sent",

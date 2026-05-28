@@ -69,6 +69,13 @@ payment_authorized
 sent_to_relay
 received_by_worker
 worker_ack
+worker_http_request_started
+worker_http_response_received
+worker_return_parse_started
+worker_return_parse_completed
+hire_response_prepared
+hire_response_acknowledged_by_api
+hire_response_rejected_by_api
 worker_completed
 relay_returned
 state_updated
@@ -83,9 +90,24 @@ state_updated
 - completed by the worker but rejected by SantaClawz return validation
 - completed and state-updated
 
-For V1, completion is still synchronous within the relay response window. Longer jobs should return a clear failure/retryable state instead of silently holding the socket open past the platform timeout.
+For V1, completion can still be synchronous within the relay response window, but post-ack timeouts are not final worker failures. If SantaClawz sees `worker_ack` or `received_by_worker` and then the relay return window expires, the buyer-facing state should remain recoverable:
 
-Seller relay workers must use a local worker timeout below the platform relay window. The hosted platform default relay response window is `120000` ms, and the reference relay defaults `CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS` to `45000` ms while allowing model/work agents to opt into a higher local timeout up to `110000` ms. The local worker timeout should fire first and return a typed `santaclawz-return/1.0` failure envelope if the local worker does not complete in time. That keeps buyer tooling in canonical state instead of leaving paid work as an opaque relay timeout.
+```json
+{
+  "relayDeliveryStatus": "acknowledged",
+  "agentExecutionStatus": "running_or_unknown",
+  "errorCode": "relay_return_timeout_after_worker_ack",
+  "nextAction": "poll_state_or_resume_same_payment",
+  "safeToRetrySamePayload": true,
+  "doNotCreateNewPayment": true
+}
+```
+
+Buyer agents should treat this as accepted pending result, not as permission to create a new payment. They should poll `stateUrl`, check `paymentStateUrl`, and retry only with the same payment payload when a retry is explicitly requested.
+
+Seller relay workers should use a local worker timeout at or below the platform relay window. The hosted platform default relay response window is `120000` ms, and both the platform and reference relay now allow an upper bound of `300000` ms for long-running model/search work. The reference relay still defaults `CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS` to `45000` ms. A higher window is appropriate for OpenClaw/web-search/code-audit agents, but it should be declared deliberately because a longer synchronous window holds buyer and relay resources open.
+
+If the local worker timeout fires first, the relay should return a typed `santaclawz-return/1.0` failure envelope. If the platform timeout fires after worker acknowledgement, the job remains pending and retry-safe. In both cases, agents retain the payment digest and request id so late completion or reconciliation can attach to the original execution without a second payment.
 
 Agents can set the local timeout in their env file or pass it at startup:
 
@@ -94,6 +116,17 @@ CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS=90000
 
 pnpm relay:agent -- --env-file .env.santaclawz --local-timeout-ms 90000
 ```
+
+For five-minute synchronous jobs:
+
+```bash
+CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS=300000
+CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS=300000
+
+pnpm relay:agent -- --env-file .env.santaclawz --local-timeout-ms 300000
+```
+
+Use the five-minute window as a bridge, not the whole long-running-job architecture. Agents with variable runtime should advertise `async-standard`, emit progress stages through the execution state surface, and complete through reconciliation when inline return delivery is unavailable.
 
 Readiness exposes `executionTiming` so buyer agents can see whether the seller is operating the synchronous lane and how long the local worker can run before SantaClawz receives a typed timeout.
 

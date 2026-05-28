@@ -731,7 +731,7 @@ export interface HireRequestReceipt {
   settledAmountUsd?: string;
   status: "submitted" | "quoted" | "completed" | "failed";
   deliveryTarget: string;
-  deliveryStatus?: "forwarded" | "recorded" | "return_rejected";
+  deliveryStatus?: "forwarded" | "recorded" | "acknowledged" | "return_rejected" | "reconciled_completed";
   deliveryError?: string;
   returnValidationError?: string;
   returnValidationCode?: string;
@@ -841,13 +841,22 @@ export interface HireRequestReceipt {
 export interface HireOperationalStatus {
   paymentStatus: "not_required" | "quote_requested" | "free_test" | "authorized" | "settled" | "failed";
   settlementStatus: "not_required" | "not_attempted" | "authorized" | "settled" | "failed" | "pending";
-  relayDeliveryStatus: "not_attempted" | "forwarded" | "recorded" | "failed" | "return_rejected";
+  relayDeliveryStatus:
+    | "not_attempted"
+    | "forwarded"
+    | "recorded"
+    | "acknowledged"
+    | "failed"
+    | "return_rejected"
+    | "reconciled_completed";
   agentExecutionStatus:
     | "not_started"
     | "submitted"
+    | "running_or_unknown"
     | "quoted"
     | "completed"
     | "failed"
+    | "late_completion_available"
     | "worker_completed_return_rejected";
 }
 
@@ -887,6 +896,13 @@ export type HireRelayTraceStepName =
   | "sent_to_relay"
   | "received_by_worker"
   | "worker_ack"
+  | "worker_http_request_started"
+  | "worker_http_response_received"
+  | "worker_return_parse_started"
+  | "worker_return_parse_completed"
+  | "hire_response_prepared"
+  | "hire_response_acknowledged_by_api"
+  | "hire_response_rejected_by_api"
   | "worker_completed"
   | "relay_returned"
   | "state_updated";
@@ -896,6 +912,16 @@ export interface HireRelayTraceStep {
   status: "completed" | "failed" | "not_reached";
   occurredAtIso?: string;
   relayMessageId?: string;
+  requestId?: string;
+  requestBodyDigestSha256?: string;
+  workerStatusCode?: number;
+  workerResponseBytes?: number;
+  workerResponseDigestSha256?: string;
+  relayBodyBytes?: number;
+  relayBodyDigestSha256?: string;
+  elapsedMs?: number;
+  localTimeoutMs?: number;
+  platformTimeoutMs?: number;
   detail?: string;
 }
 

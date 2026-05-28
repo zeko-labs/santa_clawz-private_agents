@@ -154,6 +154,10 @@ function paidExecutionSummary(responseOk, payload) {
     settlementStatus === "settled" &&
     ["forwarded", "recorded"].includes(relayDeliveryStatus) &&
     agentExecutionStatus === "completed";
+  const acceptedPendingResult =
+    responseOk &&
+    relayDeliveryStatus === "acknowledged" &&
+    agentExecutionStatus === "running_or_unknown";
   return {
     ok: jobCompleted,
     overallOk: jobCompleted,
@@ -167,8 +171,24 @@ function paidExecutionSummary(responseOk, payload) {
     agentExecutionStatus,
     jobCompleted,
     retryable: paymentOk && !executionOk,
-    nextAction: paymentOk && !executionOk ? "retry_delivery_or_resume_execution" : jobCompleted ? "none" : "inspect_payment_state",
-    code: jobCompleted ? "paid_execution_completed" : "paid_execution_not_completed"
+    nextAction: acceptedPendingResult
+      ? "poll_state_or_resume_same_payment"
+      : paymentOk && !executionOk
+        ? "retry_delivery_or_resume_execution"
+        : jobCompleted
+          ? "none"
+          : "inspect_payment_state",
+    code: jobCompleted
+      ? "paid_execution_completed"
+      : acceptedPendingResult
+        ? "job_running_or_return_timeout"
+        : "paid_execution_not_completed",
+    ...(acceptedPendingResult
+      ? {
+          safeToRetrySamePayload: true,
+          doNotCreateNewPayment: true
+        }
+      : {})
   };
 }
 

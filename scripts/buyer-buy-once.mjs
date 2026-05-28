@@ -627,15 +627,29 @@ function paidExecutionSummary(responseOk, payload) {
     settlementStatus === "settled" &&
     ["forwarded", "recorded"].includes(relayDeliveryStatus) &&
     agentExecutionStatus === "completed";
+  const acceptedPendingResult =
+    responseOk &&
+    relayDeliveryStatus === "acknowledged" &&
+    agentExecutionStatus === "running_or_unknown";
   return {
     ok: jobCompleted,
-    code: jobCompleted ? "paid_execution_completed" : "paid_execution_not_completed",
+    code: jobCompleted
+      ? "paid_execution_completed"
+      : acceptedPendingResult
+        ? "job_running_or_return_timeout"
+        : "paid_execution_not_completed",
     paymentStatus: paymentStatus || "unknown",
     settlementStatus,
     relayDeliveryStatus,
     agentExecutionStatus,
     retryable: ["authorized", "settled", "paid", "escrowed"].includes(paymentStatus) && agentExecutionStatus !== "completed",
-    nextAction: jobCompleted ? "none" : "inspect_payment_or_execution_state"
+    nextAction: jobCompleted ? "none" : acceptedPendingResult ? "poll_state_or_resume_same_payment" : "inspect_payment_or_execution_state",
+    ...(acceptedPendingResult
+      ? {
+          safeToRetrySamePayload: true,
+          doNotCreateNewPayment: true
+        }
+      : {})
   };
 }
 
