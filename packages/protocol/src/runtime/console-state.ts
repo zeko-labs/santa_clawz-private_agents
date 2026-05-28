@@ -866,6 +866,8 @@ export interface HireDeliveryReceipt {
   target: string;
   occurredAtIso: string;
   relayMessageId?: string;
+  requestId?: string;
+  requestBodyDigestSha256?: string;
   runtimeStatusCode?: number;
   runtimeResponseBytes?: number;
   workerStatusCode?: number;
@@ -873,7 +875,9 @@ export interface HireDeliveryReceipt {
   workerResponseDigestSha256?: string;
   relayBodyBytes?: number;
   relayBodyDigestSha256?: string;
+  platformRelayTimeoutMs?: number;
   returnValidationCode?: string;
+  errorCode?: string;
   errorMessage?: string;
 }
 

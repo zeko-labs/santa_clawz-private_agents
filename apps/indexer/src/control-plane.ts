@@ -183,6 +183,8 @@ type RelayHireDeliveryHandler = (input: {
   body: string;
   deliveryTarget: string;
   relayMessageId?: string;
+  requestId?: string;
+  requestBodyDigestSha256?: string;
   workerStatusCode?: number;
   workerResponseBytes?: number;
   workerResponseDigestSha256?: string;
@@ -940,6 +942,16 @@ function relayTraceFromError(error: unknown): HireRelayTraceStep[] | undefined {
   return trace.filter((entry): entry is HireRelayTraceStep => {
     return Boolean(entry && typeof entry === "object" && typeof entry.step === "string" && typeof entry.status === "string");
   });
+}
+
+function stringPropertyFromError(error: unknown, key: string): string | undefined {
+  const value = (error as Record<string, unknown> | undefined)?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function numberPropertyFromError(error: unknown, key: string): number | undefined {
+  const value = (error as Record<string, unknown> | undefined)?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function mergeHireRelayTrace(input: {
@@ -5214,13 +5226,25 @@ export class ClawzControlPlane {
         }).catch((error: unknown) => ({
           deliveryFailed: true as const,
           deliveryError: error instanceof Error ? error.message : String(error),
+          ...(stringPropertyFromError(error, "code") ? { errorCode: stringPropertyFromError(error, "code") } : {}),
           deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(input.agentId)}`,
+          ...(stringPropertyFromError(error, "relayMessageId") ? { relayMessageId: stringPropertyFromError(error, "relayMessageId") } : {}),
+          ...(stringPropertyFromError(error, "requestId") ? { requestId: stringPropertyFromError(error, "requestId") } : {}),
+          ...(stringPropertyFromError(error, "requestBodyDigestSha256")
+            ? { requestBodyDigestSha256: stringPropertyFromError(error, "requestBodyDigestSha256") }
+            : {}),
+          ...(numberPropertyFromError(error, "platformRelayTimeoutMs")
+            ? { platformRelayTimeoutMs: numberPropertyFromError(error, "platformRelayTimeoutMs") }
+            : {}),
           ...(relayTraceFromError(error) ? { relayTrace: relayTraceFromError(error) } : {})
         }))
       : undefined;
 
     if (relayResponse && "deliveryFailed" in relayResponse) {
       const relayError = relayResponse.deliveryError;
+      const relayErrorCode = "errorCode" in relayResponse && typeof relayResponse.errorCode === "string"
+        ? relayResponse.errorCode
+        : undefined;
       const stage: HireDeliveryReceipt["stage"] = /timed out|timeout/i.test(relayError)
         ? "relay_timeout"
         : "relay_disconnected";
@@ -5232,6 +5256,19 @@ export class ClawzControlPlane {
         deliveryReceipt: this.buildHireDeliveryReceipt({
           stage,
           target: relayResponse.deliveryTarget,
+          ...("relayMessageId" in relayResponse && typeof relayResponse.relayMessageId === "string"
+            ? { relayMessageId: relayResponse.relayMessageId }
+            : {}),
+          ...("requestId" in relayResponse && typeof relayResponse.requestId === "string"
+            ? { requestId: relayResponse.requestId }
+            : {}),
+          ...("requestBodyDigestSha256" in relayResponse && typeof relayResponse.requestBodyDigestSha256 === "string"
+            ? { requestBodyDigestSha256: relayResponse.requestBodyDigestSha256 }
+            : {}),
+          ...("platformRelayTimeoutMs" in relayResponse && typeof relayResponse.platformRelayTimeoutMs === "number"
+            ? { platformRelayTimeoutMs: relayResponse.platformRelayTimeoutMs }
+            : {}),
+          ...(relayErrorCode ? { errorCode: relayErrorCode } : {}),
           errorMessage: relayError
         }),
         requestKind: signedRequest.requestKind,
@@ -5284,6 +5321,8 @@ export class ClawzControlPlane {
           stage: "return_rejected",
           target: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
           ...(relayResponse?.relayMessageId ? { relayMessageId: relayResponse.relayMessageId } : {}),
+          ...(relayResponse?.requestId ? { requestId: relayResponse.requestId } : {}),
+          ...(relayResponse?.requestBodyDigestSha256 ? { requestBodyDigestSha256: relayResponse.requestBodyDigestSha256 } : {}),
           runtimeStatusCode: response.status,
           runtimeResponseBytes: responseBytes,
           ...(relayResponse?.workerStatusCode !== undefined ? { workerStatusCode: relayResponse.workerStatusCode } : {}),
@@ -5311,6 +5350,8 @@ export class ClawzControlPlane {
         stage: protocolReturn ? "return_validated" : "runtime_responded",
         target: relayResponse?.deliveryTarget ?? signedRequest.ingressUrl,
         ...(relayResponse?.relayMessageId ? { relayMessageId: relayResponse.relayMessageId } : {}),
+        ...(relayResponse?.requestId ? { requestId: relayResponse.requestId } : {}),
+        ...(relayResponse?.requestBodyDigestSha256 ? { requestBodyDigestSha256: relayResponse.requestBodyDigestSha256 } : {}),
         runtimeStatusCode: response.status,
         runtimeResponseBytes: responseBytes,
         ...(relayResponse?.workerStatusCode !== undefined ? { workerStatusCode: relayResponse.workerStatusCode } : {}),
@@ -5344,6 +5385,8 @@ export class ClawzControlPlane {
     stage: HireDeliveryReceipt["stage"];
     target: string;
     relayMessageId?: string;
+    requestId?: string;
+    requestBodyDigestSha256?: string;
     runtimeStatusCode?: number;
     runtimeResponseBytes?: number;
     workerStatusCode?: number;
@@ -5351,7 +5394,9 @@ export class ClawzControlPlane {
     workerResponseDigestSha256?: string;
     relayBodyBytes?: number;
     relayBodyDigestSha256?: string;
+    platformRelayTimeoutMs?: number;
     returnValidationCode?: string;
+    errorCode?: string;
     errorMessage?: string;
   }): HireDeliveryReceipt {
     return {
@@ -5359,6 +5404,8 @@ export class ClawzControlPlane {
       target: input.target,
       occurredAtIso: new Date().toISOString(),
       ...(input.relayMessageId ? { relayMessageId: input.relayMessageId } : {}),
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      ...(input.requestBodyDigestSha256 ? { requestBodyDigestSha256: input.requestBodyDigestSha256 } : {}),
       ...(typeof input.runtimeStatusCode === "number" ? { runtimeStatusCode: input.runtimeStatusCode } : {}),
       ...(typeof input.runtimeResponseBytes === "number" ? { runtimeResponseBytes: input.runtimeResponseBytes } : {}),
       ...(typeof input.workerStatusCode === "number" ? { workerStatusCode: input.workerStatusCode } : {}),
@@ -5366,7 +5413,9 @@ export class ClawzControlPlane {
       ...(input.workerResponseDigestSha256 ? { workerResponseDigestSha256: input.workerResponseDigestSha256 } : {}),
       ...(typeof input.relayBodyBytes === "number" ? { relayBodyBytes: input.relayBodyBytes } : {}),
       ...(input.relayBodyDigestSha256 ? { relayBodyDigestSha256: input.relayBodyDigestSha256 } : {}),
+      ...(typeof input.platformRelayTimeoutMs === "number" ? { platformRelayTimeoutMs: input.platformRelayTimeoutMs } : {}),
       ...(input.returnValidationCode ? { returnValidationCode: input.returnValidationCode } : {}),
+      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
       ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 500) } : {})
     };
   }

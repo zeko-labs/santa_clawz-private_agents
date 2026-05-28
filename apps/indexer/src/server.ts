@@ -4473,7 +4473,9 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
     if (!verification.ok) {
       response.status(402).json(paymentSettlementFailureBody(new Error(verification.error ?? "x402 authorization was not valid."), {
         intent: context.intent,
-        paymentAuthorized: false
+        paymentAuthorized: false,
+        ...(verification.errorCode ? { errorCode: verification.errorCode } : {}),
+        ...(verification.remoteVerification ? { facilitatorDiagnostics: verification.remoteVerification } : {})
       }));
       return;
     }
@@ -5565,7 +5567,9 @@ const handleAgentHireRequest = route(async (request, response) => {
       if (!verification.ok) {
         response.status(402).json(paymentSettlementFailureBody(new Error(verification.error ?? "x402 authorization was not valid."), {
           agentId,
-          paymentAuthorized: false
+          paymentAuthorized: false,
+          ...(verification.errorCode ? { errorCode: verification.errorCode } : {}),
+          ...(verification.remoteVerification ? { facilitatorDiagnostics: verification.remoteVerification } : {})
         }));
         return;
       }
@@ -6131,6 +6135,8 @@ type RelayPendingRequest = {
     body: string;
     deliveryTarget: string;
     relayMessageId: string;
+    requestId?: string;
+    requestBodyDigestSha256?: string;
     workerStatusCode?: number;
     workerResponseBytes?: number;
     workerResponseDigestSha256?: string;
@@ -6141,12 +6147,27 @@ type RelayPendingRequest = {
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
   trace: HireRelayTraceStep[];
+  requestId?: string;
+  requestBodyDigestSha256?: string;
 };
 
 type RelayRateLimitBucket = {
   count: number;
   resetAtMs: number;
 };
+
+function relayRequestIdFromSignedBody(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (!isRecord(parsed)) {
+      return undefined;
+    }
+    const direct = parsed.request_id ?? parsed.requestId;
+    return typeof direct === "string" && direct.trim().length > 0 ? direct.trim().slice(0, 96) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 class RelayMessageRateLimiter {
   private readonly buckets = new Map<string, RelayRateLimitBucket>();
@@ -6297,32 +6318,69 @@ class AgentRelayConnection {
     };
   }) {
     const messageId = `relay_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+    const requestId = relayRequestIdFromSignedBody(input.signedRequest.body);
+    const requestBodyDigestSha256 = input.signedRequest.bodyDigestSha256;
     return new Promise<{
       statusCode: number;
       body: string;
       deliveryTarget: string;
       relayMessageId: string;
+      requestId?: string;
+      requestBodyDigestSha256?: string;
       relayTrace?: HireRelayTraceStep[];
     }>((resolve, reject) => {
       const trace: HireRelayTraceStep[] = [];
       const timeout = setTimeout(() => {
         this.pending.delete(messageId);
-        const error = new Error("Timed out waiting for agent relay response.") as Error & { relayTrace?: HireRelayTraceStep[] };
+        const sawWorker = trace.some((entry) => entry.step === "worker_ack" || entry.step === "received_by_worker");
+        const error = new Error(
+          sawWorker
+            ? "Timed out waiting for agent relay response after worker acknowledgement."
+            : "Timed out waiting for agent relay response."
+        ) as Error & {
+          code?: string;
+          relayTrace?: HireRelayTraceStep[];
+          relayMessageId?: string;
+          requestId?: string;
+          requestBodyDigestSha256?: string;
+          platformRelayTimeoutMs?: number;
+        };
+        error.code = sawWorker ? "relay_return_timeout_after_worker_ack" : "relay_return_timeout";
+        error.relayMessageId = messageId;
+        if (requestId) {
+          error.requestId = requestId;
+        }
+        error.requestBodyDigestSha256 = requestBodyDigestSha256;
+        error.platformRelayTimeoutMs = RELAY_RESPONSE_TIMEOUT_MS;
         trace.push({
           step: "relay_returned",
           status: "failed",
           occurredAtIso: new Date().toISOString(),
           relayMessageId: messageId,
-          detail: "Timed out waiting for agent relay response."
+          detail: [
+            error.message,
+            `code ${error.code}`,
+            requestId ? `request ${requestId}` : "",
+            `platform timeout ${RELAY_RESPONSE_TIMEOUT_MS}ms`
+          ].filter(Boolean).join("; ")
         });
         error.relayTrace = trace;
         reject(error);
       }, RELAY_RESPONSE_TIMEOUT_MS);
-      this.pending.set(messageId, { resolve, reject, timeout, trace });
+      this.pending.set(messageId, {
+        resolve,
+        reject,
+        timeout,
+        trace,
+        ...(requestId ? { requestId } : {}),
+        requestBodyDigestSha256
+      });
       try {
         this.sendJson({
           type: "hire_request",
           messageId,
+          ...(requestId ? { requestId } : {}),
+          requestBodyDigestSha256,
           request: {
             method: "POST",
             url: input.signedRequest.ingressUrl,
@@ -6398,6 +6456,14 @@ class AgentRelayConnection {
     }
     this.pending.delete(messageId);
     clearTimeout(pending.timeout);
+    const responseRequestId = typeof message.requestId === "string" && message.requestId.trim().length > 0
+      ? message.requestId.trim().slice(0, 96)
+      : pending.requestId;
+    const requestIdMismatched = Boolean(
+      pending.requestId &&
+        responseRequestId &&
+        pending.requestId !== responseRequestId
+    );
     const statusCode = typeof message.statusCode === "number" && Number.isFinite(message.statusCode)
       ? Math.round(message.statusCode)
       : 502;
@@ -6426,11 +6492,13 @@ class AgentRelayConnection {
         : undefined;
     pending.trace.push({
       step: "worker_completed",
-      status: statusCode >= 200 && statusCode < 300 ? "completed" : "failed",
+      status: statusCode >= 200 && statusCode < 300 && !requestIdMismatched ? "completed" : "failed",
       occurredAtIso: new Date().toISOString(),
       relayMessageId: messageId,
       detail: [
         `relay status ${statusCode}`,
+        responseRequestId ? `request ${responseRequestId}` : "",
+        requestIdMismatched ? `request mismatch expected ${pending.requestId}` : "",
         workerStatusCode !== undefined ? `worker status ${workerStatusCode}` : "",
         workerResponseBytes !== undefined ? `worker bytes ${workerResponseBytes}` : "",
         relayBodyBytes !== undefined ? `relay bytes ${relayBodyBytes}` : ""
@@ -6447,6 +6515,8 @@ class AgentRelayConnection {
       body,
       deliveryTarget: `santaclawz-relay://agent/${encodeURIComponent(this.agentId)}`,
       relayMessageId: messageId,
+      ...(responseRequestId ? { requestId: responseRequestId } : {}),
+      ...(pending.requestBodyDigestSha256 ? { requestBodyDigestSha256: pending.requestBodyDigestSha256 } : {}),
       ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
       ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
       ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),

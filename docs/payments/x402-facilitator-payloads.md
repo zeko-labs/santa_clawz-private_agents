@@ -48,6 +48,15 @@ For SantaClawz fee-split payloads, use the SDK helper. It includes both:
 - top-level x402 fields SantaClawz uses for local rail matching and idempotency
 - hosted facilitator fields: `accepted`, `payload.authorization`, and `payload.feeAuthorization`
 
+The hosted Base USDC fee-split path has been confirmed to require USDC EIP-3009
+typed data with `primaryType: "TransferWithAuthorization"` and the metadata
+primitive `evm-eip3009-transfer-with-authorization`. That hosted facilitator
+verifies and settles with `transferWithAuthorization(...)`; a payload signed
+with a different primary type will fail signature verification even when the
+buyer wallet is funded. Keep Ethereum/EVM helper output consistent with this
+hosted facilitator convention, but verify the Ethereum hosted path with a
+dedicated smoke before treating it as directly proven.
+
 Before submitting a payment payload, validate it locally:
 
 ```bash

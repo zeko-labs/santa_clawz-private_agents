@@ -182,6 +182,7 @@ interface AgentX402VerificationResult {
   remoteVerification?: JsonRecord;
   headers: Record<string, string>;
   error?: string;
+  errorCode?: string;
 }
 
 interface AgentX402SettlementResult extends AgentX402VerificationResult {
@@ -1866,6 +1867,25 @@ function remoteVerificationFundingError(remoteVerification: JsonRecord): string 
   return `Payer does not hold enough ${assetSymbol} for the x402 payment.`;
 }
 
+function x402VerificationErrorCode(message: string | undefined): string | undefined {
+  if (!message) {
+    return undefined;
+  }
+  if (/signature verification failed/i.test(message)) {
+    return "x402_signature_verification_failed";
+  }
+  if (/already used|authorization nonce/i.test(message)) {
+    return "x402_authorization_already_used";
+  }
+  if (/not hold enough|insufficient|balance/i.test(message)) {
+    return "x402_insufficient_balance";
+  }
+  if (/invalid x402 payment payload|missing or malformed|payload/i.test(message)) {
+    return "x402_payload_shape_invalid";
+  }
+  return "x402_facilitator_verification_failed";
+}
+
 function assertHostedFacilitatorPayloadShape(paymentPayload: JsonRecord, rail: AgentX402RailPlan): void {
   if (!rail.facilitatorUrl || rail.settlementRail !== "evm") {
     return;
@@ -2081,8 +2101,11 @@ export async function verifyAgentX402Payment(input: {
     paymentPayload: input.paymentPayload,
     paymentRequirements: input.runtime.paymentRequired
   })) as JsonRecord;
-  const fundingError = remoteVerificationFundingError(remoteVerification);
+  const remoteError = resultError(remoteVerification);
+  const fundingError = remoteError ? undefined : remoteVerificationFundingError(remoteVerification);
   const remoteOk = remoteVerificationOk(remoteVerification) && !fundingError;
+  const failureError = remoteError ?? fundingError;
+  const failureCode = x402VerificationErrorCode(failureError);
 
   return {
     ok: remoteOk,
@@ -2092,8 +2115,11 @@ export async function verifyAgentX402Payment(input: {
     localVerification: verification.localVerification,
     remoteVerification,
     headers: verification.headers,
-    ...(!remoteOk && (fundingError || resultError(remoteVerification))
-      ? { error: fundingError ?? resultError(remoteVerification)! }
+    ...(!remoteOk && failureError
+      ? {
+          error: failureError,
+          ...(failureCode ? { errorCode: failureCode } : {})
+        }
       : {})
   };
 }

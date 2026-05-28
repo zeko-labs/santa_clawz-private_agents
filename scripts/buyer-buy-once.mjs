@@ -65,7 +65,7 @@ Options:
   --task "Buyer task"                Alias for --prompt.
   --requester-contact buyer-agent:local
   --max-usd 1.00                     Required local budget guard.
-  --wallet-env ./buyer.env           Env file containing BUYER_PRIVATE_KEY or X402_BUYER_PRIVATE_KEY.
+  --wallet-env ./buyer.env           Env file containing BUYER_PRIVATE_KEY, BUYER_BASE_PRIVATE_KEY, or X402_BUYER_PRIVATE_KEY.
   --payment-payload-file ./payload.json
   --service agent_job_pack           Service key when payload file contains multiple payloads.
   --output-dir .clawz-data/buyer-runs
@@ -136,10 +136,10 @@ function normalizePrivateKey(value) {
 function buyerPrivateKeyFromEnv(filePath) {
   const env = readEnvFile(filePath);
   const privateKey = normalizePrivateKey(
-    env.BUYER_PRIVATE_KEY ?? env.X402_BUYER_PRIVATE_KEY ?? env.EVM_PRIVATE_KEY ?? env.PRIVATE_KEY
+    env.BUYER_PRIVATE_KEY ?? env.BUYER_BASE_PRIVATE_KEY ?? env.X402_BUYER_PRIVATE_KEY ?? env.EVM_PRIVATE_KEY ?? env.PRIVATE_KEY
   );
   if (!privateKey) {
-    throw new Error(`${filePath} must contain BUYER_PRIVATE_KEY, X402_BUYER_PRIVATE_KEY, EVM_PRIVATE_KEY, or PRIVATE_KEY.`);
+    throw new Error(`${filePath} must contain BUYER_PRIVATE_KEY, BUYER_BASE_PRIVATE_KEY, X402_BUYER_PRIVATE_KEY, EVM_PRIVATE_KEY, or PRIVATE_KEY.`);
   }
   return privateKey;
 }
@@ -324,7 +324,7 @@ function randomNonceHex() {
   return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function buildReceiveWithAuthorizationTypedData(input) {
+function buildTransferWithAuthorizationTypedData(input) {
   const chainId = Number(input.evm.chainId);
   if (!Number.isFinite(chainId)) {
     throw new Error("Fee-split x402 accept option is missing extensions.evm.chainId.");
@@ -337,7 +337,7 @@ function buildReceiveWithAuthorizationTypedData(input) {
       verifyingContract: stringField(input.evm, "assetAddress", "extensions.evm")
     },
     types: {
-      ReceiveWithAuthorization: [
+      TransferWithAuthorization: [
         { name: "from", type: "address" },
         { name: "to", type: "address" },
         { name: "value", type: "uint256" },
@@ -346,7 +346,7 @@ function buildReceiveWithAuthorizationTypedData(input) {
         { name: "nonce", type: "bytes32" }
       ]
     },
-    primaryType: "ReceiveWithAuthorization",
+    primaryType: "TransferWithAuthorization",
     message: {
       from: input.from,
       to: input.to,
@@ -387,7 +387,7 @@ function paymentContextDigest(payload) {
 
 function buildEip3009Authorization(input) {
   return {
-    primitive: "evm-eip3009-receive-with-authorization",
+    primitive: "evm-eip3009-transfer-with-authorization",
     settlementRail: "evm",
     network: input.accept.network,
     asset: input.accept.asset,
@@ -414,7 +414,7 @@ async function buildFeeSplitPaymentPayload(input) {
   const amountUnit = isRecord(accept.extensions) && isRecord(accept.extensions.evm) && accept.extensions.evm.amountUnit === "atomic"
     ? "atomic"
     : "decimal";
-  const sellerTypedData = buildReceiveWithAuthorizationTypedData({
+  const sellerTypedData = buildTransferWithAuthorizationTypedData({
     evm,
     from: input.payer,
     to: sellerPayTo,
@@ -423,7 +423,7 @@ async function buildFeeSplitPaymentPayload(input) {
     validBefore,
     nonce: randomNonceHex()
   });
-  const feeTypedData = buildReceiveWithAuthorizationTypedData({
+  const feeTypedData = buildTransferWithAuthorizationTypedData({
     evm,
     from: input.payer,
     to: protocolFeePayTo,
@@ -486,11 +486,11 @@ async function buildFeeSplitPaymentPayload(input) {
   const hostedPayload = {
     signature: sellerSignature,
     authorization: sellerTypedData.message,
-    primitive: "evm-eip3009-receive-with-authorization",
+    primitive: "evm-eip3009-transfer-with-authorization",
     feeAuthorization: {
       signature: feeSignature,
       authorization: feeTypedData.message,
-      primitive: "evm-eip3009-receive-with-authorization"
+      primitive: "evm-eip3009-transfer-with-authorization"
     }
   };
   const payloadWithoutDigest = {
