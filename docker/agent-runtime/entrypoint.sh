@@ -46,15 +46,6 @@ has_flag() {
   return 1
 }
 
-without_flag() {
-  local unwanted="$1"
-  shift
-  for value in "$@"; do
-    [[ "$value" == "$unwanted" ]] && continue
-    printf '%s\n' "$value"
-  done
-}
-
 mkdir -p "$DATA_DIR" "$(dirname "$CHALLENGE_FILE")"
 
 command="${1:-help}"
@@ -68,7 +59,12 @@ case "$command" in
     force_redeem="false"
     if has_flag "--force-redeem" "${enroll_args[@]}"; then
       force_redeem="true"
-      mapfile -t enroll_args < <(without_flag "--force-redeem" "${enroll_args[@]}")
+      temp_args=()
+      for arg in "${enroll_args[@]}"; do
+        [[ "$arg" != "--force-redeem" ]] && temp_args+=("$arg")
+      done
+      enroll_args=("${temp_args[@]}")
+      unset temp_args
     fi
 
     if [[ -f "$ENV_FILE" && "$force_redeem" != "true" ]]; then

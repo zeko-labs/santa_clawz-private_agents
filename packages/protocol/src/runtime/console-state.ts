@@ -581,6 +581,18 @@ export interface AgentCompletionScore {
   label: string;
 }
 
+export type AgentActivationProbeClassification = "payment" | "platform" | "seller" | "unknown";
+
+export interface AgentActivationProbeStats {
+  totalProbeCount: number;
+  completedProbeCount: number;
+  failedProbeCount: number;
+  lastProbeAtIso?: string;
+  lastProbeStatus?: "completed" | "failed" | "pending";
+  lastProbeClassification?: AgentActivationProbeClassification;
+  label: string;
+}
+
 export interface AgentJobActivityStats {
   totalJobCount: number;
   publicJobCount: number;
@@ -592,6 +604,10 @@ export interface AgentJobActivityStats {
   failedJobCount: number;
   privateFailedJobCount: number;
   lastJobAtIso?: string;
+  activationProbeCount?: number;
+  activationProbeCompletedCount?: number;
+  activationProbeFailedCount?: number;
+  lastActivationProbeAtIso?: string;
   label: string;
 }
 
@@ -711,6 +727,7 @@ export interface AgentRegistryEntry {
   readiness?: AgentReadinessState;
   completionScore?: AgentCompletionScore;
   jobActivityStats?: AgentJobActivityStats;
+  activationProbes?: AgentActivationProbeStats;
   marketplaceTagStats?: AgentMarketplaceTagStat[];
   published: boolean;
   pendingSocialAnchorCount: number;
@@ -749,6 +766,7 @@ export interface HireRequestReceipt {
   jobContext?: SantaClawzJobContext;
   jobWorkspace?: {
     token: string;
+    statePath: string;
     messagesPath: string;
     stagesPath: string;
     collaborationPath: string;
@@ -1136,11 +1154,15 @@ export interface AgentRuntimeHeartbeatState {
     attempted: boolean;
     ok: boolean;
     checkedAtIso: string;
+    provenAtIso?: string;
+    provenBy?: "heartbeat_probe" | "activation_lane" | "paid_job_history";
+    lastProvenBuild?: string;
     requestId?: string;
     localHireUrl?: string;
     packageVerified?: boolean;
     returnStatus?: string;
     reason?: string;
+    classification?: AgentActivationProbeClassification;
   };
 }
 
@@ -1168,9 +1190,21 @@ export interface AgentReadinessState {
   published: boolean;
   hireable: boolean;
   paidExecutionProven?: boolean;
+  paidExecutionProvenAt?: string;
+  paidExecutionProvenBy?: "heartbeat_probe" | "activation_lane" | "paid_job_history";
+  lastProvenBuild?: string;
   needsUpgrade?: boolean;
   upgradeReasons?: string[];
   readinessWarnings?: string[];
+  readinessNotes?: Array<{
+    code: string;
+    severity: "info" | "warning" | "error";
+    message: string;
+    atIso?: string;
+    requestId?: string;
+    classification?: AgentActivationProbeClassification;
+  }>;
+  activationProbes?: AgentActivationProbeStats;
   lastJobStatus?: "none" | "submitted" | "quoted" | "completed" | "failed";
   blockers: string[];
 }
@@ -1202,6 +1236,7 @@ export interface ConsoleStateResponse {
   readiness?: AgentReadinessState;
   completionScore?: AgentCompletionScore;
   jobActivityStats?: AgentJobActivityStats;
+  activationProbes?: AgentActivationProbeStats;
   protocolOwnerFeePolicy: ProtocolOwnerFeePolicy;
   adminAccess: AdminAccessState;
   ingressAccess?: IngressAccessState;

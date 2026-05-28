@@ -980,13 +980,59 @@ def activation_paid_execution_ok(status: int, payload: dict[str, Any]) -> bool:
     return status == 200 and payment_status == "settled" and settlement_status == "settled" and relay_status in ("forwarded", "recorded") and execution_status == "completed"
 
 
+def classify_activation_probe_result(result: dict[str, Any]) -> str:
+    status = int(result.get("status", 0) or 0)
+    mode = str(result.get("mode", ""))
+    response = result.get("response") if isinstance(result.get("response"), dict) else {}
+    operational = response.get("operationalStatus") if isinstance(response.get("operationalStatus"), dict) else {}
+    text = " ".join(
+        str(part)
+        for part in (
+            mode,
+            result.get("error"),
+            response.get("code"),
+            response.get("error"),
+            response.get("deliveryError"),
+            response.get("returnValidationCode"),
+            response.get("returnValidationError"),
+            response.get("status"),
+        )
+        if part
+    ).lower()
+    if result.get("ok") is True:
+        return "unknown"
+    if (
+        mode in ("builtin_missing_buyer_key", "builtin_challenge")
+        or status == 402
+        or operational.get("paymentStatus") == "failed"
+        or operational.get("settlementStatus") == "failed"
+        or any(term in text for term in ("x402", "payment", "settlement", "authorization", "facilitator", "insufficient", "balance", "wallet", "usdc"))
+    ):
+        return "payment"
+    if (
+        operational.get("agentExecutionStatus") in ("failed", "worker_completed_return_rejected")
+        or response.get("deliveryStatus") == "return_rejected"
+        or any(term in text for term in ("verified_output_required", "return_rejected", "worker", "seller", "runtime", "invalid_output"))
+    ):
+        return "seller"
+    if (
+        status >= 500
+        or operational.get("relayDeliveryStatus") == "failed"
+        or any(term in text for term in ("relay", "timeout", "temporarily unavailable", "502", "503", "504", "platform"))
+    ):
+        return "platform"
+    return "unknown"
+
+
 def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> dict[str, Any]:
     private_key = os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()
     if not private_key:
-        return {"ok": False, "mode": "builtin_missing_buyer_key", "error": "missing CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY"}
+        result = {"ok": False, "mode": "builtin_missing_buyer_key", "error": "missing CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY"}
+        return {**result, "classification": classify_activation_probe_result(result)}
     endpoint = str(candidate.get("activationHireEndpoint", ""))
     if not endpoint:
-        return {"ok": False, "mode": "builtin", "error": "candidate_missing_activationHireEndpoint"}
+        result = {"ok": False, "mode": "builtin", "error": "candidate_missing_activationHireEndpoint"}
+        return {**result, "classification": classify_activation_probe_result(result)}
     request_body = {
         "activationLane": True,
         "taskPrompt": "SantaClawz activation lane paid execution probe from hosted agent_job_pack.",
@@ -994,7 +1040,8 @@ def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> 
     }
     challenge_status, payment_requirement = activation_lane_http_json("POST", f"{endpoint}?activationLane=true", token, request_body, timeout_seconds=30)
     if challenge_status != 402 or not isinstance(payment_requirement, dict):
-        return {"ok": False, "mode": "builtin_challenge", "status": challenge_status, "response": payment_requirement}
+        result = {"ok": False, "mode": "builtin_challenge", "status": challenge_status, "response": payment_requirement}
+        return {**result, "classification": classify_activation_probe_result(result)}
     payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
     paid_status, paid_payload = activation_lane_http_json(
         "POST",
@@ -1002,22 +1049,25 @@ def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> 
         token,
         {**request_body, "paymentPayload": payment_payload},
     )
-    return {
+    result = {
         "ok": activation_paid_execution_ok(paid_status, paid_payload if isinstance(paid_payload, dict) else {}),
         "mode": "builtin_x402",
         "status": paid_status,
         "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
         "response": paid_payload,
     }
+    return {**result, "classification": classify_activation_probe_result(result)}
 
 
 def process_activation_candidate(candidate: dict[str, Any], token: str, command: str | None) -> dict[str, Any]:
     agent_id = str(candidate.get("agentId", ""))
     if not agent_id:
-        return {"ok": False, "error": "candidate_missing_agent_id"}
+        result = {"ok": False, "error": "candidate_missing_agent_id"}
+        return {**result, "classification": classify_activation_probe_result(result)}
     if command:
         command_result = run_activation_lane_probe_command(command, candidate)
-        return {"ok": command_result["return_code"] == 0, "mode": "command", **command_result}
+        result = {"ok": command_result["return_code"] == 0, "mode": "command", **command_result}
+        return {**result, "classification": classify_activation_probe_result(result)}
     private_key = os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()
     if private_key:
         return run_builtin_activation_lane_probe(candidate, token)
@@ -1033,13 +1083,14 @@ def process_activation_candidate(candidate: dict[str, Any], token: str, command:
             "requesterContact": "agent_job_pack@santaclawz.ai",
         },
     )
-    return {
+    result = {
         "ok": status == 402,
         "mode": "payment_required_preview",
         "status": status,
         "paymentRequired": status == 402,
         "response": payload,
     }
+    return {**result, "classification": classify_activation_probe_result(result)}
 
 
 def activation_lane_loop(interval_seconds: int) -> None:
@@ -1083,10 +1134,17 @@ def activation_lane_loop(interval_seconds: int) -> None:
                     "last_attempt_at": now_iso(),
                     "last_ok": bool(result.get("ok")),
                     "mode": result.get("mode"),
+                    "classification": result.get("classification"),
                 }
                 write_json(ACTIVATION_LANE_STATE, state)
                 append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
-                log_event({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "ok": result.get("ok"), "mode": result.get("mode")})
+                log_event({
+                    "type": "activation-lane-candidate-processed",
+                    "agent_id": agent_id,
+                    "ok": result.get("ok"),
+                    "mode": result.get("mode"),
+                    "classification": result.get("classification"),
+                })
         except Exception as exc:
             log_event({"type": "activation-lane-unhandled-error", "error": str(exc), "trace": traceback.format_exc(limit=4)})
         time.sleep(interval_seconds)

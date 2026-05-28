@@ -34,6 +34,7 @@ RUN pnpm install --frozen-lockfile \
   && pnpm --filter @clawz/protocol build \
   && pnpm --filter @clawz/agent-sdk build \
   && pnpm --filter @clawz/indexer build \
+  && sed -i 's/\r$//' docker/agent-runtime/entrypoint.sh \
   && chmod +x docker/agent-runtime/entrypoint.sh \
   && ln -s /app/docker/agent-runtime/entrypoint.sh /usr/local/bin/santaclawz-agent
 

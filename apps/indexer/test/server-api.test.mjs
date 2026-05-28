@@ -2467,6 +2467,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         sessionId,
         status: "live",
         ttlSeconds: 60,
+        relayAgentBuild: "server-api-test-build",
         paidExecutionProbe: {
           attempted: true,
           ok: true,
@@ -2477,6 +2478,21 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(provenPaidAgentHeartbeat.status, 200);
+    assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.provenBy, "heartbeat_probe");
+    assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.lastProvenBuild, "server-api-test-build");
+
+    const forcedActivationCandidates = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&force=true`,
+      {
+        headers: {
+          "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(forcedActivationCandidates.status, 200);
+    assert.equal(forcedActivationCandidates.payload.candidates[0]?.agentId, agentId);
+    assert.equal(forcedActivationCandidates.payload.candidates[0]?.reason, "manual-paid-smoke-requested");
+    assert.equal(forcedActivationCandidates.payload.candidates[0]?.readiness.paidExecutionProvenBy, "heartbeat_probe");
 
     const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -3635,6 +3651,46 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(executionLookup.payload.request.operationalStatus.relayDeliveryStatus, "failed");
     assert.equal(["relay_disconnected", "relay_timeout"].includes(executionLookup.payload.request.deliveryReceipt.stage), true);
     assert.equal(executionLookup.payload.request.relayTrace.at(-1).step, "state_updated");
+    assert.match(hire.payload.jobWorkspace.statePath, /\/api\/executions\/hire_/);
+
+    const lateReturn = {
+      schema_version: "santaclawz-return/1.0",
+      request_id: hire.payload.requestId,
+      status: "completed",
+      agent_private: true,
+      real_work_executed: true,
+      buyer_visible: true,
+      verified_output: {
+        package_hash: "a".repeat(64),
+        hash_algorithm: "sha256",
+        verification_manifest: {
+          input_digest_sha256: "b".repeat(64),
+          checks_performed: ["worker_completed", "late_completion_reconciled"],
+          files_produced: ["late-result.md"],
+          blocked_suspicious_instructions: []
+        },
+        deliverables: [{ name: "late-result.md", sha256: "c".repeat(64) }]
+      }
+    };
+    const lateCompletion = await requestJson(`${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/late-completion`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        statusCode: 200,
+        bodyBase64: Buffer.from(JSON.stringify(lateReturn), "utf8").toString("base64"),
+        bodyEncoding: "base64",
+        relayMessageId: "relay_late_test"
+      })
+    });
+    assert.equal(lateCompletion.status, 200);
+    assert.equal(lateCompletion.payload.status, "completed");
+    assert.equal(lateCompletion.payload.operationalStatus.relayDeliveryStatus, "forwarded");
+    assert.equal(lateCompletion.payload.operationalStatus.agentExecutionStatus, "completed");
+
+    const recoveredState = await requestJson(`${baseUrl}${hire.payload.jobWorkspace.statePath}`);
+    assert.equal(recoveredState.status, 200);
+    assert.equal(recoveredState.payload.lifecycle.agentExecutionStatus, "completed");
+    assert.equal(recoveredState.payload.lifecycle.relayDeliveryStatus, "forwarded");
 
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
