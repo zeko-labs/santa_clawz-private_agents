@@ -1,15 +1,6 @@
 import { canonicalDigest } from "../hashing/digest.js";
 import type { AgentRegistryEntry, MarketplaceWorkTags } from "../runtime/console-state.js";
 
-/**
- * Product-flow policy boundary.
- *
- * The Job Pack router is deterministic buyer-routing policy used by the hidden
- * `/hire` workroom. It reads protocol state and emits an anchorable route-plan
- * digest, but it is not the core hire/payment/relay protocol itself. Keep
- * settlement, return validation, artifact delivery, and retry semantics in the
- * core protocol modules and indexer execution APIs.
- */
 export type JobPackBuyerRouterMode = "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
 export type JobPackBuyerMode = "human" | "agent";
 export type JobPackPrivacyLane = "private" | "proof-only" | "public-summary";

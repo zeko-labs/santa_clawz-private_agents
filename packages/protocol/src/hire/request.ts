@@ -1,13 +1,5 @@
 import type { AgentPaymentRail, AgentPricingMode } from "../runtime/console-state.js";
 
-/**
- * Core protocol boundary.
- *
- * This file defines the portable hire request contract that both product
- * surfaces use. The public `/hire` workroom and `/coordinate` orchestration UI
- * may choose agents, collect briefs, or create procurement intents, but they
- * eventually hand work to this schema and the shared execution/payment path.
- */
 export const SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION = "santaclawz-request/1.0" as const;
 
 export type SantaClawzHireRequestType = "quote_intake" | "paid_execution" | "free_test";

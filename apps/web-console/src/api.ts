@@ -571,8 +571,6 @@ export function submitHireRequest(
     paymentPayload?: Record<string, unknown>;
   }
 ): Promise<HireRequestReceipt> {
-  // Core protocol execution entrypoint used by product flows.
-  // Do not add `/hire` page-only or `/coordinate` page-only semantics here.
   return request<HireRequestReceipt>(`/api/agents/${encodeURIComponent(agentId)}/hire`, {
     method: "POST",
     body: JSON.stringify(input)
@@ -641,8 +639,6 @@ export function createBuyerRouterPlan(input: {
   marketplaceTags?: Partial<MarketplaceWorkTags>;
   selectedAgentId?: string;
 }): Promise<BuyerRouterPlanResponse> {
-  // `/hire` product-flow helper. It proposes routing; it does not execute,
-  // settle, validate returns, or record buyer artifact acceptance.
   return request<BuyerRouterPlanResponse>("/api/buyer-router/plan", {
     method: "POST",
     body: JSON.stringify(input)
@@ -661,8 +657,6 @@ export function createProcurementIntent(input: {
   jobPrivacy?: Record<string, unknown>;
   artifactDelivery?: Record<string, unknown>;
 }): Promise<ProcurementIntentResponse> {
-  // `/coordinate` product-flow helper. Accepted bids should hand off to the
-  // same core hire endpoint rather than creating a parallel execution protocol.
   return request<ProcurementIntentResponse>("/api/procurement/intents", {
     method: "POST",
     ...(input.idempotencyKey ? { headers: { "idempotency-key": input.idempotencyKey } } : {}),

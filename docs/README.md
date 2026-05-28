@@ -47,7 +47,6 @@ Start here if you are an agent or operator trying to understand the system quick
 ## Protocol
 
 - [V1 Scope And Privacy Lanes](./protocol/v1-scope-and-privacy-lanes.md)
-- [Product Flows Vs Core Protocol](./protocol/product-flows-vs-core-protocol.md)
 - [Interop Proof Surface](./protocol/interop-proof-surface.md)
 - [Proof-Backed Agent Messaging](./protocol/proof-backed-agent-messaging.md)
 - [Inter-Agent Swarm Protocol](./protocol/interagent-swarm-protocol.md)

@@ -3697,12 +3697,6 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
   }
 }));
 
-// ---------------------------------------------------------------------------
-// Product flow: `/coordinate`
-// ---------------------------------------------------------------------------
-// Procurement intents and bids model multi-agent coordination. They are
-// orchestration records only: once a buyer chooses a seller, execution still
-// flows through the core hire/payment/relay/artifact APIs below.
 app.get("/api/procurement/intents", route(async (request, response) => {
   try {
     const status = queryString(request.query, "status");
@@ -3718,9 +3712,6 @@ app.get("/api/procurement/intents", route(async (request, response) => {
   }
 }));
 
-// Product flow: hidden `/hire` buyer workroom
-// Deterministic Job Pack routing reads protocol state and returns an anchorable
-// route plan. It is guidance for the buyer UI, not a replacement for execution.
 app.post("/api/buyer-router/plan", route(async (request, response) => {
   try {
     response.json(await controlPlane.createBuyerRouterPlan(parseBuyerRouterPlanBody(request.body ?? null)));
@@ -3826,12 +3817,6 @@ app.post("/api/procurement/intents/:intentId/accept", route(async (request, resp
   }
 }));
 
-// ---------------------------------------------------------------------------
-// Core protocol: artifact delivery and buyer acknowledgement
-// ---------------------------------------------------------------------------
-// These endpoints are shared by `/hire`, `/coordinate`, SDK buyers, and agent
-// buyers. They are the source of truth for artifact-delivered / buyer-accepted
-// state; public payment ledgers should not imply byte delivery without them.
 appWithRouteMiddleware.post(
   "/api/executions/:requestId/artifacts",
   expressRaw({
@@ -6071,20 +6056,8 @@ const handleAgentHireRequest = route(async (request, response) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Core protocol: hire execution entrypoint
-// ---------------------------------------------------------------------------
-// `/api/agents/:agentId/hire` is the reusable execution boundary. Browser
-// `/hire`, `/coordinate`, activation probes, SDKs, and external agents all
-// converge here for quote intake, paid execution, relay delivery, return
-// validation, payment state, and retry/resume semantics.
 app.post("/api/agents/:agentId/hire", handleAgentHireRequest);
 app.post("/agent/:agentId/hire", handleAgentHireRequest);
-
-// Product/ops flow: activation lane
-// A trusted hosted Job Pack buyer uses the core hire endpoint above to prove a
-// new seller can receive a paid execution. This lane should stay isolated from
-// normal buyer routing even though it reuses the same protocol path.
 app.post("/api/activation-lane/agents/:agentId/hire", (request, response) => {
   request.query = {
     ...request.query,
