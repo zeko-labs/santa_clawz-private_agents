@@ -2356,6 +2356,10 @@ pre,
   overflow-wrap: anywhere;
 }
 
+.coordination-intent-result small {
+  color: var(--muted);
+}
+
 .coordination-handoff-actions {
   display: grid;
   gap: 10px;

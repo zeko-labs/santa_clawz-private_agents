@@ -39,6 +39,8 @@ import {
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
   sponsorWallet,
+  type HostedWorkspaceRunResponse,
+  upsertHostedWorkspaceRun,
   updateAgentProfile,
   verifyOwnershipChallenge,
   type ZekoHealthState
@@ -2218,6 +2220,7 @@ export function App() {
   const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
+  const [coordinationWorkspaceResult, setCoordinationWorkspaceResult] = useState<HostedWorkspaceRunResponse | null>(null);
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
@@ -4336,6 +4339,47 @@ export function App() {
     setCoordinationError(null);
   }
 
+  async function saveCoordinationWorkspaceAction(procurementIntentId?: string) {
+    if (!coordinationDraft.goal.trim()) {
+      setCoordinationError("Add a coordination goal before saving the workspace run.");
+      return null;
+    }
+    if (!coordinationDraft.requesterContact.trim()) {
+      setCoordinationError("Add a requester contact before saving the workspace run.");
+      return null;
+    }
+
+    setPendingAction(procurementIntentId ? "coordinate-save-after-procurement" : "coordinate-save-workspace");
+    setCoordinationError(null);
+
+    try {
+      const nextWorkspace = await upsertHostedWorkspaceRun({
+        orgName: coordinationDraft.orgName,
+        workspaceDomain: coordinationDraft.workspaceDomain,
+        identityProvider: coordinationDraft.identityProvider,
+        projectName: coordinationDraft.projectName,
+        goal: coordinationDraft.goal,
+        threadId: coordinationDraft.threadId,
+        swarmId: coordinationDraft.swarmId,
+        requesterContact: coordinationDraft.requesterContact,
+        ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
+        privacyMode: coordinationDraft.privacyMode,
+        requiredCapabilities: tagCsvToList(coordinationDraft.requiredCapabilities),
+        selectedAgentIds: selectedCoordinationAgents.map((agent) => agent.agentId),
+        toolTouchpoints: tagCsvToList(coordinationDraft.toolTouchpoints),
+        manifest: JSON.parse(bridgeManifest) as Record<string, unknown>,
+        ...(procurementIntentId ? { procurementIntentId } : {})
+      });
+      setCoordinationWorkspaceResult(nextWorkspace);
+      return nextWorkspace;
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not save the hosted workspace run.");
+      return null;
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function createCoordinationProcurementAction() {
     if (!coordinationDraft.goal.trim()) {
       setCoordinationError("Add a coordination goal before routing work.");
@@ -4391,6 +4435,7 @@ export function App() {
         }
       });
       setCoordinationResult(nextResult);
+      await saveCoordinationWorkspaceAction(nextResult.intent.intentId);
     } catch (nextError) {
       setCoordinationError(nextError instanceof Error ? nextError.message : "Could not create the coordination procurement intent.");
     } finally {
@@ -4637,13 +4682,23 @@ export function App() {
               <div className="coordination-handoff-actions">
                 <button
                   type="button"
+                  className="secondary-button"
+                  disabled={!routeWorkReady || pendingAction === "coordinate-save-workspace"}
+                  onClick={() => {
+                    void saveCoordinationWorkspaceAction();
+                  }}
+                >
+                  {pendingAction === "coordinate-save-workspace" ? "Saving..." : "Save workspace"}
+                </button>
+                <button
+                  type="button"
                   className="primary-button"
-                  disabled={!routeWorkReady || pendingAction === "coordinate-procurement"}
+                  disabled={!routeWorkReady || pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement"}
                   onClick={() => {
                     void createCoordinationProcurementAction();
                   }}
                 >
-                  {pendingAction === "coordinate-procurement" ? "Creating..." : "Create intent"}
+                  {pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement" ? "Creating..." : "Create intent"}
                 </button>
                 <button
                   type="button"
@@ -4663,6 +4718,15 @@ export function App() {
                 <div className="coordination-intent-result">
                   <span className="subtle-pill live">Intent created</span>
                   <code>{String(coordinationResult.intent.intentId)}</code>
+                </div>
+              ) : null}
+              {coordinationWorkspaceResult ? (
+                <div className="coordination-intent-result">
+                  <span className="subtle-pill live">Workspace saved</span>
+                  <code>{coordinationWorkspaceResult.run.runId}</code>
+                  <small>
+                    {coordinationWorkspaceResult.stats.publicMessageCount} public messages • {coordinationWorkspaceResult.stats.selectedAgentCount} agents • hosted org data {String(coordinationWorkspaceResult.stats.hostedOrgData)}
+                  </small>
                 </div>
               ) : null}
             </aside>

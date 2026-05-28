@@ -4321,6 +4321,90 @@ async function testMissionAuthVerificationPersists() {
   }
 }
 
+async function testHostedWorkspaceRunApi() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-workspace-run-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const code = await requestJson(`${baseUrl}/api/workspaces/auth/email-code`, {
+      method: "POST",
+      body: JSON.stringify({
+        orgName: "Example team",
+        workspaceDomain: "example.com",
+        email: "team-bridge@example.com"
+      })
+    });
+    assert.equal(code.status, 200);
+    assert.equal(code.payload.ok, true);
+    assert.equal(code.payload.deliveryMode, "dev-returned");
+    assert.equal(typeof code.payload.devCode, "string");
+
+    const verified = await requestJson(`${baseUrl}/api/workspaces/auth/email-code/verify`, {
+      method: "POST",
+      body: JSON.stringify({
+        challengeId: code.payload.challengeId,
+        email: "team-bridge@example.com",
+        code: code.payload.devCode
+      })
+    });
+    assert.equal(verified.status, 200);
+    assert.equal(verified.payload.ok, true);
+    assert.equal(verified.payload.workspaceId, code.payload.workspaceId);
+    assert.equal(typeof verified.payload.workspaceSessionToken, "string");
+
+    const saved = await requestJson(`${baseUrl}/api/workspaces/runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        orgName: "Example team",
+        workspaceDomain: "example.com",
+        identityProvider: "email-code",
+        projectName: "Market launch review",
+        goal: "Coordinate research agents without hosting company data.",
+        threadId: "thread_team_launch_review",
+        swarmId: "team_launch_review",
+        requesterContact: "team-bridge@example.com",
+        budgetUsd: "1.00",
+        privacyMode: "digest-only",
+        requiredCapabilities: ["research", "critique"],
+        selectedAgentIds: [],
+        toolTouchpoints: ["slack", "github"],
+        manifest: {
+          schemaVersion: "santaclawz-team-coordination-bridge/0.1"
+        }
+      })
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.payload.ok, true);
+    assert.equal(saved.payload.workspace.workspaceId, code.payload.workspaceId);
+    assert.equal(saved.payload.workspace.loginMode, "email_one_time_code");
+    assert.equal(saved.payload.workspace.dataPolicy.hostedOrgData, false);
+    assert.equal(saved.payload.stats.hostedOrgData, false);
+    assert.equal(saved.payload.stats.globalMetricsCounted, true);
+    assert.equal(saved.payload.connectors.length, 2);
+    assert.deepEqual(saved.payload.connectors.map((connector) => connector.kind).sort(), ["github", "slack"]);
+
+    const fetched = await requestJson(`${baseUrl}/api/workspaces/runs/${encodeURIComponent(saved.payload.run.runId)}`);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.payload.ok, true);
+    assert.equal(fetched.payload.run.runId, saved.payload.run.runId);
+    assert.equal(fetched.payload.stats.hostedOrgData, false);
+
+    const listed = await requestJson(`${baseUrl}/api/workspaces/runs?workspaceId=${encodeURIComponent(code.payload.workspaceId)}`);
+    assert.equal(listed.status, 200);
+    assert.equal(listed.payload.ok, true);
+    assert.equal(listed.payload.runs.length, 1);
+
+    console.log("ok - hosted workspace run API persists shell state without org data");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testLegacyDemoProfileCanEnableBasePayments() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-legacy-payment-test-"));
   const port = await reservePort();
@@ -4508,6 +4592,7 @@ async function main() {
   await testRelayPreparedResponseResolvesInlineCompletion();
   await testOfficialRelayNormalizesLargeWorkerResponses();
   await testMissionAuthVerificationPersists();
+  await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
 }
