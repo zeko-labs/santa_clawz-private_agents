@@ -86,8 +86,8 @@ const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
-  { label: "X", href: "https://x.com/zekolabs", icon: "x" },
-  { label: "Discord", href: "https://discord.gg/edF9vzD7en", icon: "discord" }
+  { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
+  { label: "Discord", href: "https://discord.gg/FGcu6tJDzH", icon: "discord" }
 ] as const;
 
 function SocialIcon({ icon }: { icon: (typeof SOCIAL_LINKS)[number]["icon"] }) {
