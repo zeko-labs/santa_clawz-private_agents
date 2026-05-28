@@ -200,7 +200,7 @@ function findFeeSplitAccept(paymentRequirement: Record<string, unknown>) {
   return { accept, evm, feeSplit };
 }
 
-function buildReceiveWithAuthorizationTypedData(input: {
+function buildTransferWithAuthorizationTypedData(input: {
   evm: Record<string, unknown>;
   from: string;
   to: string;
@@ -221,7 +221,7 @@ function buildReceiveWithAuthorizationTypedData(input: {
       verifyingContract: stringField(input.evm, "assetAddress", "extensions.evm")
     },
     types: {
-      ReceiveWithAuthorization: [
+      TransferWithAuthorization: [
         { name: "from", type: "address" },
         { name: "to", type: "address" },
         { name: "value", type: "uint256" },
@@ -230,7 +230,7 @@ function buildReceiveWithAuthorizationTypedData(input: {
         { name: "nonce", type: "bytes32" }
       ]
     },
-    primaryType: "ReceiveWithAuthorization",
+    primaryType: "TransferWithAuthorization",
     message: {
       from: input.from,
       to: input.to,
@@ -273,7 +273,7 @@ function buildEip3009Authorization(input: {
   signature: string;
 }) {
   return {
-    primitive: "evm-eip3009-receive-with-authorization",
+    primitive: "evm-eip3009-transfer-with-authorization",
     settlementRail: "evm",
     network: input.accept.network,
     asset: input.accept.asset,
@@ -319,7 +319,7 @@ export async function buildClawzFeeSplitExactPaymentPayload(
     accept.extensions.evm.amountUnit === "atomic"
       ? "atomic"
       : "decimal";
-  const sellerTypedData = buildReceiveWithAuthorizationTypedData({
+  const sellerTypedData = buildTransferWithAuthorizationTypedData({
     evm,
     from: input.payer,
     to: sellerPayTo,
@@ -328,7 +328,7 @@ export async function buildClawzFeeSplitExactPaymentPayload(
     validBefore,
     nonce: randomNonceHex()
   });
-  const feeTypedData = buildReceiveWithAuthorizationTypedData({
+  const feeTypedData = buildTransferWithAuthorizationTypedData({
     evm,
     from: input.payer,
     to: protocolFeePayTo,
@@ -394,11 +394,11 @@ export async function buildClawzFeeSplitExactPaymentPayload(
   const hostedPayload = {
     signature: sellerSignature,
     authorization: sellerTypedData.message,
-    primitive: "evm-eip3009-receive-with-authorization",
+    primitive: "evm-eip3009-transfer-with-authorization",
     feeAuthorization: {
       signature: feeSignature,
       authorization: feeTypedData.message,
-      primitive: "evm-eip3009-receive-with-authorization"
+      primitive: "evm-eip3009-transfer-with-authorization"
     }
   };
   const payloadWithoutDigest: Record<string, unknown> = {

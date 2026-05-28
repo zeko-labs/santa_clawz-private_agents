@@ -473,6 +473,10 @@ async function main() {
     assert.equal(feeSplitPayload.accepted.extra.feeSplit.grossAmount, "420000");
     assert.equal(feeSplitPayload.payload.authorization.value, "419580");
     assert.equal(feeSplitPayload.payload.feeAuthorization.authorization.value, "420");
+    assert.equal(feeSplitPayload.payload.primitive, "evm-eip3009-transfer-with-authorization");
+    assert.equal(feeSplitPayload.payload.feeAuthorization.primitive, "evm-eip3009-transfer-with-authorization");
+    assert.equal(feeSplitPayload.authorization.typedData.primaryType, "TransferWithAuthorization");
+    assert.equal(feeSplitPayload.feeAuthorization.typedData.primaryType, "TransferWithAuthorization");
     assert.equal(feeSplitPayload.authorization.typedData.message.value, "419580");
     assert.equal(feeSplitPayload.feeAuthorization.typedData.message.value, "420");
     assert.match(feeSplitPayload.paymentContextDigest, /^[a-f0-9]{64}$/);

@@ -137,7 +137,7 @@ function findFeeSplitAccept(paymentRequirement: Record<string, unknown>) {
   return { accept, evm, feeSplit };
 }
 
-function buildReceiveWithAuthorizationTypedData(input: {
+function buildTransferWithAuthorizationTypedData(input: {
   evm: Record<string, unknown>;
   from: string;
   to: string;
@@ -154,7 +154,7 @@ function buildReceiveWithAuthorizationTypedData(input: {
       verifyingContract: stringField(input.evm, "assetAddress", "extensions.evm")
     },
     types: {
-      ReceiveWithAuthorization: [
+      TransferWithAuthorization: [
         { name: "from", type: "address" },
         { name: "to", type: "address" },
         { name: "value", type: "uint256" },
@@ -163,7 +163,7 @@ function buildReceiveWithAuthorizationTypedData(input: {
         { name: "nonce", type: "bytes32" }
       ]
     },
-    primaryType: "ReceiveWithAuthorization",
+    primaryType: "TransferWithAuthorization",
     message: {
       from: input.from,
       to: input.to,
@@ -228,11 +228,11 @@ async function authorizationDigest(payload: Record<string, unknown>) {
 function buildEip3009Authorization(input: {
   accept: Record<string, unknown>;
   evm: Record<string, unknown>;
-  typedData: ReturnType<typeof buildReceiveWithAuthorizationTypedData>;
+  typedData: ReturnType<typeof buildTransferWithAuthorizationTypedData>;
   signature: string;
 }) {
   return {
-    primitive: "evm-eip3009-receive-with-authorization",
+    primitive: "evm-eip3009-transfer-with-authorization",
     settlementRail: "evm",
     network: input.accept.network,
     asset: input.accept.asset,
@@ -264,7 +264,7 @@ function paymentRequirementSessionId(paymentRequirement: Record<string, unknown>
 async function buildBrowserFeeSplitPaymentPayload(input: {
   paymentRequirement: Record<string, unknown>;
   payer: string;
-  signTypedData(typedData: ReturnType<typeof buildReceiveWithAuthorizationTypedData>): Promise<string>;
+  signTypedData(typedData: ReturnType<typeof buildTransferWithAuthorizationTypedData>): Promise<string>;
 }) {
   const { accept, evm, feeSplit } = findFeeSplitAccept(input.paymentRequirement);
   const issuedAtIso = new Date().toISOString();
@@ -280,7 +280,7 @@ async function buildBrowserFeeSplitPaymentPayload(input: {
   const amountUnit = isRecord(accept.extensions) && isRecord(accept.extensions.evm) && accept.extensions.evm.amountUnit === "atomic"
     ? "atomic"
     : "decimal";
-  const sellerTypedData = buildReceiveWithAuthorizationTypedData({
+  const sellerTypedData = buildTransferWithAuthorizationTypedData({
     evm,
     from: input.payer,
     to: sellerPayTo,
@@ -289,7 +289,7 @@ async function buildBrowserFeeSplitPaymentPayload(input: {
     validBefore,
     nonce: randomNonceHex()
   });
-  const feeTypedData = buildReceiveWithAuthorizationTypedData({
+  const feeTypedData = buildTransferWithAuthorizationTypedData({
     evm,
     from: input.payer,
     to: protocolFeePayTo,
@@ -368,11 +368,11 @@ async function buildBrowserFeeSplitPaymentPayload(input: {
     payload: {
       signature: sellerSignature,
       authorization: sellerTypedData.message,
-      primitive: "evm-eip3009-receive-with-authorization",
+      primitive: "evm-eip3009-transfer-with-authorization",
       feeAuthorization: {
         signature: feeSignature,
         authorization: feeTypedData.message,
-        primitive: "evm-eip3009-receive-with-authorization"
+        primitive: "evm-eip3009-transfer-with-authorization"
       }
     },
     payloadShape: "santaclawz-browser-hosted-exact-fee-split-v1"
@@ -875,7 +875,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
     return connectBaseWallet();
   }
 
-  async function signTypedDataWithWallet(typedData: ReturnType<typeof buildReceiveWithAuthorizationTypedData>, payer: string) {
+  async function signTypedDataWithWallet(typedData: ReturnType<typeof buildTransferWithAuthorizationTypedData>, payer: string) {
     const provider = typeof window !== "undefined" ? window.ethereum : undefined;
     if (!provider) {
       throw new Error("Connect an EVM wallet first.");

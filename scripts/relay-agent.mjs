@@ -671,26 +671,30 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       ? localHireUrl[requestKind] || localHireUrl.default
       : localHireUrl;
   const receivedAtMs = Date.now();
+  const requestId = requestIdFromSignedBody(request.body);
+  const requestBodyDigestSha256 = typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined;
   console.error(JSON.stringify({
     event: "relay_worker_request_received",
     messageId: message.messageId,
+    requestId,
     requestKind,
     localHireUrl: targetUrl,
     configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
     localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
-    requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined,
+    requestBodyDigestSha256,
     requestBodyBytes: typeof request.body === "string" ? Buffer.byteLength(request.body, "utf8") : 0
   }));
   sendJson({
     type: "hire_ack",
     messageId: message.messageId,
+    requestId,
     receivedAtIso: new Date().toISOString(),
     requestKind,
     localHireUrl: targetUrl,
     relayAgentProtocolVersion: RELAY_AGENT_PROTOCOL_VERSION,
     relayAgentBuild: RELAY_AGENT_BUILD,
     relayAgentFeatures: RELAY_AGENT_FEATURES,
-    requestBodyDigestSha256: typeof request.bodyDigestSha256 === "string" ? request.bodyDigestSha256 : undefined
+    requestBodyDigestSha256
   });
   let responded = false;
   const sendHireResponseOnce = (payload) => {
@@ -703,6 +707,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
   const timeoutEnvelope = () => ({
     type: "hire_response",
     messageId: message.messageId,
+    requestId,
+    requestBodyDigestSha256,
     statusCode: 504,
     workerStatusCode: 504,
     body: failedReturnPackage({
@@ -720,6 +726,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     console.error(JSON.stringify({
       event: "relay_worker_response_timeout",
       messageId: message.messageId,
+      requestId,
       requestKind,
       localHireUrl: targetUrl,
       configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
@@ -734,6 +741,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       sendJson({
         type: "hire_worker_progress",
         messageId: message.messageId,
+        requestId,
         step: "received_by_worker",
         status: "completed",
         occurredAtIso: new Date().toISOString(),
@@ -750,9 +758,11 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
         requestBody: typeof request.body === "string" ? request.body : "{}"
       });
       const responseEnvelope = {
-        type: "hire_response",
-        messageId: message.messageId,
-        statusCode: 200,
+          type: "hire_response",
+          messageId: message.messageId,
+          requestId,
+          requestBodyDigestSha256,
+          statusCode: 200,
         bodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
         bodyEncoding: "base64",
         workerStatusCode: 200,
@@ -765,6 +775,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       console.error(JSON.stringify({
         event: "relay_starter_fast_path_completed",
         messageId: message.messageId,
+        requestId,
         requestKind,
         agentId,
         elapsedMs: Date.now() - receivedAtMs,
@@ -776,6 +787,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     sendJson({
       type: "hire_worker_progress",
       messageId: message.messageId,
+      requestId,
       step: "received_by_worker",
       status: "completed",
       occurredAtIso: new Date().toISOString(),
@@ -800,6 +812,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     const responseEnvelope = {
       type: "hire_response",
       messageId: message.messageId,
+      requestId,
+      requestBodyDigestSha256,
       statusCode: response.status,
       ...(bodyBytes > 2048
         ? {
@@ -814,10 +828,21 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       relayBodyDigestSha256: sha256Hex(normalized.body)
     };
     const sent = sendHireResponseOnce(responseEnvelope);
+    console.error(JSON.stringify({
+      event: "relay_hire_response_sent",
+      messageId: message.messageId,
+      requestId,
+      requestKind,
+      statusCode: response.status,
+      relayPayloadBytes: sent.bytes,
+      relayPayloadDigestSha256: sent.digestSha256,
+      elapsedMs: Date.now() - receivedAtMs
+    }));
     if (normalized.normalized) {
       console.error(JSON.stringify({
         event: "relay_worker_response_normalized",
         messageId: message.messageId,
+        requestId,
         requestKind,
         localHireUrl: targetUrl,
         configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
@@ -833,6 +858,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       console.error(JSON.stringify({
         event: "relay_worker_response_forwarded",
         messageId: message.messageId,
+        requestId,
         requestKind,
         localHireUrl: targetUrl,
         configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
@@ -849,6 +875,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     const failedEnvelope = {
       type: "hire_response",
       messageId: message.messageId,
+      requestId,
+      requestBodyDigestSha256,
       statusCode: error instanceof Error && /timed? out|timeout/i.test(error.message) ? 504 : 502,
       workerStatusCode: error instanceof Error && /timed? out|timeout/i.test(error.message) ? 504 : 502,
       body: failedReturnPackage({
@@ -861,6 +889,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
     console.error(JSON.stringify({
       event: "relay_worker_forward_failed",
       messageId: message.messageId,
+      requestId,
       localHireUrl: targetUrl,
       configuredLocalHireTimeoutMs: CONFIGURED_LOCAL_HIRE_TIMEOUT_MS,
       localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
