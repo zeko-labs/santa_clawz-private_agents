@@ -6832,11 +6832,18 @@ class AgentRelayConnection {
         relayBodyBytes !== undefined ? `relay bytes ${relayBodyBytes}` : ""
       ].filter(Boolean).join("; ")
     });
-    const preparedResponseBodyBase64 =
+    const preparedResponseBody =
       typeof message.preparedResponseBodyBase64 === "string" && message.preparedResponseBodyBase64.trim().length > 0
-        ? message.preparedResponseBodyBase64
+        ? Buffer.from(message.preparedResponseBodyBase64, "base64").toString("utf8").slice(0, RELAY_MESSAGE_MAX_BYTES)
         : undefined;
-    if (step === "hire_response_prepared" && preparedResponseBodyBase64) {
+    const preparedResponseDigestSha256 = preparedResponseBody
+      ? createHash("sha256").update(preparedResponseBody).digest("hex")
+      : undefined;
+    if (
+      step === "hire_response_prepared" &&
+      preparedResponseBody &&
+      (!relayBodyDigestSha256 || relayBodyDigestSha256 === preparedResponseDigestSha256)
+    ) {
       this.handleResponse({
         type: "hire_response",
         messageId,
@@ -6845,7 +6852,7 @@ class AgentRelayConnection {
         statusCode: typeof message.preparedResponseStatusCode === "number" && Number.isFinite(message.preparedResponseStatusCode)
           ? Math.round(message.preparedResponseStatusCode)
           : workerStatusCode ?? 200,
-        bodyBase64: preparedResponseBodyBase64,
+        bodyBase64: Buffer.from(preparedResponseBody, "utf8").toString("base64"),
         bodyEncoding: "base64",
         ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
         ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),

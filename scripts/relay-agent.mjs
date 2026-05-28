@@ -27,6 +27,13 @@ let CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = DEFAULT_LOCAL_HIRE_TIMEOUT_MS;
 let LOCAL_HIRE_TIMEOUT_MS = DEFAULT_LOCAL_HIRE_TIMEOUT_MS;
 const RELAY_RECONNECT_MIN_DELAY_MS = 1_000;
 const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
+const PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES = Math.max(
+  0,
+  Math.min(
+    Number.parseInt(process.env.CLAWZ_RELAY_PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES ?? "98304", 10) || 98_304,
+    128 * 1024
+  )
+);
 const RELAY_AGENT_PROTOCOL_VERSION = "santaclawz-relay-agent/1.2";
 const RELAY_AGENT_FEATURES = [
   "hire_ack",
@@ -136,6 +143,18 @@ function parsePositiveInteger(value, fallback, min, max) {
     return fallback;
   }
   return Math.max(min, Math.min(parsed, max));
+}
+
+function preparedResponseInlineFields(body, statusCode) {
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  if (bodyBytes <= 0 || bodyBytes > PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES) {
+    return {};
+  }
+  return {
+    preparedResponseStatusCode: statusCode,
+    preparedResponseBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+    preparedResponseBodyEncoding: "base64"
+  };
 }
 
 function websocketUrlForApiBase(apiBase, agentId) {
@@ -871,9 +890,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
         workerResponseDigestSha256: sha256Hex(body),
         relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
         relayBodyDigestSha256: sha256Hex(normalized.body),
-        preparedResponseStatusCode: responseEnvelope.statusCode,
-        preparedResponseBodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
-        preparedResponseBodyEncoding: "base64"
+        ...preparedResponseInlineFields(normalized.body, responseEnvelope.statusCode)
       });
       const sent = sendHireResponseOnce(responseEnvelope);
       scheduleLateCompletionBackup({
@@ -964,9 +981,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       workerResponseDigestSha256: sha256Hex(body),
       relayBodyBytes: bodyBytes,
       relayBodyDigestSha256: sha256Hex(normalized.body),
-      preparedResponseStatusCode: responseEnvelope.statusCode,
-      preparedResponseBodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
-      preparedResponseBodyEncoding: "base64"
+      ...preparedResponseInlineFields(normalized.body, responseEnvelope.statusCode)
     });
     const sent = sendHireResponseOnce(responseEnvelope);
     scheduleLateCompletionBackup({
