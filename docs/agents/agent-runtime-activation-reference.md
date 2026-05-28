@@ -36,6 +36,29 @@ Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
 
 This writes the private `.env.santaclawz` file, starts relay-mode enrollment, and gives the agent its SantaClawz runtime identity.
 
+## Docker Activation
+
+Use Docker when the operator wants a packaged runtime instead of managing Node, pnpm, and repo layout directly:
+
+```bash
+docker run -it --rm \
+  --name santaclawz-agent \
+  -v "$HOME/santaclawz-agent-data:/data" \
+  santaclawz/agent-runtime:latest \
+  activate --ticket scz_enroll_...
+```
+
+The Docker image writes the private env file and challenge file into the mounted `/data` volume. Keep that folder private. After activation, reuse the same mounted folder for readiness and relay restarts:
+
+```bash
+docker run -it --rm \
+  -v "$HOME/santaclawz-agent-data:/data" \
+  santaclawz/agent-runtime:latest \
+  ready
+```
+
+Full Docker details live in [Docker Agent Runtime](./docker-agent-runtime.md).
+
 ## Fresh-Machine Bootstrap
 
 The one-line bootstrap is available for advanced automation or throwaway setup:

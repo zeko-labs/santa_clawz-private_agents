@@ -36,12 +36,6 @@ type CandidateAgent = {
   provenTags: AgentMarketplaceTagStat[];
 };
 
-type ChatMessage = {
-  id: string;
-  role: "buyer" | "router";
-  body: string;
-};
-
 type Eip1193Provider = {
   request<T = unknown>(input: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<T>;
   on?(event: string, handler: (...args: unknown[]) => void): void;
@@ -447,16 +441,6 @@ const ROUTE_RULES: RouteRule[] = [
   }
 ];
 
-const LIFECYCLE_STEPS = [
-  "Describe work",
-  "Match agents",
-  "Confirm price",
-  "Pay safely",
-  "Track progress",
-  "Receive files",
-  "Verify proof"
-];
-
 const RETAIL_USE_CASES = [
   "Competitive research",
   "Repo review",
@@ -666,12 +650,6 @@ function nextActionForMode(mode: RoutingMode) {
   return "Direct-hire the selected agent if the price and delivery lane are clear.";
 }
 
-function makeId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `msg_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
 function safeContact(persona: BuyerPersona) {
   return persona === "agent" ? "buyer-agent@local" : "human-buyer@local";
 }
@@ -708,14 +686,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
   const [buyerContact, setBuyerContact] = useState("");
   const [budget, setBudget] = useState("0.25");
   const [privacyLane, setPrivacyLane] = useState("private");
-  const [chatInput, setChatInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "router-welcome",
-      role: "router",
-      body: "Tell me what you need done. I’ll turn it into marketplace tags, suggest a route, and show whether this should be direct hire, quote, or bidding."
-    }
-  ]);
+  const [routeMessage, setRouteMessage] = useState("Preview uses local scoring. Route to SantaClawz to anchor a protocol plan.");
   const [serverRoutingPlan, setServerRoutingPlan] = useState<BuyerRouterPlanResponse["plan"] | null>(null);
   const [routingAnchorDigest, setRoutingAnchorDigest] = useState("");
   const [routingRequesting, setRoutingRequesting] = useState(false);
@@ -982,18 +953,14 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
     }
   }
 
-  async function sendRouterMessage() {
-    const trimmed = chatInput.trim();
+  async function routeCurrentRequest() {
+    const trimmed = requestSummary.trim();
     if (!trimmed) {
+      setRouteMessage("Add a task first so SantaClawz can route it.");
       return;
     }
-    setRequestSummary(trimmed);
-    setMessages((current) => [
-      ...current,
-      { id: makeId(), role: "buyer", body: trimmed }
-    ]);
-    setChatInput("");
     setRoutingRequesting(true);
+    setRouteMessage("Routing through SantaClawz...");
     try {
       const nextTags = extractMarketplaceTags(trimmed);
       const response = await createBuyerRouterPlan({
@@ -1010,14 +977,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
       if (response.plan.candidateAgents[0]?.agentId) {
         setSelectedAgentId(response.plan.candidateAgents[0].agentId);
       }
-      setMessages((current) => [
-        ...current,
-        {
-          id: makeId(),
-          role: "router",
-          body: `${response.routerMessage}${response.routingAnchor ? ` Anchored route-plan digest ${response.routingAnchor.payloadDigestSha256.slice(0, 12)}...` : ""}`
-        }
-      ]);
+      setRouteMessage(`${response.routerMessage}${response.routingAnchor ? ` Anchor ${response.routingAnchor.payloadDigestSha256.slice(0, 12)}...` : ""}`);
     } catch (_error) {
       const nextTags = extractMarketplaceTags(trimmed);
       const nextCandidates = agentOptions
@@ -1030,14 +990,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
         ...(nextCandidates[0]?.agent ? { selectedAgent: nextCandidates[0].agent } : {}),
         tags: nextTags
       });
-      setMessages((current) => [
-        ...current,
-        {
-          id: makeId(),
-          role: "router",
-          body: `I used local routing while the protocol router was unavailable. I read this as ${workTagValues(nextTags).slice(0, 5).join(", ")}. Best route: ${mode.replace("-", " ")}. ${nextCandidates[0] ? `Top match: ${displayAgentName(nextCandidates[0].agent)} because ${nextCandidates[0].reasons[0]}.` : "I need more agent history before ranking sellers."}`
-        }
-      ]);
+      setRouteMessage(`Local preview: ${workTagValues(nextTags).slice(0, 5).join(", ")}. Route: ${mode.replace("-", " ")}. ${nextCandidates[0] ? `Top match ${displayAgentName(nextCandidates[0].agent)} because ${nextCandidates[0].reasons[0]}.` : "More seller history would improve ranking."}`);
     } finally {
       setRoutingRequesting(false);
     }
@@ -1079,378 +1032,349 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
 
   const personaCopy =
     persona === "agent"
-      ? "Give your agent a simple way to find specialists, preserve payment state, and verify the returned package."
-      : "Describe what you need, get matched to a capable agent, pay safely, and receive verified work back here.";
+      ? "A visual trace for agent procurement: route planning, x402 payment, relay execution, and verified return state."
+      : "A simple surface for discovering and paying agents, with the protocol trace visible after every step.";
+  const visibleRouteTags = workTagValues(activeMarketplaceTags).slice(0, 8);
+  const routeDigest = activeRoutingPlan.routePlanDigestSha256 ?? routingAnchorDigest;
+  const topCandidate = activeRoutingPlan.candidateAgents[0];
+  const paymentBusy = paymentState.status === "requesting" || paymentState.status === "signing" || paymentState.status === "submitting";
+  const timelineSteps = [
+    {
+      label: "Intent",
+      detail: persona === "agent" ? "agent buyer policy" : "human task brief",
+      state: requestSummary.trim() ? "done" : "active"
+    },
+    {
+      label: "Route",
+      detail: routingMode.replace("-", " "),
+      state: serverRoutingPlan || routeDigest ? "done" : routingRequesting ? "active" : "pending"
+    },
+    {
+      label: "Match",
+      detail: selectedAgent ? displayAgentName(selectedAgent) : "waiting for agents",
+      state: selectedAgent ? "done" : "pending"
+    },
+    {
+      label: "Payment",
+      detail: selectedAgent?.pricingMode === "quote-required" ? "quote first" : "Base USDC x402",
+      state: paymentState.status === "completed" || paymentState.status === "pending" || paymentState.status === "quoted"
+        ? "done"
+        : paymentBusy
+          ? "active"
+          : "pending"
+    },
+    {
+      label: "Execution",
+      detail: paymentState.status === "pending" ? "runtime working" : "relay ready",
+      state: paymentState.status === "completed" ? "done" : paymentState.status === "pending" ? "active" : "pending"
+    },
+    {
+      label: "Verification",
+      detail: paymentState.proofDigest ? `digest ${paymentState.proofDigest.slice(0, 10)}...` : "manifest and proof",
+      state: paymentState.proofDigest || paymentState.status === "completed" ? "done" : "pending"
+    }
+  ];
 
   return (
     <>
-      <section className="masthead buyer-masthead">
-        <div className="masthead-inner">
-          <div className="masthead-content buyer-masthead-content">
-            <div className="masthead-copy">
-              <p className="eyebrow">Hire workroom beta</p>
-              <h1>Give your agent a team of specialists.</h1>
-              <p className="masthead-copyline">{personaCopy}</p>
-              <div className="buyer-hero-actions">
-                <a href="#buyer-task" className="primary-button">Start a task</a>
-                <a href={buyerGuideUrl} target="_blank" rel="noreferrer" className="secondary-button buyer-hero-link">
-                  Buyer agent tips &gt;&gt;
-                </a>
-              </div>
+      <section className="buyer-protocol-hero">
+        <div className="buyer-protocol-hero-copy">
+          <p className="eyebrow">Agent procurement trace</p>
+          <h1>Watch work move from intent to verified agent output.</h1>
+          <p>{personaCopy}</p>
+          <div className="buyer-protocol-mode-row" aria-label="Buyer mode">
+            <span>Buying as</span>
+            <div className="buyer-persona-toggle" role="group" aria-label="Choose buyer mode">
+              <button type="button" className={persona === "agent" ? "active" : ""} onClick={() => updatePersona("agent")}>
+                Agent
+              </button>
+              <button type="button" className={persona === "human" ? "active" : ""} onClick={() => updatePersona("human")}>
+                Human
+              </button>
             </div>
-
-            <div className="buyer-demo-card" aria-label="Example agent task flow">
-              <div className="buyer-persona-card compact" aria-label="Buyer mode">
-                <span>Buying as</span>
-                <div className="buyer-persona-toggle" role="group" aria-label="Choose buyer mode">
-                  <button type="button" className={persona === "human" ? "active" : ""} onClick={() => updatePersona("human")}>
-                    Human
-                  </button>
-                  <button type="button" className={persona === "agent" ? "active" : ""} onClick={() => updatePersona("agent")}>
-                    Agent
-                  </button>
-                </div>
-              </div>
-              <div className="buyer-demo-thread">
-                <div className="buyer-demo-bubble buyer">
-                  Pull a launch-risk teardown and return markdown findings.
-                </div>
-                <div className="buyer-demo-bubble router">
-                  Scanning capability graph...
-                  <span>3 matches</span>
-                </div>
-                <div className="buyer-demo-match selected">
-                  <strong>{selectedAgent ? displayAgentName(selectedAgent) : "Verified specialist"}</strong>
-                  <span>{selectedAgent ? agentPriceLabel(selectedAgent) : "Quote-ready"} · {selectedAgent ? agentSuccessLabel(selectedAgent) : "proof history"}</span>
-                </div>
-                <div className="buyer-demo-result">
-                  <strong>Result package</strong>
-                  <span>manifest · digest · payout proof</span>
-                </div>
-              </div>
-            </div>
+          </div>
+        </div>
+        <div className="buyer-protocol-summary" aria-label="Protocol summary">
+          <div>
+            <span>Route</span>
+            <strong>{routingMode.replace("-", " ")}</strong>
+          </div>
+          <div>
+            <span>Seller</span>
+            <strong>{selectedAgent ? displayAgentName(selectedAgent) : "finding match"}</strong>
+          </div>
+          <div>
+            <span>Rail</span>
+            <strong>Base USDC</strong>
           </div>
         </div>
       </section>
 
-      <section className="panel buyer-panel">
-        <div className="section-head buyer-section-head">
-          <div>
-            <p className="eyebrow">From brief to result</p>
-            <h2>Start with a task. SantaClawz handles the route.</h2>
-            <p>
-              Tell the router what you need. It turns the brief into tags, recommends agents, and keeps payment,
-              delivery, and proof state in one flow.
-            </p>
+      <section id="buyer-task" className="buyer-protocol-stage">
+        <form className="buyer-protocol-composer">
+          <div className="buyer-protocol-card-head">
+            <div>
+              <p className="eyebrow">Composer</p>
+              <h2>Describe the work once. Let the protocol route it.</h2>
+            </div>
+            <span className="subtle-pill">{persona === "agent" ? "agent-native" : "human-ready"}</span>
           </div>
-          <div className="buyer-credit-teaser" aria-label="Payment rails">
-            <span>Now</span>
-            <strong>Base USDC</strong>
-            <em>Credits + Stripe top-up next</em>
-          </div>
-        </div>
+          <label className="field">
+            <span>Work request</span>
+            <textarea
+              className="text-area buyer-protocol-brief"
+              value={requestSummary}
+              onChange={(event: ValueEvent) => setRequestSummary(event.target.value)}
+              placeholder="Example: pull a competitor teardown and return a short positioning brief with sources and proof."
+            />
+          </label>
 
-        <div className="buyer-retail-steps" aria-label="How hiring works">
-          <div><span>01</span><strong>Describe</strong><em>plain-language task</em></div>
-          <div><span>02</span><strong>Match</strong><em>agents ranked by proof</em></div>
-          <div><span>03</span><strong>Pay</strong><em>Base USDC or quote</em></div>
-          <div><span>04</span><strong>Receive</strong><em>files, digest, proof</em></div>
-        </div>
-
-        <div className="buyer-grid buyer-main-grid">
-          <section className="buyer-card buyer-router-card">
-            <div className="buyer-card-head">
-              <p className="eyebrow">Smart brief</p>
-              <span className="subtle-pill live">Job Pack router</span>
-            </div>
-            <div className="buyer-chat-window" aria-live="polite">
-              {messages.map((message) => (
-                <div key={message.id} className={`buyer-chat-message ${message.role}`}>
-                  <span>{message.role === "buyer" ? "You" : "SantaClawz router"}</span>
-                  <p>{message.body}</p>
-                </div>
-              ))}
-            </div>
-            <div className="buyer-chat-input-row">
-              <textarea
-                className="text-area buyer-chat-input"
-                value={chatInput}
-                onChange={(event: ValueEvent) => setChatInput(event.target.value)}
-                placeholder="Tell SantaClawz what work you want routed..."
-              />
-              <button type="button" className="primary-button" onClick={() => void sendRouterMessage()} disabled={routingRequesting}>
-                {routingRequesting ? "Routing..." : "Route request"}
-              </button>
-            </div>
-            <div className="buyer-use-case-row">
-              {RETAIL_USE_CASES.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setChatInput(`I need ${item.toLowerCase()} with a concise deliverable and proof-backed output.`)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            {routingAnchorDigest ? (
-              <p className="buyer-router-note">Route-plan anchor {routingAnchorDigest.slice(0, 12)}...</p>
-            ) : null}
-          </section>
-
-          <aside className="buyer-card buyer-lifecycle-card">
-            <div className="buyer-card-head">
-              <p className="eyebrow">Live workflow</p>
-              <span className="subtle-pill">{routingMode.replace("-", " ")}</span>
-            </div>
-            <ol className="buyer-lifecycle-list">
-              {LIFECYCLE_STEPS.map((step, index) => (
-                <li key={step} className={index < 3 ? "ready" : ""}>
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <strong>{step}</strong>
-                </li>
-              ))}
-            </ol>
-          </aside>
-        </div>
-
-        <div className="buyer-grid">
-          <form id="buyer-task" className="buyer-card buyer-request-card">
-            <div className="buyer-card-head">
-              <p className="eyebrow">Task checkout</p>
-              <span className="subtle-pill">Proof-aware</span>
-            </div>
-
+          <div className="buyer-protocol-fields">
             <label className="field">
-              <span>What do you need done?</span>
-              <textarea
-                className="text-area buyer-brief-input"
-                value={requestSummary}
-                onChange={(event: ValueEvent) => setRequestSummary(event.target.value)}
-                placeholder="Example: pull a competitor teardown and return a short positioning brief with sources."
+              <span>Budget USDC</span>
+              <input className="text-input" value={budget} onChange={(event: ValueEvent) => setBudget(event.target.value)} placeholder="0.25" />
+            </label>
+            <label className="field">
+              <span>Buyer contact</span>
+              <input
+                className="text-input"
+                value={buyerContact}
+                onChange={(event: ValueEvent) => setBuyerContact(event.target.value)}
+                placeholder={safeContact(persona)}
               />
             </label>
-
-            <div className="field-grid buyer-compact-fields">
-              <label className="field">
-                <span>Budget USDC</span>
-                <input className="text-input" value={budget} onChange={(event: ValueEvent) => setBudget(event.target.value)} placeholder="0.25" />
-              </label>
-              <label className="field">
-                <span>Buyer contact</span>
-                <input
-                  className="text-input"
-                  value={buyerContact}
-                  onChange={(event: ValueEvent) => setBuyerContact(event.target.value)}
-                  placeholder={safeContact(persona)}
-                />
-              </label>
-            </div>
-
-            <div className="field-grid buyer-compact-fields">
-              <label className="field">
-                <span>Delivery lane</span>
-                <select className="text-input" value={privacyLane} onChange={(event: ValueEvent) => setPrivacyLane(event.target.value)}>
-                  <option value="private">Private package</option>
-                  <option value="public-summary">Public summary</option>
-                  <option value="proof-only">Proof trail only</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Choose agent</span>
-                <select
-                  className="text-input"
-                  value={selectedAgent?.agentId ?? ""}
-                  onChange={(event: ValueEvent) => setSelectedAgentId(event.target.value)}
-                >
-                  {agentOptions.length > 0 ? (
-                    agentOptions.map((agent) => (
-                      <option key={agent.agentId} value={agent.agentId}>
-                        {displayAgentName(agent)} - {agentStatusLabel(agent)}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">Loading public agents...</option>
-                  )}
-                </select>
-              </label>
-            </div>
-
-            <div className="buyer-payment-rail-row">
-              <div className="active">
-                <span>Pay now</span>
-                <strong>Base USDC</strong>
-                <em>Wallet signs exact payment payload</em>
-              </div>
-              <div>
-                <span>Next</span>
-                <strong>Platform credits</strong>
-                <em>Stripe top-up, credit ledger, Zeko authorization</em>
-              </div>
-            </div>
-
-            <div className="buyer-tag-panel">
-              <div>
-                <span>Job</span>
-                {marketplaceTags.jobTags.map((tag) => <strong key={tag}>{tag}</strong>)}
-              </div>
-              <div>
-                <span>Capability</span>
-                {marketplaceTags.capabilityTags.map((tag) => <strong key={tag}>{tag}</strong>)}
-              </div>
-              <div>
-                <span>Delivery</span>
-                {formatTags.map((tag) => <strong key={tag}>{tag}</strong>)}
-              </div>
-              <div>
-                <span>Protocol lane</span>
-                {laneTags.map((tag) => <strong key={tag}>{tag}</strong>)}
-              </div>
-            </div>
-
-            <div className="buyer-action-row">
-              <button type="button" className="primary-button" onClick={connectBaseWallet}>
-                {wallet?.status === "connected" ? `${shortAddress(wallet.address)} · Base` : "Connect Base wallet"}
-              </button>
-              <button
-                type="button"
-                className="secondary-button buyer-pay-button"
-                onClick={payOrRequestSelectedAgent}
-                disabled={!selectedAgent || paymentState.status === "requesting" || paymentState.status === "signing" || paymentState.status === "submitting"}
+            <label className="field">
+              <span>Delivery lane</span>
+              <select className="text-input" value={privacyLane} onChange={(event: ValueEvent) => setPrivacyLane(event.target.value)}>
+                <option value="private">Private package</option>
+                <option value="public-summary">Public summary</option>
+                <option value="proof-only">Proof trail only</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Seller agent</span>
+              <select
+                className="text-input"
+                value={selectedAgent?.agentId ?? ""}
+                onChange={(event: ValueEvent) => setSelectedAgentId(event.target.value)}
               >
-                {selectedAgent?.pricingMode === "quote-required" ? "Request quote" : "Pay and hire"}
+                {agentOptions.length > 0 ? (
+                  agentOptions.map((agent) => (
+                    <option key={agent.agentId} value={agent.agentId}>
+                      {displayAgentName(agent)} - {agentStatusLabel(agent)}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">Loading public agents...</option>
+                )}
+              </select>
+            </label>
+          </div>
+
+          <div className="buyer-protocol-use-cases">
+            {RETAIL_USE_CASES.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setRequestSummary(`I need ${item.toLowerCase()} with a concise deliverable and proof-backed output.`)}
+              >
+                {item}
               </button>
-              <button type="button" className="secondary-button" onClick={postProcurementIntent} disabled={postingProcurement || !requestSummary.trim()}>
-                {postingProcurement ? "Posting..." : "Post bidding request"}
+            ))}
+          </div>
+
+          <div className="buyer-protocol-actions">
+            <button type="button" className="primary-button" onClick={() => void routeCurrentRequest()} disabled={routingRequesting || !requestSummary.trim()}>
+              {routingRequesting ? "Routing..." : "Route request"}
+            </button>
+            <button type="button" className="secondary-button" onClick={connectBaseWallet}>
+              {wallet?.status === "connected" ? `${shortAddress(wallet.address)} · Base` : "Connect wallet"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={payOrRequestSelectedAgent}
+              disabled={!selectedAgent || paymentBusy}
+            >
+              {selectedAgent?.pricingMode === "quote-required" ? "Request quote" : "Pay and hire"}
+            </button>
+            <button type="button" className="secondary-button" onClick={postProcurementIntent} disabled={postingProcurement || !requestSummary.trim()}>
+              {postingProcurement ? "Posting..." : "Post procurement"}
+            </button>
+          </div>
+
+          <div className="buyer-protocol-note">
+            <strong>Router</strong>
+            <span>{routeMessage}</span>
+          </div>
+
+          {paymentState.message ? (
+            <div className={paymentState.status === "completed" || paymentState.status === "quoted" ? "status-banner status-banner-success" : "status-banner buyer-payment-status"}>
+              <strong>{paymentState.status === "idle" ? "Wallet" : paymentState.status.replace("-", " ")}</strong>
+              <span>{paymentState.message}</span>
+              {paymentState.transactionHashes?.length ? (
+                <div className="buyer-proof-links">
+                  {paymentState.transactionHashes.map((hash) => (
+                    <a key={hash} href={`${BASE_BLOCK_EXPLORER_TX}${hash}`} target="_blank" rel="noreferrer">
+                      Base tx {hash.slice(0, 10)}...
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+              {paymentState.proofDigest ? (
+                <div className="buyer-proof-links">
+                  <span>return digest {paymentState.proofDigest.slice(0, 12)}...</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {procurementResult ? (
+            <div className="status-banner status-banner-success">
+              Procurement intent {procurementResult.intent.intentId} is open. Agents can bid against this routed demand.
+              {procurementResult.routingAnchor ? (
+                <div className="buyer-proof-links">
+                  <span>Zeko anchor {procurementResult.routingAnchor.payloadDigestSha256.slice(0, 12)}...</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {procurementError ? <div className="status-banner">{procurementError}</div> : null}
+        </form>
+
+        <aside className="buyer-protocol-trace" aria-label="Agent procurement trace">
+          <div className="buyer-protocol-card-head">
+            <div>
+              <p className="eyebrow">Live trace</p>
+              <h2>What the agent is doing</h2>
+            </div>
+            <span className="subtle-pill">{paymentState.status}</span>
+          </div>
+          <ol className="buyer-protocol-timeline">
+            {timelineSteps.map((step, index) => (
+              <li key={step.label} className={step.state}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <div>
+                  <strong>{step.label}</strong>
+                  <em>{step.detail}</em>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </aside>
+      </section>
+
+      <section className="buyer-protocol-lower">
+        <article className="buyer-protocol-panel">
+          <div className="buyer-protocol-card-head">
+            <div>
+              <p className="eyebrow">Route plan</p>
+              <h3>{activeRoutingPlan.recommendedNextAction}</h3>
+            </div>
+            <span className="subtle-pill">{routeDigest ? `${routeDigest.slice(0, 10)}...` : "preview"}</span>
+          </div>
+          <div className="buyer-protocol-tags">
+            {visibleRouteTags.map((tag) => <span key={tag}>{tag}</span>)}
+            {activeLaneTags.map((tag) => <span key={tag}>{tag}</span>)}
+            {activeFormatTags.map((tag) => <span key={tag}>{tag}</span>)}
+          </div>
+          <div className="buyer-candidate-list compact">
+            {candidates.length > 0 ? candidates.slice(0, 4).map((candidate) => (
+              <button
+                key={candidate.agent.agentId}
+                type="button"
+                className={candidate.agent.agentId === selectedAgent?.agentId ? "buyer-candidate active" : "buyer-candidate"}
+                onClick={() => setSelectedAgentId(candidate.agent.agentId)}
+              >
+                <span>{displayAgentName(candidate.agent)}</span>
+                <strong>{candidate.score}</strong>
+                <em>{candidate.reasons.join(" / ")}</em>
               </button>
-            </div>
+            )) : (
+              <p className="buyer-router-note">No strong matches yet. Add a clearer job brief or post procurement.</p>
+            )}
+          </div>
+        </article>
 
-            {paymentState.message ? (
-              <div className={paymentState.status === "completed" || paymentState.status === "quoted" ? "status-banner status-banner-success" : "status-banner buyer-payment-status"}>
-                <strong>{paymentState.status === "idle" ? "Wallet" : paymentState.status.replace("-", " ")}</strong>
-                <span>{paymentState.message}</span>
-                {paymentState.transactionHashes?.length ? (
-                  <div className="buyer-proof-links">
-                    {paymentState.transactionHashes.map((hash) => (
-                      <a key={hash} href={`${BASE_BLOCK_EXPLORER_TX}${hash}`} target="_blank" rel="noreferrer">
-                        Base tx {hash.slice(0, 10)}...
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
-                {paymentState.proofDigest ? (
-                  <div className="buyer-proof-links">
-                    <span>return digest {paymentState.proofDigest.slice(0, 12)}...</span>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {procurementResult ? (
-              <div className="status-banner status-banner-success">
-                Procurement intent {procurementResult.intent.intentId} is open. Job Pack can use this as the routing spine; keep buyer token private for bid acceptance.
-                {procurementResult.routingAnchor ? (
-                  <div className="buyer-proof-links">
-                    <span>Zeko anchor {procurementResult.routingAnchor.payloadDigestSha256.slice(0, 12)}...</span>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {procurementError ? <div className="status-banner">{procurementError}</div> : null}
-          </form>
-
-          <aside className="buyer-card buyer-candidates-card">
-            <div className="buyer-card-head">
-              <p className="eyebrow">Best matches</p>
-              <span className="subtle-pill">{candidates.length || 0} matches</span>
+        <article className="buyer-protocol-panel">
+          <div className="buyer-protocol-card-head">
+            <div>
+              <p className="eyebrow">Human surface</p>
+              <h3>Discovery and payment stay simple.</h3>
             </div>
-            <div className="buyer-candidate-list">
-              {candidates.length > 0 ? candidates.slice(0, 5).map((candidate) => (
-                <button
-                  key={candidate.agent.agentId}
-                  type="button"
-                  className={candidate.agent.agentId === selectedAgent?.agentId ? "buyer-candidate active" : "buyer-candidate"}
-                  onClick={() => setSelectedAgentId(candidate.agent.agentId)}
-                >
-                  <span>{displayAgentName(candidate.agent)}</span>
-                  <strong>{candidate.score}</strong>
-                  <em>{candidate.reasons.join(" · ")}</em>
-                </button>
-              )) : (
-                <p className="buyer-router-note">No strong matches yet. Add a clearer job brief or use procurement bidding.</p>
-              )}
+            <span className="subtle-pill">Base now</span>
+          </div>
+          <div className="buyer-selected-agent modern">
+            <div>
+              <span>Selected agent</span>
+              <strong>{selectedAgent ? displayAgentName(selectedAgent) : topCandidate?.agentName ?? "No match yet"}</strong>
             </div>
-            {selectedAgent ? (
-              <div className="buyer-selected-agent">
-                <div>
-                  <span>Selected</span>
-                  <strong>{displayAgentName(selectedAgent)}</strong>
-                </div>
-                <div>
-                  <span>Status</span>
-                  <strong>{agentStatusLabel(selectedAgent)}</strong>
-                </div>
-                <div>
-                  <span>Price</span>
-                  <strong>{agentPriceLabel(selectedAgent)}</strong>
-                </div>
-                <div>
-                  <span>Record</span>
-                  <strong>{agentSuccessLabel(selectedAgent)}</strong>
-                </div>
-              </div>
-            ) : null}
-            {selectedAgent ? (
-              <button type="button" className="secondary-button" onClick={() => onOpenAgent(selectedAgent.agentId)}>
-                View selected agent
-              </button>
-            ) : null}
-          </aside>
-        </div>
+            <div>
+              <span>Status</span>
+              <strong>{agentStatusLabel(selectedAgent)}</strong>
+            </div>
+            <div>
+              <span>Price</span>
+              <strong>{agentPriceLabel(selectedAgent)}</strong>
+            </div>
+            <div>
+              <span>Record</span>
+              <strong>{agentSuccessLabel(selectedAgent)}</strong>
+            </div>
+          </div>
+          <div className="buyer-payment-rail-row compact">
+            <div className="active">
+              <span>Pay now</span>
+              <strong>Base USDC</strong>
+              <em>x402 exact authorization</em>
+            </div>
+            <div>
+              <span>Next</span>
+              <strong>Credits</strong>
+              <em>Stripe top-up for humans</em>
+            </div>
+          </div>
+          {selectedAgent ? (
+            <button type="button" className="secondary-button" onClick={() => onOpenAgent(selectedAgent.agentId)}>
+              View agent profile
+            </button>
+          ) : null}
+        </article>
 
-        <div className="buyer-output-grid">
-          <section className="buyer-card buyer-output-card">
-            <p className="eyebrow">What comes back</p>
-            <h3>Verified output package</h3>
-            <p>
-              After execution, the buyer should see the deliverable, artifact manifest, Base transaction, and Zeko-ready
-              proof digest in one simple receipt.
-            </p>
-            <div className="buyer-result-preview">
-              <div>
-                <span>Deliverable</span>
-                <strong>brief.md</strong>
-              </div>
-              <div>
-                <span>Proof</span>
-                <strong>{activeRoutingPlan.routePlanDigestSha256 ? `${activeRoutingPlan.routePlanDigestSha256.slice(0, 10)}...` : "pending route digest"}</strong>
-              </div>
-              <div>
-                <span>Settlement</span>
-                <strong>Base USDC</strong>
-              </div>
+        <article className="buyer-protocol-panel buyer-protocol-artifacts">
+          <div className="buyer-protocol-card-head">
+            <div>
+              <p className="eyebrow">Agent-native mirror</p>
+              <h3>Everything visible here maps to protocol calls.</h3>
             </div>
-            <details className="buyer-protocol-details">
-              <summary>View protocol route plan</summary>
-              <pre className="buyer-plan-json">{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
-            </details>
-          </section>
-
-          <section className="buyer-card buyer-coach-card">
-            <p className="eyebrow">{persona === "agent" ? "Agent buyer mode" : "Human buyer mode"}</p>
-            <h3>{persona === "agent" ? "Procure safely" : "Easy mode for expert work"}</h3>
-            <p>
-              {persona === "agent"
-                ? "Use idempotent payment payloads, validate x402 units before signing, inspect readiness, and verify the returned package before trusting the result."
-                : "Start with a narrow task, prefer proven tags, keep first spend small, and use bidding when the right seller is unclear."}
-            </p>
-            <div className="buyer-artifact-preview">
-              <span>output package</span>
-              <strong>after execution</strong>
-              <em>scan + manifest</em>
+            <a href={buyerGuideUrl} target="_blank" rel="noreferrer" className="inline-link-button">
+              Buyer agent tips &gt;&gt;
+            </a>
+          </div>
+          <div className="buyer-artifact-preview modern">
+            <span>API path</span>
+            <strong>/api/buyer-router/plan</strong>
+            <em>{selectedAgent ? `/api/agents/${selectedAgent.agentId}/hire` : "/api/agents/<agent-id>/hire"}</em>
+          </div>
+          <div className="buyer-result-preview compact">
+            <div>
+              <span>Request</span>
+              <strong>{paymentState.requestId ?? procurementResult?.intent.intentId ?? "not submitted"}</strong>
             </div>
-          </section>
-        </div>
+            <div>
+              <span>Payment</span>
+              <strong>{paymentState.paymentDigest ? `${paymentState.paymentDigest.slice(0, 10)}...` : "not signed"}</strong>
+            </div>
+            <div>
+              <span>Proof</span>
+              <strong>{paymentState.proofDigest ? `${paymentState.proofDigest.slice(0, 10)}...` : routeDigest ? `${routeDigest.slice(0, 10)}...` : "pending"}</strong>
+            </div>
+          </div>
+          <details className="buyer-protocol-details">
+            <summary>View route plan JSON</summary>
+            <pre className="buyer-plan-json">{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
+          </details>
+        </article>
       </section>
     </>
   );

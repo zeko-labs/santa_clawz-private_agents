@@ -1071,6 +1071,349 @@ pre,
   line-height: 1.5;
 }
 
+.buyer-protocol-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: 18px;
+  align-items: stretch;
+  margin: 18px 0 0;
+}
+
+.buyer-protocol-hero-copy,
+.buyer-protocol-summary,
+.buyer-protocol-composer,
+.buyer-protocol-trace,
+.buyer-protocol-panel {
+  border: 1px solid rgba(18, 35, 54, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 252, 247, 0.86);
+  box-shadow: 0 18px 54px rgba(8, 17, 31, 0.1);
+}
+
+.buyer-protocol-hero-copy {
+  padding: clamp(28px, 5vw, 54px);
+}
+
+.buyer-protocol-hero-copy h1 {
+  max-width: 880px;
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(2.35rem, 5vw, 5.2rem);
+  line-height: 0.95;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.buyer-protocol-hero-copy p:not(.eyebrow) {
+  max-width: 680px;
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 1.04rem;
+  line-height: 1.62;
+}
+
+.buyer-protocol-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.buyer-protocol-mode-row .buyer-persona-toggle {
+  width: auto;
+  border-radius: 8px;
+  background: #edf3f1;
+}
+
+.buyer-protocol-mode-row .buyer-persona-toggle button {
+  min-width: 92px;
+  border-radius: 6px;
+}
+
+.buyer-protocol-summary {
+  display: grid;
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.buyer-protocol-summary div {
+  display: grid;
+  gap: 8px;
+  padding: 22px;
+  border-bottom: 1px solid rgba(18, 35, 54, 0.1);
+}
+
+.buyer-protocol-summary div:last-child {
+  border-bottom: 0;
+}
+
+.buyer-protocol-summary span,
+.buyer-protocol-note strong,
+.buyer-protocol-timeline span,
+.buyer-protocol-tags span,
+.buyer-selected-agent.modern span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.buyer-protocol-summary strong {
+  color: var(--ink);
+  font-size: 1.14rem;
+  overflow-wrap: anywhere;
+}
+
+.buyer-protocol-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.buyer-protocol-composer,
+.buyer-protocol-trace,
+.buyer-protocol-panel {
+  padding: 22px;
+}
+
+.buyer-protocol-card-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.buyer-protocol-card-head h2,
+.buyer-protocol-card-head h3 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  line-height: 1.1;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.buyer-protocol-card-head h2 {
+  font-size: clamp(1.5rem, 2.4vw, 2.25rem);
+}
+
+.buyer-protocol-card-head h3 {
+  font-size: 1.28rem;
+}
+
+.buyer-protocol-brief {
+  min-height: 190px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 1.02rem;
+  line-height: 1.58;
+}
+
+.buyer-protocol-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.buyer-protocol-use-cases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.buyer-protocol-use-cases button {
+  padding: 8px 10px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 8px;
+  background: #f7faf7;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.buyer-protocol-use-cases button:hover {
+  border-color: rgba(15, 116, 103, 0.35);
+  color: var(--teal-ink);
+}
+
+.buyer-protocol-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.buyer-protocol-actions .primary-button,
+.buyer-protocol-actions .secondary-button {
+  border-radius: 8px;
+}
+
+.buyer-protocol-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 8px;
+  background: #f7f4ed;
+}
+
+.buyer-protocol-note span {
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.buyer-protocol-timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.buyer-protocol-timeline li {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid rgba(18, 35, 54, 0.1);
+}
+
+.buyer-protocol-timeline li:last-child {
+  border-bottom: 0;
+}
+
+.buyer-protocol-timeline strong,
+.buyer-protocol-timeline em {
+  display: block;
+}
+
+.buyer-protocol-timeline strong {
+  color: var(--ink);
+}
+
+.buyer-protocol-timeline em {
+  margin-top: 4px;
+  color: var(--muted);
+  font-style: normal;
+}
+
+.buyer-protocol-timeline li.done span {
+  color: var(--success);
+}
+
+.buyer-protocol-timeline li.active span {
+  color: var(--accent);
+}
+
+.buyer-protocol-timeline li.pending {
+  opacity: 0.5;
+}
+
+.buyer-protocol-lower {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.78fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.buyer-protocol-panel {
+  min-width: 0;
+}
+
+.buyer-protocol-artifacts {
+  grid-column: 1 / -1;
+}
+
+.buyer-protocol-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.buyer-protocol-tags span {
+  padding: 7px 9px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 8px;
+  background: #f8fbfb;
+  color: var(--teal-ink);
+}
+
+.buyer-candidate-list.compact {
+  gap: 8px;
+}
+
+.buyer-selected-agent.modern {
+  margin-bottom: 14px;
+}
+
+.buyer-selected-agent.modern,
+.buyer-result-preview.compact {
+  border-radius: 8px;
+}
+
+.buyer-payment-rail-row.compact {
+  margin: 0 0 14px;
+}
+
+.buyer-artifact-preview.modern {
+  margin-bottom: 14px;
+  border-radius: 8px;
+}
+
+@media (max-width: 980px) {
+  .buyer-protocol-hero,
+  .buyer-protocol-stage,
+  .buyer-protocol-lower {
+    grid-template-columns: 1fr;
+  }
+
+  .buyer-protocol-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .buyer-protocol-hero-copy,
+  .buyer-protocol-composer,
+  .buyer-protocol-trace,
+  .buyer-protocol-panel {
+    padding: 18px;
+  }
+
+  .buyer-protocol-hero-copy h1 {
+    font-size: clamp(2rem, 14vw, 3rem);
+  }
+
+  .buyer-protocol-fields,
+  .buyer-result-preview.compact,
+  .buyer-selected-agent.modern,
+  .buyer-payment-rail-row.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .buyer-protocol-card-head,
+  .buyer-protocol-actions,
+  .buyer-protocol-note {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .buyer-protocol-actions .primary-button,
+  .buyer-protocol-actions .secondary-button,
+  .buyer-protocol-use-cases button {
+    width: 100%;
+  }
+}
+
 .masthead {
   position: relative;
   overflow: hidden;

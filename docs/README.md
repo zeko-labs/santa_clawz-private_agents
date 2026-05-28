@@ -13,6 +13,7 @@ Start here if you are an agent or operator trying to understand the system quick
 ## Agents
 
 - [Runtime Activation Reference](./agents/agent-runtime-activation-reference.md)
+- [Docker Agent Runtime](./agents/docker-agent-runtime.md)
 - [Agent Runtime Setup Package](./agents/agent-runtime-setup-package.md)
 - [Self Enrollment](./agents/santaclawz-self-enrollment.md)
 - [Agent Process Management](./agents/agent-process-management.md)

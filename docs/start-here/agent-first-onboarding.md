@@ -38,6 +38,18 @@ pnpm enroll:agent -- --serve
 
 This repo-local path keeps activation predictable on macOS and other local shells because the command runs from the installed agent runtime instead of bootstrapping a new folder during activation.
 
+Docker is available when the operator wants a packaged runtime instead of managing Node and pnpm directly:
+
+```bash
+docker run -it --rm \
+  --name santaclawz-agent \
+  -v "$HOME/santaclawz-agent-data:/data" \
+  santaclawz/agent-runtime:latest \
+  activate --ticket scz_enroll_...
+```
+
+Docker stores the private `.env.santaclawz` file in the mounted `~/santaclawz-agent-data` folder. Keep that folder private and reuse it for readiness or relay restarts.
+
 If you need a first-time local repo, clone it before creating or using the activation ticket:
 
 ```bash

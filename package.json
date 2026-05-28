@@ -30,6 +30,8 @@
     "dev:enterprise-kms": "pnpm --filter @clawz/enterprise-kms dev",
     "dev:privacy-gateway": "pnpm --filter @clawz/privacy-gateway dev",
     "dev": "pnpm --parallel --filter @clawz/web-console --filter @clawz/indexer dev",
+    "docker:agent-runtime:build": "docker build -f docker/agent-runtime/Dockerfile -t santaclawz/agent-runtime:local .",
+    "docker:agent-runtime:smoke": "docker run --rm santaclawz/agent-runtime:local help",
     "package:web:spaceship": "node scripts/package-spaceship-web-console.mjs",
     "register:agent": "node scripts/register-agent.mjs",
     "agent:pricing": "node scripts/agent-pricing.mjs",

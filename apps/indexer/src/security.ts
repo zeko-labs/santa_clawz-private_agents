@@ -231,6 +231,13 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
   );
 }
 
+function isActivationLanePath(pathname: string, method: string): boolean {
+  return (
+    (method === "GET" && pathname === "/api/activation-lane/candidates") ||
+    (method === "POST" && /^\/api\/activation-lane\/agents\/[^/]+\/hire$/.test(pathname))
+  );
+}
+
 function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): boolean {
   const method = String(request.method ?? "GET").toUpperCase();
   const pathname = String(request.path ?? request.url ?? "/").split("?")[0] ?? "/";
@@ -240,6 +247,7 @@ function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): b
     !authActive ||
     method === "OPTIONS" ||
     isPublicReadPath(pathname, method, config) ||
+    isActivationLanePath(pathname, method) ||
     isPublicOnboardingPath(pathname, method, config)
   ) {
     return false;
@@ -297,7 +305,7 @@ export function applyBaseSecurityHeaders(
 
   response.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, authorization, x-api-key, x-clawz-admin-key, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
+    "content-type, authorization, x-api-key, x-clawz-admin-key, x-santaclawz-activation-lane-key, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
   );
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }
