@@ -3660,6 +3660,160 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
   }
 }
 
+async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-relay-post-ack-timeout-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "500"
+  });
+  let relaySocket;
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const ticket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Relay Post Ack Timeout Agent",
+        headline: "Keeps post-ack relay timeouts pending instead of final failed.",
+        representedPrincipal: "Relay timeout smoke operator",
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "free-test",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(ticket.status, 200);
+
+    const redeemed = await requestJson(`${baseUrl}/api/enrollment/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ ticket: ticket.payload.ticket })
+    });
+    assert.equal(redeemed.status, 200);
+    const sessionId = redeemed.payload.session.sessionId;
+    const agentId = redeemed.payload.agentId;
+    const adminKey = redeemed.payload.adminAccess.issuedAdminKey;
+
+    const published = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId, localOnly: true })
+    });
+    assert.equal(published.status, 200);
+
+    relaySocket = await connectRelaySocket(baseUrl, agentId, adminKey);
+    const hirePromise = requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Acknowledge the job but do not return before platform timeout.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    const relayHire = await waitForRelayJson(
+      relaySocket,
+      (message) => message.type === "hire_request"
+    );
+    const requestId = JSON.parse(relayHire.request.body).request_id;
+    sendRelayJson(relaySocket, {
+      type: "hire_ack",
+      messageId: relayHire.messageId,
+      requestId,
+      receivedAtIso: new Date().toISOString(),
+      localHireUrl: "http://127.0.0.1:65535/hire",
+      localHireTimeoutMs: 300000,
+      relayAgentProtocolVersion: "relay-test"
+    });
+    sendRelayJson(relaySocket, {
+      type: "hire_worker_progress",
+      messageId: relayHire.messageId,
+      requestId,
+      requestBodyDigestSha256: relayHire.request.bodyDigestSha256,
+      step: "received_by_worker",
+      status: "completed",
+      occurredAtIso: new Date().toISOString(),
+      detail: "test worker accepted but did not return",
+      localHireTimeoutMs: 300000,
+      elapsedMs: 15
+    });
+
+    const hire = await hirePromise;
+    assert.equal(hire.status, 200);
+    assert.equal(hire.payload.status, "submitted");
+    assert.equal(hire.payload.deliveryStatus, "acknowledged");
+    assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "acknowledged");
+    assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "running_or_unknown");
+    assert.equal(hire.payload.deliveryReceipt.errorCode, "relay_return_timeout_after_worker_ack");
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "received_by_worker" && entry.status === "completed"), true);
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "relay_returned" && entry.status === "failed"), true);
+
+    const executionState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
+    );
+    assert.equal(executionState.status, 200);
+    assert.equal(executionState.payload.lifecycle.relayDeliveryStatus, "acknowledged");
+    assert.equal(executionState.payload.lifecycle.agentExecutionStatus, "running_or_unknown");
+    assert.equal(executionState.payload.lifecycleChecks.failed, false);
+    assert.equal(executionState.payload.lifecycleChecks.terminal, false);
+    assert.equal(executionState.payload.safeToRetrySamePayload, true);
+    assert.equal(executionState.payload.doNotCreateNewPayment, true);
+
+    const reconciled = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/reconcile-worker-return`,
+      {
+        method: "POST",
+        headers: { "x-clawz-admin-key": adminKey },
+        body: JSON.stringify({
+          schema_version: "santaclawz-return/1.0",
+          request_id: hire.payload.requestId,
+          status: "completed",
+          agent_private: true,
+          real_work_executed: true,
+          buyer_visible: true,
+          verified_output: {
+            package_hash: "f".repeat(64),
+            hash_algorithm: "sha256",
+            verification_manifest: {
+              input_digest_sha256: "a".repeat(64),
+              checks_performed: ["worker_completed", "late_return_reconciled"],
+              files_produced: ["late-result.json"],
+              blocked_suspicious_instructions: []
+            },
+            deliverables: [
+              {
+                name: "late-result.json",
+                sha256: "b".repeat(64)
+              }
+            ]
+          }
+        })
+      }
+    );
+    assert.equal(reconciled.status, 200);
+    assert.equal(reconciled.payload.request.status, "completed");
+    assert.equal(reconciled.payload.request.operationalStatus.relayDeliveryStatus, "reconciled_completed");
+    assert.equal(reconciled.payload.request.operationalStatus.agentExecutionStatus, "completed");
+
+    const reconciledState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
+    );
+    assert.equal(reconciledState.status, 200);
+    assert.equal(reconciledState.payload.lifecycle.relayDeliveryStatus, "reconciled_completed");
+    assert.equal(reconciledState.payload.lifecycle.agentExecutionStatus, "completed");
+    assert.equal(reconciledState.payload.lifecycleChecks.agentCompleted, true);
+    assert.equal(reconciledState.payload.relayTrace.some((entry) => entry.detail === "late worker return reconciled through authenticated endpoint"), true);
+
+    console.log("ok - relay post-ack timeout remains pending, retry-safe, and reconcilable");
+  } finally {
+    relaySocket?.destroy();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testOfficialRelayNormalizesLargeWorkerResponses() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-official-relay-normalize-test-"));
   const port = await reservePort();
@@ -4142,6 +4296,7 @@ async function main() {
   await testMainnetFreeTestDisabledByDefault();
   await testStaleRelayDoesNotStayLive();
   await testRelayHireFailureCreatesDurableExecutionRecord();
+  await testRelayPostAckTimeoutStaysPendingAndRetrySafe();
   await testOfficialRelayNormalizesLargeWorkerResponses();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();
