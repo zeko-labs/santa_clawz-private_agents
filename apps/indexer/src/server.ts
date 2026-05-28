@@ -370,6 +370,20 @@ type JobStageBody = {
   note?: unknown;
   artifactDigestSha256?: unknown;
 };
+type LateHireCompletionBody = {
+  statusCode?: unknown;
+  body?: unknown;
+  bodyBase64?: unknown;
+  bodyEncoding?: unknown;
+  relayMessageId?: unknown;
+  requestBodyDigestSha256?: unknown;
+  workerStatusCode?: unknown;
+  workerResponseBytes?: unknown;
+  workerResponseDigestSha256?: unknown;
+  relayBodyBytes?: unknown;
+  relayBodyDigestSha256?: unknown;
+  source?: unknown;
+};
 type QuoteAcceptRequestBody = {
   buyerAgentId?: unknown;
   buyerWallet?: unknown;
@@ -1453,6 +1467,43 @@ function parseJobStageBody(body: unknown): JobStageBody {
         artifactDigestSha256: body.artifactDigestSha256
       }
     : {};
+}
+
+function parseLateHireCompletionBody(body: unknown): LateHireCompletionBody {
+  return isRecord(body)
+    ? {
+        statusCode: body.statusCode,
+        body: body.body,
+        bodyBase64: body.bodyBase64,
+        bodyEncoding: body.bodyEncoding,
+        relayMessageId: body.relayMessageId,
+        requestBodyDigestSha256: body.requestBodyDigestSha256,
+        workerStatusCode: body.workerStatusCode,
+        workerResponseBytes: body.workerResponseBytes,
+        workerResponseDigestSha256: body.workerResponseDigestSha256,
+        relayBodyBytes: body.relayBodyBytes,
+        relayBodyDigestSha256: body.relayBodyDigestSha256,
+        source: body.source
+      }
+    : {};
+}
+
+function boundedNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : undefined;
+}
+
+function validSha256(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value) ? value.toLowerCase() : undefined;
+}
+
+function lateCompletionResponseText(body: LateHireCompletionBody) {
+  if (body.bodyEncoding === "base64" && typeof body.bodyBase64 === "string") {
+    return Buffer.from(body.bodyBase64, "base64").toString("utf8");
+  }
+  if (typeof body.body === "string") {
+    return body.body;
+  }
+  return "";
 }
 
 function parseAgentHeartbeatRequest(body: unknown): AgentHeartbeatRequestBody {
@@ -3318,6 +3369,57 @@ app.post("/api/executions/:requestId/stages", route(async (request, response) =>
   } catch (error) {
     response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to post job stage."
+    });
+  }
+}));
+
+app.post("/api/executions/:requestId/late-completion", route(async (request, response) => {
+  const requestId = request.params.requestId;
+  if (!requestId) {
+    response.status(400).json({ ok: false, code: "request_id_required", error: "requestId is required." });
+    return;
+  }
+  const adminKey = adminKeyHeader(request);
+  if (!adminKey) {
+    response.status(401).json({ ok: false, code: "admin_key_required", error: "x-clawz-admin-key is required." });
+    return;
+  }
+  const body = parseLateHireCompletionBody(request.body ?? null);
+  const responseText = lateCompletionResponseText(body);
+  if (!responseText.trim()) {
+    response.status(400).json({ ok: false, code: "return_body_required", error: "Late completion body is required." });
+    return;
+  }
+  try {
+    const hireRequest = await controlPlane.recordLateHireCompletion({
+      requestId,
+      adminKey,
+      ...(boundedNumber(body.statusCode) ? { statusCode: boundedNumber(body.statusCode)! } : {}),
+      body: responseText,
+      ...(typeof body.relayMessageId === "string" ? { relayMessageId: body.relayMessageId.slice(0, 120) } : {}),
+      ...(validSha256(body.requestBodyDigestSha256) ? { requestBodyDigestSha256: validSha256(body.requestBodyDigestSha256)! } : {}),
+      ...(boundedNumber(body.workerStatusCode) ? { workerStatusCode: boundedNumber(body.workerStatusCode)! } : {}),
+      ...(boundedNumber(body.workerResponseBytes) !== undefined ? { workerResponseBytes: boundedNumber(body.workerResponseBytes)! } : {}),
+      ...(validSha256(body.workerResponseDigestSha256) ? { workerResponseDigestSha256: validSha256(body.workerResponseDigestSha256)! } : {}),
+      ...(boundedNumber(body.relayBodyBytes) !== undefined ? { relayBodyBytes: boundedNumber(body.relayBodyBytes)! } : {}),
+      ...(validSha256(body.relayBodyDigestSha256) ? { relayBodyDigestSha256: validSha256(body.relayBodyDigestSha256)! } : {}),
+      ...(typeof body.source === "string" ? { source: body.source.slice(0, 80) } : {})
+    });
+    response.json({
+      ok: true,
+      requestId: hireRequest.requestId,
+      status: hireRequest.status,
+      operationalStatus: hireRequest.operationalStatus,
+      protocolReturn: hireRequest.protocolReturn
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to record late completion.";
+    const unknownRequest = /unknown execution request/i.test(message);
+    response.status(unknownRequest ? 409 : 400).json({
+      ok: false,
+      code: unknownRequest ? "execution_request_not_persisted_yet" : "late_completion_rejected",
+      retryable: unknownRequest,
+      error: message
     });
   }
 }));
@@ -5659,6 +5761,85 @@ const handleAgentHireRequest = route(async (request, response) => {
           ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
           : {})
       });
+      if (
+        paymentLedgerEntry.hireRequestId &&
+        paymentLedgerEntry.executionStatus === "completed" &&
+        paymentLedgerEntry.returnStatus === "accepted" &&
+        paymentLedgerEntry.transactionHashes.length === 0
+      ) {
+        const completedHire = await controlPlane.getHireRequest(paymentLedgerEntry.hireRequestId);
+        if (completedHire.protocolReturn?.status === "completed") {
+          try {
+            const settlement = await settleAgentX402Payment({
+              runtime,
+              paymentPayload
+            });
+            const settledLedger = await recordX402PaymentLedgerSettlement({
+              agentId,
+              sessionId: consoleState.session.sessionId,
+              pricingMode: activationLaneRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
+              railPlan: settlement.rail,
+              settlement,
+              paymentPayload,
+              authorizationId: paymentPayloadDigestSha256,
+              ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+              ...(consoleState.protocolOwnerFeePolicy.enabled
+                ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
+                : {})
+            });
+            await controlPlane.markHireRequestPaymentSettled({
+              requestId: completedHire.requestId,
+              ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
+              ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
+              ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
+              transactionHashes: settledLedger.transactionHashes,
+              paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
+            });
+            response.json({
+              ...completedHire,
+              idempotent: true,
+              resumedFromPaymentPayload: true,
+              paymentStatus: "settled",
+              operationalStatus: completedHire.operationalStatus
+                ? {
+                    ...completedHire.operationalStatus,
+                    paymentStatus: "settled",
+                    settlementStatus: "settled"
+                  }
+                : completedHire.operationalStatus,
+              payment: {
+                ...completedHire.payment,
+                status: "settled",
+                ledgerId: settledLedger.ledgerId,
+                ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
+                ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
+                ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
+                transactionHashes: settledLedger.transactionHashes
+              }
+            });
+            return;
+          } catch (error) {
+            await controlPlane.recordPaymentLedgerSettlementFailure({
+              ledgerId: paymentLedgerEntry.ledgerId,
+              errorMessage: errorMessage(error, "Unable to settle x402 payment."),
+              settlementRetryable: isRetryableSettlementError(error)
+            });
+            response.status(202).json(paymentSettlementFailureBody(error, {
+              agentId,
+              paidExecution: completedHire,
+              paymentAuthorized: true,
+              paymentSettled: false,
+              payment: {
+                ...completedHire.payment,
+                status: "authorized",
+                ledgerId: paymentLedgerEntry.ledgerId,
+                transactionHashes: []
+              }
+            }));
+            return;
+          }
+        }
+      }
       paymentAuthorization = {
         status: "authorized",
         ...(activationLaneRequested ? { activationLane: true } : {}),
@@ -6584,7 +6765,7 @@ class AgentRelayConnection {
     const messageId = typeof message.messageId === "string" ? message.messageId : "";
     const pending = this.pending.get(messageId);
     if (!pending) {
-      return;
+      return false;
     }
     this.pending.delete(messageId);
     clearTimeout(pending.timeout);
@@ -6679,6 +6860,7 @@ class AgentRelayConnection {
       ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {}),
       relayTrace: pending.trace
     });
+    return true;
   }
 
   private receive(chunk: Buffer) {
@@ -7003,7 +7185,35 @@ class AgentRelayHub {
       return;
     }
     if (message.type === "hire_response") {
-      connection.handleResponse(message);
+      const handled = connection.handleResponse(message);
+      if (!handled) {
+        const requestId = typeof message.requestId === "string" ? message.requestId.trim().slice(0, 96) : "";
+        const responseText = lateCompletionResponseText(parseLateHireCompletionBody(message));
+        if (requestId && responseText.trim()) {
+          await this.plane.recordLateHireCompletion({
+            requestId,
+            adminKey: connection.adminKey,
+            ...(boundedNumber(message.statusCode) ? { statusCode: boundedNumber(message.statusCode)! } : {}),
+            body: responseText,
+            ...(typeof message.messageId === "string" ? { relayMessageId: message.messageId.slice(0, 120) } : {}),
+            ...(validSha256(message.requestBodyDigestSha256) ? { requestBodyDigestSha256: validSha256(message.requestBodyDigestSha256)! } : {}),
+            ...(boundedNumber(message.workerStatusCode) ? { workerStatusCode: boundedNumber(message.workerStatusCode)! } : {}),
+            ...(boundedNumber(message.workerResponseBytes) !== undefined ? { workerResponseBytes: boundedNumber(message.workerResponseBytes)! } : {}),
+            ...(validSha256(message.workerResponseDigestSha256) ? { workerResponseDigestSha256: validSha256(message.workerResponseDigestSha256)! } : {}),
+            ...(boundedNumber(message.relayBodyBytes) !== undefined ? { relayBodyBytes: boundedNumber(message.relayBodyBytes)! } : {}),
+            ...(validSha256(message.relayBodyDigestSha256) ? { relayBodyDigestSha256: validSha256(message.relayBodyDigestSha256)! } : {}),
+            source: "late_websocket_response"
+          }).catch((error) => {
+            console.error(JSON.stringify({
+              event: "late_hire_response_record_failed",
+              agentId: connection.agentId,
+              requestId,
+              relayMessageId: typeof message.messageId === "string" ? message.messageId : undefined,
+              error: error instanceof Error ? error.message : String(error)
+            }));
+          });
+        }
+      }
       return;
     }
     if (message.type === "hire_ack") {

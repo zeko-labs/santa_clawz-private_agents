@@ -11302,10 +11302,203 @@ export class ClawzControlPlane {
     const base = `/api/executions/${encodeURIComponent(input.requestId)}`;
     return {
       token: input.token,
+      statePath: `${base}/state?${tokenQuery}`,
       messagesPath: `${base}/messages?${tokenQuery}`,
       stagesPath: `${base}/stages?${tokenQuery}`,
       collaborationPath: `${base}/collaboration?${tokenQuery}`
     };
+  }
+
+  async recordLateHireCompletion(options: {
+    requestId: string;
+    adminKey?: string;
+    statusCode?: number;
+    body: string;
+    relayMessageId?: string;
+    requestBodyDigestSha256?: string;
+    workerStatusCode?: number;
+    workerResponseBytes?: number;
+    workerResponseDigestSha256?: string;
+    relayBodyBytes?: number;
+    relayBodyDigestSha256?: string;
+    source?: string;
+  }): Promise<HireRequestRecord> {
+    const existing = await this.assertHireArtifactUploadAccess(options.requestId, options.adminKey);
+    const responseStatus = Number.isFinite(options.statusCode) ? Math.round(options.statusCode ?? 200) : 200;
+    const responseBytes = Buffer.byteLength(options.body, "utf8");
+    let protocolReturn: HireRequestReceipt["protocolReturn"] | undefined;
+    try {
+      protocolReturn = this.parseHireIngressProtocolReturn({
+        responseText: options.body,
+        requestId: existing.requestId,
+        requestKind: existing.requestType
+      });
+    } catch (error) {
+      const validationError = error instanceof Error ? error.message : "Agent runtime returned an invalid response.";
+      const deliveryReceipt = this.buildHireDeliveryReceipt({
+        stage: "return_rejected",
+        target: existing.deliveryTarget,
+        ...(options.relayMessageId ? { relayMessageId: options.relayMessageId } : {}),
+        requestId: existing.requestId,
+        ...(options.requestBodyDigestSha256 ? { requestBodyDigestSha256: options.requestBodyDigestSha256 } : {}),
+        runtimeStatusCode: responseStatus,
+        runtimeResponseBytes: responseBytes,
+        ...(options.workerStatusCode !== undefined ? { workerStatusCode: options.workerStatusCode } : {}),
+        ...(options.workerResponseBytes !== undefined ? { workerResponseBytes: options.workerResponseBytes } : {}),
+        ...(options.workerResponseDigestSha256 ? { workerResponseDigestSha256: options.workerResponseDigestSha256 } : {}),
+        ...(options.relayBodyBytes !== undefined ? { relayBodyBytes: options.relayBodyBytes } : {}),
+        ...(options.relayBodyDigestSha256 ? { relayBodyDigestSha256: options.relayBodyDigestSha256 } : {}),
+        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+        errorMessage: validationError
+      });
+      const file = await this.loadHireRequestFile();
+      const index = file.requests.findIndex((request) => request.requestId === existing.requestId);
+      if (index < 0) {
+        throw new Error(`Unknown execution request: ${existing.requestId}`);
+      }
+      const updated: HireRequestRecord = {
+        ...file.requests[index]!,
+        status: "failed",
+        deliveryStatus: "return_rejected",
+        returnValidationError: validationError,
+        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+        localResponseStatusCode: responseStatus,
+        localResponseBytes: responseBytes,
+        deliveryReceipt,
+        operationalStatus: {
+          ...(file.requests[index]!.operationalStatus ?? {
+            paymentStatus: existing.paymentStatus === "authorized" ? "authorized" : "not_required",
+            settlementStatus: existing.requestType === "paid_execution" ? "authorized" : "not_required",
+            relayDeliveryStatus: "return_rejected",
+            agentExecutionStatus: "worker_completed_return_rejected"
+          }),
+          relayDeliveryStatus: "return_rejected",
+          agentExecutionStatus: "worker_completed_return_rejected"
+        },
+        relayTrace: mergeHireRelayTrace({
+          submittedAtIso: existing.submittedAtIso,
+          paymentStatus: existing.paymentStatus,
+          requestUpdatedAtIso: new Date().toISOString(),
+          ...(existing.relayTrace ? { relayTrace: existing.relayTrace } : {}),
+          deliveryStatus: "return_rejected",
+          completed: false
+        })
+      };
+      const nextRequests = file.requests.map((request, requestIndex) => requestIndex === index ? updated : request);
+      const nextJobActivityStatsBySessionId = { ...(file.jobActivityStatsBySessionId ?? {}) };
+      delete nextJobActivityStatsBySessionId[updated.sessionId];
+      await this.saveHireRequestFile({
+        ...file,
+        requests: nextRequests,
+        jobActivityStatsBySessionId: nextJobActivityStatsBySessionId
+      });
+      await this.updatePaymentLedgerExecution({
+        ...(updated.payment?.ledgerId ? { ledgerId: updated.payment.ledgerId } : {}),
+        hireRequestId: updated.requestId,
+        executionStatus: "failed",
+        returnStatus: "rejected",
+        deliveryReceipt,
+        ...(updated.returnValidationCode ? { errorCode: updated.returnValidationCode } : {}),
+        errorMessage: validationError
+      });
+      return updated;
+    }
+
+    if (!protocolReturn) {
+      throw new Error("Late completion did not include a SantaClawz return package.");
+    }
+    if (
+      existing.requestType === "paid_execution" &&
+      protocolReturn.status === "completed" &&
+      protocolReturn.execution?.completionClassification !== "agent_completed_verified"
+    ) {
+      throw new Error(
+        "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
+      );
+    }
+
+    const file = await this.loadHireRequestFile();
+    const index = file.requests.findIndex((request) => request.requestId === existing.requestId);
+    if (index < 0) {
+      throw new Error(`Unknown execution request: ${existing.requestId}`);
+    }
+    const current = file.requests[index]!;
+    const deliveryReceipt = this.buildHireDeliveryReceipt({
+      stage: protocolReturn ? "return_validated" : "runtime_responded",
+      target: current.deliveryTarget,
+      ...(options.relayMessageId ? { relayMessageId: options.relayMessageId } : {}),
+      requestId: current.requestId,
+      ...(options.requestBodyDigestSha256 ? { requestBodyDigestSha256: options.requestBodyDigestSha256 } : {}),
+      runtimeStatusCode: responseStatus,
+      runtimeResponseBytes: responseBytes,
+      ...(options.workerStatusCode !== undefined ? { workerStatusCode: options.workerStatusCode } : {}),
+      ...(options.workerResponseBytes !== undefined ? { workerResponseBytes: options.workerResponseBytes } : {}),
+      ...(options.workerResponseDigestSha256 ? { workerResponseDigestSha256: options.workerResponseDigestSha256 } : {}),
+      ...(options.relayBodyBytes !== undefined ? { relayBodyBytes: options.relayBodyBytes } : {}),
+      ...(options.relayBodyDigestSha256 ? { relayBodyDigestSha256: options.relayBodyDigestSha256 } : {})
+    });
+    const completed = protocolReturn.status === "completed";
+    const {
+      deliveryError: _deliveryError,
+      returnValidationError: _returnValidationError,
+      returnValidationCode: _returnValidationCode,
+      ...currentWithoutPriorFailure
+    } = current;
+    const updated: HireRequestRecord = {
+      ...currentWithoutPriorFailure,
+      status: protocolReturn.status,
+      deliveryStatus: "forwarded",
+      localResponseStatusCode: responseStatus,
+      localResponseBytes: responseBytes,
+      deliveryReceipt,
+      protocolReturn,
+      operationalStatus: {
+        ...(current.operationalStatus ?? {
+          paymentStatus: current.paymentStatus === "authorized" ? "authorized" : "not_required",
+          settlementStatus: current.requestType === "paid_execution" ? "authorized" : "not_required",
+          relayDeliveryStatus: "forwarded",
+          agentExecutionStatus: protocolReturn.status
+        }),
+        relayDeliveryStatus: "forwarded",
+        agentExecutionStatus: protocolReturn.status
+      },
+      relayTrace: mergeHireRelayTrace({
+        submittedAtIso: current.submittedAtIso,
+        paymentStatus: current.paymentStatus,
+        requestUpdatedAtIso: new Date().toISOString(),
+        ...(current.relayTrace ? { relayTrace: current.relayTrace } : {}),
+        deliveryStatus: "forwarded",
+        completed
+      })
+    };
+    const nextRequests = file.requests.map((request, requestIndex) => requestIndex === index ? updated : request);
+    const nextJobActivityStatsBySessionId = { ...(file.jobActivityStatsBySessionId ?? {}) };
+    delete nextJobActivityStatsBySessionId[updated.sessionId];
+    await this.saveHireRequestFile({
+      ...file,
+      requests: nextRequests,
+      jobActivityStatsBySessionId: nextJobActivityStatsBySessionId
+    });
+    if (updated.payment?.ledgerId) {
+      await this.updatePaymentLedgerExecution({
+        ledgerId: updated.payment.ledgerId,
+        hireRequestId: updated.requestId,
+        executionStatus:
+          protocolReturn.status === "completed"
+            ? "completed"
+            : protocolReturn.status === "failed"
+              ? "failed"
+              : "submitted",
+        returnStatus:
+          protocolReturn.status === "completed"
+            ? "accepted"
+            : protocolReturn.status === "failed"
+              ? "rejected"
+              : "none",
+        deliveryReceipt
+      });
+    }
+    return updated;
   }
 
   private buildJobCollaborationState(file: JobCollaborationFile, request: HireRequestRecord) {

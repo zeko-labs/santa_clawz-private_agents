@@ -35,7 +35,8 @@ const RELAY_AGENT_FEATURES = [
   "node_http_worker_forwarding",
   "worker_response_telemetry",
   "worker_return_parse_telemetry",
-  "five_minute_sync_window"
+  "five_minute_sync_window",
+  "late_completion_backup"
 ];
 const RELAY_AGENT_BUILD =
   process.env.RENDER_GIT_COMMIT?.trim() ||
@@ -662,7 +663,73 @@ function postWorkerRequest(targetUrl, input) {
   });
 }
 
-async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "") {
+async function postLateCompletionBackup(input) {
+  if (!input?.apiBase || !input?.adminKey || !input?.requestId || !input?.body) {
+    return;
+  }
+  const url = `${normalizeBaseUrl(input.apiBase)}/api/executions/${encodeURIComponent(input.requestId)}/late-completion`;
+  const payload = {
+    statusCode: input.statusCode,
+    bodyBase64: Buffer.from(input.body, "utf8").toString("base64"),
+    bodyEncoding: "base64",
+    ...(input.relayMessageId ? { relayMessageId: input.relayMessageId } : {}),
+    ...(input.requestBodyDigestSha256 ? { requestBodyDigestSha256: input.requestBodyDigestSha256 } : {}),
+    ...(input.workerStatusCode !== undefined ? { workerStatusCode: input.workerStatusCode } : {}),
+    ...(input.workerResponseBytes !== undefined ? { workerResponseBytes: input.workerResponseBytes } : {}),
+    ...(input.workerResponseDigestSha256 ? { workerResponseDigestSha256: input.workerResponseDigestSha256 } : {}),
+    ...(input.relayBodyBytes !== undefined ? { relayBodyBytes: input.relayBodyBytes } : {}),
+    ...(input.relayBodyDigestSha256 ? { relayBodyDigestSha256: input.relayBodyDigestSha256 } : {}),
+    source: "relay_agent_backup"
+  };
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-clawz-admin-key": input.adminKey
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000)
+  });
+  const responseText = await response.text().catch(() => "");
+  if (!response.ok) {
+    const error = new Error(`Late completion backup returned ${response.status}${responseText ? `: ${responseText.slice(0, 240)}` : ""}`);
+    error.status = response.status;
+    throw error;
+  }
+  return responseText;
+}
+
+function scheduleLateCompletionBackup(input) {
+  const delaysMs = [0, 10_000, 30_000, 75_000, 130_000, 190_000];
+  let recorded = false;
+  for (const [index, delayMs] of delaysMs.entries()) {
+    setTimeout(() => {
+      if (recorded) {
+        return;
+      }
+      void postLateCompletionBackup(input).then(() => {
+        recorded = true;
+        console.error(JSON.stringify({
+          event: "relay_late_completion_backup_recorded",
+          requestId: input.requestId,
+          messageId: input.relayMessageId,
+          attempt: index + 1
+        }));
+      }).catch((error) => {
+        console.error(JSON.stringify({
+          event: "relay_late_completion_backup_failed",
+          requestId: input.requestId,
+          messageId: input.relayMessageId,
+          attempt: index + 1,
+          retrying: index + 1 < delaysMs.length,
+          error: error instanceof Error ? error.message : String(error)
+        }));
+      });
+    }, delayMs).unref?.();
+  }
+}
+
+async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "", completionBackup = {}) {
   if (!message || typeof message !== "object" || message.type !== "hire_request") {
     return;
   }
@@ -806,6 +873,19 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
         relayBodyDigestSha256: sha256Hex(normalized.body)
       });
       const sent = sendHireResponseOnce(responseEnvelope);
+      scheduleLateCompletionBackup({
+        ...completionBackup,
+        requestId,
+        relayMessageId: message.messageId,
+        requestBodyDigestSha256,
+        statusCode: responseEnvelope.statusCode,
+        body: normalized.body,
+        workerStatusCode: responseEnvelope.workerStatusCode,
+        workerResponseBytes: responseEnvelope.workerResponseBytes,
+        workerResponseDigestSha256: responseEnvelope.workerResponseDigestSha256,
+        relayBodyBytes: responseEnvelope.relayBodyBytes,
+        relayBodyDigestSha256: responseEnvelope.relayBodyDigestSha256
+      });
       console.error(JSON.stringify({
         event: "relay_starter_fast_path_completed",
         messageId: message.messageId,
@@ -883,6 +963,19 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "")
       relayBodyDigestSha256: sha256Hex(normalized.body)
     });
     const sent = sendHireResponseOnce(responseEnvelope);
+    scheduleLateCompletionBackup({
+      ...completionBackup,
+      requestId,
+      relayMessageId: message.messageId,
+      requestBodyDigestSha256,
+      statusCode: responseEnvelope.statusCode,
+      body: normalized.body,
+      workerStatusCode: responseEnvelope.workerStatusCode,
+      workerResponseBytes: responseEnvelope.workerResponseBytes,
+      workerResponseDigestSha256: responseEnvelope.workerResponseDigestSha256,
+      relayBodyBytes: responseEnvelope.relayBodyBytes,
+      relayBodyDigestSha256: responseEnvelope.relayBodyDigestSha256
+    });
     console.error(JSON.stringify({
       event: "relay_hire_response_sent",
       messageId: message.messageId,
@@ -1072,7 +1165,16 @@ async function connectRelay(options) {
       if (opcode !== 0x1) {
         continue;
       }
-      void handleRelayMessage(JSON.parse(payload.toString("utf8")), options.localHireUrl, sendJson, options.agentId);
+      void handleRelayMessage(
+        JSON.parse(payload.toString("utf8")),
+        options.localHireUrl,
+        sendJson,
+        options.agentId,
+        {
+          apiBase: options.apiBase,
+          adminKey: options.adminKey
+        }
+      );
     }
   });
   const relayHeartbeatInterval = setInterval(() => {

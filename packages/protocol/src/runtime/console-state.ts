@@ -766,6 +766,7 @@ export interface HireRequestReceipt {
   jobContext?: SantaClawzJobContext;
   jobWorkspace?: {
     token: string;
+    statePath: string;
     messagesPath: string;
     stagesPath: string;
     collaborationPath: string;
