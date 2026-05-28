@@ -6546,6 +6546,7 @@ class RelayMessageRateLimiter {
 class AgentRelayConnection {
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, RelayPendingRequest>();
+  private readonly recentlyResolvedMessageIds = new Set<string>();
   private closed = false;
   private lastHeartbeatAtMs = Date.now();
   private invalidJsonFrames = 0;
@@ -6762,6 +6763,14 @@ class AgentRelayConnection {
     const messageId = typeof message.messageId === "string" ? message.messageId : "";
     const pending = this.pending.get(messageId);
     if (!pending) {
+      console.error(JSON.stringify({
+        event: "relay_worker_progress_without_pending_request",
+        agentId: this.agentId,
+        connectionId: this.connectionId,
+        messageId,
+        requestId: typeof message.requestId === "string" ? message.requestId.slice(0, 96) : undefined,
+        step: typeof message.step === "string" ? message.step.slice(0, 96) : undefined
+      }));
       return;
     }
     const step = [
@@ -6839,11 +6848,50 @@ class AgentRelayConnection {
     const preparedResponseDigestSha256 = preparedResponseBody
       ? createHash("sha256").update(preparedResponseBody).digest("hex")
       : undefined;
+    const preparedDigestFromMessage = validSha256(message.preparedResponseBodyDigestSha256);
+    const preparedDigestMatches =
+      Boolean(preparedResponseBody) &&
+      (!relayBodyDigestSha256 || relayBodyDigestSha256 === preparedResponseDigestSha256) &&
+      (!preparedDigestFromMessage || preparedDigestFromMessage === preparedResponseDigestSha256);
+    if (preparedResponseBody) {
+      console.error(JSON.stringify({
+        event: "relay_hire_response_prepared_progress_received",
+        agentId: this.agentId,
+        connectionId: this.connectionId,
+        messageId,
+        requestId,
+        step,
+        preparedResponseBodyBytes: Buffer.byteLength(preparedResponseBody, "utf8"),
+        preparedResponseDigestSha256,
+        preparedDigestFromMessage,
+        relayBodyDigestSha256,
+        preparedDigestMatches,
+        pendingFound: true
+      }));
+    }
     if (
-      step === "hire_response_prepared" &&
       preparedResponseBody &&
-      (!relayBodyDigestSha256 || relayBodyDigestSha256 === preparedResponseDigestSha256)
+      preparedDigestMatches
     ) {
+      if (step !== "hire_response_prepared" && !pending.trace.some((entry) => entry.step === "hire_response_prepared")) {
+        pending.trace.push({
+          step: "hire_response_prepared",
+          status: "completed",
+          occurredAtIso: new Date().toISOString(),
+          relayMessageId: messageId,
+          ...(requestId ? { requestId } : {}),
+          ...(requestBodyDigestSha256 ? { requestBodyDigestSha256 } : {}),
+          ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
+          ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
+          ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
+          ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+          ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {}),
+          ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+          ...(localTimeoutMs !== undefined ? { localTimeoutMs } : {}),
+          platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
+          detail: `prepared response carried by ${step} progress frame`
+        });
+      }
       this.handleResponse({
         type: "hire_response",
         messageId,
@@ -6860,6 +6908,19 @@ class AgentRelayConnection {
         ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
         ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {})
       });
+    } else if (preparedResponseBody) {
+      console.error(JSON.stringify({
+        event: "relay_hire_response_prepared_progress_rejected",
+        agentId: this.agentId,
+        connectionId: this.connectionId,
+        messageId,
+        requestId,
+        step,
+        preparedResponseDigestSha256,
+        preparedDigestFromMessage,
+        relayBodyDigestSha256,
+        reason: "prepared_response_digest_mismatch"
+      }));
     }
   }
 
@@ -6867,7 +6928,14 @@ class AgentRelayConnection {
     const messageId = typeof message.messageId === "string" ? message.messageId : "";
     const pending = this.pending.get(messageId);
     if (!pending) {
-      return false;
+      return this.recentlyResolvedMessageIds.has(messageId);
+    }
+    if (messageId) {
+      this.recentlyResolvedMessageIds.add(messageId);
+      const forgetResolvedMessageId = setTimeout(() => {
+        this.recentlyResolvedMessageIds.delete(messageId);
+      }, Math.max(10_000, RELAY_RESPONSE_TIMEOUT_MS));
+      (forgetResolvedMessageId as unknown as { unref?: () => void }).unref?.();
     }
     this.pending.delete(messageId);
     clearTimeout(pending.timeout);
