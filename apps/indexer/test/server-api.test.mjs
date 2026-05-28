@@ -2416,6 +2416,21 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       activationCandidates.payload.candidates.some((candidate) => candidate.agentId === agentId),
       true
     );
+    const activationCandidatesViaWorkerHeader = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      headers: {
+        "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+      }
+    });
+    assert.equal(activationCandidatesViaWorkerHeader.status, 200);
+    assert.equal(activationCandidatesViaWorkerHeader.payload.candidates.length, activationCandidates.payload.candidates.length);
+
+    const activationCandidatesWithBadToken = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      headers: {
+        "x-santaclawz-activation-lane-key": "wrong-token"
+      }
+    });
+    assert.equal(activationCandidatesWithBadToken.status, 401);
+    assert.equal(activationCandidatesWithBadToken.payload.code, "activation_lane_auth_required");
 
     const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -2489,11 +2504,48 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(quotePlan.payload.published, true);
     assert.equal(quotePlan.payload.readiness.published, true);
 
+    const contextRequired = await requestJson(`${baseUrl}/api/console/profile`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        contextRequirements: {
+          schemaVersion: "santaclawz-context-requirements/1.0",
+          hardRequirements: [
+            {
+              key: "source-material",
+              label: "Source material",
+              anyOf: ["url", "document"],
+              buyerMessage: "Provide a source URL or document before hiring this agent."
+            }
+          ]
+        }
+      })
+    });
+    assert.equal(contextRequired.status, 200);
+    assert.equal(contextRequired.payload.profile.contextRequirements.hardRequirements[0].key, "source-material");
+
+    const missingContext = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Quote this request without required buyer context.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(missingContext.status, 400);
+    assert.equal(missingContext.payload.code, "missing_required_input");
+    assert.equal(missingContext.payload.paymentRequested, false);
+    assert.equal(missingContext.payload.operationalStatus.relayDeliveryStatus, "not_attempted");
+
     const accepted = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
         taskPrompt: "Quote this signed hire request.",
-        requesterContact: "buyer@example.com"
+        requesterContact: "buyer@example.com",
+        jobContext: {
+          urls: ["https://example.com/source-brief"],
+          text: "Use this as buyer-provided context for the quote."
+        }
       })
     });
     assert.equal(accepted.status, 200);
@@ -2513,12 +2565,22 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(accepted.payload.ingress.url, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
     assert.notEqual(accepted.payload.ingress.url, ingressUrl);
     assert.equal(ingress.receivedHireRequestIds.has(accepted.payload.requestId), true);
+    assert.deepEqual(accepted.payload.jobContext.urls, ["https://example.com/source-brief"]);
+    assert.equal(ingress.receivedHireRequests.get(accepted.payload.requestId).input.job_context.urls[0], "https://example.com/source-brief");
 
     const acceptedFromHostedUrl = await requestJson(`${baseUrl}/agent/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
         taskPrompt: "Quote this from the hosted SantaClawz hire URL.",
-        requesterContact: "buyer@example.com"
+        requesterContact: "buyer@example.com",
+        jobContext: {
+          attachments: [
+            {
+              kind: "document",
+              url: "https://example.com/hosted-brief.pdf"
+            }
+          ]
+        }
       })
     });
     assert.equal(acceptedFromHostedUrl.status, 200);
@@ -2526,6 +2588,19 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(acceptedFromHostedUrl.payload.deliveryStatus, "forwarded");
     assert.equal(acceptedFromHostedUrl.payload.deliveryTarget, `https://santaclawz.ai/agent/${encodeURIComponent(agentId)}/hire`);
     assert.equal(ingress.receivedHireRequestIds.has(acceptedFromHostedUrl.payload.requestId), true);
+
+    const contextRequirementCleared = await requestJson(`${baseUrl}/api/console/profile`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        contextRequirements: {
+          schemaVersion: "santaclawz-context-requirements/1.0",
+          hardRequirements: []
+        }
+      })
+    });
+    assert.equal(contextRequirementCleared.status, 200);
 
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({
       schema_version: "santaclawz-return/1.0",

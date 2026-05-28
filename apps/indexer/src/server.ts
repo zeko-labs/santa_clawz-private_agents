@@ -25,6 +25,10 @@ import {
   type PaymentLedgerEntry,
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
+  type SantaClawzContextFailureCode,
+  type SantaClawzContextInputField,
+  type SantaClawzContextRequirements,
+  type SantaClawzJobContext,
   type SantaClawzJobPrivacyPreference,
   type SocialAnchorCandidateKind,
   type SantaClawzQuoteAcceptanceWalletProof,
@@ -280,6 +284,7 @@ type RegisterAgentRequestBody = {
   missionAuthOverlay?: unknown;
   paymentProfile?: unknown;
   marketplaceTags?: unknown;
+  contextRequirements?: unknown;
   socialAnchorPolicy?: unknown;
   trustModeId?: unknown;
   preferredProvingLocation?: unknown;
@@ -301,6 +306,7 @@ type ProfileRequestBody = {
   missionAuthOverlay?: unknown;
   paymentProfile?: unknown;
   marketplaceTags?: unknown;
+  contextRequirements?: unknown;
   socialAnchorPolicy?: unknown;
   preferredProvingLocation?: unknown;
   sessionId?: unknown;
@@ -319,6 +325,8 @@ type HireRequestBody = {
   budgetMina?: unknown;
   requesterContact?: unknown;
   marketplaceTags?: unknown;
+  jobContext?: unknown;
+  context?: unknown;
   jobPrivacy?: unknown;
   activityPrivacy?: unknown;
   artifactDelivery?: unknown;
@@ -404,6 +412,8 @@ type ProcurementIntentBody = {
   preferredDeliveryModes?: unknown;
   preferredPrivacyModes?: unknown;
   marketplaceTags?: unknown;
+  jobContext?: unknown;
+  context?: unknown;
   jobPrivacy?: unknown;
   artifactDelivery?: unknown;
 };
@@ -581,6 +591,131 @@ function parseMarketplaceWorkTags(value: unknown): Partial<MarketplaceWorkTags> 
     capabilityTags: stringArray(value.capabilityTags),
     inputTags: stringArray(value.inputTags),
     outputTags: stringArray(value.outputTags)
+  };
+}
+
+function parseContextRequirements(value: unknown): Partial<SantaClawzContextRequirements> | undefined {
+  return isRecord(value) ? value as Partial<SantaClawzContextRequirements> : undefined;
+}
+
+function parseJobContext(value: unknown): SantaClawzJobContext | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const stringValue = (input: unknown, maxLength: number) =>
+    typeof input === "string" && input.trim().length > 0 ? input.trim().slice(0, maxLength) : undefined;
+  const urlValues = [
+    ...(Array.isArray(value.urls) ? value.urls : []),
+    value.url,
+    value.artifactUrl
+  ].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  const urls = Array.from(new Set(urlValues.map((item) => item.trim().slice(0, 2048)))).slice(0, 12);
+  const text = stringValue(value.text, 12000) ?? stringValue(value.inputText, 12000) ?? stringValue(value.diffText, 12000);
+  const rawAttachments = Array.isArray(value.attachments) ? value.attachments : [];
+  const attachments = rawAttachments
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .slice(0, 16)
+    .map((item) => {
+      const rawKind = typeof item.kind === "string" ? item.kind : "";
+      const kind =
+        rawKind === "document" || rawKind === "image" || rawKind === "structured_data"
+          ? rawKind
+          : "file";
+      const digestSha256 = stringValue(item.digestSha256, 80)?.toLowerCase();
+      const sizeBytes = typeof item.sizeBytes === "number" && Number.isFinite(item.sizeBytes) && item.sizeBytes >= 0
+        ? Math.floor(item.sizeBytes)
+        : undefined;
+      return {
+        kind,
+        ...(stringValue(item.name, 160) ? { name: stringValue(item.name, 160)! } : {}),
+        ...(stringValue(item.url, 2048) ? { url: stringValue(item.url, 2048)! } : {}),
+        ...(stringValue(item.uploadId, 160) ? { uploadId: stringValue(item.uploadId, 160)! } : {}),
+        ...(digestSha256 && /^[a-f0-9]{64}$/.test(digestSha256) ? { digestSha256 } : {}),
+        ...(stringValue(item.contentType, 120) ? { contentType: stringValue(item.contentType, 120)! } : {}),
+        ...(sizeBytes !== undefined ? { sizeBytes } : {})
+      } satisfies NonNullable<SantaClawzJobContext["attachments"]>[number];
+    });
+  const artifactDigestSha256 = stringValue(value.artifactDigestSha256, 80)?.toLowerCase();
+  const legacyAttachment =
+    stringValue(value.artifactUploadId, 160) || stringValue(value.artifactUrl, 2048) || artifactDigestSha256
+      ? {
+          kind: "file" as const,
+          ...(stringValue(value.artifactUrl, 2048) ? { url: stringValue(value.artifactUrl, 2048)! } : {}),
+          ...(stringValue(value.artifactUploadId, 160) ? { uploadId: stringValue(value.artifactUploadId, 160)! } : {}),
+          ...(artifactDigestSha256 && /^[a-f0-9]{64}$/.test(artifactDigestSha256) ? { digestSha256: artifactDigestSha256 } : {})
+        }
+      : undefined;
+  const structuredData =
+    value.structuredData !== undefined && Buffer.byteLength(JSON.stringify(value.structuredData), "utf8") <= 12000
+      ? value.structuredData
+      : undefined;
+  const context: SantaClawzJobContext = {
+    ...(urls.length > 0 ? { urls } : {}),
+    ...(text ? { text } : {}),
+    ...(attachments.length > 0 || legacyAttachment ? { attachments: [...attachments, ...(legacyAttachment ? [legacyAttachment] : [])] } : {}),
+    ...(structuredData !== undefined ? { structuredData } : {}),
+    ...(stringValue(value.note, 1000) ? { note: stringValue(value.note, 1000)! } : {})
+  };
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+const CONTEXT_INPUT_FIELD_SET = new Set<SantaClawzContextInputField>([
+  "url",
+  "text",
+  "document",
+  "image",
+  "file",
+  "structured_data"
+]);
+
+function jobContextHasField(context: SantaClawzJobContext | undefined, field: SantaClawzContextInputField): boolean {
+  if (!context) {
+    return false;
+  }
+  if (field === "url") {
+    return Boolean(context.urls?.length) || Boolean(context.attachments?.some((item) => item.url));
+  }
+  if (field === "text") {
+    return typeof context.text === "string" && context.text.trim().length > 0;
+  }
+  if (field === "file") {
+    return Boolean(context.attachments?.length);
+  }
+  if (field === "document" || field === "image") {
+    return Boolean(context.attachments?.some((item) => item.kind === field));
+  }
+  if (field === "structured_data") {
+    return context.structuredData !== undefined || Boolean(context.attachments?.some((item) => item.kind === "structured_data"));
+  }
+  return false;
+}
+
+function evaluateContextRequirements(
+  requirements: SantaClawzContextRequirements | undefined,
+  context: SantaClawzJobContext | undefined
+) {
+  const missing = (requirements?.hardRequirements ?? [])
+    .map((requirement) => {
+      const anyOf = (requirement.anyOf ?? []).filter((field) => CONTEXT_INPUT_FIELD_SET.has(field));
+      const allOf = (requirement.allOf ?? []).filter((field) => CONTEXT_INPUT_FIELD_SET.has(field));
+      const anySatisfied = anyOf.length === 0 || anyOf.some((field) => jobContextHasField(context, field));
+      const allSatisfied = allOf.every((field) => jobContextHasField(context, field));
+      if (anySatisfied && allSatisfied) {
+        return undefined;
+      }
+      return {
+        key: requirement.key,
+        ...(requirement.label ? { label: requirement.label } : {}),
+        ...(anyOf.length > 0 ? { anyOf } : {}),
+        ...(allOf.length > 0 ? { allOf } : {}),
+        ...(requirement.buyerMessage ? { buyerMessage: requirement.buyerMessage } : {}),
+        missingCode: requirement.missingCode ?? "missing_required_input" as SantaClawzContextFailureCode
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  return {
+    ok: missing.length === 0,
+    missing
   };
 }
 
@@ -1097,6 +1232,7 @@ function parseRegisterAgentRequest(body: unknown): RegisterAgentRequestBody {
         missionAuthOverlay: body.missionAuthOverlay,
         paymentProfile: body.paymentProfile,
         marketplaceTags: body.marketplaceTags,
+        contextRequirements: body.contextRequirements,
         socialAnchorPolicy: body.socialAnchorPolicy,
         trustModeId: body.trustModeId,
         preferredProvingLocation: body.preferredProvingLocation
@@ -1119,6 +1255,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
   const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
   const paymentProfile = parsePaymentProfile(body.paymentProfile);
   const marketplaceTags = parseAgentMarketplaceTags(body.marketplaceTags);
+  const contextRequirements = parseContextRequirements(body.contextRequirements);
   const runtimeDelivery = parseRuntimeDelivery(body.runtimeDelivery);
   const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
   const trustModeId: TrustModeId | undefined =
@@ -1150,6 +1287,7 @@ function registerOptionsFromBody(body: RegisterAgentRequestBody): Parameters<typ
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
     ...(marketplaceTags ? { marketplaceTags } : {}),
+    ...(contextRequirements ? { contextRequirements } : {}),
     ...(runtimeDelivery ? { runtimeDelivery } : {}),
     ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
     ...(typeof body.representedPrincipal === "string" ? { representedPrincipal: body.representedPrincipal } : {}),
@@ -1164,22 +1302,23 @@ function enrollmentTicketOptionsFromBody(body: RegisterAgentRequestBody): Parame
 
 function parseProfileRequest(body: unknown): ProfileRequestBody {
   return isRecord(body)
-      ? {
-          agentName: body.agentName,
-          representedPrincipal: body.representedPrincipal,
-          headline: body.headline,
-          publicClawzUrl: body.publicClawzUrl,
-          openClawUrl: body.openClawUrl,
-          runtimeDelivery: body.runtimeDelivery,
-          payoutAddress: body.payoutAddress,
-          payoutWallets: body.payoutWallets,
-          missionAuthOverlay: body.missionAuthOverlay,
-          paymentProfile: body.paymentProfile,
-          marketplaceTags: body.marketplaceTags,
-          socialAnchorPolicy: body.socialAnchorPolicy,
-          preferredProvingLocation: body.preferredProvingLocation,
-          sessionId: body.sessionId
-        }
+    ? {
+        agentName: body.agentName,
+        representedPrincipal: body.representedPrincipal,
+        headline: body.headline,
+        publicClawzUrl: body.publicClawzUrl,
+        openClawUrl: body.openClawUrl,
+        runtimeDelivery: body.runtimeDelivery,
+        payoutAddress: body.payoutAddress,
+        payoutWallets: body.payoutWallets,
+        missionAuthOverlay: body.missionAuthOverlay,
+        paymentProfile: body.paymentProfile,
+        marketplaceTags: body.marketplaceTags,
+        contextRequirements: body.contextRequirements,
+        socialAnchorPolicy: body.socialAnchorPolicy,
+        preferredProvingLocation: body.preferredProvingLocation,
+        sessionId: body.sessionId
+      }
     : {};
 }
 
@@ -1209,6 +1348,8 @@ function parseHireRequest(body: unknown): HireRequestBody {
         budgetMina: body.budgetMina,
         requesterContact: body.requesterContact,
         marketplaceTags: body.marketplaceTags,
+        jobContext: body.jobContext,
+        context: body.context,
         jobPrivacy: body.jobPrivacy,
         activityPrivacy: body.activityPrivacy,
         artifactDelivery: body.artifactDelivery,
@@ -1222,6 +1363,7 @@ function parseHireRequest(body: unknown): HireRequestBody {
 function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): CreateProcurementIntentOptions {
   const value = isRecord(body) ? body as ProcurementIntentBody : {};
   const marketplaceTags = parseMarketplaceWorkTags(value.marketplaceTags);
+  const jobContext = parseJobContext(value.jobContext ?? value.context);
   return {
     ...(idempotencyKey ? { idempotencyKey } : typeof value.idempotencyKey === "string" ? { idempotencyKey: value.idempotencyKey } : {}),
     taskPrompt: typeof value.taskPrompt === "string" ? value.taskPrompt : "",
@@ -1233,6 +1375,7 @@ function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): Cre
     preferredDeliveryModes: stringArray(value.preferredDeliveryModes),
     preferredPrivacyModes: stringArray(value.preferredPrivacyModes),
     ...(marketplaceTags ? { marketplaceTags } : {}),
+    ...(jobContext ? { jobContext } : {}),
     ...(parseJobPrivacyPreference(value.jobPrivacy) ? { jobPrivacy: parseJobPrivacyPreference(value.jobPrivacy)! } : {}),
     ...(parseArtifactDeliveryPreference(value.artifactDelivery)
       ? { artifactDelivery: parseArtifactDeliveryPreference(value.artifactDelivery)! }
@@ -4396,6 +4539,7 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         requesterContact: context.quoteRequest.requesterContact,
         ...(context.quoteRequest.budgetMina ? { budgetMina: context.quoteRequest.budgetMina } : {}),
         ...(context.quoteRequest.marketplaceTags ? { marketplaceTags: context.quoteRequest.marketplaceTags } : {}),
+        ...(context.quoteRequest.jobContext ? { jobContext: context.quoteRequest.jobContext } : {}),
         ...(context.quoteRequest.jobPrivacy ? { jobPrivacy: context.quoteRequest.jobPrivacy } : {}),
         ...(context.quoteRequest.artifactDelivery ? { artifactDelivery: context.quoteRequest.artifactDelivery } : {}),
         paymentAuthorization: {
@@ -5102,6 +5246,7 @@ app.post("/api/console/profile", route(async (request, response) => {
   const missionAuthOverlay = parseMissionAuthOverlay(body.missionAuthOverlay);
   const paymentProfile = parsePaymentProfile(body.paymentProfile);
   const marketplaceTags = parseAgentMarketplaceTags(body.marketplaceTags);
+  const contextRequirements = parseContextRequirements(body.contextRequirements);
   const runtimeDelivery = parseRuntimeDelivery(body.runtimeDelivery);
   const socialAnchorPolicy = parseSocialAnchorPolicy(body.socialAnchorPolicy);
   const preferredProvingLocation =
@@ -5123,6 +5268,7 @@ app.post("/api/console/profile", route(async (request, response) => {
     ...(missionAuthOverlay ? { missionAuthOverlay } : {}),
     ...(paymentProfile ? { paymentProfile } : {}),
     ...(marketplaceTags ? { marketplaceTags } : {}),
+    ...(contextRequirements ? { contextRequirements } : {}),
     ...(runtimeDelivery ? { runtimeDelivery } : {}),
     ...(socialAnchorPolicy ? { socialAnchorPolicy } : {}),
     ...(typeof body.payoutAddress === "string"
@@ -5237,6 +5383,7 @@ const handleAgentHireRequest = route(async (request, response) => {
     const jobPrivacy = parseJobPrivacyPreference(body.jobPrivacy ?? body.activityPrivacy);
     const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
     const marketplaceTags = parseMarketplaceWorkTags(body.marketplaceTags);
+    const jobContext = parseJobContext(body.jobContext ?? body.context);
     if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
       response.status(400).json(hireRequestErrorBody(
         "task_prompt_too_long",
@@ -5322,6 +5469,42 @@ const handleAgentHireRequest = route(async (request, response) => {
             agentExecutionStatus: "not_started"
           }
         });
+        return;
+      }
+    }
+    if (!activationLaneRequested) {
+      const contextCheck = evaluateContextRequirements(consoleState.profile.contextRequirements, jobContext);
+      if (!contextCheck.ok) {
+        const firstMissing = contextCheck.missing[0];
+        response.status(400).json(hireRequestErrorBody(
+          firstMissing?.missingCode ?? "missing_required_input",
+          firstMissing?.buyerMessage ??
+            "This seller requires more buyer context before SantaClawz can submit the job.",
+          {
+            paymentRequested: false,
+            nextAction: "provide_required_context",
+            acceptedContextFields: Array.from(CONTEXT_INPUT_FIELD_SET),
+            missingRequirements: contextCheck.missing,
+            jobContextShape: {
+              urls: ["https://example.com/source-or-reference"],
+              text: "Plain text input or instructions that do not fit in taskPrompt.",
+              attachments: [
+                {
+                  kind: "document",
+                  url: "https://example.com/input.pdf",
+                  digestSha256: "optional sha256 digest"
+                }
+              ],
+              structuredData: { key: "value" }
+            },
+            operationalStatus: {
+              paymentStatus: "not_required",
+              settlementStatus: "not_attempted",
+              relayDeliveryStatus: "not_attempted",
+              agentExecutionStatus: "not_started"
+            }
+          }
+        ));
         return;
       }
     }
@@ -5423,6 +5606,7 @@ const handleAgentHireRequest = route(async (request, response) => {
         requesterContact,
         ...(typeof body.budgetMina === "string" ? { budgetMina: body.budgetMina } : {}),
         ...(marketplaceTags ? { marketplaceTags } : {}),
+        ...(jobContext ? { jobContext } : {}),
         ...(jobPrivacy ? { jobPrivacy } : {}),
         ...(artifactDelivery ? { artifactDelivery } : {}),
         ...(paymentAuthorization ? { paymentAuthorization } : {})

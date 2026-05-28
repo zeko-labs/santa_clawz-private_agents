@@ -671,6 +671,7 @@ def run_once(path: pathlib.Path, timeout_seconds: int) -> int:
 
 
 def activation_lane_http_json(method: str, url: str, token: str, payload: Optional[dict[str, Any]] = None, timeout_seconds: Optional[int] = None) -> tuple[int, dict[str, Any]]:
+    clean_token = token.strip()
     body = None if payload is None else json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     timeout = timeout_seconds if timeout_seconds is not None else int(os.environ.get("CLAWZ_ACTIVATION_LANE_HTTP_TIMEOUT_SECONDS", "120"))
     request = urllib.request.Request(
@@ -680,8 +681,8 @@ def activation_lane_http_json(method: str, url: str, token: str, payload: Option
         headers={
             "accept": "application/json",
             "content-type": "application/json",
-            "authorization": f"Bearer {token}",
-            "x-santaclawz-activation-lane-key": token,
+            "authorization": f"Bearer {clean_token}",
+            "x-santaclawz-activation-lane-key": clean_token,
         },
     )
     try:
@@ -1043,7 +1044,7 @@ def process_activation_candidate(candidate: dict[str, Any], token: str, command:
 
 def activation_lane_loop(interval_seconds: int) -> None:
     api_base = os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/")
-    token = os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN") or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN")
+    token = (os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN") or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN") or "").strip()
     command = os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND")
     cooldown_seconds = int(os.environ.get("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", "3600"))
     if not token:

@@ -595,6 +595,55 @@ export interface AgentJobActivityStats {
   label: string;
 }
 
+export type SantaClawzContextInputField =
+  | "url"
+  | "text"
+  | "document"
+  | "image"
+  | "file"
+  | "structured_data";
+
+export type SantaClawzContextFailureCode =
+  | "missing_required_input"
+  | "context_insufficient"
+  | "invalid_input"
+  | "input_unavailable"
+  | "artifact_unavailable"
+  | "artifact_scan_failed"
+  | "unsupported_delivery_mode"
+  | "buyer_action_required";
+
+export interface SantaClawzContextRequirement {
+  key: string;
+  label?: string;
+  anyOf?: SantaClawzContextInputField[];
+  allOf?: SantaClawzContextInputField[];
+  buyerMessage?: string;
+  missingCode?: SantaClawzContextFailureCode;
+}
+
+export interface SantaClawzContextRequirements {
+  schemaVersion: "santaclawz-context-requirements/1.0";
+  hardRequirements: SantaClawzContextRequirement[];
+  softGuidance?: string[];
+}
+
+export interface SantaClawzJobContext {
+  urls?: string[];
+  text?: string;
+  attachments?: Array<{
+    kind: "document" | "image" | "file" | "structured_data";
+    name?: string;
+    url?: string;
+    uploadId?: string;
+    digestSha256?: string;
+    contentType?: string;
+    sizeBytes?: number;
+  }>;
+  structuredData?: unknown;
+  note?: string;
+}
+
 export interface AgentProfileState {
   agentName: string;
   representedPrincipal: string;
@@ -614,6 +663,7 @@ export interface AgentProfileState {
   missionAuthOverlay: AgentMissionAuthOverlay;
   paymentProfile: AgentPaymentProfile;
   marketplaceTags: AgentMarketplaceTags;
+  contextRequirements?: SantaClawzContextRequirements;
   socialAnchorPolicy: AgentSocialAnchorPolicy;
   preferredProvingLocation: PrivacyProvingLocation;
 }
@@ -644,6 +694,7 @@ export interface AgentRegistryEntry {
   referencePriceUnit?: AgentReferencePriceUnit;
   settlementTrigger: AgentSettlementTrigger;
   marketplaceTags: AgentMarketplaceTags;
+  contextRequirements?: SantaClawzContextRequirements;
   payoutAddressConfigured: boolean;
   paymentProfileReady: boolean;
   paidJobsEnabled: boolean;
@@ -695,6 +746,7 @@ export interface HireRequestReceipt {
     note?: string;
   };
   marketplaceTags?: MarketplaceWorkTags;
+  jobContext?: SantaClawzJobContext;
   jobWorkspace?: {
     token: string;
     messagesPath: string;
@@ -770,6 +822,7 @@ export interface HireRequestReceipt {
         | "demo_completion";
     };
     incidentId?: string;
+    failureCode?: SantaClawzContextFailureCode;
   };
   payment?: {
     status: "quote_requested" | "authorized" | "settled" | "paid" | "escrowed" | "free_test";

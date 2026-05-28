@@ -78,7 +78,11 @@ import {
   type SocialAnchorQueueState,
   type SantaClawzQuoteAcceptanceWalletProof,
   type SantaClawzArtifactDeliveryPreference,
+  type SantaClawzContextFailureCode,
+  type SantaClawzContextInputField,
+  type SantaClawzContextRequirements,
   type SantaClawzJobPrivacyPreference,
+  type SantaClawzJobContext,
   type ShadowWalletState,
   type TrustModeId,
   type ZekoContractDeployment,
@@ -581,6 +585,7 @@ interface RegisterAgentOptions {
   missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
   paymentProfile?: Partial<AgentProfileState["paymentProfile"]>;
   marketplaceTags?: Partial<AgentMarketplaceTags>;
+  contextRequirements?: Partial<SantaClawzContextRequirements>;
   socialAnchorPolicy?: Partial<AgentProfileState["socialAnchorPolicy"]>;
   payoutAddress?: string;
   trustModeId?: TrustModeId;
@@ -631,12 +636,13 @@ interface DeleteAgentRegistrationOptions {
 }
 
 type AgentProfileInput = Partial<
-  Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay" | "runtimeDelivery" | "marketplaceTags">
+  Omit<AgentProfileState, "paymentProfile" | "socialAnchorPolicy" | "missionAuthOverlay" | "runtimeDelivery" | "marketplaceTags" | "contextRequirements">
 > & {
   missionAuthOverlay?: Partial<AgentProfileState["missionAuthOverlay"]>;
   paymentProfile?: Partial<AgentProfileState["paymentProfile"]>;
   runtimeDelivery?: Partial<AgentProfileState["runtimeDelivery"]>;
   marketplaceTags?: Partial<AgentMarketplaceTags>;
+  contextRequirements?: Partial<SantaClawzContextRequirements>;
   socialAnchorPolicy?: Partial<AgentProfileState["socialAnchorPolicy"]>;
   payoutAddress?: unknown;
 };
@@ -647,6 +653,7 @@ interface SubmitHireRequestOptions {
   budgetMina?: string;
   requesterContact: string;
   marketplaceTags?: Partial<MarketplaceWorkTags>;
+  jobContext?: SantaClawzJobContext;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   paymentAuthorization?: HirePaymentAuthorization;
@@ -811,6 +818,7 @@ interface HireRequestRecord {
   requesterContact: string;
   jobAccessTokenHashSha256?: string;
   marketplaceTags?: MarketplaceWorkTags;
+  jobContext?: SantaClawzJobContext;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   deliveryTarget: string;
@@ -1147,6 +1155,7 @@ interface ProcurementIntentRecord {
   preferredDeliveryModes: string[];
   preferredPrivacyModes: string[];
   marketplaceTags?: MarketplaceWorkTags;
+  jobContext?: SantaClawzJobContext;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
   createdAtIso: string;
@@ -1164,6 +1173,8 @@ interface ProcurementIntentRecord {
     suggestedHireBody: {
       taskPrompt: string;
       requesterContact: string;
+      marketplaceTags?: MarketplaceWorkTags;
+      jobContext?: SantaClawzJobContext;
       jobPrivacy?: SantaClawzJobPrivacyPreference;
       artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     };
@@ -1185,6 +1196,7 @@ export interface CreateProcurementIntentOptions {
   preferredDeliveryModes?: string[];
   preferredPrivacyModes?: string[];
   marketplaceTags?: Partial<MarketplaceWorkTags>;
+  jobContext?: SantaClawzJobContext;
   jobPrivacy?: SantaClawzJobPrivacyPreference;
   artifactDelivery?: SantaClawzArtifactDeliveryPreference;
 }
@@ -1706,6 +1718,7 @@ function buildDefaultProfile(trustModeId: TrustModeId): AgentProfileState {
       settlementTrigger: "upfront"
     },
     marketplaceTags: emptyAgentMarketplaceTags(),
+    contextRequirements: emptyContextRequirements(),
     socialAnchorPolicy: {
       mode: "shared-batched"
     },
@@ -2824,6 +2837,266 @@ function marketplaceTagsDigest(tags: AgentMarketplaceTags | MarketplaceWorkTags 
     return undefined;
   }
   return canonicalDigest(tags).sha256Hex;
+}
+
+const CONTEXT_INPUT_FIELDS: SantaClawzContextInputField[] = [
+  "url",
+  "text",
+  "document",
+  "image",
+  "file",
+  "structured_data"
+];
+
+const CONTEXT_FAILURE_CODES: SantaClawzContextFailureCode[] = [
+  "missing_required_input",
+  "context_insufficient",
+  "invalid_input",
+  "input_unavailable",
+  "artifact_unavailable",
+  "artifact_scan_failed",
+  "unsupported_delivery_mode",
+  "buyer_action_required"
+];
+
+function emptyContextRequirements(): SantaClawzContextRequirements {
+  return {
+    schemaVersion: "santaclawz-context-requirements/1.0",
+    hardRequirements: [],
+    softGuidance: []
+  };
+}
+
+function isContextInputField(value: unknown): value is SantaClawzContextInputField {
+  return typeof value === "string" && CONTEXT_INPUT_FIELDS.includes(value as SantaClawzContextInputField);
+}
+
+function sanitizeContextFieldList(value: unknown): SantaClawzContextInputField[] {
+  return Array.isArray(value) ? Array.from(new Set(value.filter(isContextInputField))).slice(0, 8) : [];
+}
+
+function sanitizeContextRequirementKey(value: unknown, index: number): string {
+  if (typeof value !== "string") {
+    return `requirement_${index + 1}`;
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 48);
+  return normalized || `requirement_${index + 1}`;
+}
+
+function sanitizeContextRequirements(
+  input: Partial<SantaClawzContextRequirements> | undefined,
+  fallback: SantaClawzContextRequirements = emptyContextRequirements()
+): SantaClawzContextRequirements {
+  if (!input) {
+    return {
+      schemaVersion: "santaclawz-context-requirements/1.0",
+      hardRequirements: [...fallback.hardRequirements],
+      softGuidance: [...(fallback.softGuidance ?? [])]
+    };
+  }
+
+  const rawRequirements: unknown[] = Array.isArray(input.hardRequirements)
+    ? input.hardRequirements
+    : fallback.hardRequirements;
+  const hardRequirements: SantaClawzContextRequirements["hardRequirements"] = rawRequirements
+    .slice(0, 8)
+    .flatMap((item, index) => {
+      if (!isRecord(item)) {
+        return [];
+      }
+      const anyOf = sanitizeContextFieldList(item.anyOf);
+      const allOf = sanitizeContextFieldList(item.allOf);
+      if (anyOf.length === 0 && allOf.length === 0) {
+        return [];
+      }
+      const missingCode = CONTEXT_FAILURE_CODES.includes(item.missingCode as SantaClawzContextFailureCode)
+        ? item.missingCode as SantaClawzContextFailureCode
+        : "missing_required_input";
+      return [{
+        key: sanitizeContextRequirementKey(item.key, index),
+        ...(typeof item.label === "string" && item.label.trim().length > 0
+          ? { label: item.label.trim().slice(0, 80) }
+          : {}),
+        ...(anyOf.length > 0 ? { anyOf } : {}),
+        ...(allOf.length > 0 ? { allOf } : {}),
+        ...(typeof item.buyerMessage === "string" && item.buyerMessage.trim().length > 0
+          ? { buyerMessage: item.buyerMessage.trim().slice(0, 240) }
+          : {}),
+        missingCode
+      } satisfies SantaClawzContextRequirements["hardRequirements"][number]];
+    });
+
+  const rawSoftGuidance = Array.isArray(input.softGuidance) ? input.softGuidance : fallback.softGuidance ?? [];
+  const softGuidance = rawSoftGuidance
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim().slice(0, 160))
+    .slice(0, 6);
+
+  return {
+    schemaVersion: "santaclawz-context-requirements/1.0",
+    hardRequirements,
+    ...(softGuidance.length > 0 ? { softGuidance } : {})
+  };
+}
+
+function sanitizeJobContext(input: SantaClawzJobContext | undefined): SantaClawzJobContext | undefined {
+  if (!input) {
+    return undefined;
+  }
+  const record = input as Record<string, unknown>;
+  const stringValue = (value: unknown, maxLength: number) =>
+    typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, maxLength) : undefined;
+  const urls = Array.from(new Set([
+    ...(Array.isArray(input.urls) ? input.urls : []),
+    stringValue(record.url, 2048),
+    stringValue(record.artifactUrl, 2048)
+  ].filter((item): item is string => typeof item === "string" && item.trim().length > 0)))
+    .map((item) => item.trim().slice(0, 2048))
+    .slice(0, 12);
+  const text = stringValue(input.text, 12000) ?? stringValue(record.inputText, 12000) ?? stringValue(record.diffText, 12000);
+  const rawAttachments: unknown[] = Array.isArray(record.attachments) ? record.attachments : [];
+  const attachments: NonNullable<SantaClawzJobContext["attachments"]> = rawAttachments.length > 0
+    ? rawAttachments
+        .filter((item): item is Record<string, unknown> => isRecord(item))
+        .slice(0, 16)
+        .map((item) => {
+          const rawKind = typeof item.kind === "string" ? item.kind : "";
+          const kind: NonNullable<SantaClawzJobContext["attachments"]>[number]["kind"] =
+            rawKind === "document" || rawKind === "image" || rawKind === "structured_data"
+              ? rawKind
+              : "file";
+          const digestSha256 = stringValue(item.digestSha256, 80)?.toLowerCase();
+          const sizeBytes = typeof item.sizeBytes === "number" && Number.isFinite(item.sizeBytes) && item.sizeBytes >= 0
+            ? Math.floor(item.sizeBytes)
+            : undefined;
+          return {
+            kind,
+            ...(stringValue(item.name, 160) ? { name: stringValue(item.name, 160)! } : {}),
+            ...(stringValue(item.url, 2048) ? { url: stringValue(item.url, 2048)! } : {}),
+            ...(stringValue(item.uploadId, 160) ? { uploadId: stringValue(item.uploadId, 160)! } : {}),
+            ...(digestSha256 && /^[a-f0-9]{64}$/.test(digestSha256) ? { digestSha256 } : {}),
+            ...(stringValue(item.contentType, 120) ? { contentType: stringValue(item.contentType, 120)! } : {}),
+            ...(sizeBytes !== undefined ? { sizeBytes } : {})
+          };
+        })
+    : [];
+  const artifactDigestSha256 = stringValue(record.artifactDigestSha256, 80)?.toLowerCase();
+  const legacyAttachment =
+    stringValue(record.artifactUploadId, 160) || stringValue(record.artifactUrl, 2048) || artifactDigestSha256
+      ? {
+          kind: "file" as const,
+          ...(stringValue(record.artifactUrl, 2048) ? { url: stringValue(record.artifactUrl, 2048)! } : {}),
+          ...(stringValue(record.artifactUploadId, 160) ? { uploadId: stringValue(record.artifactUploadId, 160)! } : {}),
+          ...(artifactDigestSha256 && /^[a-f0-9]{64}$/.test(artifactDigestSha256) ? { digestSha256: artifactDigestSha256 } : {})
+        }
+      : undefined;
+  const structuredData =
+    input.structuredData !== undefined && Buffer.byteLength(JSON.stringify(input.structuredData), "utf8") <= 12000
+      ? input.structuredData
+      : undefined;
+  const context: SantaClawzJobContext = {
+    ...(urls.length > 0 ? { urls } : {}),
+    ...(text ? { text } : {}),
+    ...(attachments.length > 0 || legacyAttachment ? { attachments: [...attachments, ...(legacyAttachment ? [legacyAttachment] : [])] } : {}),
+    ...(structuredData !== undefined ? { structuredData } : {}),
+    ...(stringValue(input.note, 1000) ? { note: stringValue(input.note, 1000)! } : {})
+  };
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+function jobContextProvidedInputs(context: SantaClawzJobContext | undefined) {
+  if (!context) {
+    return [];
+  }
+  const entries: Array<[string, string]> = [
+    ...(context.urls ?? []).map((url, index) => [`url.${index + 1}`, url] as [string, string]),
+    ...(context.text ? [["text", context.text] as [string, string]] : []),
+    ...(context.note ? [["note", context.note] as [string, string]] : []),
+    ...(context.attachments ?? []).map((attachment, index) => [
+      `${attachment.kind}.${index + 1}`,
+      JSON.stringify(attachment)
+    ] as [string, string]),
+    ...(context.structuredData !== undefined
+      ? [["structured_data", JSON.stringify(context.structuredData)] as [string, string]]
+      : [])
+  ];
+  return entries
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+    .map(([field, value]) => ({
+      field,
+      digest_sha256: sha256Hex(value),
+      bytes: Buffer.byteLength(value, "utf8")
+    }));
+}
+
+function jobContextHasField(context: SantaClawzJobContext | undefined, field: SantaClawzContextInputField): boolean {
+  if (!context) {
+    return false;
+  }
+  if (field === "url") {
+    return Boolean(context.urls?.length) || Boolean(context.attachments?.some((item) => item.url));
+  }
+  if (field === "text") {
+    return typeof context.text === "string" && context.text.trim().length > 0;
+  }
+  if (field === "file") {
+    return Boolean(context.attachments?.length);
+  }
+  if (field === "document" || field === "image") {
+    return Boolean(context.attachments?.some((item) => item.kind === field));
+  }
+  if (field === "structured_data") {
+    return context.structuredData !== undefined || Boolean(context.attachments?.some((item) => item.kind === "structured_data"));
+  }
+  return false;
+}
+
+function missingContextRequirements(
+  requirements: SantaClawzContextRequirements | undefined,
+  context: SantaClawzJobContext | undefined
+) {
+  return (requirements?.hardRequirements ?? [])
+    .map((requirement) => {
+      const anyOf = requirement.anyOf ?? [];
+      const allOf = requirement.allOf ?? [];
+      const anySatisfied = anyOf.length === 0 || anyOf.some((field) => jobContextHasField(context, field));
+      const allSatisfied = allOf.every((field) => jobContextHasField(context, field));
+      if (anySatisfied && allSatisfied) {
+        return undefined;
+      }
+      return {
+        key: requirement.key,
+        ...(requirement.label ? { label: requirement.label } : {}),
+        ...(anyOf.length > 0 ? { anyOf } : {}),
+        ...(allOf.length > 0 ? { allOf } : {}),
+        ...(requirement.buyerMessage ? { buyerMessage: requirement.buyerMessage } : {}),
+        missingCode: requirement.missingCode ?? "missing_required_input"
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+}
+
+function assertJobContextRequirementsSatisfied(
+  requirements: SantaClawzContextRequirements | undefined,
+  context: SantaClawzJobContext | undefined
+) {
+  const missing = missingContextRequirements(requirements, context);
+  if (missing.length === 0) {
+    return;
+  }
+  const first = missing[0]!;
+  throw new Error(
+    [
+      first.missingCode,
+      first.buyerMessage ?? "This seller requires more buyer context before SantaClawz can submit the job.",
+      `missing=${missing.map((item) => item.key).join(",")}`
+    ].join(": ")
+  );
 }
 
 function sanitizeAgentBoardMessageType(value: unknown): AgentBoardMessageType {
@@ -4494,6 +4767,7 @@ export class ClawzControlPlane {
     requesterContact: string;
     budgetMina?: string;
     marketplaceTags?: MarketplaceWorkTags;
+    jobContext?: SantaClawzJobContext;
     jobPrivacy?: SantaClawzJobPrivacyPreference;
     artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     paymentAuthorization: HirePaymentAuthorization;
@@ -4635,7 +4909,8 @@ export class ClawzControlPlane {
               }
             }
           : {}),
-        provided_inputs: [],
+        ...(input.jobContext ? { job_context: input.jobContext } : {}),
+        provided_inputs: jobContextProvidedInputs(input.jobContext),
         requested_deliverables: [],
         ...(input.budgetMina ? { budget: input.budgetMina } : {})
       }
@@ -4879,11 +5154,15 @@ export class ClawzControlPlane {
       };
     }
 
+    const failureCode = CONTEXT_FAILURE_CODES.includes(parsed.failure_code as SantaClawzContextFailureCode)
+      ? parsed.failure_code as SantaClawzContextFailureCode
+      : undefined;
     return {
       schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
       status,
       digestSha256,
-      incidentId: assertStringValue(parsed, "incident_id", "Failed SantaClawz return package")
+      incidentId: assertStringValue(parsed, "incident_id", "Failed SantaClawz return package"),
+      ...(failureCode ? { failureCode } : {})
     };
   }
 
@@ -4907,6 +5186,8 @@ export class ClawzControlPlane {
     taskPrompt: string;
     requesterContact: string;
     budgetMina?: string;
+    marketplaceTags?: MarketplaceWorkTags;
+    jobContext?: SantaClawzJobContext;
     jobPrivacy?: SantaClawzJobPrivacyPreference;
     artifactDelivery?: SantaClawzArtifactDeliveryPreference;
     paymentAuthorization: HirePaymentAuthorization;
@@ -5182,6 +5463,7 @@ export class ClawzControlPlane {
         ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
         ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
         ...(options.marketplaceTags ? { marketplaceTags: options.marketplaceTags } : {}),
+        ...(options.contextRequirements ? { contextRequirements: options.contextRequirements } : {}),
         ...(options.socialAnchorPolicy ? { socialAnchorPolicy: options.socialAnchorPolicy } : {}),
         ...(options.payoutAddress ? { payoutAddress: options.payoutAddress } : {}),
         ...(options.representedPrincipal ? { representedPrincipal: options.representedPrincipal } : {}),
@@ -5203,6 +5485,7 @@ export class ClawzControlPlane {
       payoutWallets: profile.payoutWallets,
       missionAuthOverlay: profile.missionAuthOverlay,
       paymentProfile: profile.paymentProfile,
+      ...(profile.contextRequirements ? { contextRequirements: profile.contextRequirements } : {}),
       socialAnchorPolicy: profile.socialAnchorPolicy,
       trustModeId,
       preferredProvingLocation: profile.preferredProvingLocation
@@ -5322,6 +5605,7 @@ export class ClawzControlPlane {
       }),
       paymentProfile: sanitizePaymentProfile(input.paymentProfile, fallback.paymentProfile),
       marketplaceTags: sanitizeAgentMarketplaceTags(input.marketplaceTags, fallback.marketplaceTags),
+      contextRequirements: sanitizeContextRequirements(input.contextRequirements, fallback.contextRequirements),
       socialAnchorPolicy: sanitizeSocialAnchorPolicy(input.socialAnchorPolicy, fallback.socialAnchorPolicy),
       preferredProvingLocation
     };
@@ -8715,6 +8999,7 @@ export class ClawzControlPlane {
           completionScore,
           jobActivityStats,
           marketplaceTags: sanitizeAgentMarketplaceTags(profile.marketplaceTags, emptyAgentMarketplaceTags()),
+          contextRequirements: sanitizeContextRequirements(profile.contextRequirements, emptyContextRequirements()),
           marketplaceTagStats,
           published,
           pendingSocialAnchorCount: sessionAnchors.filter((item) => item.status === "pending").length,
@@ -8972,6 +9257,7 @@ export class ClawzControlPlane {
     const nowIso = new Date().toISOString();
     const buyerToken = idempotencyKey ? this.procurementIdempotentBuyerToken(idempotencyKey) : randomBytes(32).toString("base64url");
     const marketplaceTags = sanitizeMarketplaceWorkTags(options.marketplaceTags);
+    const jobContext = sanitizeJobContext(options.jobContext);
     const intent: ProcurementIntentRecord = {
       schemaVersion: "santaclawz-procurement-intent/1.0",
       intentId: `proc_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
@@ -8985,6 +9271,7 @@ export class ClawzControlPlane {
       preferredDeliveryModes: (options.preferredDeliveryModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
       preferredPrivacyModes: (options.preferredPrivacyModes ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 10),
       ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
+      ...(jobContext ? { jobContext } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       createdAtIso: nowIso,
@@ -9219,6 +9506,7 @@ export class ClawzControlPlane {
           taskPrompt: intent.taskPrompt,
           requesterContact: intent.requesterContact,
           ...(intent.marketplaceTags ? { marketplaceTags: intent.marketplaceTags } : {}),
+          ...(intent.jobContext ? { jobContext: intent.jobContext } : {}),
           ...(intent.jobPrivacy ? { jobPrivacy: intent.jobPrivacy } : {}),
           ...(intent.artifactDelivery ? { artifactDelivery: intent.artifactDelivery } : {})
         }
@@ -9467,6 +9755,7 @@ export class ClawzControlPlane {
         ...(options.missionAuthOverlay ? { missionAuthOverlay: options.missionAuthOverlay } : {}),
         ...(options.paymentProfile ? { paymentProfile: options.paymentProfile } : {}),
         ...(options.marketplaceTags ? { marketplaceTags: options.marketplaceTags } : {}),
+        ...(options.contextRequirements ? { contextRequirements: options.contextRequirements } : {}),
         ...(options.socialAnchorPolicy ? { socialAnchorPolicy: options.socialAnchorPolicy } : {}),
         ...(options.payoutAddress ? { payoutAddress: options.payoutAddress } : {}),
         ...(options.representedPrincipal ? { representedPrincipal: options.representedPrincipal } : {}),
@@ -9873,6 +10162,10 @@ export class ClawzControlPlane {
     const taskPrompt = options.taskPrompt.trim();
     const requesterContact = options.requesterContact.trim();
     const marketplaceTags = sanitizeMarketplaceWorkTags(options.marketplaceTags);
+    const jobContext = sanitizeJobContext(options.jobContext);
+    if (options.paymentAuthorization?.activationLane !== true) {
+      assertJobContextRequirementsSatisfied(profile.contextRequirements, jobContext);
+    }
     if (taskPrompt.length === 0 || requesterContact.length === 0) {
       throw new Error("taskPrompt and requesterContact are required.");
     }
@@ -9967,6 +10260,7 @@ export class ClawzControlPlane {
       taskPrompt,
       requesterContact,
       ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
+      ...(jobContext ? { jobContext } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
@@ -10057,6 +10351,7 @@ export class ClawzControlPlane {
       requesterContact,
       jobAccessTokenHashSha256: sha256Hex(jobAccessToken),
       ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
+      ...(jobContext ? { jobContext } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
       deliveryTarget: publicDeliveryTarget,
@@ -10284,6 +10579,7 @@ export class ClawzControlPlane {
       operationalStatus,
       relayTrace,
       ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
+      ...(jobContext ? { jobContext } : {}),
       ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
       jobWorkspace: this.buildJobWorkspace({ requestId, token: jobAccessToken }),
       ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),

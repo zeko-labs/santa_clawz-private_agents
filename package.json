@@ -13,6 +13,7 @@
     "check:privacy-gateway": "node scripts/check-privacy-gateway.mjs",
     "smoke:regulated-local": "node scripts/smoke-regulated-local.mjs",
     "preflight:production": "node scripts/preflight-production.mjs",
+    "smoke:paid-route": "node scripts/smoke-paid-route-preflight.mjs",
     "test:enterprise-kms": "pnpm --filter @clawz/enterprise-kms test",
     "test:contracts": "pnpm --filter @clawz/contracts test",
     "test:key-broker": "pnpm --filter @clawz/key-broker test",
