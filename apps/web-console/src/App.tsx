@@ -103,8 +103,8 @@ const COORDINATE_COPY =
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
-  { label: "X", href: "https://x.com/zekolabs", icon: "x" },
-  { label: "Discord", href: "https://discord.gg/edF9vzD7en", icon: "discord" }
+  { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
+  { label: "Discord", href: "https://discord.gg/FGcu6tJDzH", icon: "discord" }
 ] as const;
 
 function SocialIcon({ icon }: { icon: (typeof SOCIAL_LINKS)[number]["icon"] }) {
@@ -2926,7 +2926,7 @@ export function App() {
             {SOCIAL_LINKS.map((link) => (
               <a
                 key={link.label}
-                className="site-social-link"
+                className={`site-social-link ${link.icon}`}
                 href={link.href}
                 target="_blank"
                 rel="noreferrer"
