@@ -1093,6 +1093,7 @@ export interface PaymentLedgerEntry {
   lifecycleStatus?: {
     displayStatus:
       | "paid_completed"
+      | "paid_return_verified"
       | "paid_not_completed"
       | "payment_authorized"
       | "return_rejected"

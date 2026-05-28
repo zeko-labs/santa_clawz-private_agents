@@ -6081,12 +6081,14 @@ export class ClawzControlPlane {
       };
     }
     if (completed) {
+      // This means the agent return package was accepted by the protocol.
+      // Buyer artifact delivery/acceptance is tracked separately by execution state.
       return {
-        displayStatus: "paid_completed",
+        displayStatus: "paid_return_verified",
         paidButNotCompleted: false,
         needsAttention: false,
         completionStatus: "completed",
-        label: "Paid and completed"
+        label: "Paid, return verified"
       };
     }
     if (authorized) {
