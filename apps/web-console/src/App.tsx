@@ -86,9 +86,32 @@ const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
-  { label: "X", href: "https://x.com/zekolabs" },
-  { label: "Discord", href: "https://discord.gg/edF9vzD7en" }
-];
+  { label: "X", href: "https://x.com/zekolabs", icon: "x" },
+  { label: "Discord", href: "https://discord.gg/edF9vzD7en", icon: "discord" }
+] as const;
+
+function SocialIcon({ icon }: { icon: (typeof SOCIAL_LINKS)[number]["icon"] }) {
+  if (icon === "discord") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M19.8 5.4A16.9 16.9 0 0 0 15.6 4l-.2.4c1.5.4 2.2 1 2.2 1s-1.9-1-5.6-1-5.6 1-5.6 1 .7-.6 2.2-1L8.4 4a16.9 16.9 0 0 0-4.2 1.4C1.5 9.5.8 13.5 1.2 17.4c1.8 1.3 3.5 2.1 5.2 2.6l1.1-1.8c-.6-.2-1.1-.5-1.6-.8l.4-.3c3.1 1.4 8.3 1.4 11.4 0l.4.3c-.5.3-1 .6-1.6.8l1.1 1.8c1.7-.5 3.4-1.3 5.2-2.6.5-4.6-.8-8.5-3-12ZM8.7 14.9c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.6 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M14.4 10.2 22.6 1h-2l-7.1 8.1L7.8 1H1.2l8.6 12.2L1.2 23h2l7.5-8.5 6 8.5h6.6l-8.9-12.8Zm-2.7 3.1-.9-1.2L3.9 2.5h3l5.6 7.8.9 1.2 7.2 10h-3l-5.9-8.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
   "agent-registered",
   "ownership-verified",
@@ -551,10 +574,9 @@ function commandQuote(value: string) {
   return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
 
-type ActivationMethodId = "one-liner" | "docker" | "pnpm" | "manual";
+type ActivationMethodId = "one-liner" | "pnpm" | "manual";
 
 const ACTIVATION_SCRIPT_URL = "https://www.santaclawz.ai/activate-agent.sh";
-const DOCKER_AGENT_RUNTIME_IMAGE = "santaclawz/agent-runtime:latest";
 const DEFAULT_RELAY_BASE = "https://relay.santaclawz.ai";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 
@@ -567,17 +589,10 @@ const ACTIVATION_METHODS: Array<{
 }> = [
   {
     id: "one-liner",
-    label: "Setup script",
+    label: "One-liner",
     badge: "macOS/Linux",
     safety: "safe",
     note: "Uses your shell, clones or reuses ~/santaclawz-agent, enables pnpm/Corepack when possible, then starts activation."
-  },
-  {
-    id: "docker",
-    label: "Docker",
-    badge: "Any OS",
-    safety: "safe",
-    note: "Runs the packaged SantaClawz runtime in Docker and keeps credentials in a mounted local data folder."
   },
   {
     id: "pnpm",
@@ -596,29 +611,6 @@ const ACTIVATION_METHODS: Array<{
 ];
 
 const DEFAULT_ACTIVATION_METHOD = ACTIVATION_METHODS[0]!;
-
-const ACTIVATION_STEPS = [
-  {
-    label: "Redeem ticket",
-    detail: "Validates this activation against SantaClawz."
-  },
-  {
-    label: "Write .env.santaclawz",
-    detail: "Stores agent credentials locally."
-  },
-  {
-    label: "Serve challenge",
-    detail: "Publishes the .well-known proof file."
-  },
-  {
-    label: "Connect relay",
-    detail: "Opens the persistent relay path."
-  },
-  {
-    label: "Send heartbeat",
-    detail: "Marks the agent live when ready."
-  }
-];
 
 function buildActivationCommand(runtimeDelivery: { mode: string; runtimeIngressUrl?: string | null }) {
   const args = [
@@ -643,22 +635,6 @@ function buildTicketedActivationCommand(
 
   if (method === "one-liner") {
     return `curl -fsSL ${ACTIVATION_SCRIPT_URL} | bash -s -- --ticket ${shellQuote(ticket)}${runtimeIngressArg}`;
-  }
-
-  if (method === "docker") {
-    const args = [
-      "docker run -it --rm",
-      "--name santaclawz-agent",
-      `-v "$HOME/santaclawz-agent-data:/data"`,
-      DOCKER_AGENT_RUNTIME_IMAGE,
-      "activate",
-      "--ticket",
-      shellQuote(ticket),
-      runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
-        ? `--runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
-        : `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`
-    ];
-    return args.join(" ");
   }
 
   if (method === "manual") {
@@ -2802,8 +2778,16 @@ export function App() {
         <div className="site-header-actions">
           <div className="site-social-links" aria-label="Community links">
             {SOCIAL_LINKS.map((link) => (
-              <a key={link.label} className="site-social-link" href={link.href} target="_blank" rel="noreferrer">
-                {link.label}
+              <a
+                key={link.label}
+                className="site-social-link"
+                href={link.href}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={link.label}
+                title={link.label}
+              >
+                <SocialIcon icon={link.icon} />
               </a>
             ))}
           </div>
@@ -4220,46 +4204,71 @@ export function App() {
             </div>
 
             <div className="register-cli-stack">
-                <div className={enrollmentTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
+                <div className="activation-ticket-method-row">
+                  <div className={enrollmentTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
+                    {enrollmentTicket ? (
+                      <>
+                        <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
+                          <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
+                          <span aria-hidden="true"> · </span>
+                          <span>expires {enrollmentTicketExpiryTime}</span>
+                        </span>
+                        <span className={`activation-inline-status ${activationStatus.className}`}>
+                          <span aria-hidden="true" />
+                          {activationStatus.label}
+                        </span>
+                        <button
+                          type="button"
+                          className="activation-reissue-button"
+                          disabled={pendingAction === "create-enrollment-ticket" || !enrollmentReady}
+                          onClick={() => {
+                            void createEnrollmentTicketAction();
+                          }}
+                        >
+                          {pendingAction === "create-enrollment-ticket" ? "Reissuing..." : "Reissue ticket"}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={pendingAction === "create-enrollment-ticket" || !enrollmentReady}
+                          onClick={() => {
+                            void createEnrollmentTicketAction();
+                          }}
+                        >
+                          {pendingAction === "create-enrollment-ticket" ? "Issuing..." : "Activation ticket"}
+                        </button>
+                        <span className="subtle-pill activation-pending-pill">Pending</span>
+                      </>
+                    )}
+                  </div>
+
                   {enrollmentTicket ? (
-                    <>
-                      <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
-                        <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
-                        <span aria-hidden="true"> · </span>
-                        <span>expires {enrollmentTicketExpiryTime}</span>
-                      </span>
-                      <span className={`activation-inline-status ${activationStatus.className}`}>
-                        <span aria-hidden="true" />
-                        {activationStatus.label}
-                      </span>
-                      <button
-                        type="button"
-                        className="activation-reissue-button"
-                        disabled={pendingAction === "create-enrollment-ticket" || !enrollmentReady}
-                        onClick={() => {
-                          void createEnrollmentTicketAction();
-                        }}
-                      >
-                        {pendingAction === "create-enrollment-ticket" ? "Reissuing..." : "Reissue ticket"}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={pendingAction === "create-enrollment-ticket" || !enrollmentReady}
-                    onClick={() => {
-                      void createEnrollmentTicketAction();
-                    }}
-                  >
-                    {pendingAction === "create-enrollment-ticket"
-                      ? "Issuing..."
-                      : "Activation ticket"}
-                  </button>
-                      <span className="subtle-pill activation-pending-pill">Pending</span>
-                    </>
-                  )}
+                    <div className="activation-method-inline">
+                      <p className="activation-method-label">How are you running the agent?</p>
+                      <div className="activation-method-tabs" aria-label="Activation method">
+                        <div className="activation-tab-group" role="tablist" aria-label="Activation method">
+                          {ACTIVATION_METHODS.map((method) => (
+                            <button
+                              key={method.id}
+                              type="button"
+                              className={activationMethod === method.id ? "active" : ""}
+                              aria-selected={activationMethod === method.id}
+                              role="tab"
+                              onClick={() => {
+                                setActivationMethod(method.id);
+                              }}
+                            >
+                              <span>{method.label}</span>
+                              <small>{method.badge}</small>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
@@ -4284,26 +4293,6 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
-                    <p className="activation-method-label">How are you running the agent?</p>
-                    <div className="activation-method-tabs" aria-label="Activation method">
-                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
-                        {ACTIVATION_METHODS.map((method) => (
-                          <button
-                            key={method.id}
-                            type="button"
-                            className={activationMethod === method.id ? "active" : ""}
-                            aria-selected={activationMethod === method.id}
-                            role="tab"
-                            onClick={() => {
-                              setActivationMethod(method.id);
-                            }}
-                          >
-                            <span>{method.label}</span>
-                            <small>{method.badge}</small>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
                     <div className={`activation-safety-note ${selectedActivationMethod.safety}`}>
                       <span aria-hidden="true" />
                       {selectedActivationMethod.safety === "safe"
@@ -4329,17 +4318,6 @@ export function App() {
                       </div>
                       <div className="command-strip compact-command-strip activation-command-strip">
                         <pre className="activation-command-code">{activationCommand}</pre>
-                      </div>
-                    </div>
-                    <div className="activation-steps-card" aria-label="What activation does">
-                      <p>What this does</p>
-                      <div>
-                        {ACTIVATION_STEPS.map((step) => (
-                          <span key={step.label}>
-                            <strong>{step.label}</strong>
-                            <small>{step.detail}</small>
-                          </span>
-                        ))}
                       </div>
                     </div>
                   </div>
