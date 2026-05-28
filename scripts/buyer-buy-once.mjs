@@ -19,6 +19,8 @@ const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const DEFAULT_OUTPUT_DIR = ".clawz-data/buyer-runs";
+const DEFAULT_RECOVERY_POLL_MS = 120_000;
+const RECOVERY_POLL_INTERVAL_MS = 3_000;
 
 function printCliError(error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -621,12 +623,15 @@ function paidExecutionSummary(responseOk, payload) {
   const relayDeliveryStatus = stringFrom(operational, "relayDeliveryStatus") || stringFrom(payload, "relayDeliveryStatus") || "not_confirmed";
   const agentExecutionStatus =
     stringFrom(operational, "agentExecutionStatus") || stringFrom(payload, "agentExecutionStatus") || stringFrom(payload, "status") || "not_confirmed";
-  const jobCompleted =
+  const paymentAccepted = ["authorized", "settled", "paid", "escrowed", "execution_completed"].includes(paymentStatus);
+  const workCompleted =
     responseOk &&
-    ["settled", "paid", "escrowed"].includes(paymentStatus) &&
-    settlementStatus === "settled" &&
-    ["forwarded", "recorded"].includes(relayDeliveryStatus) &&
+    paymentAccepted &&
+    ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
     agentExecutionStatus === "completed";
+  const jobCompleted =
+    workCompleted &&
+    (settlementStatus === "settled" || settlementStatus === "authorized" || settlementStatus === "not_required");
   const acceptedPendingResult =
     responseOk &&
     relayDeliveryStatus === "acknowledged" &&
@@ -642,7 +647,8 @@ function paidExecutionSummary(responseOk, payload) {
     settlementStatus,
     relayDeliveryStatus,
     agentExecutionStatus,
-    retryable: ["authorized", "settled", "paid", "escrowed"].includes(paymentStatus) && agentExecutionStatus !== "completed",
+    completionMode: jobCompleted ? (settlementStatus === "settled" ? "inline_settled" : "inline_return_verified") : "none",
+    retryable: paymentAccepted && agentExecutionStatus !== "completed",
     nextAction: jobCompleted ? "none" : acceptedPendingResult ? "poll_state_or_resume_same_payment" : "inspect_payment_or_execution_state",
     ...(acceptedPendingResult
       ? {
@@ -650,6 +656,94 @@ function paidExecutionSummary(responseOk, payload) {
           doNotCreateNewPayment: true
         }
       : {})
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function stateUrlFromSubmitPayload(payload, fallbackUrl) {
+  if (typeof payload?.stateUrl === "string" && payload.stateUrl.trim()) {
+    return payload.stateUrl.trim();
+  }
+  const statePath = payload?.paidExecution?.jobWorkspace?.statePath;
+  if (typeof statePath === "string" && statePath.trim()) {
+    return statePath.startsWith("http") ? statePath : `${apiBase}${statePath}`;
+  }
+  return fallbackUrl;
+}
+
+function recoveredCompletionFromState(payload) {
+  const lifecycle = isRecord(payload?.lifecycle) ? payload.lifecycle : {};
+  const checks = isRecord(payload?.lifecycleChecks) ? payload.lifecycleChecks : {};
+  const currentPhase = typeof payload?.currentPhase === "string" ? payload.currentPhase : "";
+  const relayDeliveryStatus = typeof lifecycle.relayDeliveryStatus === "string" ? lifecycle.relayDeliveryStatus : "";
+  const agentExecutionStatus = typeof lifecycle.agentExecutionStatus === "string" ? lifecycle.agentExecutionStatus : "";
+  const proofStatus = typeof lifecycle.proofStatus === "string" ? lifecycle.proofStatus : "";
+  const failed = checks.failed === true;
+  const completed =
+    !failed &&
+    (
+      currentPhase === "return_verified" ||
+      currentPhase === "artifact_delivered" ||
+      currentPhase === "buyer_verified" ||
+      currentPhase === "buyer_accepted" ||
+      (
+        agentExecutionStatus === "completed" &&
+        ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
+        (proofStatus === "return_validated" || proofStatus === "anchored_or_attested")
+      )
+    );
+  return {
+    completed,
+    failed,
+    currentPhase,
+    paymentStatus: typeof lifecycle.paymentStatus === "string" ? lifecycle.paymentStatus : "unknown",
+    settlementStatus: typeof lifecycle.settlementStatus === "string" ? lifecycle.settlementStatus : "unknown",
+    relayDeliveryStatus: relayDeliveryStatus || "unknown",
+    agentExecutionStatus: agentExecutionStatus || "unknown",
+    proofStatus: proofStatus || "unknown",
+    artifactDeliveryStatus: typeof lifecycle.artifactDeliveryStatus === "string" ? lifecycle.artifactDeliveryStatus : "unknown"
+  };
+}
+
+async function pollRecoverableExecutionState(stateUrl, maxMs = DEFAULT_RECOVERY_POLL_MS) {
+  if (!stateUrl) {
+    return { recovered: false, reason: "missing_state_url" };
+  }
+  const startedAt = Date.now();
+  let last = null;
+  while (Date.now() - startedAt <= maxMs) {
+    const state = await requestJson(stateUrl);
+    last = state;
+    if (state.ok) {
+      const completion = recoveredCompletionFromState(state.payload);
+      if (completion.completed) {
+        return {
+          recovered: true,
+          elapsedMs: Date.now() - startedAt,
+          state: state.payload,
+          completion
+        };
+      }
+      if (completion.failed) {
+        return {
+          recovered: false,
+          terminal: true,
+          elapsedMs: Date.now() - startedAt,
+          state: state.payload,
+          completion
+        };
+      }
+    }
+    await sleep(RECOVERY_POLL_INTERVAL_MS);
+  }
+  return {
+    recovered: false,
+    elapsedMs: Date.now() - startedAt,
+    lastStatus: last?.status,
+    lastPayload: last?.payload
   };
 }
 
@@ -915,9 +1009,10 @@ const submittedRequestId =
   paymentRequirement.requestId ??
   null;
 const paymentStateUrl = `${apiBase}/api/x402/payment-state?paymentPayloadDigestSha256=${paymentPayloadDigestSha256}`;
-const resultStateUrl = submittedRequestId
+const fallbackResultStateUrl = submittedRequestId
   ? `${apiBase}/api/executions/${encodeURIComponent(submittedRequestId)}/state`
   : null;
+const resultStateUrl = stateUrlFromSubmitPayload(submit.payload, fallbackResultStateUrl);
 if (!submit.ok && submit.payload?.retryable === true) {
   const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
     code: "post_payment_state_unavailable_retryable",
@@ -946,8 +1041,26 @@ if (!submit.ok && submit.payload?.retryable === true) {
   process.exit();
 }
 const summary = paidExecutionSummary(submit.ok, submit.payload);
+const recoveryPoll = summary.code === "job_running_or_return_timeout"
+  ? await pollRecoverableExecutionState(resultStateUrl)
+  : null;
+const recoveredSummary = recoveryPoll?.recovered
+  ? {
+      ok: true,
+      code: "paid_execution_recovered",
+      completionMode: "recovered_return_verified",
+      retryable: false,
+      nextAction: "none",
+      paymentStatus: recoveryPoll.completion.paymentStatus,
+      settlementStatus: recoveryPoll.completion.settlementStatus,
+      relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
+      agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
+      proofStatus: recoveryPoll.completion.proofStatus,
+      artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus
+    }
+  : null;
 const output = {
-  ...summary,
+  ...(recoveredSummary ?? summary),
   paid: true,
   status: submit.status,
   agentId,
@@ -957,6 +1070,7 @@ const output = {
   stateUrl: resultStateUrl,
   paymentStateUrl,
   manifestDir: runDir,
+  ...(recoveryPoll ? { recoveryPoll } : {}),
   response: submit.payload
 };
 writeJson(path.join(runDir, "buyer-run.json"), output);

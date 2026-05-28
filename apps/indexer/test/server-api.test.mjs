@@ -4154,6 +4154,7 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
     assert.ok(hire.payload.deliveryReceipt.relayBodyBytes > 4_000);
     assert.match(hire.payload.deliveryReceipt.relayBodyDigestSha256, /^[a-f0-9]{64}$/);
     assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "worker_ack" && entry.status === "completed"), true);
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "hire_response_prepared" && entry.status === "completed"), true);
     assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "completed"), true);
     const executionState = await requestJson(
       `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
@@ -4162,6 +4163,7 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
     assert.equal(executionState.payload.relayTrace.some((entry) => entry.step === "worker_ack" && entry.status === "completed"), true);
     assert.match(relayLogs.stderr.join(""), /"relayPayloadBytes":[4-9][0-9]{3}/);
     assert.match(relayLogs.stderr.join(""), /relay_worker_request_received/);
+    assert.match(relayLogs.stderr.join(""), /relay_hire_response_prepared_progress_send_succeeded/);
     assert.match(relayLogs.stderr.join(""), /relay_worker_response_normalized/);
 
     console.log("ok - official relay normalizes large worker responses into accepted hire_response JSON");

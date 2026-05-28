@@ -42,6 +42,7 @@ const RELAY_AGENT_FEATURES = [
   "node_http_worker_forwarding",
   "worker_response_telemetry",
   "worker_return_parse_telemetry",
+  "prepared_response_inline_on_parse_complete",
   "five_minute_sync_window",
   "late_completion_backup"
 ];
@@ -148,11 +149,18 @@ function parsePositiveInteger(value, fallback, min, max) {
 function preparedResponseInlineFields(body, statusCode) {
   const bodyBytes = Buffer.byteLength(body, "utf8");
   if (bodyBytes <= 0 || bodyBytes > PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES) {
-    return {};
+    return {
+      preparedResponseBodyBytes: bodyBytes,
+      preparedResponseInlineMaxBytes: PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES,
+      preparedResponseInlineSkipped: bodyBytes <= 0 ? "empty_body" : "body_too_large"
+    };
   }
   return {
     preparedResponseStatusCode: statusCode,
-    preparedResponseBodyBase64: Buffer.from(body, "utf8").toString("base64")
+    preparedResponseBodyBase64: Buffer.from(body, "utf8").toString("base64"),
+    preparedResponseBodyEncoding: "base64",
+    preparedResponseBodyBytes: bodyBytes,
+    preparedResponseBodyDigestSha256: sha256Hex(body)
   };
 }
 
@@ -792,7 +800,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
     return sendJson(payload);
   };
   const sendWorkerProgress = (step, status = "completed", extra = {}) => {
-    sendJson({
+    const payload = {
       type: "hire_worker_progress",
       messageId: message.messageId,
       requestId,
@@ -806,7 +814,20 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       localHireTimeoutMs: LOCAL_HIRE_TIMEOUT_MS,
       elapsedMs: Date.now() - receivedAtMs,
       ...extra
-    });
+    };
+    try {
+      return sendJson(payload);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "relay_worker_progress_send_failed",
+        messageId: message.messageId,
+        requestId,
+        step,
+        status,
+        error: error instanceof Error ? error.message : String(error)
+      }));
+      return { bytes: 0, digestSha256: "" };
+    }
   };
   const timeoutEnvelope = () => ({
     type: "hire_response",
@@ -860,13 +881,15 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
         body,
         requestBody: typeof request.body === "string" ? request.body : "{}"
       });
+      const starterPreparedInline = preparedResponseInlineFields(normalized.body, 200);
       sendWorkerProgress("worker_return_parse_completed", normalized.parseError ? "failed" : "completed", {
         detail: normalized.normalized ? "worker response normalized" : "worker response already canonical",
         workerStatusCode: 200,
         workerResponseBytes: Buffer.byteLength(body, "utf8"),
         workerResponseDigestSha256: sha256Hex(body),
         relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
-        relayBodyDigestSha256: sha256Hex(normalized.body)
+        relayBodyDigestSha256: sha256Hex(normalized.body),
+        ...starterPreparedInline
       });
       const responseEnvelope = {
           type: "hire_response",
@@ -882,15 +905,35 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
         relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
         relayBodyDigestSha256: sha256Hex(normalized.body)
       };
-      sendWorkerProgress("hire_response_prepared", "completed", {
+      console.error(JSON.stringify({
+        event: "relay_hire_response_prepared_progress_send_started",
+        messageId: message.messageId,
+        requestId,
+        requestKind,
+        relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
+        relayBodyDigestSha256: sha256Hex(normalized.body),
+        preparedResponseInlineIncluded: Boolean(starterPreparedInline.preparedResponseBodyBase64),
+        preparedResponseBodyBytes: starterPreparedInline.preparedResponseBodyBytes,
+        preparedResponseInlineMaxBytes: starterPreparedInline.preparedResponseInlineMaxBytes
+      }));
+      const starterPreparedProgress = sendWorkerProgress("hire_response_prepared", "completed", {
         detail: "prepared hire_response frame for API",
         workerStatusCode: 200,
         workerResponseBytes: Buffer.byteLength(body, "utf8"),
         workerResponseDigestSha256: sha256Hex(body),
         relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
         relayBodyDigestSha256: sha256Hex(normalized.body),
-        ...preparedResponseInlineFields(normalized.body, responseEnvelope.statusCode)
+        ...starterPreparedInline
       });
+      console.error(JSON.stringify({
+        event: "relay_hire_response_prepared_progress_send_succeeded",
+        messageId: message.messageId,
+        requestId,
+        requestKind,
+        websocketPayloadBytes: starterPreparedProgress.bytes,
+        websocketPayloadDigestSha256: starterPreparedProgress.digestSha256,
+        preparedResponseInlineIncluded: Boolean(starterPreparedInline.preparedResponseBodyBase64)
+      }));
       const sent = sendHireResponseOnce(responseEnvelope);
       scheduleLateCompletionBackup({
         ...completionBackup,
@@ -947,13 +990,15 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       requestBody: typeof request.body === "string" ? request.body : "{}"
     });
     const bodyBytes = Buffer.byteLength(normalized.body, "utf8");
+    const preparedInline = preparedResponseInlineFields(normalized.body, response.status);
     sendWorkerProgress("worker_return_parse_completed", normalized.parseError ? "failed" : "completed", {
       detail: normalized.normalized ? "worker response normalized" : "worker response already canonical",
       workerStatusCode: response.status,
       workerResponseBytes: Buffer.byteLength(body, "utf8"),
       workerResponseDigestSha256: sha256Hex(body),
       relayBodyBytes: bodyBytes,
-      relayBodyDigestSha256: sha256Hex(normalized.body)
+      relayBodyDigestSha256: sha256Hex(normalized.body),
+      ...preparedInline
     });
     const responseEnvelope = {
       type: "hire_response",
@@ -973,15 +1018,35 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       relayBodyBytes: bodyBytes,
       relayBodyDigestSha256: sha256Hex(normalized.body)
     };
-    sendWorkerProgress("hire_response_prepared", "completed", {
+    console.error(JSON.stringify({
+      event: "relay_hire_response_prepared_progress_send_started",
+      messageId: message.messageId,
+      requestId,
+      requestKind,
+      relayBodyBytes: bodyBytes,
+      relayBodyDigestSha256: sha256Hex(normalized.body),
+      preparedResponseInlineIncluded: Boolean(preparedInline.preparedResponseBodyBase64),
+      preparedResponseBodyBytes: preparedInline.preparedResponseBodyBytes,
+      preparedResponseInlineMaxBytes: preparedInline.preparedResponseInlineMaxBytes
+    }));
+    const preparedProgress = sendWorkerProgress("hire_response_prepared", "completed", {
       detail: "prepared hire_response frame for API",
       workerStatusCode: response.status,
       workerResponseBytes: Buffer.byteLength(body, "utf8"),
       workerResponseDigestSha256: sha256Hex(body),
       relayBodyBytes: bodyBytes,
       relayBodyDigestSha256: sha256Hex(normalized.body),
-      ...preparedResponseInlineFields(normalized.body, responseEnvelope.statusCode)
+      ...preparedInline
     });
+    console.error(JSON.stringify({
+      event: "relay_hire_response_prepared_progress_send_succeeded",
+      messageId: message.messageId,
+      requestId,
+      requestKind,
+      websocketPayloadBytes: preparedProgress.bytes,
+      websocketPayloadDigestSha256: preparedProgress.digestSha256,
+      preparedResponseInlineIncluded: Boolean(preparedInline.preparedResponseBodyBase64)
+    }));
     const sent = sendHireResponseOnce(responseEnvelope);
     scheduleLateCompletionBackup({
       ...completionBackup,
