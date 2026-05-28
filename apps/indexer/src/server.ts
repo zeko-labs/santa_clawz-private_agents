@@ -6832,6 +6832,35 @@ class AgentRelayConnection {
         relayBodyBytes !== undefined ? `relay bytes ${relayBodyBytes}` : ""
       ].filter(Boolean).join("; ")
     });
+    const preparedResponseBody =
+      typeof message.preparedResponseBodyBase64 === "string" && message.preparedResponseBodyBase64.trim().length > 0
+        ? Buffer.from(message.preparedResponseBodyBase64, "base64").toString("utf8").slice(0, RELAY_MESSAGE_MAX_BYTES)
+        : undefined;
+    const preparedResponseDigestSha256 = preparedResponseBody
+      ? createHash("sha256").update(preparedResponseBody).digest("hex")
+      : undefined;
+    if (
+      step === "hire_response_prepared" &&
+      preparedResponseBody &&
+      (!relayBodyDigestSha256 || relayBodyDigestSha256 === preparedResponseDigestSha256)
+    ) {
+      this.handleResponse({
+        type: "hire_response",
+        messageId,
+        ...(requestId ? { requestId } : {}),
+        ...(requestBodyDigestSha256 ? { requestBodyDigestSha256 } : {}),
+        statusCode: typeof message.preparedResponseStatusCode === "number" && Number.isFinite(message.preparedResponseStatusCode)
+          ? Math.round(message.preparedResponseStatusCode)
+          : workerStatusCode ?? 200,
+        bodyBase64: Buffer.from(preparedResponseBody, "utf8").toString("base64"),
+        bodyEncoding: "base64",
+        ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
+        ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
+        ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
+        ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+        ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {})
+      });
+    }
   }
 
   handleResponse(message: Record<string, unknown>) {
