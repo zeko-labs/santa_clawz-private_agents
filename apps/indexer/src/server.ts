@@ -3219,6 +3219,26 @@ app.get("/api/executions/:requestId", route(async (request, response) => {
   }
 }));
 
+app.post("/api/executions/:requestId/reconcile-worker-return", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    response.json(await controlPlane.reconcileWorkerReturn({
+      requestId,
+      ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      returnPayload: request.body ?? null
+    }));
+  } catch (error) {
+    response.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to reconcile worker return."
+    });
+  }
+}));
+
 app.get("/api/executions/:requestId/collaboration", route(async (request, response) => {
   try {
     const requestId = request.params.requestId;
@@ -3347,26 +3367,36 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const settlementStatus = operational?.settlementStatus ?? "not_attempted";
     const relayDeliveryStatus = operational?.relayDeliveryStatus ?? "not_attempted";
     const agentExecutionStatus = operational?.agentExecutionStatus ?? hireRequest.status;
+    const acceptedPendingResult =
+      relayDeliveryStatus === "acknowledged" &&
+      agentExecutionStatus === "running_or_unknown" &&
+      hireRequest.deliveryReceipt?.errorCode === "relay_return_timeout_after_worker_ack";
     const paymentSettled = paymentStatus === "settled";
-    const relayDelivered = relayDeliveryStatus === "forwarded" || relayDeliveryStatus === "recorded";
+    const relayDelivered =
+      relayDeliveryStatus === "forwarded" ||
+      relayDeliveryStatus === "recorded" ||
+      relayDeliveryStatus === "acknowledged" ||
+      relayDeliveryStatus === "reconciled_completed";
     const agentStarted =
       relayDelivered ||
       agentExecutionStatus === "submitted" ||
+      agentExecutionStatus === "running_or_unknown" ||
       agentExecutionStatus === "quoted" ||
       agentExecutionStatus === "completed" ||
       agentExecutionStatus === "failed" ||
+      agentExecutionStatus === "late_completion_available" ||
       agentExecutionStatus === "worker_completed_return_rejected";
     const agentCompleted = agentExecutionStatus === "completed" || agentExecutionStatus === "worker_completed_return_rejected";
     const hasFailure =
       settlementStatus === "failed" ||
-      relayDeliveryStatus === "failed" ||
+      (!acceptedPendingResult && relayDeliveryStatus === "failed") ||
       relayDeliveryStatus === "return_rejected" ||
       agentExecutionStatus === "failed" ||
       agentExecutionStatus === "worker_completed_return_rejected" ||
       proofStatus === "return_rejected" ||
-      Boolean(hireRequest.deliveryError || hireRequest.returnValidationError || latestLedger?.errorMessage);
+      Boolean((!acceptedPendingResult && hireRequest.deliveryError) || hireRequest.returnValidationError || latestLedger?.errorMessage);
     const knownBlockers = [
-      ...(hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
+      ...(!acceptedPendingResult && hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
       ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
       ...(latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
     ];
@@ -3397,6 +3427,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
             ? "Execution completed and artifact delivery is recorded; buyer verification and acceptance are still pending."
             : agentCompleted && !hasFailure
               ? "Execution completed and proof/return state is recorded; no artifact delivery receipt has been recorded yet."
+              : acceptedPendingResult
+                ? "Execution was acknowledged by the worker and is pending result reconciliation; buyers should poll state or resume with the same payment payload."
               : hasFailure
                 ? "Execution has a failure or rejected return that needs attention."
                 : "Execution is still in progress."
@@ -3421,7 +3453,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
                 ? "return_verified"
                 : operational?.agentExecutionStatus === "completed"
                   ? "agent_completed"
-                  : operational?.relayDeliveryStatus === "forwarded" || operational?.relayDeliveryStatus === "recorded"
+                    : operational?.relayDeliveryStatus === "forwarded" ||
+                        operational?.relayDeliveryStatus === "recorded" ||
+                        operational?.relayDeliveryStatus === "acknowledged" ||
+                        operational?.relayDeliveryStatus === "reconciled_completed"
                     ? "relay_delivered"
                     : paymentStatus === "settled"
                       ? "payment_settled"
@@ -3453,6 +3488,13 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         failed: hasFailure,
         terminal: buyerAccepted || hasFailure
       },
+      ...(acceptedPendingResult
+        ? {
+            agentNextAction: "poll_state_or_resume_same_payment",
+            safeToRetrySamePayload: true,
+            doNotCreateNewPayment: true
+          }
+        : {}),
       privacy: {
         jobVisibility: hireRequest.jobPrivacy?.visibility ?? "public",
         publicAggregateStats: true,
@@ -4645,11 +4687,6 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
           })
         : executedIntent;
 
-    const responseStatus =
-      (paidExecution.operationalStatus?.relayDeliveryStatus === "failed" && paidExecution.status === "submitted") ||
-      paidExecution.operationalStatus?.relayDeliveryStatus === "return_rejected"
-        ? 202
-        : 200;
     const responsePaidExecution = settlement
       ? {
           ...paidExecution,
@@ -4672,6 +4709,20 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       }
         }
       : paidExecution;
+    const acceptedPendingResult =
+      responsePaidExecution.operationalStatus?.relayDeliveryStatus === "acknowledged" &&
+      responsePaidExecution.operationalStatus?.agentExecutionStatus === "running_or_unknown";
+    const responseStatus =
+      acceptedPendingResult ||
+      (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "failed" && responsePaidExecution.status === "submitted") ||
+      responsePaidExecution.operationalStatus?.relayDeliveryStatus === "return_rejected"
+        ? 202
+        : 200;
+    const stateUrl =
+      `${getBaseUrl(request)}/api/executions/${encodeURIComponent(responsePaidExecution.requestId)}/state` +
+      (responsePaidExecution.jobWorkspace?.token ? `?token=${encodeURIComponent(responsePaidExecution.jobWorkspace.token)}` : "");
+    const paymentStateUrl =
+      `${getBaseUrl(request)}/api/x402/payment-state?paymentPayloadDigestSha256=${encodeURIComponent(paymentPayloadDigestSha256)}`;
     if (responsePaidExecution.requestType !== "paid_execution") {
       response.status(409).json({
         ok: false,
@@ -4693,7 +4744,11 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
     response.status(responseStatus).json({
       ok: true,
       idempotent: context.intent.status !== "pending",
-      nextAction: finalIntent.status === "settled" || finalIntent.status === "executed" ? "result_lookup" : "poll_execution",
+      nextAction: acceptedPendingResult
+        ? "poll_state_or_resume_same_payment"
+        : finalIntent.status === "settled" || finalIntent.status === "executed"
+          ? "result_lookup"
+          : "poll_execution",
       intent: finalIntent,
       requestId: responsePaidExecution.requestId,
       requestType: responsePaidExecution.requestType,
@@ -4701,6 +4756,17 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       settlementStatus: responsePaidExecution.operationalStatus?.settlementStatus ?? (settlement ? "settled" : "authorized"),
       relayDeliveryStatus: responsePaidExecution.operationalStatus?.relayDeliveryStatus ?? "not_confirmed",
       agentExecutionStatus: responsePaidExecution.operationalStatus?.agentExecutionStatus ?? "not_confirmed",
+      paymentPayloadDigestSha256,
+      stateUrl,
+      paymentStateUrl,
+      ...(acceptedPendingResult
+        ? {
+            code: "job_running_or_return_timeout",
+            errorCode: responsePaidExecution.deliveryReceipt?.errorCode ?? "relay_return_timeout_after_worker_ack",
+            safeToRetrySamePayload: true,
+            doNotCreateNewPayment: true
+          }
+        : {}),
       payment: {
         ...(settlement?.paymentResponse ?? {}),
         status: settlement ? "settled" : "authorized",
@@ -6081,7 +6147,7 @@ function parseBoundedIntegerEnv(name: string, fallback: number, min: number, max
 }
 
 const RELAY_RESPONSE_TIMEOUT_MS =
-  parseBoundedIntegerEnv("CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS", 120_000, 15_000, 180_000);
+  parseBoundedIntegerEnv("CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS", 120_000, 15_000, 300_000);
 const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
 const RELAY_HEARTBEAT_GRACE_MS =
   Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;
@@ -6357,6 +6423,9 @@ class AgentRelayConnection {
           status: "failed",
           occurredAtIso: new Date().toISOString(),
           relayMessageId: messageId,
+          ...(requestId ? { requestId } : {}),
+          requestBodyDigestSha256,
+          platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
           detail: [
             error.message,
             `code ${error.code}`,
@@ -6430,20 +6499,72 @@ class AgentRelayConnection {
     if (!pending) {
       return;
     }
-    const step = message.step === "received_by_worker" ? "received_by_worker" : undefined;
+    const step = [
+      "received_by_worker",
+      "worker_http_request_started",
+      "worker_http_response_received",
+      "worker_return_parse_started",
+      "worker_return_parse_completed",
+      "hire_response_prepared"
+    ].includes(String(message.step))
+      ? message.step as HireRelayTraceStep["step"]
+      : undefined;
     if (!step) {
       return;
     }
+    const requestId = typeof message.requestId === "string" && message.requestId.trim().length > 0
+      ? message.requestId.trim().slice(0, 96)
+      : pending.requestId;
+    const requestBodyDigestSha256 =
+      typeof message.requestBodyDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(message.requestBodyDigestSha256)
+        ? message.requestBodyDigestSha256.toLowerCase()
+        : pending.requestBodyDigestSha256;
+    const workerStatusCode = typeof message.workerStatusCode === "number" && Number.isFinite(message.workerStatusCode)
+      ? Math.round(message.workerStatusCode)
+      : undefined;
+    const workerResponseBytes = typeof message.workerResponseBytes === "number" && Number.isFinite(message.workerResponseBytes)
+      ? Math.round(message.workerResponseBytes)
+      : undefined;
+    const workerResponseDigestSha256 =
+      typeof message.workerResponseDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(message.workerResponseDigestSha256)
+        ? message.workerResponseDigestSha256.toLowerCase()
+        : undefined;
+    const relayBodyBytes = typeof message.relayBodyBytes === "number" && Number.isFinite(message.relayBodyBytes)
+      ? Math.round(message.relayBodyBytes)
+      : undefined;
+    const relayBodyDigestSha256 =
+      typeof message.relayBodyDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(message.relayBodyDigestSha256)
+        ? message.relayBodyDigestSha256.toLowerCase()
+        : undefined;
+    const elapsedMs = typeof message.elapsedMs === "number" && Number.isFinite(message.elapsedMs)
+      ? Math.round(message.elapsedMs)
+      : undefined;
+    const localTimeoutMs = typeof message.localHireTimeoutMs === "number" && Number.isFinite(message.localHireTimeoutMs)
+      ? Math.round(message.localHireTimeoutMs)
+      : undefined;
     pending.trace.push({
       step,
       status: message.status === "failed" ? "failed" : "completed",
       occurredAtIso: typeof message.occurredAtIso === "string" ? message.occurredAtIso : new Date().toISOString(),
       relayMessageId: messageId,
+      ...(requestId ? { requestId } : {}),
+      ...(requestBodyDigestSha256 ? { requestBodyDigestSha256 } : {}),
+      ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
+      ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
+      ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
+      ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+      ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {}),
+      ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+      ...(localTimeoutMs !== undefined ? { localTimeoutMs } : {}),
+      platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
       detail: [
         typeof message.detail === "string" ? message.detail : "",
         typeof message.relayAgentProtocolVersion === "string" ? message.relayAgentProtocolVersion : "",
         typeof message.relayAgentBuild === "string" ? `build ${message.relayAgentBuild.slice(0, 12)}` : "",
-        typeof message.localHireTimeoutMs === "number" ? `timeout ${message.localHireTimeoutMs}ms` : ""
+        localTimeoutMs !== undefined ? `timeout ${localTimeoutMs}ms` : "",
+        workerStatusCode !== undefined ? `worker status ${workerStatusCode}` : "",
+        workerResponseBytes !== undefined ? `worker bytes ${workerResponseBytes}` : "",
+        relayBodyBytes !== undefined ? `relay bytes ${relayBodyBytes}` : ""
       ].filter(Boolean).join("; ")
     });
   }
@@ -6495,6 +6616,14 @@ class AgentRelayConnection {
       status: statusCode >= 200 && statusCode < 300 && !requestIdMismatched ? "completed" : "failed",
       occurredAtIso: new Date().toISOString(),
       relayMessageId: messageId,
+      ...(responseRequestId ? { requestId: responseRequestId } : {}),
+      ...(pending.requestBodyDigestSha256 ? { requestBodyDigestSha256: pending.requestBodyDigestSha256 } : {}),
+      ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
+      ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
+      ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
+      ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+      ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {}),
+      platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
       detail: [
         `relay status ${statusCode}`,
         responseRequestId ? `request ${responseRequestId}` : "",
@@ -6505,10 +6634,25 @@ class AgentRelayConnection {
       ].filter(Boolean).join("; ")
     });
     pending.trace.push({
+      step: requestIdMismatched ? "hire_response_rejected_by_api" : "hire_response_acknowledged_by_api",
+      status: requestIdMismatched ? "failed" : "completed",
+      occurredAtIso: new Date().toISOString(),
+      relayMessageId: messageId,
+      ...(responseRequestId ? { requestId: responseRequestId } : {}),
+      ...(pending.requestBodyDigestSha256 ? { requestBodyDigestSha256: pending.requestBodyDigestSha256 } : {}),
+      ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+      ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {}),
+      platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
+      detail: requestIdMismatched ? `request mismatch expected ${pending.requestId}` : "hire_response received and correlated"
+    });
+    pending.trace.push({
       step: "relay_returned",
       status: "completed",
       occurredAtIso: new Date().toISOString(),
-      relayMessageId: messageId
+      relayMessageId: messageId,
+      ...(responseRequestId ? { requestId: responseRequestId } : {}),
+      ...(pending.requestBodyDigestSha256 ? { requestBodyDigestSha256: pending.requestBodyDigestSha256 } : {}),
+      platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS
     });
     pending.resolve({
       statusCode,

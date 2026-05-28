@@ -5,14 +5,19 @@ export type ClawzPlatformRelayDeliveryStatus =
   | "not_attempted"
   | "forwarded"
   | "recorded"
+  | "acknowledged"
   | "failed"
-  | "return_rejected";
+  | "return_rejected"
+  | "reconciled_completed";
 export type ClawzPlatformAgentExecutionStatus =
   | "not_confirmed"
   | "not_started"
+  | "submitted"
   | "running"
+  | "running_or_unknown"
   | "completed"
   | "failed"
+  | "late_completion_available"
   | "worker_completed_return_rejected";
 
 export interface ClawzRetryablePlatformFailure {
@@ -35,6 +40,7 @@ export interface ClawzRetryablePlatformFailure {
   paymentStateUrl?: string;
   resultStateUrl?: string;
   safeToRetrySamePayload?: boolean;
+  doNotCreateNewPayment?: boolean;
   error: string;
   responsePreview?: string;
 }
@@ -72,6 +78,7 @@ export function createRetryablePlatformFailure(input: {
   paymentStateUrl?: string;
   resultStateUrl?: string;
   safeToRetrySamePayload?: boolean;
+  doNotCreateNewPayment?: boolean;
   error?: string;
 }): ClawzRetryablePlatformFailure {
   const responsePreview = input.responseText?.trim().slice(0, 1000);
@@ -96,6 +103,7 @@ export function createRetryablePlatformFailure(input: {
     ...(input.paymentStateUrl ? { paymentStateUrl: input.paymentStateUrl } : {}),
     ...(input.resultStateUrl ? { resultStateUrl: input.resultStateUrl } : {}),
     ...(typeof input.safeToRetrySamePayload === "boolean" ? { safeToRetrySamePayload: input.safeToRetrySamePayload } : {}),
+    ...(typeof input.doNotCreateNewPayment === "boolean" ? { doNotCreateNewPayment: input.doNotCreateNewPayment } : {}),
     error:
       input.error ??
       (code === "post_payment_state_unavailable_retryable"
@@ -126,6 +134,7 @@ export function throwRetryablePlatformFailure(input: {
   paymentStateUrl?: string;
   resultStateUrl?: string;
   safeToRetrySamePayload?: boolean;
+  doNotCreateNewPayment?: boolean;
   error?: string;
 }): never {
   throw new ClawzRetryablePlatformError(createRetryablePlatformFailure(input));

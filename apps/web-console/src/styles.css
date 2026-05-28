@@ -104,9 +104,9 @@ pre,
 
 .site-header {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 20px;
   margin-bottom: 16px;
   padding: 0 2px;
@@ -115,6 +115,7 @@ pre,
 .site-brand {
   display: inline-flex;
   align-items: center;
+  justify-self: start;
 }
 
 .site-brand-logo {
@@ -127,6 +128,7 @@ pre,
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-self: center;
 }
 
 .site-nav-link {
@@ -163,6 +165,47 @@ pre,
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
     0 12px 28px rgba(4, 10, 18, 0.16);
+}
+
+.site-header-actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 10px;
+}
+
+.site-social-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.site-social-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 42px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 18, 30, 0.3);
+  color: rgba(255, 248, 239, 0.86);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  backdrop-filter: blur(10px);
+  transition:
+    transform 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease;
+}
+
+.site-social-link:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 .site-menu-button {
@@ -5960,6 +6003,11 @@ button:disabled {
     width: min(220px, 58vw);
   }
 
+  .site-header {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+  }
+
   .site-nav {
     width: min(100%, 320px);
     flex-direction: row;
@@ -6446,8 +6494,16 @@ button:disabled {
   }
 
   .site-header {
-    flex-direction: row;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .site-header-actions {
+    grid-column: 2;
+  }
+
+  .site-social-links {
+    display: none;
   }
 
   .site-menu-button {
@@ -6461,6 +6517,7 @@ button:disabled {
     top: calc(100% + 10px);
     right: 0;
     z-index: 20;
+    justify-self: stretch;
     width: min(250px, calc(100vw - 40px));
     padding: 10px;
     border: 1px solid rgba(255, 250, 243, 0.16);
