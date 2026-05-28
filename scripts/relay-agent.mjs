@@ -30,8 +30,8 @@ const RELAY_RECONNECT_MAX_DELAY_MS = 15_000;
 const PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES = Math.max(
   0,
   Math.min(
-    Number.parseInt(process.env.CLAWZ_RELAY_PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES ?? "98304", 10) || 98_304,
-    128 * 1024
+    Number.parseInt(process.env.CLAWZ_RELAY_PREPARED_RESPONSE_INLINE_BODY_MAX_BYTES ?? "16384", 10) || 16_384,
+    32 * 1024
   )
 );
 const RELAY_AGENT_PROTOCOL_VERSION = "santaclawz-relay-agent/1.2";
@@ -152,8 +152,7 @@ function preparedResponseInlineFields(body, statusCode) {
   }
   return {
     preparedResponseStatusCode: statusCode,
-    preparedResponseBodyBase64: Buffer.from(body, "utf8").toString("base64"),
-    preparedResponseBodyEncoding: "base64"
+    preparedResponseBodyBase64: Buffer.from(body, "utf8").toString("base64")
   };
 }
 
