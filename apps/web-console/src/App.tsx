@@ -649,10 +649,10 @@ function buildTicketedActivationCommand(
       DOCKER_AGENT_RUNTIME_IMAGE,
       "activate",
       "--ticket",
-      commandQuote(ticket),
+      shellQuote(ticket),
       runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
-        ? `--runtime-ingress-url ${commandQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
-        : `--relay-base ${commandQuote(DEFAULT_RELAY_BASE)}`
+        ? `--runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
+        : `--relay-base ${shellQuote(DEFAULT_RELAY_BASE)}`
     ];
     return args.join(" ");
   }
