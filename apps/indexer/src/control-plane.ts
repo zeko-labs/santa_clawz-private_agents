@@ -26,6 +26,8 @@ import {
   type AgentRuntimeStatus,
   type AgentRuntimeAvailabilityState,
   type AgentRegistryEntry,
+  type AgentActivationProbeClassification,
+  type AgentActivationProbeStats,
   type ExecutionIntentLifecycleEntry,
   type ExecutionLifecycleSummary,
   type ExecutionIntentRecord,
@@ -740,11 +742,15 @@ interface AgentRuntimeHeartbeatRecord {
     attempted: boolean;
     ok: boolean;
     checkedAtIso: string;
+    provenAtIso?: string;
+    provenBy?: "heartbeat_probe" | "activation_lane" | "paid_job_history";
+    lastProvenBuild?: string;
     requestId?: string;
     localHireUrl?: string;
     packageVerified?: boolean;
     returnStatus?: string;
     reason?: string;
+    classification?: AgentActivationProbeClassification;
   };
 }
 
@@ -2243,6 +2249,10 @@ function isPrivateHireRequest(request: Pick<HireRequestRecord, "jobPrivacy">) {
   return request.jobPrivacy?.visibility === "private";
 }
 
+function isActivationLaneHireRequest(request: Pick<HireRequestRecord, "requestType" | "payment">) {
+  return request.requestType === "paid_execution" && request.payment?.activationLane === true;
+}
+
 function shouldPublishDetailedHireLifecycle(jobPrivacy?: SantaClawzJobPrivacyPreference) {
   return jobPrivacy?.visibility !== "private";
 }
@@ -2260,10 +2270,15 @@ function toSnakeJobPrivacy(jobPrivacy: SantaClawzJobPrivacyPreference) {
 function lastHireStatusForSession(
   hireRequests: HireRequestFile,
   sessionId: string,
-  options: { includePrivate?: boolean } = {}
+  options: { includePrivate?: boolean; includeActivationLane?: boolean } = {}
 ): AgentReadinessState["lastJobStatus"] {
   const latest = hireRequests.requests
-    .filter((request) => request.sessionId === sessionId && (options.includePrivate !== false || !isPrivateHireRequest(request)))
+    .filter(
+      (request) =>
+        request.sessionId === sessionId &&
+        (options.includePrivate !== false || !isPrivateHireRequest(request)) &&
+        (options.includeActivationLane === true || !isActivationLaneHireRequest(request))
+    )
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))[0];
   return latest?.status ?? "none";
 }
@@ -2301,13 +2316,112 @@ function hasVerifiedPaidExecutionForSession(
   sessionId: string,
   options: { includePrivate?: boolean } = {}
 ) {
-  return hireRequests.requests.some(
-    (request) =>
-      request.sessionId === sessionId &&
-      (options.includePrivate !== false || !isPrivateHireRequest(request)) &&
-      request.requestType === "paid_execution" &&
-      paidExecutionTerminalOutcome(request) === "completed"
-  );
+  return paidExecutionProofForSession(hireRequests, sessionId, options).proven;
+}
+
+interface PaidExecutionProofState {
+  proven: boolean;
+  provenAtIso?: string;
+  provenBy?: AgentReadinessState["paidExecutionProvenBy"];
+  requestId?: string;
+}
+
+function paidExecutionProofForSession(
+  hireRequests: HireRequestFile,
+  sessionId: string,
+  options: { includePrivate?: boolean } = {}
+): PaidExecutionProofState {
+  const latestCompleted = hireRequests.requests
+    .filter(
+      (request) =>
+        request.sessionId === sessionId &&
+        (options.includePrivate !== false || !isPrivateHireRequest(request)) &&
+        request.requestType === "paid_execution" &&
+        paidExecutionTerminalOutcome(request) === "completed"
+    )
+    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))[0];
+  if (!latestCompleted) {
+    return { proven: false };
+  }
+  return {
+    proven: true,
+    provenAtIso: latestCompleted.submittedAtIso,
+    provenBy: isActivationLaneHireRequest(latestCompleted) ? "activation_lane" : "paid_job_history",
+    requestId: latestCompleted.requestId
+  };
+}
+
+function classifyActivationProbeRequest(request: HireRequestRecord): AgentActivationProbeClassification {
+  const operational = request.operationalStatus;
+  const diagnosticText = [
+    request.deliveryError,
+    request.returnValidationCode,
+    request.returnValidationError,
+    request.protocolReturn?.status,
+    request.protocolReturn?.execution?.completionClassification,
+    request.relayTrace?.map((step) => [step.status, step.detail].filter(Boolean).join(" ")).join(" ")
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    operational?.paymentStatus === "failed" ||
+    operational?.settlementStatus === "failed" ||
+    /\b(x402|payment|settlement|authorization|facilitator|insufficient|balance|usdc|wallet)\b/.test(diagnosticText)
+  ) {
+    return "payment";
+  }
+  if (
+    request.deliveryStatus === "return_rejected" ||
+    request.protocolReturn?.status === "failed" ||
+    operational?.agentExecutionStatus === "failed" ||
+    operational?.agentExecutionStatus === "worker_completed_return_rejected" ||
+    /\b(return_rejected|verified_output_required|seller|worker|runtime|invalid_output|missing_required_input|context_insufficient)\b/.test(diagnosticText)
+  ) {
+    return "seller";
+  }
+  if (
+    request.deliveryError ||
+    request.localResponseStatusCode && request.localResponseStatusCode >= 500 ||
+    operational?.relayDeliveryStatus === "failed" ||
+    /\b(relay|timeout|temporarily unavailable|502|503|504|platform|api key|activation_lane_auth)\b/.test(diagnosticText)
+  ) {
+    return "platform";
+  }
+  return "unknown";
+}
+
+function buildActivationProbeStats(
+  hireRequests: HireRequestFile,
+  sessionId: string,
+  nowMs = Date.now()
+): AgentActivationProbeStats {
+  const probes = hireRequests.requests
+    .filter((request) => request.sessionId === sessionId && isActivationLaneHireRequest(request))
+    .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
+  const outcomes = probes.map((request) => ({
+    request,
+    outcome: paidExecutionTerminalOutcome(request, nowMs),
+    classification: classifyActivationProbeRequest(request)
+  }));
+  const completedProbeCount = outcomes.filter((entry) => entry.outcome === "completed").length;
+  const failedProbeCount = outcomes.filter((entry) => entry.outcome === "failed").length;
+  const last = outcomes[0];
+  return {
+    totalProbeCount: probes.length,
+    completedProbeCount,
+    failedProbeCount,
+    ...(last?.request.submittedAtIso ? { lastProbeAtIso: last.request.submittedAtIso } : {}),
+    ...(last ? { lastProbeStatus: last.outcome } : {}),
+    ...(last && last.outcome === "failed" ? { lastProbeClassification: last.classification } : {}),
+    label:
+      probes.length === 0
+        ? "No activation probes yet"
+        : failedProbeCount > 0 && last?.outcome === "failed"
+          ? `Activation probe failed: ${last.classification}`
+          : `${completedProbeCount}/${probes.length} activation probes completed`
+  };
 }
 
 function hireRequestRetentionKey(request: HireRequestRecord) {
@@ -2342,7 +2456,12 @@ function buildAgentCompletionScore(
   nowMs = Date.now()
 ): AgentCompletionScore {
   const evaluated = hireRequests.requests
-    .filter((request) => request.sessionId === sessionId && request.requestType === "paid_execution")
+    .filter(
+      (request) =>
+        request.sessionId === sessionId &&
+        request.requestType === "paid_execution" &&
+        !isActivationLaneHireRequest(request)
+    )
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))
     .map((request) => ({
       request,
@@ -2392,6 +2511,9 @@ function emptyAgentJobActivityStats(): AgentJobActivityStats {
     privateCompletedJobCount: 0,
     failedJobCount: 0,
     privateFailedJobCount: 0,
+    activationProbeCount: 0,
+    activationProbeCompletedCount: 0,
+    activationProbeFailedCount: 0,
     label: "No SantaClawz jobs yet"
   };
   return stats;
@@ -2404,7 +2526,22 @@ function incrementAgentJobActivityStats(
 ): AgentJobActivityStats {
   const privateJob = isPrivateHireRequest(request);
   const paidExecution = request.requestType === "paid_execution";
+  const activationProbe = isActivationLaneHireRequest(request);
   const paidOutcome = paidExecution ? paidExecutionTerminalOutcome(request, nowMs) : "pending";
+  if (activationProbe) {
+    const next: AgentJobActivityStats = {
+      ...(current ?? emptyAgentJobActivityStats()),
+      activationProbeCount: (current?.activationProbeCount ?? 0) + 1,
+      activationProbeCompletedCount: (current?.activationProbeCompletedCount ?? 0) + (paidOutcome === "completed" ? 1 : 0),
+      activationProbeFailedCount: (current?.activationProbeFailedCount ?? 0) + (paidOutcome === "failed" ? 1 : 0),
+      lastActivationProbeAtIso: request.submittedAtIso,
+      label: ""
+    };
+    return {
+      ...next,
+      label: buildAgentJobActivityStatsLabel(next)
+    };
+  }
   const next: AgentJobActivityStats = {
     ...(current ?? emptyAgentJobActivityStats()),
     totalJobCount: (current?.totalJobCount ?? 0) + 1,
@@ -2436,7 +2573,7 @@ function buildAgentJobActivityStats(
   }
 
   const requests = hireRequests.requests
-    .filter((request) => request.sessionId === sessionId)
+    .filter((request) => request.sessionId === sessionId && !isActivationLaneHireRequest(request))
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso));
   const privateRequests = requests.filter(isPrivateHireRequest);
   const paidRequests = requests.filter((request) => request.requestType === "paid_execution");
@@ -2447,6 +2584,7 @@ function buildAgentJobActivityStats(
   const completedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "completed");
   const failedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "failed");
   const privatePaidRequests = paidRequests.filter(isPrivateHireRequest);
+  const activationProbeStats = buildActivationProbeStats(hireRequests, sessionId, nowMs);
   const stats: AgentJobActivityStats = {
     totalJobCount: requests.length,
     publicJobCount: requests.length - privateRequests.length,
@@ -2457,6 +2595,10 @@ function buildAgentJobActivityStats(
     privateCompletedJobCount: completedPaidRequests.filter((entry) => isPrivateHireRequest(entry.request)).length,
     failedJobCount: failedPaidRequests.length,
     privateFailedJobCount: failedPaidRequests.filter((entry) => isPrivateHireRequest(entry.request)).length,
+    activationProbeCount: activationProbeStats.totalProbeCount,
+    activationProbeCompletedCount: activationProbeStats.completedProbeCount,
+    activationProbeFailedCount: activationProbeStats.failedProbeCount,
+    ...(activationProbeStats.lastProbeAtIso ? { lastActivationProbeAtIso: activationProbeStats.lastProbeAtIso } : {}),
     ...(requests[0]?.submittedAtIso ? { lastJobAtIso: requests[0].submittedAtIso } : {}),
     label: ""
   };
@@ -2476,6 +2618,7 @@ function buildAgentMarketplaceTagStats(
     .filter((request) =>
       request.sessionId === sessionId &&
       request.requestType === "paid_execution" &&
+      !isActivationLaneHireRequest(request) &&
       shouldPublishDetailedHireLifecycle(request.jobPrivacy)
     );
 
@@ -2531,7 +2674,8 @@ function buildAgentReadinessState(input: {
   runtimeReachable: boolean;
   heartbeat: AgentRuntimeHeartbeatState;
   paymentReady: boolean;
-  paidExecutionProvenByHistory?: boolean;
+  paidExecutionProofByHistory?: PaidExecutionProofState;
+  activationProbes?: AgentActivationProbeStats;
   lastJobStatus?: AgentReadinessState["lastJobStatus"];
 }): AgentReadinessState {
   const heartbeatLive = input.heartbeat.status === "live";
@@ -2578,8 +2722,18 @@ function buildAgentReadinessState(input: {
   if (relayPaidWorkerUnverified) {
     blockers.push("worker-readiness-unverified");
   }
+  const heartbeatProbeOk = input.heartbeat.paidExecutionProbe?.ok === true;
   const paidExecutionProven = paidMode
-    ? input.heartbeat.paidExecutionProbe?.ok === true || input.paidExecutionProvenByHistory === true
+    ? heartbeatProbeOk || input.paidExecutionProofByHistory?.proven === true
+    : undefined;
+  const paidExecutionProvenAt = heartbeatProbeOk
+    ? input.heartbeat.paidExecutionProbe?.provenAtIso ?? input.heartbeat.paidExecutionProbe?.checkedAtIso
+    : input.paidExecutionProofByHistory?.provenAtIso;
+  const paidExecutionProvenBy = heartbeatProbeOk
+    ? input.heartbeat.paidExecutionProbe?.provenBy ?? "heartbeat_probe"
+    : input.paidExecutionProofByHistory?.provenBy;
+  const lastProvenBuild = heartbeatProbeOk
+    ? input.heartbeat.paidExecutionProbe?.lastProvenBuild ?? input.heartbeat.relayAgentBuild
     : undefined;
   const upgradeReasons = [
     ...(paidMode && !paidExecutionProven ? ["paid-execution-not-proven"] : []),
@@ -2589,6 +2743,28 @@ function buildAgentReadinessState(input: {
   const readinessWarnings = paidMode && !input.heartbeat.relayAgentWorkerTiming && !relayPaidWorkerUnverified
     ? ["missing-current-relay-timing"]
     : [];
+  const latestProbeFailed =
+    input.activationProbes?.lastProbeStatus === "failed" ? input.activationProbes.lastProbeClassification ?? "unknown" : undefined;
+  const latestProbeFailureIsCurrent =
+    Boolean(latestProbeFailed) &&
+    (!paidExecutionProvenAt ||
+      Boolean(input.activationProbes?.lastProbeAtIso && input.activationProbes.lastProbeAtIso > paidExecutionProvenAt));
+  const readinessNotes: NonNullable<AgentReadinessState["readinessNotes"]> = [];
+  if (paidMode && latestProbeFailed && latestProbeFailureIsCurrent) {
+    const messages: Record<AgentActivationProbeClassification, string> = {
+      payment: "Activation paid smoke failed before seller execution. Check buyer funds, x402 payload, or settlement plumbing before retrying.",
+      platform: "Activation paid smoke hit a platform or relay issue. Retry with the same idempotent payment payload after service is stable.",
+      seller: "Activation paid smoke reached the seller worker, but the worker did not return a valid completed package.",
+      unknown: "Activation paid smoke failed. Check payment, relay, and worker logs for the request."
+    };
+    readinessNotes.push({
+      code: `activation_probe_failed_${latestProbeFailed}`,
+      severity: latestProbeFailed === "seller" ? "warning" : "info",
+      message: messages[latestProbeFailed],
+      ...(input.activationProbes?.lastProbeAtIso ? { atIso: input.activationProbes.lastProbeAtIso } : {}),
+      classification: latestProbeFailed
+    });
+  }
 
   return {
     relayConnected: input.relayConnected,
@@ -2599,8 +2775,13 @@ function buildAgentReadinessState(input: {
     published: input.published,
     hireable: blockers.length === 0 && !needsUpgrade,
     ...(paidExecutionProven !== undefined ? { paidExecutionProven } : {}),
+    ...(paidExecutionProvenAt ? { paidExecutionProvenAt } : {}),
+    ...(paidExecutionProvenBy ? { paidExecutionProvenBy } : {}),
+    ...(lastProvenBuild ? { lastProvenBuild } : {}),
     ...(needsUpgrade ? { needsUpgrade, upgradeReasons } : {}),
     ...(readinessWarnings.length ? { readinessWarnings } : {}),
+    ...(readinessNotes.length ? { readinessNotes } : {}),
+    ...(input.activationProbes ? { activationProbes: input.activationProbes } : {}),
     lastJobStatus: input.lastJobStatus ?? "none",
     blockers
   };
@@ -8581,6 +8762,7 @@ export class ClawzControlPlane {
       options.exposeIssuedAdminKey
     );
     const publicProfileView = Boolean(options.agentId || options.sessionId) && !adminAccess.hasAdminAccess;
+    const activationProbes = buildActivationProbeStats(hireRequestFile, focus.sessionId);
     const readiness = buildAgentReadinessState({
       profile,
       ownership,
@@ -8589,10 +8771,14 @@ export class ClawzControlPlane {
       runtimeReachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
-      paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, focus.sessionId, {
+      paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, focus.sessionId, {
         includePrivate: !publicProfileView
       }),
-      lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId, { includePrivate: !publicProfileView })
+      activationProbes,
+      lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId, {
+        includePrivate: !publicProfileView,
+        includeActivationLane: false
+      })
     });
     const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId);
     const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId);
@@ -8638,6 +8824,7 @@ export class ClawzControlPlane {
       readiness,
       completionScore,
       jobActivityStats,
+      activationProbes,
       protocolOwnerFeePolicy,
       adminAccess,
       ingressAccess,
@@ -8714,6 +8901,7 @@ export class ClawzControlPlane {
       durablePublished: Boolean(state.publishedSessionsBySession[sessionId])
     });
     const ownership = this.ownershipForSession(state, sessionId);
+    const activationProbes = buildActivationProbeStats(hireRequestFile, sessionId);
     const readiness = buildAgentReadinessState({
       profile,
       ownership,
@@ -8722,8 +8910,12 @@ export class ClawzControlPlane {
       runtimeReachable: relayProfile ? relayConnected : reachability.reachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
-      paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, sessionId, { includePrivate: true }),
-      lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
+      paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, { includePrivate: true }),
+      activationProbes,
+      lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, {
+        includePrivate: false,
+        includeActivationLane: false
+      })
     });
     const availabilityReason = relayProfile
       ? relayConnected
@@ -8812,10 +9004,29 @@ export class ClawzControlPlane {
         typeof options.paidExecutionProbe.checkedAtIso === "string" && Number.isFinite(Date.parse(options.paidExecutionProbe.checkedAtIso))
           ? options.paidExecutionProbe.checkedAtIso
           : receivedAtIso;
+      const provenBy =
+        options.paidExecutionProbe.provenBy === "activation_lane" || options.paidExecutionProbe.provenBy === "paid_job_history"
+          ? options.paidExecutionProbe.provenBy
+          : "heartbeat_probe";
+      const explicitLastProvenBuild =
+        typeof options.paidExecutionProbe.lastProvenBuild === "string"
+          ? options.paidExecutionProbe.lastProvenBuild.trim().slice(0, 80)
+          : "";
+      const classification: AgentActivationProbeClassification | undefined =
+        options.paidExecutionProbe.classification === "payment" ||
+        options.paidExecutionProbe.classification === "platform" ||
+        options.paidExecutionProbe.classification === "seller" ||
+        options.paidExecutionProbe.classification === "unknown"
+          ? options.paidExecutionProbe.classification
+          : undefined;
       paidExecutionProbe = {
         attempted: options.paidExecutionProbe.attempted === true,
         ok: options.paidExecutionProbe.ok === true,
         checkedAtIso,
+        ...(options.paidExecutionProbe.ok === true ? { provenAtIso: checkedAtIso, provenBy } : {}),
+        ...(options.paidExecutionProbe.ok === true && (explicitLastProvenBuild || relayAgentBuild)
+          ? { lastProvenBuild: explicitLastProvenBuild || relayAgentBuild }
+          : {}),
         ...(typeof options.paidExecutionProbe.requestId === "string"
           ? { requestId: options.paidExecutionProbe.requestId.trim().slice(0, 120) }
           : {}),
@@ -8830,7 +9041,8 @@ export class ClawzControlPlane {
           : {}),
         ...(typeof options.paidExecutionProbe.reason === "string"
           ? { reason: options.paidExecutionProbe.reason.trim().slice(0, 240) }
-          : {})
+          : {}),
+        ...(classification ? { classification } : {})
       };
     }
     const file = await this.loadRuntimeHeartbeatFile();
@@ -8969,6 +9181,7 @@ export class ClawzControlPlane {
             ? "SantaClawz relay is waiting for this agent to connect."
             : runtimeHeartbeat.reason;
         const paymentReady = hasReadyPaymentProfile(profile);
+        const activationProbes = buildActivationProbeStats(hireRequestFile, sessionId);
         const readiness = buildAgentReadinessState({
           profile,
           ownership,
@@ -8977,8 +9190,12 @@ export class ClawzControlPlane {
           runtimeReachable: relayProfile ? relayConnected : runtimeHeartbeat.status === "live",
           heartbeat: runtimeHeartbeat,
           paymentReady,
-          paidExecutionProvenByHistory: hasVerifiedPaidExecutionForSession(hireRequestFile, sessionId, { includePrivate: true }),
-          lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, { includePrivate: false })
+          paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, { includePrivate: true }),
+          activationProbes,
+          lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, {
+            includePrivate: false,
+            includeActivationLane: false
+          })
         });
         const paidJobsEnabled = computePaidJobsEnabled(profile, published, deployment);
         const quoteReady = paymentReady && profile.paymentProfile.pricingMode === "quote-required";
@@ -9047,6 +9264,7 @@ export class ClawzControlPlane {
           readiness,
           completionScore,
           jobActivityStats,
+          activationProbes,
           marketplaceTags: sanitizeAgentMarketplaceTags(profile.marketplaceTags, emptyAgentMarketplaceTags()),
           contextRequirements: sanitizeContextRequirements(profile.contextRequirements, emptyContextRequirements()),
           marketplaceTagStats,

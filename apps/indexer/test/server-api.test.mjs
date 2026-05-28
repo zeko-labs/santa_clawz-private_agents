@@ -2467,6 +2467,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         sessionId,
         status: "live",
         ttlSeconds: 60,
+        relayAgentBuild: "server-api-test-build",
         paidExecutionProbe: {
           attempted: true,
           ok: true,
@@ -2477,6 +2478,21 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       })
     });
     assert.equal(provenPaidAgentHeartbeat.status, 200);
+    assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.provenBy, "heartbeat_probe");
+    assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.lastProvenBuild, "server-api-test-build");
+
+    const forcedActivationCandidates = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&force=true`,
+      {
+        headers: {
+          "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(forcedActivationCandidates.status, 200);
+    assert.equal(forcedActivationCandidates.payload.candidates[0]?.agentId, agentId);
+    assert.equal(forcedActivationCandidates.payload.candidates[0]?.reason, "manual-paid-smoke-requested");
+    assert.equal(forcedActivationCandidates.payload.candidates[0]?.readiness.paidExecutionProvenBy, "heartbeat_probe");
 
     const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",

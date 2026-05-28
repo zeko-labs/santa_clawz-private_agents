@@ -172,9 +172,14 @@ export interface ClawzAgentReadinessResponse extends Record<string, unknown> {
   quoteReady: boolean;
   paidExecutionReady: boolean;
   paidExecutionProven?: boolean;
+  paidExecutionProvenAt?: string;
+  paidExecutionProvenBy?: "heartbeat_probe" | "activation_lane" | "paid_job_history";
+  lastProvenBuild?: string;
   needsUpgrade?: boolean;
   upgradeReasons?: string[];
   readinessWarnings?: string[];
+  readinessNotes?: Array<Record<string, unknown>>;
+  activationProbes?: Record<string, unknown>;
   limits?: {
     taskPromptMaxChars?: number;
     requesterContactMaxChars?: number;

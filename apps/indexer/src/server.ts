@@ -3042,9 +3042,14 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       quoteReady,
       paidExecutionReady,
       paidExecutionProven,
+      ...(consoleState.readiness?.paidExecutionProvenAt ? { paidExecutionProvenAt: consoleState.readiness.paidExecutionProvenAt } : {}),
+      ...(consoleState.readiness?.paidExecutionProvenBy ? { paidExecutionProvenBy: consoleState.readiness.paidExecutionProvenBy } : {}),
+      ...(consoleState.readiness?.lastProvenBuild ? { lastProvenBuild: consoleState.readiness.lastProvenBuild } : {}),
       needsUpgrade: consoleState.readiness?.needsUpgrade === true,
       ...(consoleState.readiness?.upgradeReasons?.length ? { upgradeReasons: consoleState.readiness.upgradeReasons } : {}),
       ...(consoleState.readiness?.readinessWarnings?.length ? { readinessWarnings: consoleState.readiness.readinessWarnings } : {}),
+      ...(consoleState.readiness?.readinessNotes?.length ? { readinessNotes: consoleState.readiness.readinessNotes } : {}),
+      ...(consoleState.activationProbes ? { activationProbes: consoleState.activationProbes } : {}),
       runtimeRoutes: {
         mode: consoleState.profile.runtimeDelivery.mode,
         ...(consoleState.profile.runtimeDelivery.runtimeIngressUrl
@@ -5750,14 +5755,17 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
   const amountUsd = activationLaneAmountUsd();
   const retryAfterSeconds = activationLaneRetrySeconds();
   const baseUrl = getBaseUrl(request);
+  const requestedAgentId = queryString(request.query, "agentId");
+  const force = queryBoolean(request.query, "force") === true;
   const candidates = (await controlPlane.listRegisteredAgents())
     .filter(
       (agent) =>
+        (!requestedAgentId || agent.agentId === requestedAgentId) &&
         agent.availability === "active" &&
         agent.published &&
         agent.paymentsEnabled &&
         agent.paymentProfileReady &&
-        agent.readiness?.paidExecutionProven !== true &&
+        (force || agent.readiness?.paidExecutionProven !== true) &&
         agent.readiness?.heartbeatLive === true &&
         agent.readiness?.runtimeReachable === true
     )
@@ -5772,13 +5780,16 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
       retryAfterSeconds,
       activationLane: true,
       activationHireEndpoint: `${baseUrl}/api/activation-lane/agents/${encodeURIComponent(agent.agentId)}/hire`,
-      reason: "payments-ready-runtime-live-paid-execution-unproven",
+      reason: force ? "manual-paid-smoke-requested" : "payments-ready-runtime-live-paid-execution-unproven",
       readiness: {
         paidExecutionProven: agent.readiness?.paidExecutionProven === true,
+        ...(agent.readiness?.paidExecutionProvenAt ? { paidExecutionProvenAt: agent.readiness.paidExecutionProvenAt } : {}),
+        ...(agent.readiness?.paidExecutionProvenBy ? { paidExecutionProvenBy: agent.readiness.paidExecutionProvenBy } : {}),
         heartbeatLive: agent.readiness?.heartbeatLive === true,
         runtimeReachable: agent.readiness?.runtimeReachable === true,
         blockers: agent.readiness?.blockers ?? []
       },
+      ...(agent.activationProbes ? { activationProbes: agent.activationProbes } : {}),
       ...(agent.lastUpdatedAtIso ? { lastUpdatedAtIso: agent.lastUpdatedAtIso } : {})
     }));
 
