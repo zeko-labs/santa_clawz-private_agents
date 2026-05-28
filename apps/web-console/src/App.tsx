@@ -64,7 +64,7 @@ type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-enc
 type CoordinationDraft = {
   orgName: string;
   workspaceDomain: string;
-  identityProvider: "google-workspace" | "oidc" | "local-operator";
+  identityProvider: "email-code" | "google" | "operator-managed";
   projectName: string;
   goal: string;
   threadId: string;
@@ -1825,7 +1825,7 @@ function defaultCoordinationDraft(): CoordinationDraft {
   return {
     orgName: "Example team",
     workspaceDomain: "example.com",
-    identityProvider: "google-workspace",
+    identityProvider: "email-code",
     projectName: "Market launch review",
     goal: "Coordinate research, critique, and synthesis agents around one shared decision package.",
     threadId: "thread_team_launch_review",
@@ -1839,13 +1839,13 @@ function defaultCoordinationDraft(): CoordinationDraft {
 }
 
 function coordinationIdentityProviderLabel(provider: CoordinationDraft["identityProvider"]) {
-  if (provider === "oidc") {
-    return "OIDC/SAML";
+  if (provider === "google") {
+    return "Google";
   }
-  if (provider === "local-operator") {
+  if (provider === "operator-managed") {
     return "Operator managed";
   }
-  return "Google Workspace";
+  return "Email code";
 }
 
 function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
@@ -1942,13 +1942,27 @@ function buildBridgeManifest(input: {
         workspaceDomain: input.draft.workspaceDomain,
         identityProvider: input.draft.identityProvider,
         loginMode:
-          input.draft.identityProvider === "google-workspace"
-            ? "google_oauth_domain_scoped"
-            : input.draft.identityProvider === "oidc"
-              ? "enterprise_oidc_or_saml"
-              : "operator_managed",
+          input.draft.identityProvider === "google"
+            ? "google_oauth"
+            : input.draft.identityProvider === "operator-managed"
+              ? "operator_managed"
+              : "email_one_time_code",
         defaultHumanRoles: ["workspace-admin", "operator", "observer"],
-        toolTouchpoints: tagCsvToList(input.draft.toolTouchpoints)
+        toolTouchpoints: tagCsvToList(input.draft.toolTouchpoints),
+        dataPolicy: {
+          hostedOrgData: false,
+          canonicalStores: [
+            "workspace shell",
+            "agent ids",
+            "thread and swarm ids",
+            "privacy policy lane",
+            "public summaries when allowed",
+            "digests and encrypted envelope references",
+            "aggregate counts",
+            "proof and procurement events"
+          ],
+          privateDataStaysWith: "customer agents, customer tools, or customer-controlled private wrappers"
+        }
       },
       org: input.draft.orgName,
       project: input.draft.projectName,
@@ -4498,9 +4512,9 @@ export function App() {
                       updateCoordinationDraft({ identityProvider: event.target.value as CoordinationDraft["identityProvider"] });
                     }}
                   >
-                    <option value="google-workspace">Google Workspace</option>
-                    <option value="oidc">OIDC/SAML</option>
-                    <option value="local-operator">Operator managed</option>
+                    <option value="email-code">Email code</option>
+                    <option value="google">Google</option>
+                    <option value="operator-managed">Operator managed</option>
                   </select>
                 </label>
                 <label className="field">
@@ -4602,6 +4616,11 @@ export function App() {
                   <span>Trace</span>
                   <strong>{coordinationThreads.length}</strong>
                   <small>{coordinationMessages.length} messages</small>
+                </div>
+                <div>
+                  <span>Data</span>
+                  <strong>Local</strong>
+                  <small>SantaClawz stores shell, digests, refs, and counts</small>
                 </div>
                 <div>
                   <span>Policy</span>

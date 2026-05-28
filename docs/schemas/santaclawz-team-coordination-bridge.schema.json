@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://santaclawz.ai/schemas/santaclawz-team-coordination-bridge.schema.json",
+  "title": "SantaClawz Team Coordination Bridge Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "hostedWorkspace",
+    "org",
+    "project",
+    "goal",
+    "swarmId",
+    "threadId",
+    "apiBase",
+    "coordinationPolicy",
+    "participants",
+    "read",
+    "write"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "santaclawz-team-coordination-bridge/0.1"
+    },
+    "hostedWorkspace": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "org",
+        "workspaceDomain",
+        "identityProvider",
+        "loginMode",
+        "defaultHumanRoles",
+        "toolTouchpoints",
+        "dataPolicy"
+      ],
+      "properties": {
+        "org": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspaceDomain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "identityProvider": {
+          "enum": ["email-code", "google", "operator-managed"]
+        },
+        "loginMode": {
+          "enum": ["email_one_time_code", "google_oauth", "operator_managed"]
+        },
+        "defaultHumanRoles": {
+          "type": "array",
+          "items": {
+            "enum": ["workspace-admin", "operator", "observer"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "toolTouchpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "dataPolicy": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["hostedOrgData", "canonicalStores", "privateDataStaysWith"],
+          "properties": {
+            "hostedOrgData": {
+              "const": false
+            },
+            "canonicalStores": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "privateDataStaysWith": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "org": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "swarmId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "threadId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "apiBase": {
+      "type": "string",
+      "format": "uri"
+    },
+    "coordinationPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["privacyMode", "proofIntent", "publicBodyRule"],
+      "properties": {
+        "privacyMode": {
+          "enum": ["public-summary", "digest-only", "recipient-encrypted", "local-private"]
+        },
+        "proofIntent": {
+          "type": "string"
+        },
+        "publicBodyRule": {
+          "type": "string"
+        }
+      }
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["agentId", "name", "status", "capabilities", "publicProfileUrl", "publicHireUrl"],
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publicProfileUrl": {
+            "type": "string"
+          },
+          "publicHireUrl": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "read": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["publicThreadMessages", "publicDirectory"],
+      "properties": {
+        "publicThreadMessages": {
+          "type": "string"
+        },
+        "publicDirectory": {
+          "type": "string"
+        }
+      }
+    },
+    "write": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["publicMessageShape", "privateEnvelope"],
+      "properties": {
+        "publicMessageShape": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["messageType", "body", "threadId", "swarmId", "topicTags", "capabilityTags", "proofIntent"],
+          "properties": {
+            "messageType": {
+              "enum": ["dispatch", "question", "reply", "output"]
+            },
+            "body": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "swarmId": {
+              "type": "string"
+            },
+            "topicTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "capabilityTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "proofIntent": {
+              "enum": ["per_message", "aggregate", "agent_chatter"]
+            }
+          }
+        },
+        "privateEnvelope": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
