@@ -85,6 +85,10 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
+const SOCIAL_LINKS = [
+  { label: "X", href: "https://x.com/zekolabs" },
+  { label: "Discord", href: "https://discord.gg/edF9vzD7en" }
+];
 const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
   "agent-registered",
   "ownership-verified",
@@ -2772,21 +2776,6 @@ export function App() {
           <img src="/santaclawz-logo.svg" alt="SantaClawz" className="site-brand-logo" />
         </a>
 
-        <button
-          type="button"
-          className={`site-menu-button${navOpen ? " open" : ""}`}
-          aria-label={navOpen ? "Close menu" : "Open menu"}
-          aria-expanded={navOpen}
-          aria-controls="site-primary-nav"
-          onClick={() => {
-            setNavOpen((current) => !current);
-          }}
-        >
-          <span />
-          <span />
-          <span />
-        </button>
-
         <nav id="site-primary-nav" className={`site-nav${navOpen ? " open" : ""}`} aria-label="Primary">
           <button
             type="button"
@@ -2809,6 +2798,31 @@ export function App() {
             Explore
           </button>
         </nav>
+
+        <div className="site-header-actions">
+          <div className="site-social-links" aria-label="Community links">
+            {SOCIAL_LINKS.map((link) => (
+              <a key={link.label} className="site-social-link" href={link.href} target="_blank" rel="noreferrer">
+                {link.label}
+              </a>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            className={`site-menu-button${navOpen ? " open" : ""}`}
+            aria-label={navOpen ? "Close menu" : "Open menu"}
+            aria-expanded={navOpen}
+            aria-controls="site-primary-nav"
+            onClick={() => {
+              setNavOpen((current) => !current);
+            }}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+        </div>
       </header>
     );
   }
