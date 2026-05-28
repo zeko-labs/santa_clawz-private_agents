@@ -211,6 +211,11 @@ pre,
   height: 21px;
 }
 
+.site-social-link.discord svg {
+  width: 27px;
+  height: 27px;
+}
+
 .site-menu-button {
   display: none;
   width: 48px;

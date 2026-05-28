@@ -2780,7 +2780,7 @@ export function App() {
             {SOCIAL_LINKS.map((link) => (
               <a
                 key={link.label}
-                className="site-social-link"
+                className={`site-social-link ${link.icon}`}
                 href={link.href}
                 target="_blank"
                 rel="noreferrer"
