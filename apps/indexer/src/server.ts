@@ -6832,6 +6832,28 @@ class AgentRelayConnection {
         relayBodyBytes !== undefined ? `relay bytes ${relayBodyBytes}` : ""
       ].filter(Boolean).join("; ")
     });
+    const preparedResponseBodyBase64 =
+      typeof message.preparedResponseBodyBase64 === "string" && message.preparedResponseBodyBase64.trim().length > 0
+        ? message.preparedResponseBodyBase64
+        : undefined;
+    if (step === "hire_response_prepared" && preparedResponseBodyBase64) {
+      this.handleResponse({
+        type: "hire_response",
+        messageId,
+        ...(requestId ? { requestId } : {}),
+        ...(requestBodyDigestSha256 ? { requestBodyDigestSha256 } : {}),
+        statusCode: typeof message.preparedResponseStatusCode === "number" && Number.isFinite(message.preparedResponseStatusCode)
+          ? Math.round(message.preparedResponseStatusCode)
+          : workerStatusCode ?? 200,
+        bodyBase64: preparedResponseBodyBase64,
+        bodyEncoding: "base64",
+        ...(workerStatusCode !== undefined ? { workerStatusCode } : {}),
+        ...(workerResponseBytes !== undefined ? { workerResponseBytes } : {}),
+        ...(workerResponseDigestSha256 ? { workerResponseDigestSha256 } : {}),
+        ...(relayBodyBytes !== undefined ? { relayBodyBytes } : {}),
+        ...(relayBodyDigestSha256 ? { relayBodyDigestSha256 } : {})
+      });
+    }
   }
 
   handleResponse(message: Record<string, unknown>) {

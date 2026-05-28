@@ -3891,6 +3891,130 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
   }
 }
 
+async function testRelayPreparedResponseResolvesInlineCompletion() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-relay-prepared-response-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "5000"
+  });
+  let relaySocket;
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const ticket = await requestJson(`${baseUrl}/api/enrollment/tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Relay Prepared Response Agent",
+        headline: "Uses the prepared response progress frame as an inline fallback.",
+        representedPrincipal: "Prepared response smoke operator",
+        paymentProfile: {
+          enabled: true,
+          supportedRails: ["base-usdc"],
+          defaultRail: "base-usdc",
+          pricingMode: "free-test",
+          settlementTrigger: "upfront"
+        }
+      })
+    });
+    assert.equal(ticket.status, 200);
+
+    const redeemed = await requestJson(`${baseUrl}/api/enrollment/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ ticket: ticket.payload.ticket })
+    });
+    assert.equal(redeemed.status, 200);
+    const sessionId = redeemed.payload.session.sessionId;
+    const agentId = redeemed.payload.agentId;
+    const adminKey = redeemed.payload.adminAccess.issuedAdminKey;
+
+    const published = await requestJson(`${baseUrl}/api/social/anchors/settle`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({ sessionId, agentId, localOnly: true })
+    });
+    assert.equal(published.status, 200);
+
+    relaySocket = await connectRelaySocket(baseUrl, agentId, adminKey);
+    const hirePromise = requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Complete through the prepared-response fallback frame.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    const relayHire = await waitForRelayJson(
+      relaySocket,
+      (message) => message.type === "hire_request"
+    );
+    const requestId = JSON.parse(relayHire.request.body).request_id;
+    const preparedReturn = {
+      schema_version: "santaclawz-return/1.0",
+      request_id: requestId,
+      status: "completed",
+      agent_private: true,
+      real_work_executed: true,
+      buyer_visible: true,
+      verified_output: {
+        package_hash: "1".repeat(64),
+        hash_algorithm: "sha256",
+        verification_manifest: {
+          input_digest_sha256: "2".repeat(64),
+          checks_performed: ["worker_completed", "prepared_response_inline_fallback"],
+          files_produced: ["prepared-response.md"],
+          blocked_suspicious_instructions: []
+        },
+        deliverables: [{ name: "prepared-response.md", sha256: "3".repeat(64) }]
+      }
+    };
+    const preparedBody = JSON.stringify(preparedReturn);
+    sendRelayJson(relaySocket, {
+      type: "hire_ack",
+      messageId: relayHire.messageId,
+      requestId,
+      receivedAtIso: new Date().toISOString(),
+      localHireUrl: "http://127.0.0.1:65535/hire",
+      relayAgentProtocolVersion: "relay-test"
+    });
+    sendRelayJson(relaySocket, {
+      type: "hire_worker_progress",
+      messageId: relayHire.messageId,
+      requestId,
+      requestBodyDigestSha256: relayHire.request.bodyDigestSha256,
+      step: "hire_response_prepared",
+      status: "completed",
+      occurredAtIso: new Date().toISOString(),
+      detail: "prepared response body is available before the separate hire_response frame",
+      workerStatusCode: 200,
+      workerResponseBytes: Buffer.byteLength(preparedBody, "utf8"),
+      workerResponseDigestSha256: createHash("sha256").update(preparedBody).digest("hex"),
+      relayBodyBytes: Buffer.byteLength(preparedBody, "utf8"),
+      relayBodyDigestSha256: createHash("sha256").update(preparedBody).digest("hex"),
+      preparedResponseStatusCode: 200,
+      preparedResponseBodyBase64: Buffer.from(preparedBody, "utf8").toString("base64"),
+      preparedResponseBodyEncoding: "base64"
+    });
+
+    const hire = await hirePromise;
+    assert.equal(hire.status, 200);
+    assert.equal(hire.payload.status, "completed");
+    assert.equal(hire.payload.deliveryStatus, "forwarded");
+    assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "forwarded");
+    assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "completed");
+    assert.equal(hire.payload.protocolReturn.status, "completed");
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "hire_response_prepared" && entry.status === "completed"), true);
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "completed"), true);
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "relay_returned" && entry.status === "completed"), true);
+
+    console.log("ok - prepared relay response progress frame resolves inline completion");
+  } finally {
+    relaySocket?.destroy();
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testOfficialRelayNormalizesLargeWorkerResponses() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-official-relay-normalize-test-"));
   const port = await reservePort();
@@ -4374,6 +4498,7 @@ async function main() {
   await testStaleRelayDoesNotStayLive();
   await testRelayHireFailureCreatesDurableExecutionRecord();
   await testRelayPostAckTimeoutStaysPendingAndRetrySafe();
+  await testRelayPreparedResponseResolvesInlineCompletion();
   await testOfficialRelayNormalizesLargeWorkerResponses();
   await testMissionAuthVerificationPersists();
   await testLegacyDemoProfileCanEnableBasePayments();

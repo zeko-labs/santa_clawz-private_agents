@@ -870,7 +870,10 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
         workerResponseBytes: Buffer.byteLength(body, "utf8"),
         workerResponseDigestSha256: sha256Hex(body),
         relayBodyBytes: Buffer.byteLength(normalized.body, "utf8"),
-        relayBodyDigestSha256: sha256Hex(normalized.body)
+        relayBodyDigestSha256: sha256Hex(normalized.body),
+        preparedResponseStatusCode: responseEnvelope.statusCode,
+        preparedResponseBodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
+        preparedResponseBodyEncoding: "base64"
       });
       const sent = sendHireResponseOnce(responseEnvelope);
       scheduleLateCompletionBackup({
@@ -960,7 +963,10 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       workerResponseBytes: Buffer.byteLength(body, "utf8"),
       workerResponseDigestSha256: sha256Hex(body),
       relayBodyBytes: bodyBytes,
-      relayBodyDigestSha256: sha256Hex(normalized.body)
+      relayBodyDigestSha256: sha256Hex(normalized.body),
+      preparedResponseStatusCode: responseEnvelope.statusCode,
+      preparedResponseBodyBase64: Buffer.from(normalized.body, "utf8").toString("base64"),
+      preparedResponseBodyEncoding: "base64"
     });
     const sent = sendHireResponseOnce(responseEnvelope);
     scheduleLateCompletionBackup({
