@@ -2332,8 +2332,9 @@ pre,
   grid-column: 2;
   grid-row: 1 / span 2;
   color: var(--ink);
-  font-size: 1.25rem;
+  font-size: 1.05rem;
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .coordination-handoff-metrics small {

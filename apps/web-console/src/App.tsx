@@ -63,6 +63,8 @@ type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationDraft = {
   orgName: string;
+  workspaceDomain: string;
+  identityProvider: "google-workspace" | "oidc" | "local-operator";
   projectName: string;
   goal: string;
   threadId: string;
@@ -71,6 +73,7 @@ type CoordinationDraft = {
   requesterContact: string;
   privacyMode: CoordinationPrivacyMode;
   requiredCapabilities: string;
+  toolTouchpoints: string;
 };
 type SdkWidgetDraft = {
   agentName: string;
@@ -1821,6 +1824,8 @@ function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], 
 function defaultCoordinationDraft(): CoordinationDraft {
   return {
     orgName: "Example team",
+    workspaceDomain: "example.com",
+    identityProvider: "google-workspace",
     projectName: "Market launch review",
     goal: "Coordinate research, critique, and synthesis agents around one shared decision package.",
     threadId: "thread_team_launch_review",
@@ -1828,8 +1833,19 @@ function defaultCoordinationDraft(): CoordinationDraft {
     budgetUsd: "1.00",
     requesterContact: "team-bridge@example.com",
     privacyMode: "digest-only",
-    requiredCapabilities: "research, critique, synthesis"
+    requiredCapabilities: "research, critique, synthesis",
+    toolTouchpoints: "slack, github, drive"
   };
+}
+
+function coordinationIdentityProviderLabel(provider: CoordinationDraft["identityProvider"]) {
+  if (provider === "oidc") {
+    return "OIDC/SAML";
+  }
+  if (provider === "local-operator") {
+    return "Operator managed";
+  }
+  return "Google Workspace";
 }
 
 function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
@@ -1921,6 +1937,19 @@ function buildBridgeManifest(input: {
   return JSON.stringify(
     {
       schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+      hostedWorkspace: {
+        org: input.draft.orgName,
+        workspaceDomain: input.draft.workspaceDomain,
+        identityProvider: input.draft.identityProvider,
+        loginMode:
+          input.draft.identityProvider === "google-workspace"
+            ? "google_oauth_domain_scoped"
+            : input.draft.identityProvider === "oidc"
+              ? "enterprise_oidc_or_saml"
+              : "operator_managed",
+        defaultHumanRoles: ["workspace-admin", "operator", "observer"],
+        toolTouchpoints: tagCsvToList(input.draft.toolTouchpoints)
+      },
       org: input.draft.orgName,
       project: input.draft.projectName,
       goal: input.draft.goal,
@@ -4309,6 +4338,7 @@ export function App() {
     try {
       const privacyMode = coordinationDraft.privacyMode;
       const requiredCapabilities = tagCsvToList(coordinationDraft.requiredCapabilities);
+      const toolTouchpoints = tagCsvToList(coordinationDraft.toolTouchpoints);
       const nextResult = await createProcurementIntent({
         taskPrompt: [
           coordinationDraft.projectName,
@@ -4316,7 +4346,9 @@ export function App() {
           coordinationDraft.goal,
           "",
           `Coordinate through SantaClawz thread ${coordinationDraft.threadId} and swarm ${coordinationDraft.swarmId}.`,
+          `Workspace: ${coordinationDraft.orgName} (${coordinationDraft.workspaceDomain}) via ${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)}.`,
           `Selected agents: ${selectedCoordinationAgents.map((agent) => agent.agentId).join(", ") || "open roster"}.`,
+          `Tool touchpoints: ${toolTouchpoints.join(", ") || "none declared"}.`,
           `Policy: ${coordinationPrivacyLabel(privacyMode)}. ${coordinationPrivacyDetail(privacyMode)}`
         ].join("\n"),
         requesterContact: coordinationDraft.requesterContact,
@@ -4329,7 +4361,7 @@ export function App() {
           capabilityTags: requiredCapabilities,
           jobTags: ["team-coordination"],
           outputTags: ["coordination-brief"],
-          inputTags: ["santaclawz-agent-board", "openclaw-runtime"]
+          inputTags: ["santaclawz-agent-board", "openclaw-runtime", ...toolTouchpoints]
         },
         jobPrivacy: {
           visibility: privacyMode === "public-summary" ? "public" : "private",
@@ -4435,7 +4467,7 @@ export function App() {
 
               <div className="field-grid coordination-field-grid">
                 <label className="field">
-                  <span>Team</span>
+                  <span>Workspace</span>
                   <input
                     className="text-input"
                     value={coordinationDraft.orgName}
@@ -4443,6 +4475,33 @@ export function App() {
                       updateCoordinationDraft({ orgName: event.target.value });
                     }}
                   />
+                </label>
+                <label className="field">
+                  <span>Domain</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.workspaceDomain}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ workspaceDomain: event.target.value });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="field-grid coordination-field-grid">
+                <label className="field">
+                  <span>Login</span>
+                  <select
+                    className="select-input"
+                    value={coordinationDraft.identityProvider}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ identityProvider: event.target.value as CoordinationDraft["identityProvider"] });
+                    }}
+                  >
+                    <option value="google-workspace">Google Workspace</option>
+                    <option value="oidc">OIDC/SAML</option>
+                    <option value="local-operator">Operator managed</option>
+                  </select>
                 </label>
                 <label className="field">
                   <span>Project</span>
@@ -4518,15 +4577,26 @@ export function App() {
                 </label>
               </div>
 
+              <label className="field">
+                <span>Touchpoints</span>
+                <input
+                  className="text-input"
+                  value={coordinationDraft.toolTouchpoints}
+                  onChange={(event: ValueInputEvent) => {
+                    updateCoordinationDraft({ toolTouchpoints: event.target.value });
+                  }}
+                />
+              </label>
+
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
             </form>
 
             <aside className="coordination-handoff-card">
               <div className="coordination-handoff-metrics">
                 <div>
-                  <span>Agents</span>
-                  <strong>{selectedCoordinationAgents.length}</strong>
-                  <small>{liveCoordinationAgentCount} online</small>
+                  <span>Login</span>
+                  <strong>{coordinationIdentityProviderLabel(coordinationDraft.identityProvider)}</strong>
+                  <small>{coordinationDraft.workspaceDomain}</small>
                 </div>
                 <div>
                   <span>Trace</span>
