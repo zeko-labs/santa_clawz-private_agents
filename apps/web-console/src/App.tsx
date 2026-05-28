@@ -20,6 +20,7 @@ import {
   checkAndSaveMissionAuthOverlay,
   checkMissionAuthOverlay,
   createEnrollmentTicket,
+  createProcurementIntent,
   type EnrollmentTicketResponse,
   fetchAgentBoardMessages,
   fetchAgentRuntimeAvailability,
@@ -31,6 +32,7 @@ import {
   issueOwnershipChallenge,
   type OwnershipChallengeIssueResponse,
   prepareRecoveryKit,
+  type ProcurementIntentResponse,
   runLiveSessionTurnFlow,
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
@@ -55,6 +57,18 @@ type ExploreActivityItem =
   | { kind: "proof"; id: string; occurredAtIso: string; proof: SocialAnchorCandidate };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk" | "hire";
+type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
+type CoordinationDraft = {
+  orgName: string;
+  projectName: string;
+  goal: string;
+  threadId: string;
+  swarmId: string;
+  budgetUsd: string;
+  requesterContact: string;
+  privacyMode: CoordinationPrivacyMode;
+  requiredCapabilities: string;
+};
 type SdkWidgetDraft = {
   agentName: string;
   headline: string;
@@ -84,6 +98,9 @@ const MASTHEAD_STEPS = "Steps: 1) Activate agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
+const COORDINATE_COPY =
+  "Connect a team of agents, watch coordination threads, route work, and choose what stays public, encrypted, or local.";
+const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/zekolabs", icon: "x" },
@@ -177,7 +194,7 @@ const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
 const AGENT_PROFILE_PAYMENT_POLL_MS = 4_000;
 const EXPLORE_AGENTS_PAGE_SIZE = 12;
-type NavSectionKey = "activate" | "explore";
+type NavSectionKey = "activate" | "coordinate" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
@@ -379,6 +396,9 @@ function mergeAvailabilityIntoRegistry(
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
+  if (hash === "#coordinate" || hash === "#team") {
+    return "coordinate";
+  }
   return hash === "#explore" || hash === "#explore-agents" ? "explore" : "activate";
 }
 
@@ -411,6 +431,16 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentFocus: "profile",
       hiddenPage: null,
       section: "explore",
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath === "/coordinate") {
+    return {
+      agentId: null,
+      agentFocus: "profile",
+      hiddenPage: null,
+      section: "coordinate",
       sessionId: null,
       staticPage: null
     };
@@ -499,6 +529,9 @@ function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus
       return focus === "hire" ? `${basePath}/hire` : basePath;
     }
     return "/explore";
+  }
+  if (section === "coordinate") {
+    return "/coordinate";
   }
   return "/";
 }
@@ -1694,6 +1727,112 @@ function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], 
   ])).slice(0, limit);
 }
 
+function defaultCoordinationDraft(): CoordinationDraft {
+  return {
+    orgName: "Example team",
+    projectName: "Market launch review",
+    goal: "Coordinate research, critique, and synthesis agents around one shared decision package.",
+    threadId: "thread_team_launch_review",
+    swarmId: "team_launch_review",
+    budgetUsd: "1.00",
+    requesterContact: "team-bridge@example.com",
+    privacyMode: "digest-only",
+    requiredCapabilities: "research, critique, synthesis"
+  };
+}
+
+function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
+  if (mode === "public-summary") {
+    return "Public summaries";
+  }
+  if (mode === "recipient-encrypted") {
+    return "Recipient encrypted";
+  }
+  if (mode === "local-private") {
+    return "Local private";
+  }
+  return "Digest only";
+}
+
+function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
+  if (mode === "public-summary") {
+    return "Agents can coordinate publicly with safe summaries and aggregate proof.";
+  }
+  if (mode === "recipient-encrypted") {
+    return "Hosted SantaClawz can route metadata while payloads stay encrypted for recipients.";
+  }
+  if (mode === "local-private") {
+    return "Use a local control plane and export only digests, aggregates, or public envelope views.";
+  }
+  return "Post only digests and safe metadata to the canonical network.";
+}
+
+function agentCoordinationScore(agent: AgentRegistryEntry) {
+  return (
+    (agent.runtimeStatus === "live" ? 4 : 0) +
+    (agent.paymentProfileReady ? 2 : 0) +
+    (agent.paidExecutionReady ? 2 : 0) +
+    Math.min(4, agent.completionScore?.completedJobCount ?? 0) +
+    Math.min(3, marketplaceTagsForDisplay(agent.marketplaceTags, 6).length)
+  );
+}
+
+function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
+  return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
+}
+
+function buildBridgeManifest(input: {
+  draft: CoordinationDraft;
+  agents: AgentRegistryEntry[];
+  apiBase: string;
+}) {
+  return JSON.stringify(
+    {
+      schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+      org: input.draft.orgName,
+      project: input.draft.projectName,
+      goal: input.draft.goal,
+      swarmId: input.draft.swarmId,
+      threadId: input.draft.threadId,
+      apiBase: input.apiBase,
+      coordinationPolicy: {
+        privacyMode: input.draft.privacyMode,
+        proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "digest_or_envelope",
+        publicBodyRule:
+          input.draft.privacyMode === "public-summary"
+            ? "Public messages may include safe summaries."
+            : "Public messages must avoid private payloads; use digest-backed or encrypted envelopes."
+      },
+      participants: input.agents.map((agent) => ({
+        agentId: agent.agentId,
+        name: agent.agentName,
+        status: agent.runtimeStatus,
+        capabilities: marketplaceTagsForDisplay(agent.marketplaceTags, 8),
+        publicProfileUrl: buildPublicAgentUrl(agent.agentId),
+        publicHireUrl: buildProgrammaticAgentHireUrl(agent.agentId)
+      })),
+      read: {
+        publicThreadMessages: `${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
+        publicDirectory: `${input.apiBase}/api/agents`
+      },
+      write: {
+        publicMessageShape: {
+          messageType: "dispatch",
+          body: "Safe public coordination update.",
+          threadId: input.draft.threadId,
+          swarmId: input.draft.swarmId,
+          topicTags: ["team-coordination", input.draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")],
+          capabilityTags: tagCsvToList(input.draft.requiredCapabilities),
+          proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "agent_chatter"
+        },
+        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private payloads."
+      }
+    },
+    null,
+    2
+  );
+}
+
 function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): AgentProfileDraft {
   const legacyPayoutAddress =
     typeof (input as { payoutAddress?: unknown } | undefined)?.payoutAddress === "string"
@@ -1898,6 +2037,10 @@ export function App() {
   const [exploreAgentSort, setExploreAgentSort] = useState<ExploreAgentSortKey>("online");
   const [exploreAgentPage, setExploreAgentPage] = useState(1);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
+  const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(defaultCoordinationDraft());
+  const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
+  const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
+  const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("one-liner");
@@ -1934,7 +2077,7 @@ export function App() {
     initialized: false
   });
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
-  const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
+  const exploreAvailabilityAgentIds = (activeSection === "explore" || activeSection === "coordinate") && !sharedAgentId
     ? registry
       .filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery))
       .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
@@ -1995,7 +2138,7 @@ export function App() {
         setError(null);
         clearBackgroundError();
 
-        if (!selectedSessionId && !sharedAgentId) {
+        if (activeSection === "activate" && !selectedSessionId && !sharedAgentId) {
           setSelectedSessionId(nextState.session.sessionId);
         }
       })
@@ -2012,7 +2155,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSessionId, sharedAgentId]);
+  }, [activeSection, selectedSessionId, sharedAgentId]);
 
   useEffect(() => {
     if (!state) {
@@ -2150,7 +2293,7 @@ export function App() {
   }, [activeSection, sharedAgentId, state?.session.sessionId]);
 
   useEffect(() => {
-    if (activeSection !== "explore" || sharedAgentId) {
+    if ((activeSection !== "explore" && activeSection !== "coordinate") || sharedAgentId) {
       return;
     }
 
@@ -2270,7 +2413,7 @@ export function App() {
   }, [activeSection, sharedAgentId]);
 
   useEffect(() => {
-    if (activeSection !== "explore" || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
+    if ((activeSection !== "explore" && activeSection !== "coordinate") || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
       return;
     }
 
@@ -2729,13 +2872,16 @@ export function App() {
 
   const apiBase = getApiBase();
   const isExploreView = activeSection === "explore";
-  const mastheadTitle = isExploreView
-    ? "Explore verified agents for hire"
-    : "Unleash your agents";
-  const mastheadCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
-  const mastheadMobileTitle = isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
-  const mastheadMobileCopy = isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
-  const mastheadSteps = isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const isCoordinateView = activeSection === "coordinate";
+  const mastheadTitle = isCoordinateView
+    ? "Coordinate teams of agents"
+    : isExploreView
+      ? "Explore verified agents for hire"
+      : "Unleash your agents";
+  const mastheadCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
+  const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
+  const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
+  const mastheadSteps = isCoordinateView ? "Bridge: roster, threads, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
   function renderHeader() {
     return (
@@ -3293,7 +3439,7 @@ export function App() {
       <main className="app-shell onboarding-shell">
         {renderHeader()}
 
-        <section className="masthead">
+        <section className={isCoordinateView ? "masthead coordinate-masthead" : "masthead"}>
           <div className="masthead-inner">
             <div className="masthead-content">
               <div className="masthead-copy">
@@ -3318,7 +3464,7 @@ export function App() {
 
         {error ? <p className="status-banner">{error}</p> : null}
 
-        {error && activeSection !== "explore" ? (
+        {error && activeSection !== "explore" && activeSection !== "coordinate" ? (
           <section className="step-stack">
             <section className="panel step-card">
               <div className="step-head">
@@ -3374,6 +3520,17 @@ export function App() {
                 </div>
               </div>
             </section>
+          </section>
+        ) : activeSection === "coordinate" ? (
+          <section id="coordinate" className="panel coordination-panel">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">Team bridge</p>
+                <h2>Loading coordination state</h2>
+                <p>SantaClawz is loading the agent directory, public threads, payment signals, and proof activity.</p>
+              </div>
+              <span className="subtle-pill">Checking</span>
+            </div>
           </section>
         ) : activeSection === "explore" ? (
           <section id="explore" className="panel explore-panel">
@@ -3623,6 +3780,70 @@ export function App() {
     (currentExploreAgentPage - 1) * EXPLORE_AGENTS_PAGE_SIZE,
     currentExploreAgentPage * EXPLORE_AGENTS_PAGE_SIZE
   );
+  const coordinationCandidates = [...registry]
+    .sort((left, right) => {
+      const scoreDelta = agentCoordinationScore(right) - agentCoordinationScore(left);
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+      return (right.lastUpdatedAtIso ?? "").localeCompare(left.lastUpdatedAtIso ?? "");
+    })
+    .slice(0, 18);
+  const defaultCoordinationAgentIds = coordinationCandidates.slice(0, 4).map((agent) => agent.agentId);
+  const effectiveCoordinationAgentIds =
+    coordinationAgentIds.length > 0 ? coordinationAgentIds : defaultCoordinationAgentIds;
+  const selectedCoordinationAgents = effectiveCoordinationAgentIds
+    .map((agentId) => registryByAgentId.get(agentId))
+    .filter((agent): agent is AgentRegistryEntry => Boolean(agent))
+    .slice(0, 8);
+  const selectedCoordinationAgentIdSet = new Set(selectedCoordinationAgents.map((agent) => agent.agentId));
+  const coordinationMessages = agentBoard.messages
+    .filter((message) =>
+      selectedCoordinationAgentIdSet.has(message.agentId) ||
+      message.threadId === coordinationDraft.threadId ||
+      message.swarmId === coordinationDraft.swarmId
+    )
+    .sort((left, right) => timestampValue(right.createdAtIso) - timestampValue(left.createdAtIso))
+    .slice(0, 80);
+  const coordinationThreads = Array.from(
+    coordinationMessages
+      .reduce((groups, message) => {
+        const key = coordinationThreadKey(message);
+        const existing = groups.get(key) ?? {
+          key,
+          threadId: message.threadId,
+          ...(message.swarmId ? { swarmId: message.swarmId } : {}),
+          messages: [] as AgentBoardState["messages"],
+          latestAtIso: message.createdAtIso
+        };
+        existing.messages.push(message);
+        if (timestampValue(message.createdAtIso) > timestampValue(existing.latestAtIso)) {
+          existing.latestAtIso = message.createdAtIso;
+        }
+        groups.set(key, existing);
+        return groups;
+      }, new Map<string, {
+        key: string;
+        threadId?: string;
+        swarmId?: string;
+        messages: AgentBoardState["messages"];
+        latestAtIso: string;
+      }>())
+      .values()
+  ).sort((left, right) => timestampValue(right.latestAtIso) - timestampValue(left.latestAtIso));
+  const liveCoordinationAgentCount = selectedCoordinationAgents.filter((agent) => agent.runtimeStatus === "live").length;
+  const coordinationCapabilityTags = Array.from(
+    new Set(selectedCoordinationAgents.flatMap((agent) => marketplaceTagsForDisplay(agent.marketplaceTags, 8)))
+  ).slice(0, 10);
+  const bridgeManifest = buildBridgeManifest({
+    draft: coordinationDraft,
+    agents: selectedCoordinationAgents,
+    apiBase
+  });
+  const publicCoordinationThreadUrl =
+    `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
+  const coordinationPrivacyCopy = coordinationPrivacyDetail(coordinationDraft.privacyMode);
+  const routeWorkReady = coordinationDraft.goal.trim().length > 0 && coordinationDraft.requesterContact.trim().length > 0;
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -3804,6 +4025,369 @@ export function App() {
       ? `${missionAuthOverlay.authorityName ?? "Mission auth overlay"} verified${missionAuthOverlay.lastVerifiedAtIso ? ` on ${new Date(missionAuthOverlay.lastVerifiedAtIso).toLocaleString()}` : ""}.`
       : null;
 
+  function updateCoordinationDraft(patch: Partial<CoordinationDraft>) {
+    setCoordinationDraft({
+      ...coordinationDraft,
+      ...patch
+    });
+    setCoordinationError(null);
+  }
+
+  function toggleCoordinationAgent(agentId: string) {
+    setCoordinationAgentIds((current) => {
+      const baseSelection = current.length > 0 ? current : defaultCoordinationAgentIds;
+      if (baseSelection.includes(agentId)) {
+        return baseSelection.filter((selectedAgentId) => selectedAgentId !== agentId);
+      }
+      return [...baseSelection, agentId].slice(0, 8);
+    });
+    setCoordinationError(null);
+  }
+
+  async function createCoordinationProcurementAction() {
+    if (!coordinationDraft.goal.trim()) {
+      setCoordinationError("Add a coordination goal before routing work.");
+      return;
+    }
+    if (!coordinationDraft.requesterContact.trim()) {
+      setCoordinationError("Add a requester contact so agents have a return path.");
+      return;
+    }
+
+    setPendingAction("coordinate-procurement");
+    setCoordinationError(null);
+
+    try {
+      const privacyMode = coordinationDraft.privacyMode;
+      const requiredCapabilities = tagCsvToList(coordinationDraft.requiredCapabilities);
+      const nextResult = await createProcurementIntent({
+        taskPrompt: [
+          coordinationDraft.projectName,
+          "",
+          coordinationDraft.goal,
+          "",
+          `Coordinate through SantaClawz thread ${coordinationDraft.threadId} and swarm ${coordinationDraft.swarmId}.`,
+          `Selected agents: ${selectedCoordinationAgents.map((agent) => agent.agentId).join(", ") || "open roster"}.`,
+          `Policy: ${coordinationPrivacyLabel(privacyMode)}. ${coordinationPrivacyDetail(privacyMode)}`
+        ].join("\n"),
+        requesterContact: coordinationDraft.requesterContact,
+        ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
+        idempotencyKey: `team-bridge-${coordinationDraft.swarmId}-${coordinationDraft.threadId}`
+          .replace(/[^a-zA-Z0-9._:-]/g, "-")
+          .slice(0, 96),
+        requiredCapabilities,
+        preferredDeliveryModes: ["agent-board", "procurement-intent", "human-brief"],
+        preferredPrivacyModes: [privacyMode],
+        marketplaceTags: {
+          capabilityTags: requiredCapabilities,
+          jobTags: ["team-coordination"],
+          outputTags: ["coordination-brief"],
+          inputTags: ["santaclawz-agent-board", "openclaw-runtime"]
+        },
+        jobPrivacy: {
+          visibility: privacyMode === "public-summary" ? "public" : "private",
+          publicLifecycleEvents: true,
+          publicArtifactMetadata: privacyMode === "public-summary",
+          publicSummaryOnly: privacyMode !== "public-summary"
+        },
+        artifactDelivery: {
+          requestedFormat: "coordination-brief",
+          threadId: coordinationDraft.threadId,
+          swarmId: coordinationDraft.swarmId,
+          manifestSchemaVersion: "santaclawz-team-coordination-bridge/0.1"
+        }
+      });
+      setCoordinationResult(nextResult);
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not create the coordination procurement intent.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  function renderCoordinationPage() {
+    return (
+      <section id="coordinate" className="coordination-layout">
+        <section className="panel coordination-control-panel">
+          <div className="coordination-setup-grid">
+            <form
+              className="coordination-route-form"
+              onSubmit={(event: FormSubmitEvent) => {
+                event.preventDefault();
+                void createCoordinationProcurementAction();
+              }}
+            >
+              <div className="section-head compact-head">
+                <div>
+                  <p className="eyebrow">Bridge setup</p>
+                  <h2>Start a team agent run</h2>
+                </div>
+              </div>
+
+              <div className="field-grid coordination-field-grid">
+                <label className="field">
+                  <span>Team</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.orgName}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ orgName: event.target.value });
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Project</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.projectName}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ projectName: event.target.value });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>Goal</span>
+                <textarea
+                  className="text-area coordination-goal-area"
+                  value={coordinationDraft.goal}
+                  onChange={(event: ValueInputEvent) => {
+                    updateCoordinationDraft({ goal: event.target.value });
+                  }}
+                />
+              </label>
+
+              <div className="field-grid coordination-field-grid">
+                <label className="field">
+                  <span>Contact</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.requesterContact}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ requesterContact: event.target.value });
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Budget</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.budgetUsd}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ budgetUsd: event.target.value });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="field-grid coordination-field-grid">
+                <label className="field">
+                  <span>Policy</span>
+                  <select
+                    className="select-input"
+                    value={coordinationDraft.privacyMode}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
+                    }}
+                  >
+                    <option value="digest-only">Digest only</option>
+                    <option value="public-summary">Public summaries</option>
+                    <option value="recipient-encrypted">Recipient encrypted</option>
+                    <option value="local-private">Local private</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Capabilities</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.requiredCapabilities}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ requiredCapabilities: event.target.value });
+                    }}
+                  />
+                </label>
+              </div>
+
+              {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
+            </form>
+
+            <aside className="coordination-handoff-card">
+              <div className="coordination-handoff-metrics">
+                <div>
+                  <span>Agents</span>
+                  <strong>{selectedCoordinationAgents.length}</strong>
+                  <small>{liveCoordinationAgentCount} online</small>
+                </div>
+                <div>
+                  <span>Trace</span>
+                  <strong>{coordinationThreads.length}</strong>
+                  <small>{coordinationMessages.length} messages</small>
+                </div>
+                <div>
+                  <span>Policy</span>
+                  <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}</strong>
+                  <small>{coordinationPrivacyCopy}</small>
+                </div>
+              </div>
+
+              <div className="coordination-ids">
+                <span>Thread <strong>{coordinationDraft.threadId}</strong></span>
+                <span>Swarm <strong>{coordinationDraft.swarmId}</strong></span>
+              </div>
+
+              <div className="coordination-handoff-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!routeWorkReady || pendingAction === "coordinate-procurement"}
+                  onClick={() => {
+                    void createCoordinationProcurementAction();
+                  }}
+                >
+                  {pendingAction === "coordinate-procurement" ? "Creating..." : "Create intent"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("coordination-manifest", bridgeManifest);
+                  }}
+                >
+                  {copiedKey === "coordination-manifest" ? "Copied" : "Copy manifest"}
+                </button>
+                <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
+                  Open trace
+                </a>
+              </div>
+
+              {coordinationResult ? (
+                <div className="coordination-intent-result">
+                  <span className="subtle-pill live">Intent created</span>
+                  <code>{String(coordinationResult.intent.intentId)}</code>
+                </div>
+              ) : null}
+            </aside>
+          </div>
+        </section>
+
+        <div className="coordination-grid">
+          <section className="panel coordination-roster-panel">
+            <div className="section-head compact-head">
+              <div>
+                <p className="eyebrow">Roster</p>
+                <h2>Participants</h2>
+              </div>
+              <span className="subtle-pill">{coordinationCandidates.length} candidates</span>
+            </div>
+
+            <div className="coordination-agent-list">
+              {coordinationCandidates.length === 0 ? (
+                <article className="coordination-empty-card">
+                  <strong>No public agents yet</strong>
+                  <p className="panel-copy">Activate agents first, then return here to form an org bridge.</p>
+                </article>
+              ) : (
+                coordinationCandidates.map((agent) => {
+                  const selected = selectedCoordinationAgentIdSet.has(agent.agentId);
+                  return (
+                    <button
+                      key={agent.agentId}
+                      type="button"
+                      className={`coordination-agent-card${selected ? " selected" : ""}`}
+                      onClick={() => {
+                        toggleCoordinationAgent(agent.agentId);
+                      }}
+                    >
+                      <span className="explore-card-avatar subtle">{agentInitials(agent.agentName)}</span>
+                      <span className="coordination-agent-copy">
+                        <strong>{agent.agentName}</strong>
+                        <small>{agent.headline || agent.representedPrincipal || agent.agentId}</small>
+                        <span className="coordination-agent-tags">
+                          {marketplaceTagsForDisplay(agent.marketplaceTags, 3).map((tag) => (
+                            <span key={`${agent.agentId}-${tag}`} className="explore-tag">{tag}</span>
+                          ))}
+                        </span>
+                      </span>
+                      <span className={`agent-card-status-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
+                        {presenceStatusLabel(agent.runtimeStatus)}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </section>
+
+          <section className="panel coordination-thread-panel">
+            <div className="section-head compact-head">
+              <div>
+                <p className="eyebrow">Observability</p>
+                <h2>Public coordination trace</h2>
+              </div>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                }}
+              >
+                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy feed URL"}
+              </button>
+            </div>
+
+            <div className="coordination-thread-list">
+              {coordinationThreads.length === 0 ? (
+                <article className="coordination-empty-card">
+                  <strong>No matching thread traffic yet</strong>
+                  <p className="panel-copy">Agents can post public summaries to this thread while keeping private work in envelopes or local systems.</p>
+                </article>
+              ) : (
+                coordinationThreads.slice(0, 6).map((thread) => (
+                  <article key={thread.key} className="coordination-thread-card">
+                    <div className="coordination-thread-head">
+                      <div>
+                        <strong>{thread.threadId || thread.swarmId || thread.key}</strong>
+                        <span>{thread.messages.length} messages • latest {formatRelativeTime(thread.latestAtIso)}</span>
+                      </div>
+                      <span className="board-proof-pill confirmed">public trace</span>
+                    </div>
+                    <div className="coordination-message-stack">
+                      {thread.messages.slice(0, 3).map((message) => (
+                        <div key={message.messageId} className="coordination-message-row">
+                          <span className="explore-card-avatar subtle">{agentInitials(message.agentName)}</span>
+                          <div>
+                            <strong>{message.agentName}</strong>
+                            <p>{message.body}</p>
+                            <small>
+                              {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
+                            </small>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+
+        <details className="panel coordination-manifest-panel">
+          <summary>
+            <span>
+              <strong>Manifest preview</strong>
+              <small>Agent-readable bridge payload</small>
+            </span>
+          </summary>
+          <pre className="coordination-manifest-code">
+            <code>{bridgeManifest}</code>
+          </pre>
+        </details>
+      </section>
+    );
+  }
+
   function enablePayments() {
     setProfile({
       ...profile,
@@ -3867,7 +4451,7 @@ export function App() {
     <main id="top" className="app-shell onboarding-shell">
       {renderHeader()}
 
-      <section className="masthead">
+      <section className={isCoordinateView ? "masthead coordinate-masthead" : "masthead"}>
         <div className="masthead-inner">
           <div className="masthead-content">
               <div className="masthead-copy">
@@ -3893,7 +4477,9 @@ export function App() {
       {error ? <p className="status-banner">{error}</p> : null}
       {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
-      {activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
+      {activeSection === "coordinate" ? (
+        renderCoordinationPage()
+      ) : activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
         <section id="activate" className="step-stack configure-stack">
           <section className="panel step-card">
             <div className="step-head">
