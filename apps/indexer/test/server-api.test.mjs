@@ -4386,12 +4386,19 @@ async function testHostedWorkspaceRunApi() {
     assert.equal(saved.payload.stats.globalMetricsCounted, true);
     assert.equal(saved.payload.connectors.length, 2);
     assert.deepEqual(saved.payload.connectors.map((connector) => connector.kind).sort(), ["github", "slack"]);
+    assert.equal(saved.payload.securityCapabilities.enterpriseAuth.protocol, "zk-mission-auth");
+    assert.deepEqual(saved.payload.securityCapabilities.enterpriseAuth.providers, ["auth0", "okta", "custom-oidc"]);
+    assert.equal(saved.payload.securityCapabilities.kms.workspaceKeyBoundary, "tenant-key-broker");
+    assert.equal(saved.payload.securityCapabilities.kms.hostedOrgData, false);
+    assert.equal(saved.payload.localConnectorContract.privateDataRule.includes("Local wrappers"), true);
+    assert.deepEqual(saved.payload.localConnectorContract.declaredTouchpoints, ["slack", "github"]);
 
     const fetched = await requestJson(`${baseUrl}/api/workspaces/runs/${encodeURIComponent(saved.payload.run.runId)}`);
     assert.equal(fetched.status, 200);
     assert.equal(fetched.payload.ok, true);
     assert.equal(fetched.payload.run.runId, saved.payload.run.runId);
     assert.equal(fetched.payload.stats.hostedOrgData, false);
+    assert.equal(fetched.payload.securityCapabilities.enterpriseAuth.overlay, "agent-mission-auth-overlay");
 
     const listed = await requestJson(`${baseUrl}/api/workspaces/runs?workspaceId=${encodeURIComponent(code.payload.workspaceId)}`);
     assert.equal(listed.status, 200);

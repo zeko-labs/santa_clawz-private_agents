@@ -35,6 +35,7 @@ import {
   type OwnershipChallengeIssueResponse,
   prepareRecoveryKit,
   type ProcurementIntentResponse,
+  requestWorkspaceEmailCode,
   runLiveSessionTurnFlow,
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
@@ -43,6 +44,7 @@ import {
   upsertHostedWorkspaceRun,
   updateAgentProfile,
   verifyOwnershipChallenge,
+  verifyWorkspaceEmailCode,
   type ZekoHealthState
 } from "./api.js";
 import { BuyerWorkroom } from "./BuyerWorkroom.js";
@@ -77,6 +79,21 @@ type CoordinationDraft = {
   requiredCapabilities: string;
   toolTouchpoints: string;
 };
+type CoordinationEmailChallenge = {
+  workspaceId: string;
+  challengeId: string;
+  expiresAtIso: string;
+  deliveryMode: "dev-returned" | "email-provider-pending";
+  devCode?: string;
+};
+type CoordinationWorkspaceSession = {
+  workspaceId: string;
+  workspaceSessionToken: string;
+  role: string;
+  expiresAtIso: string;
+  email: string;
+  savedAtIso: string;
+};
 type SdkWidgetDraft = {
   agentName: string;
   headline: string;
@@ -109,6 +126,7 @@ const EXPLORE_STEPS = "";
 const COORDINATE_COPY =
   "Connect a team of agents, watch coordination threads, route work, and choose what stays public, encrypted, or local.";
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
+const COORDINATION_WORKSPACE_SESSION_STORAGE_KEY = "santaclawz-coordinate-workspace-session:v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
@@ -1936,6 +1954,13 @@ function buildBridgeManifest(input: {
   agents: AgentRegistryEntry[];
   apiBase: string;
 }) {
+  const toolTouchpoints = tagCsvToList(input.draft.toolTouchpoints);
+  const loginMode =
+    input.draft.identityProvider === "google"
+      ? "google_oauth"
+      : input.draft.identityProvider === "operator-managed"
+        ? "operator_managed"
+        : "email_one_time_code";
   return JSON.stringify(
     {
       schemaVersion: "santaclawz-team-coordination-bridge/0.1",
@@ -1943,14 +1968,9 @@ function buildBridgeManifest(input: {
         org: input.draft.orgName,
         workspaceDomain: input.draft.workspaceDomain,
         identityProvider: input.draft.identityProvider,
-        loginMode:
-          input.draft.identityProvider === "google"
-            ? "google_oauth"
-            : input.draft.identityProvider === "operator-managed"
-              ? "operator_managed"
-              : "email_one_time_code",
+        loginMode,
         defaultHumanRoles: ["workspace-admin", "operator", "observer"],
-        toolTouchpoints: tagCsvToList(input.draft.toolTouchpoints),
+        toolTouchpoints,
         dataPolicy: {
           hostedOrgData: false,
           canonicalStores: [
@@ -1965,6 +1985,42 @@ function buildBridgeManifest(input: {
           ],
           privateDataStaysWith: "customer agents, customer tools, or customer-controlled private wrappers"
         }
+      },
+      securityCapabilities: {
+        workspaceAuth: {
+          identityProvider: input.draft.identityProvider,
+          loginMode,
+          sessionEndpoint: "/api/workspaces/auth/email-code/verify"
+        },
+        enterpriseAuth: {
+          available: true,
+          protocol: "zk-mission-auth",
+          overlay: "agent-mission-auth-overlay",
+          providers: ["auth0", "okta", "custom-oidc"],
+          checkEndpoint: "/api/mission-auth/check",
+          scope: "agent-mission-and-workspace-policy"
+        },
+        kms: {
+          available: true,
+          workspaceKeyBoundary: "tenant-key-broker",
+          sealedBlobStore: true,
+          enterpriseBridgeService: "@clawz/enterprise-kms",
+          customerManagedUpgradePath: "privacy-gateway-plus-enterprise-kms",
+          hostedOrgData: false
+        }
+      },
+      localConnectorContract: {
+        declaredTouchpoints: toolTouchpoints,
+        privateDataRule:
+          "Local wrappers and customer agents pull real org data; SantaClawz stores only shell metadata, refs, digests, encrypted envelope refs, and aggregate counts.",
+        publishAllowed: [
+          "public summaries when policy allows",
+          "digest-only coordination events",
+          "recipient-encrypted envelope references",
+          "aggregate workspace participation totals"
+        ],
+        connectorReferenceRule:
+          "Connector records are declared integration references until a customer wrapper or hosted connector binds credentials outside the canonical public payload."
       },
       org: input.draft.orgName,
       project: input.draft.projectName,
@@ -2221,6 +2277,10 @@ export function App() {
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
   const [coordinationWorkspaceResult, setCoordinationWorkspaceResult] = useState<HostedWorkspaceRunResponse | null>(null);
+  const [coordinationLoginEmail, setCoordinationLoginEmail] = useState(defaultCoordinationDraft().requesterContact);
+  const [coordinationLoginCode, setCoordinationLoginCode] = useState("");
+  const [coordinationEmailChallenge, setCoordinationEmailChallenge] = useState<CoordinationEmailChallenge | null>(null);
+  const [coordinationWorkspaceSession, setCoordinationWorkspaceSession] = useState<CoordinationWorkspaceSession | null>(null);
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
@@ -2305,6 +2365,34 @@ export function App() {
       pendingPublicSocialAnchorQueue ?? publicSocialAnchorQueue
     );
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const rawSession = window.localStorage.getItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY);
+    if (!rawSession) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(rawSession) as Partial<CoordinationWorkspaceSession>;
+      if (
+        typeof parsed.workspaceId === "string" &&
+        typeof parsed.workspaceSessionToken === "string" &&
+        typeof parsed.role === "string" &&
+        typeof parsed.expiresAtIso === "string" &&
+        typeof parsed.email === "string" &&
+        Date.parse(parsed.expiresAtIso) > Date.now()
+      ) {
+        setCoordinationWorkspaceSession(parsed as CoordinationWorkspaceSession);
+        setCoordinationLoginEmail(parsed.email);
+        return;
+      }
+    } catch {
+      // Ignore corrupt local session cache and let the operator request a new code.
+    }
+    window.localStorage.removeItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -4118,6 +4206,16 @@ export function App() {
     `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
   const coordinationPrivacyCopy = coordinationPrivacyDetail(coordinationDraft.privacyMode);
   const routeWorkReady = coordinationDraft.goal.trim().length > 0 && coordinationDraft.requesterContact.trim().length > 0;
+  const coordinationSessionActive = Boolean(
+    coordinationWorkspaceSession &&
+    coordinationWorkspaceSession.workspaceId === (coordinationWorkspaceResult?.workspace.workspaceId ?? coordinationWorkspaceSession.workspaceId) &&
+    Date.parse(coordinationWorkspaceSession.expiresAtIso) > Date.now()
+  );
+  const coordinationSessionLabel = coordinationSessionActive
+    ? `Verified ${coordinationWorkspaceSession?.role ?? "workspace"}`
+    : coordinationDraft.identityProvider === "email-code"
+      ? "Email code"
+      : `${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)} declared`;
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4318,6 +4416,74 @@ export function App() {
       ...patch
     });
     setCoordinationError(null);
+  }
+
+  async function requestCoordinationEmailCodeAction() {
+    const email = coordinationLoginEmail.trim() || coordinationDraft.requesterContact.trim();
+    if (!email) {
+      setCoordinationError("Add a workspace email before requesting a login code.");
+      return;
+    }
+    setPendingAction("coordinate-request-email-code");
+    setCoordinationError(null);
+    try {
+      const challenge = await requestWorkspaceEmailCode({
+        orgName: coordinationDraft.orgName,
+        workspaceDomain: coordinationDraft.workspaceDomain,
+        email
+      });
+      setCoordinationLoginEmail(email);
+      setCoordinationEmailChallenge({
+        workspaceId: challenge.workspaceId,
+        challengeId: challenge.challengeId,
+        expiresAtIso: challenge.expiresAtIso,
+        deliveryMode: challenge.deliveryMode,
+        ...(challenge.devCode ? { devCode: challenge.devCode } : {})
+      });
+      setCoordinationLoginCode(challenge.devCode ?? "");
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not request a workspace login code.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function verifyCoordinationEmailCodeAction() {
+    if (!coordinationEmailChallenge) {
+      setCoordinationError("Request a workspace login code first.");
+      return;
+    }
+    if (!coordinationLoginCode.trim()) {
+      setCoordinationError("Enter the workspace login code.");
+      return;
+    }
+    setPendingAction("coordinate-verify-email-code");
+    setCoordinationError(null);
+    try {
+      const session = await verifyWorkspaceEmailCode({
+        challengeId: coordinationEmailChallenge.challengeId,
+        email: coordinationLoginEmail,
+        code: coordinationLoginCode
+      });
+      const nextSession: CoordinationWorkspaceSession = {
+        workspaceId: session.workspaceId,
+        workspaceSessionToken: session.workspaceSessionToken,
+        role: session.role,
+        expiresAtIso: session.expiresAtIso,
+        email: coordinationLoginEmail,
+        savedAtIso: new Date().toISOString()
+      };
+      setCoordinationWorkspaceSession(nextSession);
+      setCoordinationEmailChallenge(null);
+      setCoordinationLoginCode("");
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+      }
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not verify the workspace login code.");
+    } finally {
+      setPendingAction(null);
+    }
   }
 
   function toggleCoordinationAgent(agentId: string) {
@@ -4654,8 +4820,8 @@ export function App() {
               <div className="coordination-handoff-metrics">
                 <div>
                   <span>Login</span>
-                  <strong>{coordinationIdentityProviderLabel(coordinationDraft.identityProvider)}</strong>
-                  <small>{coordinationDraft.workspaceDomain}</small>
+                  <strong>{coordinationSessionLabel}</strong>
+                  <small>{coordinationSessionActive ? coordinationWorkspaceSession?.email : coordinationDraft.workspaceDomain}</small>
                 </div>
                 <div>
                   <span>Trace</span>
@@ -4672,11 +4838,78 @@ export function App() {
                   <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}</strong>
                   <small>{coordinationPrivacyCopy}</small>
                 </div>
+                <div>
+                  <span>Security</span>
+                  <strong>Ready</strong>
+                  <small>KMS broker + zk mission auth overlay</small>
+                </div>
               </div>
 
               <div className="coordination-ids">
                 <span>Thread <strong>{coordinationDraft.threadId}</strong></span>
                 <span>Swarm <strong>{coordinationDraft.swarmId}</strong></span>
+              </div>
+
+              <div className="coordination-session-strip">
+                <div>
+                  <strong>Workspace session</strong>
+                  <small>
+                    {coordinationSessionActive
+                      ? `Stored locally until ${new Date(coordinationWorkspaceSession?.expiresAtIso ?? "").toLocaleDateString()}`
+                      : coordinationDraft.identityProvider === "email-code"
+                        ? "One-time code auth is local-ready; production email delivery is provider config."
+                        : "Provider is declared for the workspace handoff."}
+                  </small>
+                </div>
+                {coordinationDraft.identityProvider === "email-code" ? (
+                  <div className="coordination-session-controls">
+                    <input
+                      className="text-input"
+                      value={coordinationLoginEmail}
+                      placeholder={coordinationDraft.requesterContact}
+                      onChange={(event: ValueInputEvent) => {
+                        setCoordinationLoginEmail(event.target.value);
+                        setCoordinationError(null);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={pendingAction === "coordinate-request-email-code"}
+                      onClick={() => {
+                        void requestCoordinationEmailCodeAction();
+                      }}
+                    >
+                      {pendingAction === "coordinate-request-email-code" ? "Sending..." : "Send code"}
+                    </button>
+                    {coordinationEmailChallenge ? (
+                      <>
+                        <input
+                          className="text-input"
+                          value={coordinationLoginCode}
+                          placeholder="Code"
+                          onChange={(event: ValueInputEvent) => {
+                            setCoordinationLoginCode(event.target.value);
+                            setCoordinationError(null);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={pendingAction === "coordinate-verify-email-code"}
+                          onClick={() => {
+                            void verifyCoordinationEmailCodeAction();
+                          }}
+                        >
+                          {pendingAction === "coordinate-verify-email-code" ? "Checking..." : "Verify"}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+                {coordinationEmailChallenge?.devCode ? (
+                  <small className="coordination-dev-code">Local/dev code: {coordinationEmailChallenge.devCode}</small>
+                ) : null}
               </div>
 
               <div className="coordination-handoff-actions">

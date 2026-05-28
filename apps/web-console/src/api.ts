@@ -703,6 +703,8 @@ export type HostedWorkspaceRunResponse = {
   workspace: Record<string, unknown> & { workspaceId: string };
   run: Record<string, unknown> & { runId: string; workspaceId: string };
   connectors: Array<Record<string, unknown> & { connectorId: string; kind: string; status: string }>;
+  securityCapabilities?: Record<string, unknown>;
+  localConnectorContract?: Record<string, unknown>;
   stats: {
     selectedAgentCount: number;
     liveAgentCount: number;

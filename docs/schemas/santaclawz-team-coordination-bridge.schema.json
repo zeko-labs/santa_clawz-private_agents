@@ -13,6 +13,8 @@
     "swarmId",
     "threadId",
     "apiBase",
+    "securityCapabilities",
+    "localConnectorContract",
     "coordinationPolicy",
     "participants",
     "read",
@@ -110,6 +112,105 @@
     "apiBase": {
       "type": "string",
       "format": "uri"
+    },
+    "securityCapabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["workspaceAuth", "enterpriseAuth", "kms"],
+      "properties": {
+        "workspaceAuth": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["identityProvider", "loginMode", "sessionEndpoint"],
+          "properties": {
+            "identityProvider": {
+              "enum": ["email-code", "google", "operator-managed"]
+            },
+            "loginMode": {
+              "enum": ["email_one_time_code", "google_oauth", "operator_managed"]
+            },
+            "sessionEndpoint": {
+              "type": "string"
+            }
+          }
+        },
+        "enterpriseAuth": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["available", "protocol", "overlay", "providers", "checkEndpoint"],
+          "properties": {
+            "available": {
+              "const": true
+            },
+            "protocol": {
+              "const": "zk-mission-auth"
+            },
+            "overlay": {
+              "const": "agent-mission-auth-overlay"
+            },
+            "providers": {
+              "type": "array",
+              "items": {
+                "enum": ["auth0", "okta", "custom-oidc"]
+              },
+              "minItems": 1
+            },
+            "checkEndpoint": {
+              "type": "string"
+            }
+          }
+        },
+        "kms": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["available", "workspaceKeyBoundary", "sealedBlobStore", "enterpriseBridgeService", "hostedOrgData"],
+          "properties": {
+            "available": {
+              "const": true
+            },
+            "workspaceKeyBoundary": {
+              "const": "tenant-key-broker"
+            },
+            "sealedBlobStore": {
+              "const": true
+            },
+            "enterpriseBridgeService": {
+              "const": "@clawz/enterprise-kms"
+            },
+            "hostedOrgData": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "localConnectorContract": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["declaredTouchpoints", "privateDataRule", "publishAllowed", "connectorReferenceRule"],
+      "properties": {
+        "declaredTouchpoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "privateDataRule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "publishAllowed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "connectorReferenceRule": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "coordinationPolicy": {
       "type": "object",

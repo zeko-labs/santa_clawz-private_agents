@@ -2360,6 +2360,44 @@ pre,
   color: var(--muted);
 }
 
+.coordination-session-strip {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.coordination-session-strip strong {
+  color: var(--ink);
+}
+
+.coordination-session-strip small {
+  color: var(--muted);
+}
+
+.coordination-session-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.coordination-session-controls .text-input {
+  min-width: 0;
+}
+
+.coordination-session-controls .primary-button,
+.coordination-session-controls .secondary-button {
+  min-height: 40px;
+  padding-inline: 12px;
+}
+
+.coordination-dev-code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
 .coordination-handoff-actions {
   display: grid;
   gap: 10px;
@@ -7326,7 +7364,8 @@ button:disabled {
   .coordination-setup-grid,
   .coordination-grid,
   .coordination-policy-grid,
-  .coordination-field-grid {
+  .coordination-field-grid,
+  .coordination-session-controls {
     grid-template-columns: 1fr;
   }
 

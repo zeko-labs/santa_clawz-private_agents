@@ -1224,6 +1224,38 @@ export interface HostedWorkspaceDataPolicy {
   privateDataStaysWith: string;
 }
 
+export interface HostedWorkspaceSecurityCapabilities {
+  workspaceAuth: {
+    identityProvider: HostedWorkspaceIdentityProvider;
+    loginMode: HostedWorkspaceLoginMode;
+    sessionEndpoint: "/api/workspaces/auth/email-code/verify";
+  };
+  enterpriseAuth: {
+    available: true;
+    protocol: "zk-mission-auth";
+    overlay: "agent-mission-auth-overlay";
+    providers: ["auth0", "okta", "custom-oidc"];
+    checkEndpoint: "/api/mission-auth/check";
+    scope: "agent-mission-and-workspace-policy";
+  };
+  kms: {
+    available: true;
+    workspaceKeyBoundary: "tenant-key-broker";
+    runtime: TenantKeyBrokerRuntimeDescriptor;
+    sealedBlobStore: true;
+    enterpriseBridgeService: "@clawz/enterprise-kms";
+    customerManagedUpgradePath: "privacy-gateway-plus-enterprise-kms";
+    hostedOrgData: false;
+  };
+}
+
+export interface HostedWorkspaceLocalConnectorContract {
+  declaredTouchpoints: string[];
+  privateDataRule: string;
+  publishAllowed: string[];
+  connectorReferenceRule: string;
+}
+
 export interface HostedWorkspaceRecord {
   workspaceId: string;
   orgName: string;
@@ -1718,6 +1750,20 @@ function buildHostedWorkspaceDataPolicy(): HostedWorkspaceDataPolicy {
       "proof and procurement events"
     ],
     privateDataStaysWith: "customer agents, customer tools, or customer-controlled private wrappers"
+  };
+}
+
+function buildHostedWorkspaceLocalConnectorContract(toolTouchpoints: string[]): HostedWorkspaceLocalConnectorContract {
+  return {
+    declaredTouchpoints: toolTouchpoints,
+    privateDataRule: "Local wrappers and customer agents pull real org data; SantaClawz stores only shell metadata, refs, digests, encrypted envelope refs, and aggregate counts.",
+    publishAllowed: [
+      "public summaries when policy allows",
+      "digest-only coordination events",
+      "recipient-encrypted envelope references",
+      "aggregate workspace participation totals"
+    ],
+    connectorReferenceRule: "Connector records are declared integration references until a customer wrapper or hosted connector binds credentials outside the canonical public payload."
   };
 }
 
@@ -9933,6 +9979,8 @@ export class ClawzControlPlane {
       workspace,
       run,
       connectors,
+      securityCapabilities: this.hostedWorkspaceSecurityCapabilities(workspace),
+      localConnectorContract: buildHostedWorkspaceLocalConnectorContract(toolTouchpoints),
       stats: await this.hostedWorkspaceRunStats(run)
     };
   }
@@ -9961,6 +10009,33 @@ export class ClawzControlPlane {
     };
   }
 
+  private hostedWorkspaceSecurityCapabilities(workspace: HostedWorkspaceRecord): HostedWorkspaceSecurityCapabilities {
+    return {
+      workspaceAuth: {
+        identityProvider: workspace.identityProvider,
+        loginMode: workspace.loginMode,
+        sessionEndpoint: "/api/workspaces/auth/email-code/verify"
+      },
+      enterpriseAuth: {
+        available: true,
+        protocol: "zk-mission-auth",
+        overlay: "agent-mission-auth-overlay",
+        providers: ["auth0", "okta", "custom-oidc"],
+        checkEndpoint: "/api/mission-auth/check",
+        scope: "agent-mission-and-workspace-policy"
+      },
+      kms: {
+        available: true,
+        workspaceKeyBoundary: "tenant-key-broker",
+        runtime: this.keyBrokerRuntime,
+        sealedBlobStore: true,
+        enterpriseBridgeService: "@clawz/enterprise-kms",
+        customerManagedUpgradePath: "privacy-gateway-plus-enterprise-kms",
+        hostedOrgData: false
+      }
+    };
+  }
+
   async getHostedWorkspaceRun(runId: string) {
     const file = await this.loadHostedWorkspaceFile();
     const run = file.runs.find((candidate) => candidate.runId === runId.trim());
@@ -9973,6 +10048,10 @@ export class ClawzControlPlane {
       workspace,
       run,
       connectors: file.connectors.filter((connector) => connector.workspaceId === run.workspaceId),
+      securityCapabilities: workspace ? this.hostedWorkspaceSecurityCapabilities(workspace) : undefined,
+      localConnectorContract: workspace
+        ? buildHostedWorkspaceLocalConnectorContract(workspace.toolTouchpoints)
+        : undefined,
       stats: await this.hostedWorkspaceRunStats(run)
     };
   }
