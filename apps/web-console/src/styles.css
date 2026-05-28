@@ -105,7 +105,7 @@ pre,
 .site-header {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 20px;
   margin-bottom: 16px;
@@ -129,6 +129,7 @@ pre,
   flex-wrap: wrap;
   gap: 10px;
   justify-self: center;
+  width: fit-content;
 }
 
 .site-nav-link {
@@ -184,28 +185,30 @@ pre,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  min-height: 42px;
-  padding: 9px 13px;
+  width: 44px;
+  height: 42px;
+  padding: 0;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(8, 18, 30, 0.3);
+  border: 0;
+  background: transparent;
   color: rgba(255, 248, 239, 0.86);
-  font-size: 0.86rem;
-  font-weight: 700;
-  line-height: 1;
   text-decoration: none;
-  backdrop-filter: blur(10px);
   transition:
     transform 180ms ease,
     background 180ms ease,
-    border-color 180ms ease;
+    color 180ms ease;
 }
 
 .site-social-link:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.11);
-  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--white);
+}
+
+.site-social-link svg {
+  display: block;
+  width: 21px;
+  height: 21px;
 }
 
 .site-menu-button {
@@ -3681,6 +3684,23 @@ pre,
   gap: 10px;
 }
 
+.activation-ticket-method-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(260px, 1fr);
+  gap: 10px 14px;
+  align-items: end;
+}
+
+.activation-ticket-method-row .ticket-action-row {
+  margin: 0;
+}
+
+.activation-method-inline {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
 .activation-command-card {
   display: grid;
   gap: 8px;
@@ -3724,13 +3744,13 @@ pre,
   cursor: pointer;
   display: grid;
   gap: 1px;
-  flex: 1 1 120px;
+  flex: 1 1 96px;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.02em;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 7px 10px;
   text-align: left;
 }
 
@@ -3752,7 +3772,7 @@ pre,
   display: inline-flex;
   gap: 8px;
   align-items: center;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-radius: 12px;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.66rem;
@@ -4881,48 +4901,6 @@ h3 {
   font-style: italic;
 }
 
-.activation-steps-card {
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid rgba(17, 36, 56, 0.1);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.42);
-}
-
-.activation-steps-card p {
-  margin: 0;
-  color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.64rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.activation-steps-card > div {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.activation-steps-card span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.activation-steps-card strong {
-  color: var(--ink);
-  font-size: 0.75rem;
-}
-
-.activation-steps-card small {
-  color: var(--muted);
-  font-size: 0.64rem;
-  line-height: 1.3;
-}
-
 .activation-command-copy-button {
   display: inline-flex;
   gap: 8px;
@@ -6004,7 +5982,7 @@ button:disabled {
   }
 
   .site-header {
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
   }
 
@@ -6139,6 +6117,11 @@ button:disabled {
     flex-direction: column;
   }
 
+  .activation-ticket-method-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
   .activation-tab-group button {
     flex-basis: 100%;
     width: 100%;
@@ -6151,10 +6134,6 @@ button:disabled {
   .activation-command-summary .activation-command-copy-button {
     align-self: flex-start;
     margin-left: 0;
-  }
-
-  .activation-steps-card > div {
-    grid-template-columns: 1fr;
   }
 
   .choice-chip {
