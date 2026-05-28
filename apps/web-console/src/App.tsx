@@ -947,7 +947,10 @@ function matchesBoardMessageFilter(
 }
 
 function isCompletedPaymentEntry(entry: PaymentLedgerEntry) {
-  if (entry.lifecycleStatus?.displayStatus === "paid_completed") {
+  if (
+    entry.lifecycleStatus?.displayStatus === "paid_completed" ||
+    entry.lifecycleStatus?.displayStatus === "paid_return_verified"
+  ) {
     return true;
   }
   return entry.executionStatus === "completed" ||
@@ -1096,15 +1099,15 @@ function normalizePaymentLifecycleLabel(label?: string) {
   if (!label) {
     return "";
   }
+  if (label.toLowerCase() === "paid and completed") {
+    return "Paid, return verified";
+  }
   return label.toLowerCase() === "payment authorized, awaiting completion" ? "Awaiting completion" : label;
 }
 
 function paymentActivityLine(entry: PaymentLedgerEntry) {
   const amount = entry.sellerNetAmountUsd?.trim() || entry.amountUsd;
   const rail = entry.rail === "base-usdc" ? "Base USDC" : railLabel(entry.rail);
-  if (isCompletedPaymentEntry(entry)) {
-    return `$${amount} settled on ${rail}`;
-  }
   if (entry.settlementRecovery?.canRetrySettlement) {
     return `$${amount} settlement retry available on ${rail}`;
   }
@@ -1127,9 +1130,6 @@ function paymentActivityHeadline(entry: PaymentLedgerEntry) {
   const amount = entry.sellerNetAmountUsd?.trim() || entry.amountUsd;
   const asset = entry.assetSymbol || "USDC";
   const network = entry.rail === "base-usdc" ? "Base" : railLabel(entry.rail);
-  if (isCompletedPaymentEntry(entry)) {
-    return `$${amount} ${asset} payment settled on ${network}`;
-  }
   if (entry.settlementRecovery?.canRetrySettlement) {
     return `$${amount} ${asset} payment needs settlement retry on ${network}`;
   }
