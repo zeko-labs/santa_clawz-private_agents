@@ -1135,6 +1135,13 @@ async function testProtectedApiAuth() {
     });
     assert.notEqual(tokenStateAccess.status, 401);
 
+    const lateCompletionMissingAdmin = await requestJson(`${baseUrl}/api/executions/hire_missing/late-completion`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(lateCompletionMissingAdmin.status, 401);
+    assert.equal(lateCompletionMissingAdmin.payload.code, "admin_key_required");
+
     const protectedState = await requestJson(`${baseUrl}/api/console/state`, {
       method: "GET"
     });
@@ -3800,6 +3807,36 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(executionState.payload.lifecycleChecks.terminal, false);
     assert.equal(executionState.payload.safeToRetrySamePayload, true);
     assert.equal(executionState.payload.doNotCreateNewPayment, true);
+
+    const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
+    const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
+    legacyHireRequests.requests = legacyHireRequests.requests.map((request) =>
+      request.requestId === hire.payload.requestId
+        ? {
+            ...request,
+            status: "submitted",
+            deliveryStatus: "failed",
+            deliveryError: "Timed out waiting for agent relay response after worker acknowledgement.",
+            operationalStatus: {
+              ...request.operationalStatus,
+              relayDeliveryStatus: "failed",
+              agentExecutionStatus: "submitted"
+            }
+          }
+        : request
+    );
+    await writeFile(hireRequestPath, JSON.stringify(legacyHireRequests, null, 2), "utf8");
+
+    const legacyExecutionState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
+    );
+    assert.equal(legacyExecutionState.status, 200);
+    assert.equal(legacyExecutionState.payload.lifecycle.relayDeliveryStatus, "failed");
+    assert.equal(legacyExecutionState.payload.lifecycle.agentExecutionStatus, "submitted");
+    assert.equal(legacyExecutionState.payload.lifecycleChecks.failed, false);
+    assert.equal(legacyExecutionState.payload.lifecycleChecks.terminal, false);
+    assert.equal(legacyExecutionState.payload.retryMode, "same_payment_payload_only");
+    assert.equal(legacyExecutionState.payload.safeToCreateNewPayment, false);
 
     const reconciled = await requestJson(
       `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/reconcile-worker-return`,

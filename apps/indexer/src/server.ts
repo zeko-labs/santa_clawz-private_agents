@@ -158,6 +158,12 @@ function deploymentVersion() {
     renderServiceName: process.env.RENDER_SERVICE_NAME,
     nodeEnv: process.env.NODE_ENV,
     runtimeEnv: process.env.CLAWZ_RUNTIME_ENV,
+    apiFeatures: [
+      "late_completion_endpoint",
+      "state_path_workspace",
+      "late_ws_hire_response_recovery",
+      "post_ack_timeout_reconcilable"
+    ],
     startedAtIso,
     uptimeSeconds: Math.max(0, Math.round((Date.now() - startedAtMs) / 1000))
   };
@@ -2101,6 +2107,21 @@ async function optionalHireRequest(requestId: string | undefined) {
   }
 }
 
+function hireRequestHasPostAckRelayTimeout(hireRequest: Awaited<ReturnType<typeof optionalHireRequest>>): boolean {
+  return Boolean(
+    hireRequest &&
+      !hireRequest.protocolReturn &&
+      !hireRequest.returnValidationError &&
+      (
+        hireRequest.deliveryReceipt?.errorCode === "relay_return_timeout_after_worker_ack" ||
+        ((hireRequest.relayTrace ?? []).some((entry) =>
+          (entry.step === "worker_ack" || entry.step === "received_by_worker") && entry.status === "completed"
+        ) &&
+          hireRequest.deliveryReceipt?.stage === "relay_timeout")
+      )
+  );
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -2147,6 +2168,7 @@ async function buildX402PaymentStateResponse(input: {
         ? `${input.apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
         : undefined;
   const latestLifecycle = latestLedger?.lifecycleStatus;
+  const postAckPending = hireRequestHasPostAckRelayTimeout(hireRequest);
   const paymentAuthorized =
     latestLedger?.paymentStatus === "authorization_verified" ||
     latestLedger?.paymentStatus === "payment_verified" ||
@@ -2154,13 +2176,19 @@ async function buildX402PaymentStateResponse(input: {
     latestLedger?.paymentStatus === "already_settled" ||
     latestLedger?.paymentStatus === "execution_completed";
   const terminal =
-    latestLifecycle?.completionStatus === "completed" ||
-    latestLifecycle?.completionStatus === "failed" ||
-    latestLifecycle?.completionStatus === "return_rejected" ||
-    (isRecord(intent) && isRecord(intent.intent) && (intent.intent.status === "settled" || intent.intent.status === "refunded"));
-  const needsAttention = latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed";
+    !postAckPending &&
+    (
+      latestLifecycle?.completionStatus === "completed" ||
+      latestLifecycle?.completionStatus === "failed" ||
+      latestLifecycle?.completionStatus === "return_rejected" ||
+      (isRecord(intent) && isRecord(intent.intent) && (intent.intent.status === "settled" || intent.intent.status === "refunded"))
+    );
+  const needsAttention =
+    !postAckPending && (latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed");
   const nextAction = terminal
     ? "result_lookup"
+    : postAckPending
+      ? "poll_execution_state"
     : latestLedger?.settlementRecovery?.canRetrySettlement
       ? "retry_settlement_same_payload"
       : resolvedRequestId
@@ -2187,6 +2215,16 @@ async function buildX402PaymentStateResponse(input: {
     ...(hireRequest ? { execution: hireRequest } : {}),
     retryResume: {
       safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256 && !terminal),
+      ...(postAckPending
+        ? {
+            retryMode: "same_payment_payload_only",
+            safeToRetrySamePaymentPayload: Boolean(paymentPayloadDigestSha256),
+            safeToCreateNewPayment: false,
+            workerAcknowledged: true,
+            lateCompletionSupported: true,
+            resultMayStillArrive: true
+          }
+        : {}),
       nextAction,
       terminal: Boolean(terminal),
       needsAttention,
@@ -3474,10 +3512,16 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const settlementStatus = operational?.settlementStatus ?? "not_attempted";
     const relayDeliveryStatus = operational?.relayDeliveryStatus ?? "not_attempted";
     const agentExecutionStatus = operational?.agentExecutionStatus ?? hireRequest.status;
+    const postAckRelayTimeout = hireRequestHasPostAckRelayTimeout(hireRequest);
     const acceptedPendingResult =
-      relayDeliveryStatus === "acknowledged" &&
-      agentExecutionStatus === "running_or_unknown" &&
-      hireRequest.deliveryReceipt?.errorCode === "relay_return_timeout_after_worker_ack";
+      postAckRelayTimeout &&
+      !hireRequest.protocolReturn &&
+      !hireRequest.returnValidationError &&
+      (
+        (relayDeliveryStatus === "acknowledged" && agentExecutionStatus === "running_or_unknown") ||
+        (relayDeliveryStatus === "failed" && agentExecutionStatus === "submitted") ||
+        (relayDeliveryStatus === "failed" && hireRequest.status === "submitted")
+      );
     const paymentSettled = paymentStatus === "settled";
     const relayDelivered =
       relayDeliveryStatus === "forwarded" ||
@@ -3501,11 +3545,15 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       agentExecutionStatus === "failed" ||
       agentExecutionStatus === "worker_completed_return_rejected" ||
       proofStatus === "return_rejected" ||
-      Boolean((!acceptedPendingResult && hireRequest.deliveryError) || hireRequest.returnValidationError || latestLedger?.errorMessage);
+      Boolean(
+        (!acceptedPendingResult && hireRequest.deliveryError) ||
+        hireRequest.returnValidationError ||
+        (!acceptedPendingResult && latestLedger?.errorMessage)
+      );
     const knownBlockers = [
       ...(!acceptedPendingResult && hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
       ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
-      ...(latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
+      ...(!acceptedPendingResult && latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
     ];
     const lifecycleNarrative = {
       execution:
@@ -3598,8 +3646,19 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       ...(acceptedPendingResult
         ? {
             agentNextAction: "poll_state_or_resume_same_payment",
+            retryMode: "same_payment_payload_only",
             safeToRetrySamePayload: true,
-            doNotCreateNewPayment: true
+            safeToRetrySamePaymentPayload: true,
+            safeToCreateNewPayment: false,
+            doNotCreateNewPayment: true,
+            workerAcknowledged: true,
+            lateCompletionSupported: true,
+            resultMayStillArrive: true,
+            lateCompletion: {
+              supported: true,
+              backupExpected: true,
+              lastKnownEndpointHealthy: "unknown"
+            }
           }
         : {}),
       privacy: {
@@ -4817,8 +4876,15 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         }
       : paidExecution;
     const acceptedPendingResult =
-      responsePaidExecution.operationalStatus?.relayDeliveryStatus === "acknowledged" &&
-      responsePaidExecution.operationalStatus?.agentExecutionStatus === "running_or_unknown";
+      responsePaidExecution.deliveryReceipt?.errorCode === "relay_return_timeout_after_worker_ack" &&
+      (
+        (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "acknowledged" &&
+          responsePaidExecution.operationalStatus?.agentExecutionStatus === "running_or_unknown") ||
+        (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "failed" &&
+          responsePaidExecution.operationalStatus?.agentExecutionStatus === "submitted") ||
+        (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "failed" &&
+          responsePaidExecution.status === "submitted")
+      );
     const responseStatus =
       acceptedPendingResult ||
       (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "failed" && responsePaidExecution.status === "submitted") ||
@@ -4870,8 +4936,15 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         ? {
             code: "job_running_or_return_timeout",
             errorCode: responsePaidExecution.deliveryReceipt?.errorCode ?? "relay_return_timeout_after_worker_ack",
+            retryMode: "same_payment_payload_only",
             safeToRetrySamePayload: true,
-            doNotCreateNewPayment: true
+            safeToRetrySamePaymentPayload: true,
+            safeToCreateNewPayment: false,
+            doNotCreateNewPayment: true,
+            workerAcknowledged: true,
+            lateCompletionSupported: true,
+            lateCompletionEndpointHealthy: "unknown",
+            resultMayStillArrive: true
           }
         : {}),
       payment: {
