@@ -1500,6 +1500,28 @@ pre,
   filter: blur(18px);
 }
 
+.coordinate-masthead {
+  padding: 18px 20px;
+  border-radius: 18px;
+}
+
+.coordinate-masthead .masthead-content {
+  min-height: auto;
+}
+
+.coordinate-masthead .masthead-copy > h1 {
+  font-size: clamp(1.55rem, 3vw, 2.15rem);
+}
+
+.coordinate-masthead .masthead-copyline {
+  max-width: 620px;
+  font-size: 0.95rem;
+}
+
+.coordinate-masthead .masthead-footer {
+  margin-top: 12px;
+}
+
 .masthead-label-row,
 .step-head,
 .step-title,
@@ -1596,6 +1618,369 @@ pre,
 
 .explore-panel {
   margin-top: 18px;
+}
+
+.coordination-layout {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+  width: 100%;
+  min-width: 0;
+}
+
+.coordination-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+
+.coordination-handoff-card,
+.coordination-stat-card,
+.coordination-empty-card,
+.coordination-policy-grid article {
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: 0 14px 32px rgba(18, 35, 54, 0.06);
+}
+
+.coordination-stat-card {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 18px;
+}
+
+.coordination-stat-card span,
+.coordination-stat-card small,
+.coordination-thread-head span,
+.coordination-message-row small,
+.coordination-agent-copy small {
+  color: var(--muted);
+}
+
+.coordination-stat-card span {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.coordination-stat-card strong {
+  color: var(--ink);
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  line-height: 1.05;
+}
+
+.coordination-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(360px, 1.15fr);
+  gap: 18px;
+  align-items: start;
+  min-width: 0;
+}
+
+.coordination-control-panel {
+  border-radius: 8px;
+}
+
+.coordination-setup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.coordination-handoff-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.coordination-handoff-metrics {
+  display: grid;
+  gap: 10px;
+}
+
+.coordination-handoff-metrics div {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(56px, auto);
+  gap: 3px 10px;
+  align-items: baseline;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(18, 35, 54, 0.08);
+}
+
+.coordination-handoff-metrics div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.coordination-handoff-metrics span,
+.coordination-handoff-metrics small,
+.coordination-ids {
+  color: var(--muted);
+}
+
+.coordination-handoff-metrics span {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.coordination-handoff-metrics strong {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: var(--ink);
+  font-size: 1.25rem;
+  text-align: right;
+}
+
+.coordination-handoff-metrics small {
+  overflow-wrap: anywhere;
+}
+
+.coordination-ids,
+.coordination-intent-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(18, 35, 54, 0.05);
+}
+
+.coordination-ids strong,
+.coordination-intent-result code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.coordination-handoff-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.coordination-handoff-actions .primary-button,
+.coordination-handoff-actions .secondary-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.coordination-goal-area {
+  min-height: 92px;
+}
+
+.coordination-roster-panel,
+.coordination-thread-panel,
+.coordination-route-panel,
+.coordination-manifest-panel {
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.coordination-agent-list,
+.coordination-thread-list,
+.coordination-message-stack,
+.coordination-route-form {
+  display: grid;
+  gap: 12px;
+}
+
+.coordination-agent-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.coordination-agent-card:hover,
+.coordination-agent-card.selected {
+  border-color: rgba(89, 210, 198, 0.48);
+  background: rgba(247, 255, 252, 0.86);
+}
+
+.coordination-agent-card.selected {
+  box-shadow: inset 3px 0 0 rgba(89, 210, 198, 0.86);
+}
+
+.coordination-agent-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.coordination-agent-copy strong,
+.coordination-agent-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-agent-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.coordination-thread-card,
+.coordination-manifest-code {
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.coordination-thread-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.coordination-thread-head,
+.coordination-route-actions,
+.coordination-manifest-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.coordination-thread-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.coordination-thread-head strong {
+  overflow-wrap: anywhere;
+}
+
+.coordination-message-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(18, 35, 54, 0.04);
+}
+
+.coordination-message-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.coordination-message-row p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.coordination-field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.coordination-route-actions {
+  flex-wrap: wrap;
+}
+
+.coordination-empty-card {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.coordination-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.coordination-policy-grid article {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.coordination-policy-grid p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.coordination-capability-row {
+  margin-top: 14px;
+}
+
+.coordination-manifest-code {
+  max-height: 360px;
+  margin: 16px 0 0;
+  padding: 16px;
+  overflow: auto;
+  color: rgba(18, 35, 54, 0.88);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.coordination-manifest-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.coordination-manifest-panel summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.coordination-manifest-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.coordination-manifest-panel summary::after {
+  content: "Preview";
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(18, 35, 54, 0.06);
+  color: rgba(18, 35, 54, 0.72);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.coordination-manifest-panel[open] summary::after {
+  content: "Hide";
+}
+
+.coordination-manifest-panel summary span {
+  display: grid;
+  gap: 3px;
+}
+
+.coordination-manifest-panel summary small {
+  color: var(--muted);
+}
+
+.coordination-manifest-panel .coordination-manifest-code {
+  margin: 0 18px 18px;
 }
 
 .explore-feed-column.explore-panel {
@@ -6078,6 +6463,46 @@ button:disabled {
     position: static;
   }
 
+  .coordination-summary-grid,
+  .coordination-setup-grid,
+  .coordination-grid,
+  .coordination-policy-grid,
+  .coordination-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coordination-agent-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .coordination-agent-card .agent-card-status-pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .coordination-thread-head,
+  .coordination-route-actions,
+  .coordination-manifest-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coordination-roster-panel .compact-head,
+  .coordination-thread-panel .compact-head,
+  .coordination-manifest-panel .compact-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coordination-manifest-actions {
+    width: 100%;
+  }
+
+  .coordination-manifest-actions .secondary-button {
+    width: 100%;
+    justify-content: center;
+  }
+
   .sdk-readonly-url {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -6227,6 +6652,13 @@ button:disabled {
 
   .masthead h1 {
     max-width: 100%;
+  }
+}
+
+@media (max-width: 1180px) and (min-width: 801px) {
+  .coordination-setup-grid,
+  .coordination-grid {
+    grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
   }
 }
 
