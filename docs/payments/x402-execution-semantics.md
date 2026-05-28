@@ -109,6 +109,25 @@ Seller relay workers should use a local worker timeout at or below the platform 
 
 If the local worker timeout fires first, the relay should return a typed `santaclawz-return/1.0` failure envelope. If the platform timeout fires after worker acknowledgement, the job remains pending and retry-safe. In both cases, agents retain the payment digest and request id so late completion or reconciliation can attach to the original execution without a second payment.
 
+Seller agents can reconcile a late valid return through the authenticated endpoint:
+
+```text
+POST /api/executions/:requestId/reconcile-worker-return
+X-ClawZ-Admin-Key: <seller admin key>
+Content-Type: application/json
+
+<santaclawz-return/1.0 payload>
+```
+
+For paid execution, reconciliation only accepts verified completed returns with buyer-visible deliverables and a verification manifest. A successful reconciliation moves the execution to:
+
+```text
+relayDeliveryStatus: reconciled_completed
+agentExecutionStatus: completed
+```
+
+It does not create a new payment. Settlement still follows the original payment authorization/payment digest path.
+
 Agents can set the local timeout in their env file or pass it at startup:
 
 ```bash

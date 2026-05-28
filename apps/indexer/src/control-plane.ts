@@ -10955,6 +10955,106 @@ export class ClawzControlPlane {
     return request;
   }
 
+  async reconcileWorkerReturn(options: {
+    requestId: string;
+    adminKey?: string;
+    returnPayload: unknown;
+  }): Promise<{ ok: true; request: HireRequestRecord; protocolReturn: NonNullable<HireRequestRecord["protocolReturn"]> }> {
+    const trimmedRequestId = options.requestId.trim();
+    const [state, hireRequests] = await Promise.all([
+      this.loadState(),
+      this.loadHireRequestFile()
+    ]);
+    const requestIndex = hireRequests.requests.findIndex((candidate) => candidate.requestId === trimmedRequestId);
+    if (requestIndex < 0) {
+      throw new Error(`Unknown execution request: ${trimmedRequestId}`);
+    }
+    const existing = hireRequests.requests[requestIndex]!;
+    this.assertAdminAccess(state, existing.sessionId, options.adminKey);
+    const responseText =
+      typeof options.returnPayload === "string"
+        ? options.returnPayload
+        : JSON.stringify(options.returnPayload ?? {});
+    const protocolReturn = this.parseHireIngressProtocolReturn({
+      responseText,
+      requestId: existing.requestId,
+      requestKind: existing.requestType
+    });
+    if (!protocolReturn) {
+      throw new Error("Late worker reconciliation requires a santaclawz-return/1.0 payload.");
+    }
+    if (
+      existing.requestType === "paid_execution" &&
+      protocolReturn.status === "completed" &&
+      protocolReturn.execution?.completionClassification !== "agent_completed_verified"
+    ) {
+      throw new Error(
+        "Paid execution reconciliation requires a verified worker output package with buyer-visible deliverables and a verification manifest."
+      );
+    }
+    const completed = protocolReturn.status === "completed";
+    const failed = protocolReturn.status === "failed";
+    if (!completed && !failed) {
+      throw new Error("Late worker reconciliation only accepts completed or failed santaclawz-return/1.0 payloads.");
+    }
+    const occurredAtIso = new Date().toISOString();
+    const relayTrace: HireRelayTraceStep[] = [
+      ...(existing.relayTrace ?? []),
+      {
+        step: "worker_completed",
+        status: completed ? "completed" : "failed",
+        occurredAtIso,
+        ...(existing.deliveryReceipt?.relayMessageId ? { relayMessageId: existing.deliveryReceipt.relayMessageId } : {}),
+        requestId: existing.requestId,
+        ...(existing.ingressBodyDigestSha256 ? { requestBodyDigestSha256: existing.ingressBodyDigestSha256 } : {}),
+        detail: "late worker return reconciled through authenticated endpoint"
+      },
+      {
+        step: "state_updated",
+        status: "completed",
+        occurredAtIso,
+        requestId: existing.requestId,
+        detail: "late worker return reconciliation updated execution state"
+      }
+    ];
+    const operationalStatus: NonNullable<HireRequestReceipt["operationalStatus"]> = {
+      ...(existing.operationalStatus ?? buildHireOperationalStatus({
+        requestType: existing.requestType,
+        paymentStatus: existing.paymentStatus,
+        hireStatus: existing.status
+      })),
+      relayDeliveryStatus: completed ? "reconciled_completed" : "failed",
+      agentExecutionStatus: completed ? "completed" : "failed"
+    };
+    const nextRecord: HireRequestRecord = {
+      ...existing,
+      status: completed ? "completed" : "failed",
+      ...(completed ? { deliveryStatus: "reconciled_completed" as const } : {}),
+      operationalStatus,
+      relayTrace,
+      protocolReturn,
+      ...(failed ? { deliveryError: protocolReturn.incidentId ?? existing.deliveryError ?? "Late worker return reported failure." } : {})
+    };
+    await this.saveHireRequestFile({
+      ...hireRequests,
+      requests: hireRequests.requests.map((request, index) => index === requestIndex ? nextRecord : request)
+    });
+    await this.updatePaymentLedgerExecution({
+      ...(existing.payment?.ledgerId ? { ledgerId: existing.payment.ledgerId } : {}),
+      hireRequestId: existing.requestId,
+      executionStatus: completed ? "completed" : "failed",
+      returnStatus: completed ? "accepted" : "rejected",
+      ...(existing.deliveryReceipt ? { deliveryReceipt: existing.deliveryReceipt } : {}),
+      ...(failed ? { errorCode: protocolReturn.failureCode ?? "late_worker_return_failed" } : {}),
+      ...(failed ? { errorMessage: protocolReturn.incidentId ?? "Late worker return reported failure." } : {})
+    });
+    return {
+      ok: true,
+      request: nextRecord,
+      protocolReturn
+    };
+  }
+
   async assertHireArtifactUploadAccess(requestId: string, adminKey?: string): Promise<HireRequestRecord> {
     const request = await this.getHireRequest(requestId);
     const state = await this.loadState();

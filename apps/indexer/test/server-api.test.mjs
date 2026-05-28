@@ -3745,7 +3745,52 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(executionState.payload.safeToRetrySamePayload, true);
     assert.equal(executionState.payload.doNotCreateNewPayment, true);
 
-    console.log("ok - relay post-ack timeout remains pending and retry-safe");
+    const reconciled = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/reconcile-worker-return`,
+      {
+        method: "POST",
+        headers: { "x-clawz-admin-key": adminKey },
+        body: JSON.stringify({
+          schema_version: "santaclawz-return/1.0",
+          request_id: hire.payload.requestId,
+          status: "completed",
+          agent_private: true,
+          real_work_executed: true,
+          buyer_visible: true,
+          verified_output: {
+            package_hash: "f".repeat(64),
+            hash_algorithm: "sha256",
+            verification_manifest: {
+              input_digest_sha256: "a".repeat(64),
+              checks_performed: ["worker_completed", "late_return_reconciled"],
+              files_produced: ["late-result.json"],
+              blocked_suspicious_instructions: []
+            },
+            deliverables: [
+              {
+                name: "late-result.json",
+                sha256: "b".repeat(64)
+              }
+            ]
+          }
+        })
+      }
+    );
+    assert.equal(reconciled.status, 200);
+    assert.equal(reconciled.payload.request.status, "completed");
+    assert.equal(reconciled.payload.request.operationalStatus.relayDeliveryStatus, "reconciled_completed");
+    assert.equal(reconciled.payload.request.operationalStatus.agentExecutionStatus, "completed");
+
+    const reconciledState = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
+    );
+    assert.equal(reconciledState.status, 200);
+    assert.equal(reconciledState.payload.lifecycle.relayDeliveryStatus, "reconciled_completed");
+    assert.equal(reconciledState.payload.lifecycle.agentExecutionStatus, "completed");
+    assert.equal(reconciledState.payload.lifecycleChecks.agentCompleted, true);
+    assert.equal(reconciledState.payload.relayTrace.some((entry) => entry.detail === "late worker return reconciled through authenticated endpoint"), true);
+
+    console.log("ok - relay post-ack timeout remains pending, retry-safe, and reconcilable");
   } finally {
     relaySocket?.destroy();
     await stopProcess(server.child);

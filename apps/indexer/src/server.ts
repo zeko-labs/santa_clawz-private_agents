@@ -3219,6 +3219,26 @@ app.get("/api/executions/:requestId", route(async (request, response) => {
   }
 }));
 
+app.post("/api/executions/:requestId/reconcile-worker-return", route(async (request, response) => {
+  try {
+    const requestId = request.params.requestId;
+    if (!requestId) {
+      response.status(400).json({ error: "requestId is required." });
+      return;
+    }
+    response.json(await controlPlane.reconcileWorkerReturn({
+      requestId,
+      ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      returnPayload: request.body ?? null
+    }));
+  } catch (error) {
+    response.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to reconcile worker return."
+    });
+  }
+}));
+
 app.get("/api/executions/:requestId/collaboration", route(async (request, response) => {
   try {
     const requestId = request.params.requestId;
