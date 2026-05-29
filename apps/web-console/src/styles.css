@@ -4741,7 +4741,7 @@ pre,
 
 .activation-ticket-method-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 10px 14px;
   align-items: center;
   justify-content: space-between;
@@ -4754,6 +4754,7 @@ pre,
 .activation-method-inline {
   display: inline-flex;
   flex: 0 0 auto;
+  margin-left: auto;
   min-width: 0;
   max-width: 100%;
 }
@@ -7369,6 +7370,19 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
+  .activation-ticket-method-row {
+    flex-wrap: wrap;
+  }
+
+  .activation-method-inline {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .activation-method-inline .activation-tab-group {
+    width: 100%;
+  }
+
   .buyer-selected-agent,
   .buyer-persona-toggle {
     grid-template-columns: 1fr;

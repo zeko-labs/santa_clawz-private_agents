@@ -4905,14 +4905,13 @@ export function App() {
                     {enrollmentTicket ? (
                       <>
                         <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
-                          <span className={`activation-inline-status ${activationStatus.className}`}>
-                            <span aria-hidden="true" />
-                            {activationStatus.label}
-                          </span>
-                          <span aria-hidden="true"> · </span>
                           <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
                           <span aria-hidden="true"> · </span>
                           <span>expires {enrollmentTicketExpiryTime}</span>
+                        </span>
+                        <span className={`activation-inline-status ${activationStatus.className}`}>
+                          <span aria-hidden="true" />
+                          {activationStatus.label}
                         </span>
                         <button
                           type="button"
