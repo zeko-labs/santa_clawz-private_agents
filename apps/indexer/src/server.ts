@@ -458,6 +458,7 @@ type HostedWorkspaceEmailCodeBody = {
 type HostedWorkspaceRunBody = {
   orgName?: unknown;
   workspaceDomain?: unknown;
+  workspaceSessionToken?: unknown;
   identityProvider?: unknown;
   projectName?: unknown;
   goal?: unknown;
@@ -534,6 +535,10 @@ function bearerTokenHeader(request: IndexerRequest) {
 
 function activationLaneTokenHeader(request: IndexerRequest) {
   return optionalString(request.header("x-santaclawz-activation-lane-key")) ?? bearerTokenHeader(request);
+}
+
+function workspaceSessionTokenHeader(request: IndexerRequest) {
+  return optionalString(request.header("x-santaclawz-workspace-session")) ?? bearerTokenHeader(request);
 }
 
 function activationLaneToken() {
@@ -1442,13 +1447,14 @@ function parseWorkspacePrivacyMode(value: unknown): UpsertHostedWorkspaceRunOpti
     : "digest-only";
 }
 
-function parseHostedWorkspaceRunBody(body: unknown): UpsertHostedWorkspaceRunOptions {
+function parseHostedWorkspaceRunBody(body: unknown, workspaceSessionToken: string): UpsertHostedWorkspaceRunOptions {
   const value = isRecord(body) ? body as HostedWorkspaceRunBody : {};
   const budgetUsd = optionalString(value.budgetUsd);
   const procurementIntentId = optionalString(value.procurementIntentId);
   return {
     orgName: optionalString(value.orgName) ?? "",
     workspaceDomain: optionalString(value.workspaceDomain) ?? "",
+    workspaceSessionToken,
     identityProvider: parseHostedWorkspaceIdentityProvider(value.identityProvider),
     projectName: optionalString(value.projectName) ?? "",
     goal: optionalString(value.goal) ?? "",
@@ -3819,14 +3825,23 @@ app.post("/api/workspaces/auth/email-code/verify", route(async (request, respons
 
 app.get("/api/workspaces/runs", route(async (request, response) => {
   try {
+    const workspaceSessionToken = workspaceSessionTokenHeader(request);
+    if (!workspaceSessionToken) {
+      response.status(401).json({
+        error: "Workspace session token is required.",
+        code: "workspace_session_required"
+      });
+      return;
+    }
     const workspaceId = queryString(request.query, "workspaceId");
     const limit = queryString(request.query, "limit");
     response.json(await controlPlane.listHostedWorkspaceRuns({
+      workspaceSessionToken,
       ...(workspaceId ? { workspaceId } : {}),
       ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
     }));
   } catch (error) {
-    response.status(400).json({
+    response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to list workspace runs."
     });
   }
@@ -3834,9 +3849,17 @@ app.get("/api/workspaces/runs", route(async (request, response) => {
 
 app.post("/api/workspaces/runs", route(async (request, response) => {
   try {
-    response.json(await controlPlane.upsertHostedWorkspaceRun(parseHostedWorkspaceRunBody(request.body ?? null)));
+    const workspaceSessionToken = workspaceSessionTokenHeader(request);
+    if (!workspaceSessionToken) {
+      response.status(401).json({
+        error: "Workspace session token is required.",
+        code: "workspace_session_required"
+      });
+      return;
+    }
+    response.json(await controlPlane.upsertHostedWorkspaceRun(parseHostedWorkspaceRunBody(request.body ?? null, workspaceSessionToken)));
   } catch (error) {
-    response.status(400).json({
+    response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to save workspace run."
     });
   }
@@ -3844,14 +3867,22 @@ app.post("/api/workspaces/runs", route(async (request, response) => {
 
 app.get("/api/workspaces/runs/:runId", route(async (request, response) => {
   try {
+    const workspaceSessionToken = workspaceSessionTokenHeader(request);
+    if (!workspaceSessionToken) {
+      response.status(401).json({
+        error: "Workspace session token is required.",
+        code: "workspace_session_required"
+      });
+      return;
+    }
     const runId = request.params.runId;
     if (!runId) {
       response.status(400).json({ error: "runId is required." });
       return;
     }
-    response.json(await controlPlane.getHostedWorkspaceRun(runId));
+    response.json(await controlPlane.getHostedWorkspaceRun(runId, { workspaceSessionToken }));
   } catch (error) {
-    response.status(404).json({
+    response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load workspace run."
     });
   }

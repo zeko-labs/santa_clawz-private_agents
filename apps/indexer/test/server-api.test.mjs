@@ -4356,8 +4356,28 @@ async function testHostedWorkspaceRunApi() {
     assert.equal(verified.payload.workspaceId, code.payload.workspaceId);
     assert.equal(typeof verified.payload.workspaceSessionToken, "string");
 
+    const unauthenticatedSave = await requestJson(`${baseUrl}/api/workspaces/runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        orgName: "Example team",
+        workspaceDomain: "example.com",
+        identityProvider: "email-code",
+        projectName: "Market launch review",
+        goal: "Coordinate research agents without hosting company data.",
+        threadId: "thread_team_launch_review",
+        swarmId: "team_launch_review",
+        requesterContact: "team-bridge@example.com",
+        privacyMode: "digest-only"
+      })
+    });
+    assert.equal(unauthenticatedSave.status, 401);
+    assert.equal(unauthenticatedSave.payload.code, "workspace_session_required");
+
     const saved = await requestJson(`${baseUrl}/api/workspaces/runs`, {
       method: "POST",
+      headers: {
+        authorization: `Bearer ${verified.payload.workspaceSessionToken}`
+      },
       body: JSON.stringify({
         orgName: "Example team",
         workspaceDomain: "example.com",
@@ -4393,14 +4413,30 @@ async function testHostedWorkspaceRunApi() {
     assert.equal(saved.payload.localConnectorContract.privateDataRule.includes("Local wrappers"), true);
     assert.deepEqual(saved.payload.localConnectorContract.declaredTouchpoints, ["slack", "github"]);
 
-    const fetched = await requestJson(`${baseUrl}/api/workspaces/runs/${encodeURIComponent(saved.payload.run.runId)}`);
+    const wrongWorkspaceList = await requestJson(`${baseUrl}/api/workspaces/runs?workspaceId=${encodeURIComponent("workspace_wrong")}`, {
+      headers: {
+        authorization: `Bearer ${verified.payload.workspaceSessionToken}`
+      }
+    });
+    assert.equal(wrongWorkspaceList.status, 403);
+    assert.match(wrongWorkspaceList.payload.error, /does not match/);
+
+    const fetched = await requestJson(`${baseUrl}/api/workspaces/runs/${encodeURIComponent(saved.payload.run.runId)}`, {
+      headers: {
+        authorization: `Bearer ${verified.payload.workspaceSessionToken}`
+      }
+    });
     assert.equal(fetched.status, 200);
     assert.equal(fetched.payload.ok, true);
     assert.equal(fetched.payload.run.runId, saved.payload.run.runId);
     assert.equal(fetched.payload.stats.hostedOrgData, false);
     assert.equal(fetched.payload.securityCapabilities.enterpriseAuth.overlay, "agent-mission-auth-overlay");
 
-    const listed = await requestJson(`${baseUrl}/api/workspaces/runs?workspaceId=${encodeURIComponent(code.payload.workspaceId)}`);
+    const listed = await requestJson(`${baseUrl}/api/workspaces/runs?workspaceId=${encodeURIComponent(code.payload.workspaceId)}`, {
+      headers: {
+        authorization: `Bearer ${verified.payload.workspaceSessionToken}`
+      }
+    });
     assert.equal(listed.status, 200);
     assert.equal(listed.payload.ok, true);
     assert.equal(listed.payload.runs.length, 1);

@@ -127,7 +127,45 @@ The V1 local API supports the hosted shell without storing company knowledge:
 - `GET /api/workspaces/runs`: list saved runs.
 - `GET /api/workspaces/runs/:runId`: load a saved run with workspace-scoped aggregate stats.
 
+Workspace run read/write routes require a workspace session token:
+
+```http
+Authorization: Bearer <workspaceSessionToken>
+```
+
+or:
+
+```http
+x-santaclawz-workspace-session: <workspaceSessionToken>
+```
+
 The API stores only coordination shell state and metrics. It does not ingest Slack history, Drive documents, GitHub content, customer records, or private agent payloads.
+
+## Email-Code Delivery
+
+Local/dev deployments return the login code inline:
+
+```bash
+NODE_ENV=development
+```
+
+Production should configure one of:
+
+```bash
+CLAWZ_HOSTED_WORKSPACE_EMAIL_PROVIDER=resend
+CLAWZ_RESEND_API_KEY=<resend-api-key>
+CLAWZ_HOSTED_WORKSPACE_EMAIL_FROM="SantaClawz <workspace@santaclawz.ai>"
+```
+
+or:
+
+```bash
+CLAWZ_HOSTED_WORKSPACE_EMAIL_PROVIDER=webhook
+CLAWZ_HOSTED_WORKSPACE_EMAIL_WEBHOOK_URL=https://email-adapter.example.com/santaclawz/workspace-code
+CLAWZ_HOSTED_WORKSPACE_EMAIL_WEBHOOK_API_KEY=<optional-bearer-token>
+```
+
+Only use `CLAWZ_HOSTED_WORKSPACE_EXPOSE_DEV_CODES=1` outside local/dev for controlled operator testing.
 
 Saved workspace run responses include:
 
@@ -169,6 +207,16 @@ Enterprise/private wrappers should cover:
 - Workspace-specific approvals.
 - Private agent-to-agent payload storage.
 - Long-running workflow state and audit exports.
+
+## Reference Local Connector
+
+The first reference wrapper lives at:
+
+```text
+examples/workspace-connectors/github-local-wrapper
+```
+
+It reads a customer-owned local Git repo, produces a safe public summary, hashes the private local detail, and can post an aggregate SantaClawz coordination message. Use it as the pattern for Slack, Drive, Linear, Notion, or private task queues.
 
 ## External Test Guidance
 

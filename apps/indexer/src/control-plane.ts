@@ -1217,6 +1217,7 @@ interface ProcurementIntentFile {
 
 export type HostedWorkspaceIdentityProvider = "email-code" | "google" | "operator-managed";
 export type HostedWorkspaceLoginMode = "email_one_time_code" | "google_oauth" | "operator_managed";
+export type HostedWorkspaceEmailDeliveryMode = "dev-returned" | "email-sent";
 
 export interface HostedWorkspaceDataPolicy {
   hostedOrgData: false;
@@ -1279,6 +1280,11 @@ interface HostedWorkspaceEmailCodeRecord {
   consumedAtIso?: string;
 }
 
+interface HostedWorkspaceEmailDeliveryResult {
+  deliveryMode: HostedWorkspaceEmailDeliveryMode;
+  devCode?: string;
+}
+
 interface HostedWorkspaceSessionRecord {
   sessionTokenHashSha256: string;
   workspaceId: string;
@@ -1329,6 +1335,7 @@ interface HostedWorkspaceFile {
 export interface UpsertHostedWorkspaceRunOptions {
   orgName: string;
   workspaceDomain: string;
+  workspaceSessionToken: string;
   identityProvider: HostedWorkspaceIdentityProvider;
   projectName: string;
   goal: string;
@@ -1765,6 +1772,36 @@ function buildHostedWorkspaceLocalConnectorContract(toolTouchpoints: string[]): 
     ],
     connectorReferenceRule: "Connector records are declared integration references until a customer wrapper or hosted connector binds credentials outside the canonical public payload."
   };
+}
+
+function hostedWorkspaceEmailProviderMode() {
+  const configured = process.env.CLAWZ_HOSTED_WORKSPACE_EMAIL_PROVIDER?.trim().toLowerCase();
+  return configured === "resend" || configured === "webhook" ? configured : "dev-inline";
+}
+
+function hostedWorkspaceExposeDevCodes() {
+  return process.env.NODE_ENV !== "production" ||
+    process.env.CLAWZ_HOSTED_WORKSPACE_EXPOSE_DEV_CODES === "1";
+}
+
+function workspaceEmailCodeSubject(orgName: string) {
+  return `Your SantaClawz workspace code for ${orgName}`;
+}
+
+function workspaceEmailCodeText(input: {
+  orgName: string;
+  workspaceDomain: string;
+  code: string;
+  expiresAtIso: string;
+}) {
+  return [
+    `Your SantaClawz workspace login code is ${input.code}.`,
+    "",
+    `Workspace: ${input.orgName} (${input.workspaceDomain})`,
+    `Expires: ${input.expiresAtIso}`,
+    "",
+    "Use this only if you requested access to this SantaClawz workspace. SantaClawz will not ask for this code anywhere except the workspace login flow."
+  ].join("\n");
 }
 
 function timingSafeEqualHex(left: string, right: string) {
@@ -9783,6 +9820,80 @@ export class ClawzControlPlane {
     };
   }
 
+  private async deliverHostedWorkspaceEmailCode(options: {
+    orgName: string;
+    workspaceDomain: string;
+    email: string;
+    code: string;
+    expiresAtIso: string;
+  }): Promise<HostedWorkspaceEmailDeliveryResult> {
+    if (hostedWorkspaceExposeDevCodes()) {
+      return {
+        deliveryMode: "dev-returned",
+        devCode: options.code
+      };
+    }
+
+    const provider = hostedWorkspaceEmailProviderMode();
+    const subject = workspaceEmailCodeSubject(options.orgName);
+    const text = workspaceEmailCodeText(options);
+
+    if (provider === "resend") {
+      const apiKey = process.env.CLAWZ_RESEND_API_KEY?.trim() || process.env.RESEND_API_KEY?.trim();
+      const from = process.env.CLAWZ_HOSTED_WORKSPACE_EMAIL_FROM?.trim();
+      if (!apiKey || !from) {
+        throw new Error("Hosted workspace email requires CLAWZ_RESEND_API_KEY or RESEND_API_KEY and CLAWZ_HOSTED_WORKSPACE_EMAIL_FROM.");
+      }
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          from,
+          to: [options.email],
+          subject,
+          text
+        })
+      });
+      if (!response.ok) {
+        throw new Error(`Hosted workspace email provider rejected the code email: ${response.status}`);
+      }
+      return { deliveryMode: "email-sent" };
+    }
+
+    if (provider === "webhook") {
+      const endpoint = process.env.CLAWZ_HOSTED_WORKSPACE_EMAIL_WEBHOOK_URL?.trim();
+      if (!endpoint) {
+        throw new Error("Hosted workspace email webhook requires CLAWZ_HOSTED_WORKSPACE_EMAIL_WEBHOOK_URL.");
+      }
+      const apiKey = process.env.CLAWZ_HOSTED_WORKSPACE_EMAIL_WEBHOOK_API_KEY?.trim();
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
+        },
+        body: JSON.stringify({
+          to: options.email,
+          orgName: options.orgName,
+          workspaceDomain: options.workspaceDomain,
+          subject,
+          text,
+          code: options.code,
+          expiresAtIso: options.expiresAtIso
+        })
+      });
+      if (!response.ok) {
+        throw new Error(`Hosted workspace email webhook rejected the code email: ${response.status}`);
+      }
+      return { deliveryMode: "email-sent" };
+    }
+
+    throw new Error("Hosted workspace email provider is not configured for production.");
+  }
+
   async requestHostedWorkspaceEmailCode(options: {
     orgName: string;
     workspaceDomain: string;
@@ -9798,6 +9909,13 @@ export class ClawzControlPlane {
     const nowIso = new Date().toISOString();
     const expiresAtIso = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const code = String(Math.floor(100000 + Math.random() * 900000));
+    const delivery = await this.deliverHostedWorkspaceEmailCode({
+      orgName,
+      workspaceDomain,
+      email,
+      code,
+      expiresAtIso
+    });
     const challenge: HostedWorkspaceEmailCodeRecord = {
       challengeId: `wcode_${randomUUID().replace(/-/g, "").slice(0, 18)}`,
       workspaceId,
@@ -9825,16 +9943,13 @@ export class ClawzControlPlane {
       workspaces: [workspace, ...file.workspaces.filter((candidate) => candidate.workspaceId !== workspaceId)],
       emailCodes: [challenge, ...file.emailCodes.filter((candidate) => !candidate.consumedAtIso)].slice(0, 500)
     });
-    const exposeCode =
-      process.env.NODE_ENV !== "production" ||
-      process.env.CLAWZ_HOSTED_WORKSPACE_EXPOSE_DEV_CODES === "1";
     return {
       ok: true,
       workspaceId,
       challengeId: challenge.challengeId,
       expiresAtIso,
-      deliveryMode: exposeCode ? "dev-returned" : "email-provider-pending",
-      ...(exposeCode ? { devCode: code } : {})
+      deliveryMode: delivery.deliveryMode,
+      ...(delivery.devCode ? { devCode: delivery.devCode } : {})
     };
   }
 
@@ -9883,6 +9998,35 @@ export class ClawzControlPlane {
     };
   }
 
+  private async requireHostedWorkspaceSession(options: {
+    workspaceSessionToken: string;
+    workspaceId?: string;
+    orgName?: string;
+    workspaceDomain?: string;
+  }) {
+    const workspaceSessionToken = options.workspaceSessionToken.trim();
+    if (!workspaceSessionToken) {
+      throw new Error("Workspace session token is required.");
+    }
+    const expectedWorkspaceId = options.workspaceId?.trim() ||
+      (options.orgName?.trim() && options.workspaceDomain?.trim()
+        ? buildHostedWorkspaceId(options.orgName, options.workspaceDomain)
+        : "");
+    const file = await this.loadHostedWorkspaceFile();
+    const session = file.sessions.find((candidate) => candidate.sessionTokenHashSha256 === sha256Hex(workspaceSessionToken));
+    if (!session || Date.parse(session.expiresAtIso) <= Date.now()) {
+      throw new Error("Workspace session token is invalid or expired.");
+    }
+    if (expectedWorkspaceId && session.workspaceId !== expectedWorkspaceId) {
+      throw new Error("Workspace session token does not match this workspace.");
+    }
+    const workspace = file.workspaces.find((candidate) => candidate.workspaceId === session.workspaceId);
+    if (!workspace) {
+      throw new Error("Workspace session points to an unknown workspace.");
+    }
+    return { session, workspace };
+  }
+
   async upsertHostedWorkspaceRun(options: UpsertHostedWorkspaceRunOptions) {
     const orgName = options.orgName.trim().slice(0, 120);
     const workspaceDomain = options.workspaceDomain.trim().toLowerCase().slice(0, 120);
@@ -9899,6 +10043,10 @@ export class ClawzControlPlane {
     }
     const nowIso = new Date().toISOString();
     const workspaceId = buildHostedWorkspaceId(orgName, workspaceDomain);
+    await this.requireHostedWorkspaceSession({
+      workspaceSessionToken: options.workspaceSessionToken,
+      workspaceId
+    });
     const runId = buildHostedWorkspaceRunId(workspaceId, threadId, swarmId);
     const file = await this.loadHostedWorkspaceFile();
     const existingWorkspace = file.workspaces.find((workspace) => workspace.workspaceId === workspaceId);
@@ -10036,12 +10184,16 @@ export class ClawzControlPlane {
     };
   }
 
-  async getHostedWorkspaceRun(runId: string) {
+  async getHostedWorkspaceRun(runId: string, options: { workspaceSessionToken: string }) {
     const file = await this.loadHostedWorkspaceFile();
     const run = file.runs.find((candidate) => candidate.runId === runId.trim());
     if (!run) {
       throw new Error(`Unknown workspace run: ${runId}`);
     }
+    await this.requireHostedWorkspaceSession({
+      workspaceSessionToken: options.workspaceSessionToken,
+      workspaceId: run.workspaceId
+    });
     const workspace = file.workspaces.find((candidate) => candidate.workspaceId === run.workspaceId);
     return {
       ok: true,
@@ -10056,13 +10208,18 @@ export class ClawzControlPlane {
     };
   }
 
-  async listHostedWorkspaceRuns(options: { workspaceId?: string; limit?: number } = {}) {
+  async listHostedWorkspaceRuns(options: { workspaceSessionToken: string; workspaceId?: string; limit?: number }) {
+    const auth = await this.requireHostedWorkspaceSession({
+      workspaceSessionToken: options.workspaceSessionToken,
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {})
+    });
     const file = await this.loadHostedWorkspaceFile();
+    const workspaceId = options.workspaceId ?? auth.workspace.workspaceId;
     const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
       ? Math.max(1, Math.min(Math.floor(options.limit), 200))
       : 50;
     const runs = file.runs
-      .filter((run) => !options.workspaceId || run.workspaceId === options.workspaceId)
+      .filter((run) => run.workspaceId === workspaceId)
       .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
       .slice(0, limit);
     return {

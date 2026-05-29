@@ -721,7 +721,7 @@ export type WorkspaceEmailCodeResponse = {
   workspaceId: string;
   challengeId: string;
   expiresAtIso: string;
-  deliveryMode: "dev-returned" | "email-provider-pending";
+  deliveryMode: "dev-returned" | "email-sent";
   devCode?: string;
 };
 
@@ -756,6 +756,7 @@ export function verifyWorkspaceEmailCode(input: {
 }
 
 export function upsertHostedWorkspaceRun(input: {
+  workspaceSessionToken: string;
   orgName: string;
   workspaceDomain: string;
   identityProvider: HostedWorkspaceIdentityProvider;
@@ -772,9 +773,13 @@ export function upsertHostedWorkspaceRun(input: {
   manifest?: Record<string, unknown>;
   procurementIntentId?: string;
 }): Promise<HostedWorkspaceRunResponse> {
+  const { workspaceSessionToken, ...body } = input;
   return request<HostedWorkspaceRunResponse>("/api/workspaces/runs", {
     method: "POST",
-    body: JSON.stringify(input)
+    headers: {
+      authorization: `Bearer ${workspaceSessionToken}`
+    },
+    body: JSON.stringify(body)
   });
 }
 

@@ -83,7 +83,7 @@ type CoordinationEmailChallenge = {
   workspaceId: string;
   challengeId: string;
   expiresAtIso: string;
-  deliveryMode: "dev-returned" | "email-provider-pending";
+  deliveryMode: "dev-returned" | "email-sent";
   devCode?: string;
 };
 type CoordinationWorkspaceSession = {
@@ -4216,6 +4216,7 @@ export function App() {
     : coordinationDraft.identityProvider === "email-code"
       ? "Email code"
       : `${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)} declared`;
+  const workspaceSaveReady = routeWorkReady && coordinationSessionActive;
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4514,12 +4515,17 @@ export function App() {
       setCoordinationError("Add a requester contact before saving the workspace run.");
       return null;
     }
+    if (!coordinationWorkspaceSession || Date.parse(coordinationWorkspaceSession.expiresAtIso) <= Date.now()) {
+      setCoordinationError("Verify a workspace session before saving the workspace run.");
+      return null;
+    }
 
     setPendingAction(procurementIntentId ? "coordinate-save-after-procurement" : "coordinate-save-workspace");
     setCoordinationError(null);
 
     try {
       const nextWorkspace = await upsertHostedWorkspaceRun({
+        workspaceSessionToken: coordinationWorkspaceSession.workspaceSessionToken,
         orgName: coordinationDraft.orgName,
         workspaceDomain: coordinationDraft.workspaceDomain,
         identityProvider: coordinationDraft.identityProvider,
@@ -4916,7 +4922,7 @@ export function App() {
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={!routeWorkReady || pendingAction === "coordinate-save-workspace"}
+                  disabled={!workspaceSaveReady || pendingAction === "coordinate-save-workspace"}
                   onClick={() => {
                     void saveCoordinationWorkspaceAction();
                   }}
@@ -4926,7 +4932,7 @@ export function App() {
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={!routeWorkReady || pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement"}
+                  disabled={!workspaceSaveReady || pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement"}
                   onClick={() => {
                     void createCoordinationProcurementAction();
                   }}
