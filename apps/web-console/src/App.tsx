@@ -4870,12 +4870,6 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
-                    <div className={`activation-safety-note ${selectedActivationMethod.safety}`}>
-                      <span aria-hidden="true" />
-                      {selectedActivationMethod.safety === "safe"
-                        ? "No standalone app binary download; this runs through an existing trusted runtime."
-                        : "Advanced path: keep credentials local and use signed or trusted tooling."}
-                    </div>
                     <div className="activation-command-details">
                       <div className="activation-command-method-bar">
                         <div className="activation-tab-group" role="tablist" aria-label="Activation method">

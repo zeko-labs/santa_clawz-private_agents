@@ -4764,43 +4764,6 @@ pre,
   color: #fffaf3;
 }
 
-.activation-safety-note {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  padding: 7px 10px;
-  border-radius: 12px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.66rem;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.activation-safety-note span {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex: 0 0 auto;
-}
-
-.activation-safety-note.safe {
-  background: rgba(22, 113, 88, 0.1);
-  color: var(--success);
-}
-
-.activation-safety-note.safe span {
-  background: var(--success);
-}
-
-.activation-safety-note.advanced {
-  background: rgba(184, 103, 30, 0.12);
-  color: #8a4f12;
-}
-
-.activation-safety-note.advanced span {
-  background: #a86618;
-}
-
 .activation-command-details {
   border: 1px solid rgba(17, 36, 56, 0.12);
   border-radius: 22px;
