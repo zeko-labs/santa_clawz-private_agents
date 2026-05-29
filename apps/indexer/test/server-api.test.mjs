@@ -3698,6 +3698,8 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(recoveredState.status, 200);
     assert.equal(recoveredState.payload.lifecycle.agentExecutionStatus, "completed");
     assert.equal(recoveredState.payload.lifecycle.relayDeliveryStatus, "forwarded");
+    assert.equal(recoveredState.payload.lifecycleChecks.failed, false);
+    assert.equal(recoveredState.payload.lifecycleChecks.terminal, false);
 
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
@@ -3873,6 +3875,7 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(reconciled.payload.request.status, "completed");
     assert.equal(reconciled.payload.request.operationalStatus.relayDeliveryStatus, "reconciled_completed");
     assert.equal(reconciled.payload.request.operationalStatus.agentExecutionStatus, "completed");
+    assert.equal(reconciled.payload.request.deliveryError, undefined);
 
     const reconciledState = await requestJson(
       `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
@@ -3881,6 +3884,8 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(reconciledState.payload.lifecycle.relayDeliveryStatus, "reconciled_completed");
     assert.equal(reconciledState.payload.lifecycle.agentExecutionStatus, "completed");
     assert.equal(reconciledState.payload.lifecycleChecks.agentCompleted, true);
+    assert.equal(reconciledState.payload.lifecycleChecks.failed, false);
+    assert.equal(reconciledState.payload.lifecycleChecks.terminal, false);
     assert.equal(reconciledState.payload.relayTrace.some((entry) => entry.detail === "late worker return reconciled through authenticated endpoint"), true);
 
     console.log("ok - relay post-ack timeout remains pending, retry-safe, and reconcilable");

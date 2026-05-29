@@ -6357,6 +6357,7 @@ export class ClawzControlPlane {
       return undefined;
     }
     const existing = file.entries[index]!;
+    const successfulReturn = input.executionStatus === "completed" && input.returnStatus === "accepted";
     const paymentStatus: PaymentLedgerStatus =
       input.returnStatus === "rejected"
         ? "return_rejected"
@@ -6367,8 +6368,13 @@ export class ClawzControlPlane {
             : input.executionStatus === "forwarded"
               ? "execution_forwarded"
               : existing.paymentStatus;
+    const {
+      errorCode: _staleErrorCode,
+      errorMessage: _staleErrorMessage,
+      ...existingWithoutStaleExecutionError
+    } = existing;
     const nextEntry: PaymentLedgerEntry = {
-      ...existing,
+      ...(successfulReturn ? existingWithoutStaleExecutionError : existing),
       updatedAtIso: new Date().toISOString(),
       hireRequestId: input.hireRequestId,
       executionStatus: input.executionStatus,
@@ -11246,8 +11252,14 @@ export class ClawzControlPlane {
       relayDeliveryStatus: completed ? "reconciled_completed" : "failed",
       agentExecutionStatus: completed ? "completed" : "failed"
     };
+    const {
+      deliveryError: _staleDeliveryError,
+      returnValidationError: _staleReturnValidationError,
+      returnValidationCode: _staleReturnValidationCode,
+      ...existingWithoutPriorFailure
+    } = existing;
     const nextRecord: HireRequestRecord = {
-      ...existing,
+      ...(completed ? existingWithoutPriorFailure : existing),
       status: completed ? "completed" : "failed",
       ...(completed ? { deliveryStatus: "reconciled_completed" as const } : {}),
       operationalStatus,
