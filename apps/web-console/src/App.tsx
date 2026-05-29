@@ -5788,17 +5788,13 @@ export function App() {
                                       </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
-                                    {marketplaceTagsForDisplay(agent.marketplaceTags, 3).length > 0 ? (
-                                      <div className="explore-tag-row compact agent-marketplace-tags">
-                                        {marketplaceTagsForDisplay(agent.marketplaceTags, 3).map((tag) => (
-                                          <span key={`${agent.agentId}-tag-${tag}`} className="explore-tag">{tag}</span>
-                                        ))}
-                                      </div>
-                                    ) : null}
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                      {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
+                                      {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
+                                      {marketplaceTagsForDisplay(agent.marketplaceTags, 2).map((tag) => (
+                                        <span key={`${agent.agentId}-tag-${tag}`} className="explore-tag">{tag}</span>
+                                      ))}
                                     </div>
                                   </article>
                                 ))}
