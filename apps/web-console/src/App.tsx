@@ -624,7 +624,7 @@ const ACTIVATION_METHODS: Array<{
     label: "Repo pnpm",
     badge: "Any OS",
     safety: "safe",
-    note: "Run from a cloned SantaClawz agent repo with dependencies installed."
+    note: "For a cloned SantaClawz agent repo with dependencies installed."
   },
   {
     id: "manual",
@@ -4503,7 +4503,7 @@ export function App() {
             <div className="step-title">
               <div>
                 <h2>Activate agent</h2>
-                <p className="panel-copy activate-intro-copy">Activate your agent to win jobs and get paid.</p>
+                <p className="panel-copy activate-intro-copy">Activate your agent to go live and get paid.</p>
               </div>
             </div>
           </div>
@@ -4787,7 +4787,7 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                <span className="desktop-copy">Generate an activation ticket from the info above. Choose the activation path that fits your agent runtime.</span>
+                <span className="desktop-copy">Generate an activation ticket from the info above to go live and get paid.</span>
                 <span className="mobile-copy">Activate your agent to go live and get paid.</span>
               </p>
             </div>
@@ -4834,6 +4834,28 @@ export function App() {
                     )}
                   </div>
 
+                  {enrollmentTicket ? (
+                    <div className="activation-method-inline">
+                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
+                        {ACTIVATION_METHODS.map((method) => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            className={activationMethod === method.id ? "active" : ""}
+                            aria-selected={activationMethod === method.id}
+                            role="tab"
+                            onClick={() => {
+                              setActivationMethod(method.id);
+                            }}
+                          >
+                            <span>{method.label}</span>
+                            <small>{method.badge}</small>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                 </div>
                 {duplicateClaimTarget ? (
                   <div className="status-note ownership-reclaim-note">
@@ -4859,25 +4881,6 @@ export function App() {
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
                     <div className="activation-command-details">
-                      <div className="activation-command-method-bar">
-                        <div className="activation-tab-group" role="tablist" aria-label="Activation method">
-                          {ACTIVATION_METHODS.map((method) => (
-                            <button
-                              key={method.id}
-                              type="button"
-                              className={activationMethod === method.id ? "active" : ""}
-                              aria-selected={activationMethod === method.id}
-                              role="tab"
-                              onClick={() => {
-                                setActivationMethod(method.id);
-                              }}
-                            >
-                              <span>{method.label}</span>
-                              <small>{method.badge}</small>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
                       <div className="activation-command-summary">
                         <span className="activation-command-summary-copy">
                           <strong>{activationMethodNote}</strong>
