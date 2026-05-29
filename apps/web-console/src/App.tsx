@@ -607,9 +607,8 @@ function commandQuote(value: string) {
   return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 }
 
-type ActivationMethodId = "one-liner" | "pnpm" | "manual";
+type ActivationMethodId = "pnpm" | "manual";
 
-const ACTIVATION_SCRIPT_URL = "https://www.santaclawz.ai/activate-agent.sh";
 const DEFAULT_RELAY_BASE = "https://relay.santaclawz.ai";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 
@@ -621,13 +620,6 @@ const ACTIVATION_METHODS: Array<{
   note: string;
 }> = [
   {
-    id: "one-liner",
-    label: "Setup",
-    badge: "macOS/Linux",
-    safety: "safe",
-    note: "Installs or reuses ~/santaclawz-agent, then activates with this ticket."
-  },
-  {
     id: "pnpm",
     label: "Repo pnpm",
     badge: "Any OS",
@@ -636,8 +628,8 @@ const ACTIVATION_METHODS: Array<{
   },
   {
     id: "manual",
-    label: "Manual",
-    badge: "Advanced",
+    label: "Custom runtime",
+    badge: "Any stack",
     safety: "advanced",
     note: "Use these values from any compatible runtime or framework."
   }
@@ -665,10 +657,6 @@ function buildTicketedActivationCommand(
     runtimeDelivery.mode === "self-hosted" && runtimeDelivery.runtimeIngressUrl?.trim()
       ? ` --runtime-ingress-url ${shellQuote(runtimeDelivery.runtimeIngressUrl.trim())}`
       : "";
-
-  if (method === "one-liner") {
-    return `curl -fsSL ${ACTIVATION_SCRIPT_URL} | bash -s -- --ticket ${shellQuote(ticket)}${runtimeIngressArg}`;
-  }
 
   if (method === "manual") {
     return [
@@ -2043,7 +2031,7 @@ export function App() {
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
-  const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("one-liner");
+  const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
   const [urlReservationSalt, setUrlReservationSalt] = useState<string>(createUrlReservationSalt());
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const [sdkDraft, setSdkDraft] = useState<SdkWidgetDraft>({
