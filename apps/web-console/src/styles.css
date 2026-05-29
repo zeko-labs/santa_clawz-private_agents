@@ -4844,8 +4844,10 @@ pre,
 }
 
 .activation-tab-group button.active {
-  background: rgba(216, 58, 44, 0.92);
-  color: #fffaf3;
+  border: 1px solid rgba(46, 126, 75, 0.48);
+  background: rgba(229, 246, 234, 0.62);
+  color: #267044;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
 .activation-command-details {
