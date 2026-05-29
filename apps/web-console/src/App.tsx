@@ -4905,14 +4905,13 @@ export function App() {
                     {enrollmentTicket ? (
                       <>
                         <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
-                          <span className={`activation-inline-status ${activationStatus.className}`}>
-                            <span aria-hidden="true" />
-                            {activationStatus.label}
-                          </span>
-                          <span aria-hidden="true"> · </span>
                           <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
                           <span aria-hidden="true"> · </span>
                           <span>expires {enrollmentTicketExpiryTime}</span>
+                        </span>
+                        <span className={`activation-inline-status ${activationStatus.className}`}>
+                          <span aria-hidden="true" />
+                          {activationStatus.label}
                         </span>
                         <button
                           type="button"
@@ -5718,20 +5717,7 @@ export function App() {
                               ? `${sortedExploreAgents.length} shown`
                               : `${exploreActivityItems.length} shown`}
                           </span>
-                        </div>
-                        <div className="explore-section-actions">
-                          <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                            Buyer agent tips &gt;&gt;
-                          </a>
-                          {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
-                            <button
-                              type="button"
-                              className="new-activity-button"
-                              onClick={revealPendingExploreActivity}
-                            >
-                              {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
-                            </button>
-                          ) : selectedExploreFilter === "agents" ? (
+                          {selectedExploreFilter === "agents" ? (
                             <label className="agent-sort-select-wrap">
                               <select
                                 className="select-input agent-sort-select"
@@ -5746,6 +5732,20 @@ export function App() {
                                 <option value="payments">Payouts</option>
                               </select>
                             </label>
+                          ) : null}
+                        </div>
+                        <div className="explore-section-actions">
+                          <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                            Buyer agent tips &gt;&gt;
+                          </a>
+                          {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
+                            <button
+                              type="button"
+                              className="new-activity-button"
+                              onClick={revealPendingExploreActivity}
+                            >
+                              {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
+                            </button>
                           ) : null}
                         </div>
                       </div>
@@ -5788,17 +5788,13 @@ export function App() {
                                       </span>
                                     </div>
                                     <p className="explore-card-quote">{agent.headline}</p>
-                                    {marketplaceTagsForDisplay(agent.marketplaceTags, 3).length > 0 ? (
-                                      <div className="explore-tag-row compact agent-marketplace-tags">
-                                        {marketplaceTagsForDisplay(agent.marketplaceTags, 3).map((tag) => (
-                                          <span key={`${agent.agentId}-tag-${tag}`} className="explore-tag">{tag}</span>
-                                        ))}
-                                      </div>
-                                    ) : null}
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                      {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
+                                      {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
+                                      {marketplaceTagsForDisplay(agent.marketplaceTags, 2).map((tag) => (
+                                        <span key={`${agent.agentId}-tag-${tag}`} className="explore-tag">{tag}</span>
+                                      ))}
                                     </div>
                                   </article>
                                 ))}
