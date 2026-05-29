@@ -3538,22 +3538,33 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       agentExecutionStatus === "late_completion_available" ||
       agentExecutionStatus === "worker_completed_return_rejected";
     const agentCompleted = agentExecutionStatus === "completed" || agentExecutionStatus === "worker_completed_return_rejected";
+    const proofVerified = proofStatus === "return_validated" || proofStatus === "anchored_or_attested";
+    const returnVerified = agentCompleted && proofVerified && latestLedger?.returnStatus !== "rejected";
+    const staleDeliveryFailureAfterReturn =
+      returnVerified &&
+      !hireRequest.returnValidationError &&
+      relayDeliveryStatus !== "return_rejected" &&
+      agentExecutionStatus !== "worker_completed_return_rejected";
+    const staleLedgerErrorAfterReturn =
+      staleDeliveryFailureAfterReturn &&
+      latestLedger?.returnStatus === "accepted" &&
+      latestLedger?.executionStatus === "completed";
     const hasFailure =
       settlementStatus === "failed" ||
-      (!acceptedPendingResult && relayDeliveryStatus === "failed") ||
+      (!acceptedPendingResult && relayDeliveryStatus === "failed" && !staleDeliveryFailureAfterReturn) ||
       relayDeliveryStatus === "return_rejected" ||
       agentExecutionStatus === "failed" ||
       agentExecutionStatus === "worker_completed_return_rejected" ||
       proofStatus === "return_rejected" ||
       Boolean(
-        (!acceptedPendingResult && hireRequest.deliveryError) ||
+        (!acceptedPendingResult && hireRequest.deliveryError && !staleDeliveryFailureAfterReturn) ||
         hireRequest.returnValidationError ||
-        (!acceptedPendingResult && latestLedger?.errorMessage)
+        (!acceptedPendingResult && latestLedger?.errorMessage && !staleLedgerErrorAfterReturn)
       );
     const knownBlockers = [
-      ...(!acceptedPendingResult && hireRequest.deliveryError ? [hireRequest.deliveryError] : []),
+      ...(!acceptedPendingResult && hireRequest.deliveryError && !staleDeliveryFailureAfterReturn ? [hireRequest.deliveryError] : []),
       ...(hireRequest.returnValidationError ? [hireRequest.returnValidationError] : []),
-      ...(!acceptedPendingResult && latestLedger?.errorMessage ? [latestLedger.errorMessage] : [])
+      ...(!acceptedPendingResult && latestLedger?.errorMessage && !staleLedgerErrorAfterReturn ? [latestLedger.errorMessage] : [])
     ];
     const lifecycleNarrative = {
       execution:
@@ -3636,7 +3647,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         relayDelivered,
         agentStarted,
         agentCompleted,
-        proofVerified: proofStatus === "return_validated" || proofStatus === "anchored_or_attested",
+        proofVerified,
         artifactDelivered,
         buyerVerified,
         buyerAccepted,
@@ -6447,6 +6458,12 @@ function encodeWebSocketFrame(opcode: number, payload: Buffer) {
   return Buffer.concat([header, payload]);
 }
 
+function printableFramePreview(value: string, maxLength = 80) {
+  return value
+    .slice(0, maxLength)
+    .replace(/[^\t\n\r -~]/g, "�");
+}
+
 function extractAdminKeyFromUpgrade(request: IncomingMessage) {
   const direct = request.headers["x-clawz-admin-key"];
   if (typeof direct === "string" && direct.trim().length > 0) {
@@ -7096,18 +7113,55 @@ class AgentRelayConnection {
       }
       try {
         this.onMessage(JSON.parse(payload.toString("utf8")));
-      } catch {
+        this.invalidJsonFrames = 0;
+      } catch (error) {
         this.invalidJsonFrames += 1;
+        let decoded = "";
+        let utf8Decoded = true;
+        try {
+          decoded = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+        } catch {
+          utf8Decoded = false;
+          decoded = payload.toString("utf8");
+        }
+        const activePending = [...this.pending.entries()].map(([messageId, pending]) => ({
+          messageId,
+          ...(pending.requestId ? { requestId: pending.requestId } : {}),
+          requestBodyDigestSha256: pending.requestBodyDigestSha256,
+          lastStep: pending.trace.at(-1)?.step,
+          sawWorker: pending.trace.some((entry) =>
+            entry.step === "worker_ack" ||
+            entry.step === "received_by_worker" ||
+            entry.step === "worker_return_parse_completed" ||
+            entry.step === "hire_response_prepared"
+          )
+        }));
+        const workerReached = activePending.some((entry) => entry.sawWorker);
         console.error(JSON.stringify({
           event: "relay_invalid_json",
           agentId: this.agentId,
           connectionId: this.connectionId,
+          opcode,
           payloadBytes: payload.length,
           payloadDigestSha256: createHash("sha256").update(payload.toString("base64")).digest("hex"),
-          payloadPreview: payload.toString("utf8").slice(0, 200),
-          invalidJsonFrames: this.invalidJsonFrames
+          utf8Decoded,
+          payloadFirst80: printableFramePreview(decoded, 80),
+          payloadLast80: printableFramePreview(decoded.slice(Math.max(0, decoded.length - 80)), 80),
+          invalidJsonFrames: this.invalidJsonFrames,
+          parseError: error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160),
+          activePending
         }));
         if (this.invalidJsonFrames >= 3) {
+          if (workerReached) {
+            console.error(JSON.stringify({
+              event: "relay_repeated_invalid_json_after_worker_progress",
+              agentId: this.agentId,
+              connectionId: this.connectionId,
+              invalidJsonFrames: this.invalidJsonFrames,
+              activePending
+            }));
+            continue;
+          }
           this.rejectPending("Relay sent repeated invalid JSON while SantaClawz was waiting for the agent response.");
           this.close(1003, "repeated invalid json");
         }
