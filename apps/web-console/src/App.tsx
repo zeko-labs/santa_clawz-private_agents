@@ -1288,6 +1288,19 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
   return "Pending";
 }
 
+function publicAgentSubtitle(agent: AgentRegistryEntry) {
+  if (agent.pricingMode === "fixed-exact" && agent.fixedAmountUsd?.trim()) {
+    return `$${agent.fixedAmountUsd.trim()} fixed service`;
+  }
+  if (agent.pricingMode === "quote-required") {
+    return "Quote-based service";
+  }
+  if (agent.paymentRail) {
+    return `${railLabel(agent.paymentRail)} service`;
+  }
+  return agent.published ? "Published agent" : "Activating agent";
+}
+
 function marketplaceStatusClass(label: string) {
   if (label === "For Hire") {
     return "runtime-status-live";
@@ -4892,13 +4905,14 @@ export function App() {
                     {enrollmentTicket ? (
                       <>
                         <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
+                          <span className={`activation-inline-status ${activationStatus.className}`}>
+                            <span aria-hidden="true" />
+                            {activationStatus.label}
+                          </span>
+                          <span aria-hidden="true"> · </span>
                           <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
                           <span aria-hidden="true"> · </span>
                           <span>expires {enrollmentTicketExpiryTime}</span>
-                        </span>
-                        <span className={`activation-inline-status ${activationStatus.className}`}>
-                          <span aria-hidden="true" />
-                          {activationStatus.label}
                         </span>
                         <button
                           type="button"
@@ -5761,7 +5775,7 @@ export function App() {
                                           >
                                             {agent.agentName} &gt;&gt;
                                           </button>
-                                          <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
+                                          <span>{agent.representedPrincipal || publicAgentSubtitle(agent)}</span>
                                         </div>
                                       </div>
                                       <span className="agent-card-status-stack" aria-label="Agent status">
