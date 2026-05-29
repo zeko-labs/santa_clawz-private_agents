@@ -438,7 +438,9 @@ function normalizeVerificationManifest(value, fallbackInputDigest, deliverables)
   const manifest = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const filesProduced = stringArray(manifest.files_produced);
   return {
-    ...manifest,
+    schema_version: typeof manifest.schema_version === "string" ? manifest.schema_version : "santaclawz-verification-manifest/1.0",
+    ...(typeof manifest.request_id === "string" ? { request_id: manifest.request_id.slice(0, 160) } : {}),
+    ...(typeof manifest.created_at === "string" ? { created_at: manifest.created_at.slice(0, 64) } : {}),
     input_digest_sha256: normalizeSha256(manifest.input_digest_sha256, fallbackInputDigest),
     checks_performed: stringArray(manifest.checks_performed),
     files_produced: filesProduced.length > 0 ? filesProduced : deliverables.map((deliverable) => deliverable.name),
@@ -529,13 +531,40 @@ function normalizeSantaClawzReturnPackage(parsed, requestBody) {
 }
 
 function normalizeWorkerResponseBody(input) {
+  const emitStep = typeof input.onStep === "function" ? input.onStep : () => {};
   const rawBody = typeof input.body === "string" ? input.body : "";
   const trimmed = rawBody.trim();
   const parsed = trimmed.startsWith("{") ? safeJsonParse(trimmed) : undefined;
-  const normalizedPackage = normalizeSantaClawzReturnPackage(parsed, input.requestBody);
+  emitStep("worker_return_json_parse_completed", parsed ? "completed" : "failed", {
+    detail: parsed ? "worker return JSON parsed" : "worker return JSON parse failed",
+    workerResponseBytes: Buffer.byteLength(rawBody, "utf8")
+  });
+  let normalizedPackage = null;
+  let normalizationError = null;
+  try {
+    normalizedPackage = normalizeSantaClawzReturnPackage(parsed, input.requestBody);
+  } catch (error) {
+    normalizationError = error;
+  }
+  emitStep("worker_return_schema_validation_completed", normalizedPackage ? "completed" : "failed", {
+    detail: normalizedPackage
+      ? "worker return schema validated"
+      : normalizationError instanceof Error
+        ? normalizationError.message.slice(0, 240)
+        : "worker return did not match santaclawz-return/1.0",
+    workerResponseBytes: Buffer.byteLength(rawBody, "utf8")
+  });
   if (normalizedPackage) {
+    const normalizedBody = JSON.stringify(normalizedPackage);
+    emitStep("relay_response_compacted", "completed", {
+      detail: "compacted worker return for buyer/platform response",
+      workerResponseBytes: Buffer.byteLength(rawBody, "utf8"),
+      workerResponseDigestSha256: sha256Hex(rawBody),
+      relayBodyBytes: Buffer.byteLength(normalizedBody, "utf8"),
+      relayBodyDigestSha256: sha256Hex(normalizedBody)
+    });
     return {
-      body: JSON.stringify(normalizedPackage),
+      body: normalizedBody,
       normalized: true,
       parseError: false
     };
@@ -545,7 +574,9 @@ function normalizeWorkerResponseBody(input) {
       requestId: requestIdFromSignedBody(input.requestBody),
       incidentId: `relay_normalize_${Date.now()}`,
       error: trimmed.startsWith("{")
-        ? "Local worker returned invalid JSON for santaclawz-return/1.0."
+        ? normalizationError instanceof Error
+          ? `Local worker returned invalid santaclawz-return/1.0 JSON: ${normalizationError.message.slice(0, 500)}`
+          : "Local worker returned invalid JSON for santaclawz-return/1.0."
         : "Local worker response did not include santaclawz-return/1.0 JSON."
     }),
     normalized: true,
@@ -879,7 +910,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       });
       const normalized = normalizeWorkerResponseBody({
         body,
-        requestBody: typeof request.body === "string" ? request.body : "{}"
+        requestBody: typeof request.body === "string" ? request.body : "{}",
+        onStep: sendWorkerProgress
       });
       const starterPreparedInline = preparedResponseInlineFields(normalized.body, 200);
       sendWorkerProgress("worker_return_parse_completed", normalized.parseError ? "failed" : "completed", {
@@ -987,7 +1019,8 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
     });
     const normalized = normalizeWorkerResponseBody({
       body,
-      requestBody: typeof request.body === "string" ? request.body : "{}"
+      requestBody: typeof request.body === "string" ? request.body : "{}",
+      onStep: sendWorkerProgress
     });
     const bodyBytes = Buffer.byteLength(normalized.body, "utf8");
     const preparedInline = preparedResponseInlineFields(normalized.body, response.status);
