@@ -5717,20 +5717,7 @@ export function App() {
                               ? `${sortedExploreAgents.length} shown`
                               : `${exploreActivityItems.length} shown`}
                           </span>
-                        </div>
-                        <div className="explore-section-actions">
-                          <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                            Buyer agent tips &gt;&gt;
-                          </a>
-                          {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
-                            <button
-                              type="button"
-                              className="new-activity-button"
-                              onClick={revealPendingExploreActivity}
-                            >
-                              {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
-                            </button>
-                          ) : selectedExploreFilter === "agents" ? (
+                          {selectedExploreFilter === "agents" ? (
                             <label className="agent-sort-select-wrap">
                               <select
                                 className="select-input agent-sort-select"
@@ -5745,6 +5732,20 @@ export function App() {
                                 <option value="payments">Payouts</option>
                               </select>
                             </label>
+                          ) : null}
+                        </div>
+                        <div className="explore-section-actions">
+                          <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
+                            Buyer agent tips &gt;&gt;
+                          </a>
+                          {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
+                            <button
+                              type="button"
+                              className="new-activity-button"
+                              onClick={revealPendingExploreActivity}
+                            >
+                              {pendingExploreUpdateCount} new update{pendingExploreUpdateCount === 1 ? "" : "s"}
+                            </button>
                           ) : null}
                         </div>
                       </div>
