@@ -3518,7 +3518,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       !hireRequest.protocolReturn &&
       !hireRequest.returnValidationError &&
       (
-        (relayDeliveryStatus === "acknowledged" && agentExecutionStatus === "running_or_unknown") ||
+        (relayDeliveryStatus === "acknowledged" &&
+          (agentExecutionStatus === "running_or_unknown" || agentExecutionStatus === "worker_completed_return_processing")) ||
         (relayDeliveryStatus === "failed" && agentExecutionStatus === "submitted") ||
         (relayDeliveryStatus === "failed" && hireRequest.status === "submitted")
       );
@@ -3532,6 +3533,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       relayDelivered ||
       agentExecutionStatus === "submitted" ||
       agentExecutionStatus === "running_or_unknown" ||
+      agentExecutionStatus === "worker_completed_return_processing" ||
       agentExecutionStatus === "quoted" ||
       agentExecutionStatus === "completed" ||
       agentExecutionStatus === "failed" ||
@@ -4890,7 +4892,10 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
       responsePaidExecution.deliveryReceipt?.errorCode === "relay_return_timeout_after_worker_ack" &&
       (
         (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "acknowledged" &&
-          responsePaidExecution.operationalStatus?.agentExecutionStatus === "running_or_unknown") ||
+          (
+            responsePaidExecution.operationalStatus?.agentExecutionStatus === "running_or_unknown" ||
+            responsePaidExecution.operationalStatus?.agentExecutionStatus === "worker_completed_return_processing"
+          )) ||
         (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "failed" &&
           responsePaidExecution.operationalStatus?.agentExecutionStatus === "submitted") ||
         (responsePaidExecution.operationalStatus?.relayDeliveryStatus === "failed" &&
@@ -4953,6 +4958,8 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
             safeToCreateNewPayment: false,
             doNotCreateNewPayment: true,
             workerAcknowledged: true,
+            workerCompletedReturnProcessing:
+              responsePaidExecution.operationalStatus?.agentExecutionStatus === "worker_completed_return_processing",
             lateCompletionSupported: true,
             lateCompletionEndpointHealthy: "unknown",
             resultMayStillArrive: true
@@ -6795,6 +6802,9 @@ class AgentRelayConnection {
       "worker_http_request_started",
       "worker_http_response_received",
       "worker_return_parse_started",
+      "worker_return_json_parse_completed",
+      "worker_return_schema_validation_completed",
+      "relay_response_compacted",
       "worker_return_parse_completed",
       "hire_response_prepared"
     ].includes(String(message.step))

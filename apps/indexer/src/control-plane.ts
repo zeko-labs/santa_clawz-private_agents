@@ -906,6 +906,7 @@ function buildHireOperationalStatus(input: {
   deliveryStatus?: HireRequestReceipt["deliveryStatus"];
   deliveryFailed?: boolean;
   deliveryAcceptedPendingResult?: boolean;
+  workerResponseReceived?: boolean;
   returnRejected?: boolean;
   hireStatus: HireRequestReceipt["status"];
 }): NonNullable<HireRequestReceipt["operationalStatus"]> {
@@ -937,6 +938,8 @@ function buildHireOperationalStatus(input: {
     agentExecutionStatus:
       input.returnRejected
         ? "worker_completed_return_rejected"
+        : input.deliveryAcceptedPendingResult && input.workerResponseReceived
+          ? "worker_completed_return_processing"
         : input.deliveryAcceptedPendingResult
           ? "running_or_unknown"
         : input.deliveryFailed && input.requestType === "paid_execution" && input.hireStatus === "submitted"
@@ -10592,6 +10595,13 @@ export class ClawzControlPlane {
       ...("relayTrace" in ingressDelivery && ingressDelivery.relayTrace ? { relayTrace: ingressDelivery.relayTrace } : {}),
       completed: ingressProtocolReturn?.status === "completed"
     });
+    const workerResponseReceived = relayTrace.some((entry) =>
+      entry.step === "worker_http_response_received" ||
+      entry.step === "worker_return_parse_started" ||
+      entry.step === "worker_return_json_parse_completed" ||
+      entry.step === "worker_return_schema_validation_completed" ||
+      entry.step === "relay_response_compacted"
+    );
     if (
       requestType === "paid_execution" &&
       ingressProtocolReturn?.status === "completed" &&
@@ -10619,6 +10629,7 @@ export class ClawzControlPlane {
       ...(ingressDelivery.deliveryStatus ? { deliveryStatus: ingressDelivery.deliveryStatus } : {}),
       deliveryFailed,
       deliveryAcceptedPendingResult,
+      workerResponseReceived,
       returnRejected,
       hireStatus
     });

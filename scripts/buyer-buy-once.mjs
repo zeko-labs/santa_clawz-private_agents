@@ -664,12 +664,18 @@ function sleep(ms) {
 }
 
 function stateUrlFromSubmitPayload(payload, fallbackUrl) {
-  if (typeof payload?.stateUrl === "string" && payload.stateUrl.trim()) {
-    return payload.stateUrl.trim();
-  }
-  const statePath = payload?.paidExecution?.jobWorkspace?.statePath;
+  const statePath =
+    payload?.jobWorkspace?.statePath ??
+    payload?.paidExecution?.jobWorkspace?.statePath;
   if (typeof statePath === "string" && statePath.trim()) {
     return statePath.startsWith("http") ? statePath : `${apiBase}${statePath}`;
+  }
+  const stateUrl = typeof payload?.stateUrl === "string" ? payload.stateUrl.trim() : "";
+  if (stateUrl && /[?&]token=/.test(stateUrl)) {
+    return stateUrl;
+  }
+  if (stateUrl && !fallbackUrl) {
+    return stateUrl;
   }
   return fallbackUrl;
 }
@@ -717,6 +723,16 @@ async function pollRecoverableExecutionState(stateUrl, maxMs = DEFAULT_RECOVERY_
   while (Date.now() - startedAt <= maxMs) {
     const state = await requestJson(stateUrl);
     last = state;
+    if ((state.status === 401 || state.status === 403) && !/[?&]token=/.test(stateUrl)) {
+      return {
+        recovered: false,
+        terminal: false,
+        elapsedMs: Date.now() - startedAt,
+        reason: "state_url_requires_token",
+        lastStatus: state.status,
+        lastPayload: state.payload
+      };
+    }
     if (state.ok) {
       const completion = recoveredCompletionFromState(state.payload);
       if (completion.completed) {
