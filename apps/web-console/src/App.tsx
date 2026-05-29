@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
 import type {
   AgentBoardState,
@@ -129,6 +130,54 @@ function SocialIcon({ icon }: { icon: (typeof SOCIAL_LINKS)[number]["icon"] }) {
   );
 }
 
+function explorerTransactionUrl(kind: "base" | "zeko", txHash?: string, networkId?: string) {
+  const hash = typeof txHash === "string" ? txHash.trim() : "";
+  if (!hash) {
+    return "";
+  }
+  if (kind === "base") {
+    return `${BASE_EXPLORER_BASE_URL}/tx/${encodeURIComponent(hash)}`;
+  }
+  const networkSegment = networkId?.toLowerCase().includes("mainnet") ? "mainnet" : "testnet";
+  return `${ZEKO_EXPLORER_BASE_URL}/${networkSegment}/tx/${encodeURIComponent(hash)}`;
+}
+
+function openExplorerTransaction(kind: "base" | "zeko", txHash?: string, networkId?: string) {
+  const url = explorerTransactionUrl(kind, txHash, networkId);
+  if (!url) {
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function ExplorerTxLink({
+  kind,
+  txHash,
+  networkId,
+  children
+}: {
+  kind: "base" | "zeko";
+  txHash?: string;
+  networkId?: string;
+  children: ReactNode;
+}) {
+  if (!txHash) {
+    return <>{children}</>;
+  }
+  return (
+    <button
+      type="button"
+      className="explorer-link"
+      title={`Open ${kind === "base" ? "BaseScan" : "Zekoscan"} transaction`}
+      onClick={() => {
+        openExplorerTransaction(kind, txHash, networkId);
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
   "agent-registered",
   "ownership-verified",
@@ -152,6 +201,14 @@ const STARTER_AGENT_ID =
   typeof import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID === "string"
     ? import.meta.env.VITE_CLAWZ_STARTER_AGENT_ID.trim()
     : "";
+const BASE_EXPLORER_BASE_URL =
+  typeof import.meta.env.VITE_BASE_EXPLORER_BASE_URL === "string" && import.meta.env.VITE_BASE_EXPLORER_BASE_URL.trim()
+    ? import.meta.env.VITE_BASE_EXPLORER_BASE_URL.trim().replace(/\/+$/, "")
+    : "https://basescan.org";
+const ZEKO_EXPLORER_BASE_URL =
+  typeof import.meta.env.VITE_ZEKO_EXPLORER_BASE_URL === "string" && import.meta.env.VITE_ZEKO_EXPLORER_BASE_URL.trim()
+    ? import.meta.env.VITE_ZEKO_EXPLORER_BASE_URL.trim().replace(/\/+$/, "")
+    : "https://zekoscan.io";
 const SDK_WIDGET_SNIPPET = `import { createClawzAgentClient } from "@clawz/agent-sdk";
 
 const clawz = createClawzAgentClient({
@@ -1029,10 +1086,18 @@ function proofActivityBadge(item: SocialAnchorCandidate) {
   return "Proof confirmed";
 }
 
-function proofActivityDetail(item: SocialAnchorCandidate) {
-  const root = item.batchRootDigestSha256 ? `root ${shorten(item.batchRootDigestSha256, 10, 8)}` : "";
-  const tx = item.txHash ? `tx ${shorten(item.txHash, 8, 6)}` : "";
-  return [item.kind, root, tx].filter(Boolean).join(" • ");
+function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
+  return (
+    <>
+      <span>{item.kind}</span>
+      {item.batchRootDigestSha256 ? <span>root {shorten(item.batchRootDigestSha256, 10, 8)}</span> : null}
+      {item.txHash ? (
+        <ExplorerTxLink kind="zeko" txHash={item.txHash}>
+          tx {shorten(item.txHash, 8, 6)}
+        </ExplorerTxLink>
+      ) : null}
+    </>
+  );
 }
 
 function matchesProofAnchorQuery(item: SocialAnchorCandidate, query: string, agent?: AgentRegistryEntry) {
@@ -1160,6 +1225,22 @@ function shortPaymentReference(entry: PaymentLedgerEntry) {
   return shorten(reference, 10, 8);
 }
 
+function paymentExplorerTxHash(entry: PaymentLedgerEntry) {
+  return entry.sellerSettlementTxHash ?? entry.transactionHashes[0] ?? entry.protocolFeeTxHash ?? "";
+}
+
+function paymentHistoryDetail(entry: PaymentLedgerEntry) {
+  const txHash = paymentExplorerTxHash(entry);
+  return (
+    <>
+      ledger {shorten(entry.ledgerId, 8, 6)} •{" "}
+      <ExplorerTxLink kind="base" txHash={txHash} networkId={entry.networkId}>
+        tx {shortPaymentReference(entry)}
+      </ExplorerTxLink>
+    </>
+  );
+}
+
 function hasFixedPaidWorkerReadinessGap(agent: AgentRegistryEntry) {
   if (!agent.paidJobsEnabled) {
     return false;
@@ -1205,6 +1286,19 @@ function exploreStatusLabel(agent: AgentRegistryEntry) {
     return "For Hire";
   }
   return "Pending";
+}
+
+function publicAgentSubtitle(agent: AgentRegistryEntry) {
+  if (agent.pricingMode === "fixed-exact" && agent.fixedAmountUsd?.trim()) {
+    return `$${agent.fixedAmountUsd.trim()} fixed service`;
+  }
+  if (agent.pricingMode === "quote-required") {
+    return "Quote-based service";
+  }
+  if (agent.paymentRail) {
+    return `${railLabel(agent.paymentRail)} service`;
+  }
+  return agent.published ? "Published agent" : "Activating agent";
 }
 
 function marketplaceStatusClass(label: string) {
@@ -3999,7 +4093,7 @@ export function App() {
       id: `payment-${payment.ledgerId}`,
       kind: "Payment",
       title: paymentActivityLine(payment),
-      detail: `ledger ${shorten(payment.ledgerId, 8, 6)} • tx ${shortPaymentReference(payment)}`,
+      detail: paymentHistoryDetail(payment),
       occurredAtIso: payment.updatedAtIso,
       status: payment.paymentStatus
     })),
@@ -4007,7 +4101,20 @@ export function App() {
       id: `anchor-${item.candidateId}`,
       kind: "Proof",
       title: item.title,
-      detail: `${item.kind} • ${item.status}${item.batchRootDigestSha256 ? ` • root ${shorten(item.batchRootDigestSha256, 10, 8)}` : ""}`,
+      detail: (
+        <>
+          {item.kind} • {item.status}
+          {item.batchRootDigestSha256 ? <> • root {shorten(item.batchRootDigestSha256, 10, 8)}</> : null}
+          {item.txHash ? (
+            <>
+              {" • "}
+              <ExplorerTxLink kind="zeko" txHash={item.txHash}>
+                tx {shorten(item.txHash, 8, 6)}
+              </ExplorerTxLink>
+            </>
+          ) : null}
+        </>
+      ),
       occurredAtIso: item.occurredAtIso,
       status: item.status
     })),
@@ -4798,13 +4905,14 @@ export function App() {
                     {enrollmentTicket ? (
                       <>
                         <span className="subtle-pill live activation-ticket-pill" title={enrollmentTicket.ticket}>
+                          <span className={`activation-inline-status ${activationStatus.className}`}>
+                            <span aria-hidden="true" />
+                            {activationStatus.label}
+                          </span>
+                          <span aria-hidden="true"> · </span>
                           <span className="activation-ticket-id">{enrollmentTicketPreview}</span>
                           <span aria-hidden="true"> · </span>
                           <span>expires {enrollmentTicketExpiryTime}</span>
-                        </span>
-                        <span className={`activation-inline-status ${activationStatus.className}`}>
-                          <span aria-hidden="true" />
-                          {activationStatus.label}
                         </span>
                         <button
                           type="button"
@@ -5194,9 +5302,18 @@ export function App() {
                 {latestSocialAnchorBatch ? (
                   <div className="share-url-placeholder live">
                     Latest batch root {shorten(latestSocialAnchorBatch.rootDigestSha256, 14, 12)}
-                    {latestSocialAnchorBatch.txHash
-                      ? ` • tx ${shorten(latestSocialAnchorBatch.txHash, 12, 10)}`
-                      : " • awaiting Zeko tx"}
+                    {" • "}
+                    {latestSocialAnchorBatch.txHash ? (
+                      <ExplorerTxLink
+                        kind="zeko"
+                        txHash={latestSocialAnchorBatch.txHash}
+                        networkId={latestSocialAnchorBatch.networkId}
+                      >
+                        tx {shorten(latestSocialAnchorBatch.txHash, 12, 10)}
+                      </ExplorerTxLink>
+                    ) : (
+                      "awaiting Zeko tx"
+                    )}
                     {" • "}
                     {new Date(latestSocialAnchorBatch.settledAtIso).toLocaleString()}
                   </div>
@@ -5658,7 +5775,7 @@ export function App() {
                                           >
                                             {agent.agentName} &gt;&gt;
                                           </button>
-                                          <span>{agent.representedPrincipal || "Enrolled agent runtime"}</span>
+                                          <span>{agent.representedPrincipal || publicAgentSubtitle(agent)}</span>
                                         </div>
                                       </div>
                                       <span className="agent-card-status-stack" aria-label="Agent status">
@@ -5812,7 +5929,7 @@ export function App() {
                                       <p className="agent-message-body agent-message-preview">{proof.summary}</p>
                                     </div>
                                     <div className="agent-message-foot">
-                                      <span>{proofActivityDetail(proof)}</span>
+                                      <ProofActivityDetail item={proof} />
                                     </div>
                                   </article>
                                 );
@@ -5877,7 +5994,11 @@ export function App() {
                                       <div className="agent-message-proof-row">
                                         <span>digest {shorten(message.messageDigestSha256, 10, 8)}</span>
                                         {message.batchRootDigestSha256 ? <span>root {shorten(message.batchRootDigestSha256, 10, 8)}</span> : null}
-                                        {message.batchTxHash ? <span>tx {shorten(message.batchTxHash, 8, 6)}</span> : null}
+                                        {message.batchTxHash ? (
+                                          <ExplorerTxLink kind="zeko" txHash={message.batchTxHash}>
+                                            tx {shorten(message.batchTxHash, 8, 6)}
+                                          </ExplorerTxLink>
+                                        ) : null}
                                       </div>
                                     </>
                                   ) : null}
