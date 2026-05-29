@@ -13,7 +13,9 @@ import {
 
 type BuyerPersona = "human" | "agent";
 type RoutingMode = "direct-hire" | "quote-request" | "procurement-bid" | "paid-execution";
+type WorkroomStep = 1 | 2 | 3 | 4;
 type ValueEvent = { target: { value: string } };
+type SubmitEvent = { preventDefault(): void };
 
 type BuyerWorkroomProps = {
   agents: AgentRegistryEntry[];
@@ -442,12 +444,12 @@ const ROUTE_RULES: RouteRule[] = [
 ];
 
 const RETAIL_USE_CASES = [
-  "Competitive research",
-  "Repo review",
-  "Pricing teardown",
-  "Workflow automation",
-  "Data cleanup",
-  "Artifact package"
+  "Repo launch risk teardown",
+  "Competitive research brief",
+  "Cold outreach sequence",
+  "Data extraction + structured output",
+  "SEO blog draft",
+  "API workflow chain"
 ];
 
 function readPersonaCookie(): BuyerPersona {
@@ -686,6 +688,8 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
   const [buyerContact, setBuyerContact] = useState("");
   const [budget, setBudget] = useState("0.25");
   const [privacyLane, setPrivacyLane] = useState("private");
+  const [deliveryFormat, setDeliveryFormat] = useState("markdown");
+  const [workroomStep, setWorkroomStep] = useState<WorkroomStep>(1);
   const [routeMessage, setRouteMessage] = useState("Preview uses local scoring. Route to SantaClawz to anchor a protocol plan.");
   const [serverRoutingPlan, setServerRoutingPlan] = useState<BuyerRouterPlanResponse["plan"] | null>(null);
   const [routingAnchorDigest, setRoutingAnchorDigest] = useState("");
@@ -760,7 +764,7 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
   const activeRoutingPlan = serverRoutingPlan ?? routingPlan;
   const activeMarketplaceTags = activeRoutingPlan.marketplaceTags;
   const activeLaneTags = activeRoutingPlan.protocolLaneTags;
-  const activeFormatTags = activeRoutingPlan.deliveryFormatTags;
+  const activeFormatTags = uniqueTags([deliveryFormat, ...activeRoutingPlan.deliveryFormatTags]);
 
   useEffect(() => {
     if (selectedAgent?.agentId && selectedAgentId !== selectedAgent.agentId) {
@@ -771,7 +775,8 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
   useEffect(() => {
     setServerRoutingPlan(null);
     setRoutingAnchorDigest("");
-  }, [budget, persona, privacyLane, requestSummary]);
+    setWorkroomStep(1);
+  }, [budget, deliveryFormat, persona, privacyLane, requestSummary]);
 
   const procurementIdempotencyKey = useMemo(() => {
     const promptSlug = normalizeTag(requestSummary).slice(0, 64) || "request";
@@ -1030,352 +1035,272 @@ export function BuyerWorkroom({ agents, buyerGuideUrl, onOpenAgent }: BuyerWorkr
     }
   }
 
-  const personaCopy =
-    persona === "agent"
-      ? "A visual trace for agent procurement: route planning, x402 payment, relay execution, and verified return state."
-      : "A simple surface for discovering and paying agents, with the protocol trace visible after every step.";
-  const visibleRouteTags = workTagValues(activeMarketplaceTags).slice(0, 8);
-  const routeDigest = activeRoutingPlan.routePlanDigestSha256 ?? routingAnchorDigest;
-  const topCandidate = activeRoutingPlan.candidateAgents[0];
-  const paymentBusy = paymentState.status === "requesting" || paymentState.status === "signing" || paymentState.status === "submitting";
-  const timelineSteps = [
-    {
-      label: "Intent",
-      detail: persona === "agent" ? "agent buyer policy" : "human task brief",
-      state: requestSummary.trim() ? "done" : "active"
-    },
-    {
-      label: "Route",
-      detail: routingMode.replace("-", " "),
-      state: serverRoutingPlan || routeDigest ? "done" : routingRequesting ? "active" : "pending"
-    },
-    {
-      label: "Match",
-      detail: selectedAgent ? displayAgentName(selectedAgent) : "waiting for agents",
-      state: selectedAgent ? "done" : "pending"
-    },
-    {
-      label: "Payment",
-      detail: selectedAgent?.pricingMode === "quote-required" ? "quote first" : "Base USDC x402",
-      state: paymentState.status === "completed" || paymentState.status === "pending" || paymentState.status === "quoted"
-        ? "done"
-        : paymentBusy
-          ? "active"
-          : "pending"
-    },
-    {
-      label: "Execution",
-      detail: paymentState.status === "pending" ? "runtime working" : "relay ready",
-      state: paymentState.status === "completed" ? "done" : paymentState.status === "pending" ? "active" : "pending"
-    },
-    {
-      label: "Verification",
-      detail: paymentState.proofDigest ? `digest ${paymentState.proofDigest.slice(0, 10)}...` : "manifest and proof",
-      state: paymentState.proofDigest || paymentState.status === "completed" ? "done" : "pending"
+  async function findAgentsForWork() {
+    await routeCurrentRequest();
+    if (requestSummary.trim()) {
+      setWorkroomStep(2);
     }
+  }
+
+  async function commitCurrentRoute() {
+    setWorkroomStep(3);
+    if (routingMode === "procurement-bid") {
+      await postProcurementIntent();
+      setWorkroomStep(4);
+      return;
+    }
+    await payOrRequestSelectedAgent();
+    setWorkroomStep(4);
+  }
+
+  const visibleRouteTags = workTagValues(activeMarketplaceTags).slice(0, 6);
+  const routeDigest = activeRoutingPlan.routePlanDigestSha256 ?? routingAnchorDigest;
+  const paymentBusy = paymentState.status === "requesting" || paymentState.status === "signing" || paymentState.status === "submitting";
+  const routeReady = workroomStep >= 2 || Boolean(serverRoutingPlan || routeDigest || procurementResult || paymentState.requestId);
+  const selectedCandidate = candidates.find((candidate) => candidate.agent.agentId === selectedAgent?.agentId);
+  const routeModeLabel = routingMode === "procurement-bid" ? "Bid request" : routingMode === "quote-request" ? "Quote request" : "Direct hire";
+  const commitDisabled = !selectedAgent || paymentBusy || postingProcurement || routingRequesting;
+  const commitLabel = routingMode === "procurement-bid"
+    ? postingProcurement ? "Posting..." : "Request bids"
+    : selectedAgent?.pricingMode === "quote-required"
+      ? paymentBusy ? "Requesting..." : "Request quote"
+      : wallet?.status === "connected"
+        ? paymentBusy ? "Submitting..." : "Pay and hire"
+        : paymentBusy ? "Connecting..." : "Connect wallet to pay";
+  const lifecycleState = {
+    payment: paymentState.status === "completed" || paymentState.status === "pending" || paymentState.status === "quoted" ? "done" : paymentBusy ? "active" : "pending",
+    agent: paymentState.status === "pending" ? "active" : paymentState.status === "completed" ? "done" : "pending",
+    delivery: paymentState.status === "completed" ? "done" : "pending",
+    proof: paymentState.proofDigest || procurementResult?.routingAnchor ? "done" : workroomStep === 4 ? "active" : "pending"
+  };
+  const showTrackCard = workroomStep === 4 || paymentState.status !== "idle" || Boolean(procurementResult || procurementError);
+  const stepItems: Array<{ id: WorkroomStep; label: string }> = [
+    { id: 1, label: "Compose" },
+    { id: 2, label: "Route" },
+    { id: 3, label: "Commit" },
+    { id: 4, label: "Track" }
   ];
 
   return (
-    <>
-      <section className="buyer-protocol-hero">
-        <div className="buyer-protocol-hero-copy">
-          <p className="eyebrow">Agent procurement trace</p>
-          <h1>Watch work move from intent to verified agent output.</h1>
-          <p>{personaCopy}</p>
-          <div className="buyer-protocol-mode-row" aria-label="Buyer mode">
-            <span>Buying as</span>
-            <div className="buyer-persona-toggle" role="group" aria-label="Choose buyer mode">
-              <button type="button" className={persona === "agent" ? "active" : ""} onClick={() => updatePersona("agent")}>
-                Agent
-              </button>
-              <button type="button" className={persona === "human" ? "active" : ""} onClick={() => updatePersona("human")}>
-                Human
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="buyer-protocol-summary" aria-label="Protocol summary">
-          <div>
-            <span>Route</span>
-            <strong>{routingMode.replace("-", " ")}</strong>
-          </div>
-          <div>
-            <span>Seller</span>
-            <strong>{selectedAgent ? displayAgentName(selectedAgent) : "finding match"}</strong>
-          </div>
-          <div>
-            <span>Rail</span>
-            <strong>Base USDC</strong>
-          </div>
-        </div>
-      </section>
+    <section className="hire-workroom" id="buyer-task">
+      <div className="hire-workroom-inner">
+        <ol className="hire-stepper" aria-label="Hire workflow">
+          {stepItems.map((step) => {
+            const done = workroomStep > step.id;
+            const active = workroomStep === step.id;
+            return (
+              <li key={step.id} className={active ? "active" : done ? "done" : ""}>
+                <span>{done ? "OK" : step.id}</span>
+                <strong>{step.label}</strong>
+              </li>
+            );
+          })}
+        </ol>
 
-      <section id="buyer-task" className="buyer-protocol-stage">
-        <form className="buyer-protocol-composer">
-          <div className="buyer-protocol-card-head">
-            <div>
-              <p className="eyebrow">Composer</p>
-              <h2>Describe the work once. Let the protocol route it.</h2>
-            </div>
-            <span className="subtle-pill">{persona === "agent" ? "agent-native" : "human-ready"}</span>
+        <div className="hire-title-row">
+          <div>
+            <h1>Hire an agent</h1>
+            <p>Describe the work. SantaClawz routes it, handles payment, records proof.</p>
           </div>
-          <label className="field">
-            <span>Work request</span>
+          <div className="hire-persona-toggle" role="group" aria-label="Choose buyer mode">
+            <button type="button" className={persona === "human" ? "active" : ""} onClick={() => updatePersona("human")}>
+              Human
+            </button>
+            <button type="button" className={persona === "agent" ? "active" : ""} onClick={() => updatePersona("agent")}>
+              Agent / API
+            </button>
+          </div>
+        </div>
+
+        <form className="hire-compose-card" onSubmit={(event: SubmitEvent) => {
+          event.preventDefault();
+          void findAgentsForWork();
+        }}>
+          <label className="hire-brief-field">
+            <span>What do you need done?</span>
             <textarea
-              className="text-area buyer-protocol-brief"
               value={requestSummary}
               onChange={(event: ValueEvent) => setRequestSummary(event.target.value)}
-              placeholder="Example: pull a competitor teardown and return a short positioning brief with sources and proof."
+              placeholder="Ask an agent to review a repo for launch risks and return markdown findings..."
             />
           </label>
 
-          <div className="buyer-protocol-fields">
-            <label className="field">
-              <span>Budget USDC</span>
-              <input className="text-input" value={budget} onChange={(event: ValueEvent) => setBudget(event.target.value)} placeholder="0.25" />
-            </label>
-            <label className="field">
-              <span>Buyer contact</span>
-              <input
-                className="text-input"
-                value={buyerContact}
-                onChange={(event: ValueEvent) => setBuyerContact(event.target.value)}
-                placeholder={safeContact(persona)}
-              />
-            </label>
-            <label className="field">
-              <span>Delivery lane</span>
-              <select className="text-input" value={privacyLane} onChange={(event: ValueEvent) => setPrivacyLane(event.target.value)}>
-                <option value="private">Private package</option>
-                <option value="public-summary">Public summary</option>
-                <option value="proof-only">Proof trail only</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Seller agent</span>
-              <select
-                className="text-input"
-                value={selectedAgent?.agentId ?? ""}
-                onChange={(event: ValueEvent) => setSelectedAgentId(event.target.value)}
-              >
-                {agentOptions.length > 0 ? (
-                  agentOptions.map((agent) => (
-                    <option key={agent.agentId} value={agent.agentId}>
-                      {displayAgentName(agent)} - {agentStatusLabel(agent)}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">Loading public agents...</option>
-                )}
-              </select>
-            </label>
-          </div>
-
-          <div className="buyer-protocol-use-cases">
+          <div className="hire-chip-row" aria-label="Example work requests">
             {RETAIL_USE_CASES.map((item) => (
               <button
                 key={item}
                 type="button"
-                onClick={() => setRequestSummary(`I need ${item.toLowerCase()} with a concise deliverable and proof-backed output.`)}
+                onClick={() => setRequestSummary(`Ask an agent for a ${item.toLowerCase()} with buyer-visible output and proof.`)}
               >
                 {item}
               </button>
             ))}
           </div>
 
-          <div className="buyer-protocol-actions">
-            <button type="button" className="primary-button" onClick={() => void routeCurrentRequest()} disabled={routingRequesting || !requestSummary.trim()}>
-              {routingRequesting ? "Routing..." : "Route request"}
-            </button>
-            <button type="button" className="secondary-button" onClick={connectBaseWallet}>
-              {wallet?.status === "connected" ? `${shortAddress(wallet.address)} · Base` : "Connect wallet"}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={payOrRequestSelectedAgent}
-              disabled={!selectedAgent || paymentBusy}
-            >
-              {selectedAgent?.pricingMode === "quote-required" ? "Request quote" : "Pay and hire"}
-            </button>
-            <button type="button" className="secondary-button" onClick={postProcurementIntent} disabled={postingProcurement || !requestSummary.trim()}>
-              {postingProcurement ? "Posting..." : "Post procurement"}
-            </button>
+          <div className="hire-field-grid">
+            <label>
+              <span>Budget USDC</span>
+              <input value={budget} onChange={(event: ValueEvent) => setBudget(event.target.value)} placeholder="0.25" />
+            </label>
+            <label>
+              <span>Privacy</span>
+              <select value={privacyLane} onChange={(event: ValueEvent) => setPrivacyLane(event.target.value)}>
+                <option value="private">Private</option>
+                <option value="public-summary">Public summary</option>
+                <option value="proof-only">Proof only</option>
+              </select>
+            </label>
+            <label>
+              <span>Delivery</span>
+              <select value={deliveryFormat} onChange={(event: ValueEvent) => setDeliveryFormat(event.target.value)}>
+                <option value="markdown">Markdown</option>
+                <option value="structured-data">Structured data</option>
+                <option value="artifact-manifest">Artifact package</option>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+              </select>
+            </label>
+            <label>
+              <span>Contact</span>
+              <input
+                value={buyerContact}
+                onChange={(event: ValueEvent) => setBuyerContact(event.target.value)}
+                placeholder={safeContact(persona)}
+              />
+            </label>
           </div>
-
-          <div className="buyer-protocol-note">
-            <strong>Router</strong>
-            <span>{routeMessage}</span>
-          </div>
-
-          {paymentState.message ? (
-            <div className={paymentState.status === "completed" || paymentState.status === "quoted" ? "status-banner status-banner-success" : "status-banner buyer-payment-status"}>
-              <strong>{paymentState.status === "idle" ? "Wallet" : paymentState.status.replace("-", " ")}</strong>
-              <span>{paymentState.message}</span>
-              {paymentState.transactionHashes?.length ? (
-                <div className="buyer-proof-links">
-                  {paymentState.transactionHashes.map((hash) => (
-                    <a key={hash} href={`${BASE_BLOCK_EXPLORER_TX}${hash}`} target="_blank" rel="noreferrer">
-                      Base tx {hash.slice(0, 10)}...
-                    </a>
-                  ))}
-                </div>
-              ) : null}
-              {paymentState.proofDigest ? (
-                <div className="buyer-proof-links">
-                  <span>return digest {paymentState.proofDigest.slice(0, 12)}...</span>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {procurementResult ? (
-            <div className="status-banner status-banner-success">
-              Procurement intent {procurementResult.intent.intentId} is open. Agents can bid against this routed demand.
-              {procurementResult.routingAnchor ? (
-                <div className="buyer-proof-links">
-                  <span>Zeko anchor {procurementResult.routingAnchor.payloadDigestSha256.slice(0, 12)}...</span>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {procurementError ? <div className="status-banner">{procurementError}</div> : null}
         </form>
 
-        <aside className="buyer-protocol-trace" aria-label="Agent procurement trace">
-          <div className="buyer-protocol-card-head">
-            <div>
-              <p className="eyebrow">Live trace</p>
-              <h2>What the agent is doing</h2>
-            </div>
-            <span className="subtle-pill">{paymentState.status}</span>
-          </div>
-          <ol className="buyer-protocol-timeline">
-            {timelineSteps.map((step, index) => (
-              <li key={step.label} className={step.state}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <div>
-                  <strong>{step.label}</strong>
-                  <em>{step.detail}</em>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </aside>
-      </section>
+        <div className="hire-primary-row">
+          <button type="button" className="hire-primary-button" onClick={() => void findAgentsForWork()} disabled={routingRequesting || !requestSummary.trim()}>
+            {routingRequesting ? "Finding..." : "Find agents ->"}
+          </button>
+        </div>
 
-      <section className="buyer-protocol-lower">
-        <article className="buyer-protocol-panel">
-          <div className="buyer-protocol-card-head">
-            <div>
-              <p className="eyebrow">Route plan</p>
-              <h3>{activeRoutingPlan.recommendedNextAction}</h3>
+        {routeReady ? (
+          <section className="hire-route-stage" aria-label="Route results">
+            <div className="hire-route-head">
+              <div>
+                <span>Route</span>
+                <h2>{activeRoutingPlan.recommendedNextAction}</h2>
+              </div>
+              <strong>{routeModeLabel}</strong>
             </div>
-            <span className="subtle-pill">{routeDigest ? `${routeDigest.slice(0, 10)}...` : "preview"}</span>
-          </div>
-          <div className="buyer-protocol-tags">
-            {visibleRouteTags.map((tag) => <span key={tag}>{tag}</span>)}
-            {activeLaneTags.map((tag) => <span key={tag}>{tag}</span>)}
-            {activeFormatTags.map((tag) => <span key={tag}>{tag}</span>)}
-          </div>
-          <div className="buyer-candidate-list compact">
-            {candidates.length > 0 ? candidates.slice(0, 4).map((candidate) => (
-              <button
-                key={candidate.agent.agentId}
-                type="button"
-                className={candidate.agent.agentId === selectedAgent?.agentId ? "buyer-candidate active" : "buyer-candidate"}
-                onClick={() => setSelectedAgentId(candidate.agent.agentId)}
-              >
-                <span>{displayAgentName(candidate.agent)}</span>
-                <strong>{candidate.score}</strong>
-                <em>{candidate.reasons.join(" / ")}</em>
+
+            <div className="hire-route-tags">
+              {visibleRouteTags.map((tag) => <span key={tag}>{tag}</span>)}
+              {activeLaneTags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
+              {activeFormatTags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
+            </div>
+
+            <div className="hire-candidate-grid">
+              {candidates.slice(0, 4).map((candidate) => (
+                <button
+                  key={candidate.agent.agentId}
+                  type="button"
+                  className={candidate.agent.agentId === selectedAgent?.agentId ? "hire-agent-card active" : "hire-agent-card"}
+                  onClick={() => setSelectedAgentId(candidate.agent.agentId)}
+                >
+                  <span className="hire-agent-card-name">{displayAgentName(candidate.agent)}</span>
+                  <span className="hire-agent-card-price">{agentPriceLabel(candidate.agent)}</span>
+                  <span className="hire-agent-card-score">{agentSuccessLabel(candidate.agent)}</span>
+                  <em>{candidate.reasons.slice(0, 2).join(" / ")}</em>
+                </button>
+              ))}
+            </div>
+
+            <div className="hire-selected-row">
+              <div>
+                <span>Selected</span>
+                <strong>{selectedAgent ? displayAgentName(selectedAgent) : "No agent selected"}</strong>
+                <em>{selectedCandidate?.reasons.join(" / ") ?? agentStatusLabel(selectedAgent)}</em>
+              </div>
+              {selectedAgent ? (
+                <button type="button" className="hire-secondary-button" onClick={() => onOpenAgent(selectedAgent.agentId)}>
+                  Agent profile
+                </button>
+              ) : null}
+              <button type="button" className="hire-secondary-button" onClick={connectBaseWallet}>
+                {wallet?.status === "connected" ? `${shortAddress(wallet.address)} on Base` : "Connect wallet"}
               </button>
-            )) : (
-              <p className="buyer-router-note">No strong matches yet. Add a clearer job brief or post procurement.</p>
-            )}
-          </div>
-        </article>
+              <button type="button" className="hire-primary-button" onClick={() => void commitCurrentRoute()} disabled={commitDisabled}>
+                {commitLabel}
+              </button>
+            </div>
 
-        <article className="buyer-protocol-panel">
-          <div className="buyer-protocol-card-head">
-            <div>
-              <p className="eyebrow">Human surface</p>
-              <h3>Discovery and payment stay simple.</h3>
-            </div>
-            <span className="subtle-pill">Base now</span>
-          </div>
-          <div className="buyer-selected-agent modern">
-            <div>
-              <span>Selected agent</span>
-              <strong>{selectedAgent ? displayAgentName(selectedAgent) : topCandidate?.agentName ?? "No match yet"}</strong>
-            </div>
-            <div>
-              <span>Status</span>
-              <strong>{agentStatusLabel(selectedAgent)}</strong>
-            </div>
-            <div>
-              <span>Price</span>
-              <strong>{agentPriceLabel(selectedAgent)}</strong>
-            </div>
-            <div>
-              <span>Record</span>
-              <strong>{agentSuccessLabel(selectedAgent)}</strong>
-            </div>
-          </div>
-          <div className="buyer-payment-rail-row compact">
-            <div className="active">
-              <span>Pay now</span>
-              <strong>Base USDC</strong>
-              <em>x402 exact authorization</em>
-            </div>
-            <div>
-              <span>Next</span>
-              <strong>Credits</strong>
-              <em>Stripe top-up for humans</em>
-            </div>
-          </div>
-          {selectedAgent ? (
-            <button type="button" className="secondary-button" onClick={() => onOpenAgent(selectedAgent.agentId)}>
-              View agent profile
-            </button>
-          ) : null}
-        </article>
+            <p className="hire-router-note">{routeMessage}</p>
+          </section>
+        ) : null}
 
-        <article className="buyer-protocol-panel buyer-protocol-artifacts">
-          <div className="buyer-protocol-card-head">
-            <div>
-              <p className="eyebrow">Agent-native mirror</p>
-              <h3>Everything visible here maps to protocol calls.</h3>
+        {showTrackCard ? (
+          <section className="hire-track-card" aria-label="Job tracking">
+            <div className="hire-track-head">
+              <div>
+                <span>Track</span>
+                <h2>{paymentState.requestId ?? procurementResult?.intent.intentId ?? "Waiting for commit"}</h2>
+              </div>
+              <strong>{paymentState.status}</strong>
             </div>
-            <a href={buyerGuideUrl} target="_blank" rel="noreferrer" className="inline-link-button">
-              Buyer agent tips &gt;&gt;
-            </a>
-          </div>
-          <div className="buyer-artifact-preview modern">
-            <span>API path</span>
-            <strong>/api/buyer-router/plan</strong>
-            <em>{selectedAgent ? `/api/agents/${selectedAgent.agentId}/hire` : "/api/agents/<agent-id>/hire"}</em>
-          </div>
-          <div className="buyer-result-preview compact">
-            <div>
-              <span>Request</span>
-              <strong>{paymentState.requestId ?? procurementResult?.intent.intentId ?? "not submitted"}</strong>
+
+            <div className="hire-lifecycle-row">
+              {[
+                ["payment", "Payment"],
+                ["agent", "Agent work"],
+                ["delivery", "Delivery"],
+                ["proof", "Proof"]
+              ].map(([key, label]) => (
+                <div key={key} className={`hire-lifecycle-step ${lifecycleState[key as keyof typeof lifecycleState]}`}>
+                  <span />
+                  <strong>{label}</strong>
+                </div>
+              ))}
             </div>
-            <div>
-              <span>Payment</span>
-              <strong>{paymentState.paymentDigest ? `${paymentState.paymentDigest.slice(0, 10)}...` : "not signed"}</strong>
-            </div>
-            <div>
-              <span>Proof</span>
-              <strong>{paymentState.proofDigest ? `${paymentState.proofDigest.slice(0, 10)}...` : routeDigest ? `${routeDigest.slice(0, 10)}...` : "pending"}</strong>
-            </div>
-          </div>
-          <details className="buyer-protocol-details">
-            <summary>View route plan JSON</summary>
-            <pre className="buyer-plan-json">{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
-          </details>
-        </article>
-      </section>
-    </>
+
+            {paymentState.message ? (
+              <div className={paymentState.status === "completed" || paymentState.status === "quoted" ? "hire-status success" : "hire-status"}>
+                <strong>{paymentState.status === "idle" ? "Wallet" : paymentState.status}</strong>
+                <span>{paymentState.message}</span>
+                {paymentState.transactionHashes?.length ? (
+                  <div className="hire-link-row">
+                    {paymentState.transactionHashes.map((hash) => (
+                      <a key={hash} href={`${BASE_BLOCK_EXPLORER_TX}${hash}`} target="_blank" rel="noreferrer">
+                        Base tx {hash.slice(0, 10)}...
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {procurementResult ? (
+              <div className="hire-status success">
+                <strong>Procurement posted</strong>
+                <span>Intent {procurementResult.intent.intentId} is open for seller agents.</span>
+              </div>
+            ) : null}
+            {procurementError ? (
+              <div className="hire-status error">
+                <strong>Procurement error</strong>
+                <span>{procurementError}</span>
+              </div>
+            ) : null}
+
+            <details className="hire-protocol-details">
+              <summary>Protocol details</summary>
+              <div>
+                <span>Buyer guide</span>
+                <a href={buyerGuideUrl} target="_blank" rel="noreferrer">Agent/API reference</a>
+              </div>
+              <div>
+                <span>API paths</span>
+                <strong>/api/buyer-router/plan</strong>
+                <strong>{selectedAgent ? `/api/agents/${selectedAgent.agentId}/hire` : "/api/agents/<agent-id>/hire"}</strong>
+              </div>
+              <pre>{JSON.stringify(activeRoutingPlan, null, 2)}</pre>
+            </details>
+          </section>
+        ) : null}
+      </div>
+    </section>
   );
 }
