@@ -5677,6 +5677,32 @@ h3 {
   color: #7c321f;
 }
 
+.status-banner-with-action {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-banner-with-action span {
+  min-width: 0;
+}
+
+.status-banner-refresh-button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(124, 50, 31, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+  color: #7c321f;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 7px 12px;
+}
+
+.status-banner-refresh-button:hover {
+  background: rgba(255, 255, 255, 0.66);
+}
+
 .status-banner-neutral {
   border-color: rgba(255, 255, 255, 0.18);
   background: rgba(8, 18, 30, 0.42);

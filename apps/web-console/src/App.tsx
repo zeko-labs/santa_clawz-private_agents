@@ -2958,6 +2958,23 @@ export function App() {
     }
   }
 
+  function renderErrorBanner(message: string) {
+    return (
+      <div className="status-banner status-banner-with-action">
+        <span>{message}</span>
+        <button
+          type="button"
+          className="status-banner-refresh-button"
+          onClick={() => {
+            window.location.reload();
+          }}
+        >
+          Refresh page
+        </button>
+      </div>
+    );
+  }
+
   const apiBase = getApiBase();
   const isExploreView = activeSection === "explore";
   const isCoordinateView = activeSection === "coordinate";
@@ -3565,7 +3582,7 @@ export function App() {
           </div>
         </section>
 
-        {error ? <p className="status-banner">{error}</p> : null}
+        {error ? renderErrorBanner(error) : null}
 
         {error && activeSection !== "explore" && activeSection !== "coordinate" ? (
           <section className="step-stack">
@@ -4594,7 +4611,7 @@ export function App() {
         </div>
       </section>
 
-      {error ? <p className="status-banner">{error}</p> : null}
+      {error ? renderErrorBanner(error) : null}
       {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection === "coordinate" ? (
