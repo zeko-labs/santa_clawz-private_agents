@@ -854,6 +854,12 @@ function emptyPaymentLedgerState(): PaymentLedgerState {
     schemaVersion: "santaclawz-payment-ledger/1.0",
     generatedAtIso: new Date().toISOString(),
     totalLedgerEntryCount: 0,
+    summary: {
+      completedPaymentCount: 0,
+      completedBasePaymentCount: 0,
+      completedSellerPayoutUsd: "0",
+      completedBaseSellerPayoutUsd: "0"
+    },
     entries: []
   };
 }
@@ -3807,10 +3813,14 @@ export function App() {
       (completedPaymentUsdByAgentId.get(entry.agentId) ?? 0) + parseUsdValue(entry.sellerNetAmountUsd ?? entry.amountUsd)
     );
   }
-  const totalBasePayoutUsd = completedBasePaymentEntries.reduce(
+  const visibleBasePayoutUsd = completedBasePaymentEntries.reduce(
     (sum, entry) => sum + parseUsdValue(entry.sellerNetAmountUsd ?? entry.amountUsd),
     0
   );
+  const totalPlatformPayoutUsd =
+    paymentLedger?.summary?.completedSellerPayoutUsd
+      ? parseUsdValue(paymentLedger.summary.completedSellerPayoutUsd)
+      : visibleBasePayoutUsd;
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
   const publicProofActivityTotal = publicSocialAnchorQueue?.confirmedCount ?? allPublicProofAnchors.length;
   const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + publicProofActivityTotal;
@@ -5638,7 +5648,7 @@ export function App() {
                       }}
                     >
                       <span>Payouts</span>
-                      <strong>{formatCompactUsd(totalBasePayoutUsd)}</strong>
+                      <strong>{formatCompactUsd(totalPlatformPayoutUsd)}</strong>
                     </button>
                   </div>
 
