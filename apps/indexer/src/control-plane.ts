@@ -1835,6 +1835,22 @@ function usdAmountAtomic(value: string): bigint {
   return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
 }
 
+function safeUsdAmountAtomic(value: string | undefined): bigint {
+  if (!value || !/^[0-9]+(\.[0-9]{1,6})?$/.test(value)) {
+    return 0n;
+  }
+  return usdAmountAtomic(value);
+}
+
+function usdAmountFromAtomic(value: bigint): string {
+  const whole = value / 1_000_000n;
+  const fraction = value % 1_000_000n;
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+  return `${whole}.${fraction.toString().padStart(6, "0").replace(/0+$/, "")}`;
+}
+
 function assertSha256Hex(value: string, context: string) {
   if (!/^[a-f0-9]{64}$/.test(value)) {
     throw new Error(`${context} must be a lowercase sha256 hex digest.`);
@@ -5991,7 +6007,7 @@ export class ClawzControlPlane {
     const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
       ? Math.max(1, Math.min(Math.floor(options.limit), 500))
       : 100;
-    const entries = file.entries
+    const matchingEntries = file.entries
       .filter((entry) => {
         if (options.agentId && entry.agentId !== options.agentId) {
           return false;
@@ -6012,7 +6028,9 @@ export class ClawzControlPlane {
           return false;
         }
         return true;
-      })
+      });
+    const summary = this.buildPaymentLedgerSummary(matchingEntries);
+    const entries = matchingEntries
       .sort((left, right) => Date.parse(right.updatedAtIso) - Date.parse(left.updatedAtIso))
       .slice(0, limit)
       .map((entry) => ({
@@ -6026,7 +6044,35 @@ export class ClawzControlPlane {
       schemaVersion: "santaclawz-payment-ledger/1.0",
       generatedAtIso: new Date().toISOString(),
       totalLedgerEntryCount: file.entries.length,
+      summary,
       entries
+    };
+  }
+
+  private buildPaymentLedgerSummary(entries: PaymentLedgerEntry[]): NonNullable<PaymentLedgerState["summary"]> {
+    let completedPaymentCount = 0;
+    let completedBasePaymentCount = 0;
+    let completedSellerPayoutAtomic = 0n;
+    let completedBaseSellerPayoutAtomic = 0n;
+
+    for (const entry of entries) {
+      if (this.buildPaymentLedgerLifecycleStatus(entry).completionStatus !== "completed") {
+        continue;
+      }
+      const payoutAtomic = safeUsdAmountAtomic(entry.sellerNetAmountUsd ?? entry.amountUsd);
+      completedPaymentCount += 1;
+      completedSellerPayoutAtomic += payoutAtomic;
+      if (entry.rail === "base-usdc") {
+        completedBasePaymentCount += 1;
+        completedBaseSellerPayoutAtomic += payoutAtomic;
+      }
+    }
+
+    return {
+      completedPaymentCount,
+      completedBasePaymentCount,
+      completedSellerPayoutUsd: usdAmountFromAtomic(completedSellerPayoutAtomic),
+      completedBaseSellerPayoutUsd: usdAmountFromAtomic(completedBaseSellerPayoutAtomic)
     };
   }
 

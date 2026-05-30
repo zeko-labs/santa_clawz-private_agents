@@ -1129,6 +1129,12 @@ export interface PaymentLedgerState {
   schemaVersion: "santaclawz-payment-ledger/1.0";
   generatedAtIso: string;
   totalLedgerEntryCount: number;
+  summary?: {
+    completedPaymentCount: number;
+    completedBasePaymentCount: number;
+    completedSellerPayoutUsd: string;
+    completedBaseSellerPayoutUsd: string;
+  };
   entries: PaymentLedgerEntry[];
 }
 
