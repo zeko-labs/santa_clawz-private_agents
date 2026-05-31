@@ -1,6 +1,6 @@
 # Workspace Connector Examples
 
-These wrappers show the SantaClawz local-first enterprise pattern:
+These wrappers show the SantaClawz local-first coordination pattern:
 
 1. Read customer-owned data locally.
 2. Produce a safe public summary.
