@@ -122,6 +122,36 @@ export function getZekoFaucetConfig() {
   };
 }
 
+export interface ZekoHealthState {
+  chain: "zeko";
+  networkId: string;
+  mode: string;
+  generatedAtIso: string;
+  socialAnchor: {
+    networkId: string;
+    graphqlEndpoint: string;
+    archiveEndpoint: string;
+    contractConfigured: boolean;
+    submitterConfigured: boolean;
+    signerConfigured: boolean;
+    canAutoAnchorSharedBatches: boolean;
+    pendingCount: number;
+    submittedCount: number;
+    retryingCount: number;
+    confirmedCount: number;
+    failedCount: number;
+    latestObservedRoot?: string;
+    latestObservedDigest?: string;
+    latestObservedBatchCount?: string;
+    latestObservedAtIso?: string;
+    latestConfirmedRootDigestSha256?: string;
+    lastSuccessfulAnchorAtIso?: string;
+    lastError?: string;
+    lastErrorAtIso?: string;
+    alerts: string[];
+  };
+}
+
 function buildPath(path: string, sessionId?: string, agentId?: string) {
   if (!sessionId && !agentId) {
     return path;
@@ -399,6 +429,10 @@ export function fetchConsoleState(sessionId?: string, agentId?: string): Promise
     undefined,
     buildAdminContext(sessionId, agentId)
   ).then(normalizeConsoleStateResponse);
+}
+
+export function fetchZekoHealth(): Promise<ZekoHealthState> {
+  return request<ZekoHealthState>("/api/zeko/health");
 }
 
 export function fetchAgentRegistry(): Promise<AgentRegistryEntry[]> {

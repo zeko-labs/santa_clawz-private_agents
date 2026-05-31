@@ -29,6 +29,7 @@ import {
   fetchConsoleState,
   fetchPaymentLedger,
   fetchPublicSocialAnchors,
+  fetchZekoHealth,
   getApiBase,
   issueOwnershipChallenge,
   type OwnershipChallengeIssueResponse,
@@ -39,7 +40,8 @@ import {
   settleSocialAnchorBatch,
   sponsorWallet,
   updateAgentProfile,
-  verifyOwnershipChallenge
+  verifyOwnershipChallenge,
+  type ZekoHealthState
 } from "./api.js";
 import { BuyerWorkroom } from "./BuyerWorkroom.js";
 
@@ -250,6 +252,7 @@ const EXPLORE_AGENT_BOARD_POLL_MS = 8_000;
 const EXPLORE_VISIBLE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_AVAILABILITY_POLL_MS = 4_000;
 const AGENT_PROFILE_PAYMENT_POLL_MS = 4_000;
+const ZEKO_HEALTH_POLL_MS = 60_000;
 const EXPLORE_AGENTS_PAGE_SIZE = 12;
 type NavSectionKey = "activate" | "coordinate" | "explore";
 
@@ -2134,6 +2137,8 @@ export function App() {
   const [profile, setProfile] = useState<AgentProfileDraft>(normalizeProfileDraft());
   const [error, setError] = useState<string | null>(null);
   const [backgroundError, setBackgroundError] = useState<string | null>(null);
+  const [zekoHealth, setZekoHealth] = useState<ZekoHealthState | null>(null);
+  const [zekoHealthError, setZekoHealthError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [registry, setRegistry] = useState<AgentRegistryEntry[]>([]);
@@ -2272,6 +2277,39 @@ export function App() {
       cancelled = true;
     };
   }, [activeSection, selectedSessionId, sharedAgentId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    function refreshZekoHealth() {
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
+      void fetchZekoHealth()
+        .then((nextHealth) => {
+          if (cancelled) {
+            return;
+          }
+          setZekoHealth(nextHealth);
+          setZekoHealthError(null);
+        })
+        .catch((nextError: Error) => {
+          if (cancelled) {
+            return;
+          }
+          setZekoHealthError(nextError.message || "Zeko testnet status check failed.");
+        });
+    }
+
+    refreshZekoHealth();
+    const intervalId = window.setInterval(refreshZekoHealth, ZEKO_HEALTH_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   useEffect(() => {
     if (!state) {
@@ -2986,6 +3024,36 @@ export function App() {
     }
   }
 
+  function shortStatusDetail(detail?: string) {
+    const normalized = detail?.trim() ?? "";
+    return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
+  }
+
+  function zekoHealthWarningCopy() {
+    if (zekoHealthError) {
+      return `Zeko testnet status could not be checked. Public proof anchoring may be delayed. ${shortStatusDetail(zekoHealthError)}`;
+    }
+
+    const anchor = zekoHealth?.socialAnchor;
+    if (!anchor) {
+      return null;
+    }
+
+    const firstAlert = anchor.alerts?.[0];
+    const hasAnchorWarning = Boolean(firstAlert) || Boolean(anchor.lastError);
+    if (!hasAnchorWarning) {
+      return null;
+    }
+
+    const waitingCount = anchor.pendingCount + anchor.submittedCount + anchor.retryingCount;
+    const waitingCopy = waitingCount > 0
+      ? `${waitingCount} public proof milestone${waitingCount === 1 ? "" : "s"} waiting to anchor. `
+      : "";
+    const detail = shortStatusDetail(anchor.lastError ?? firstAlert);
+
+    return `Zeko testnet proof anchoring is degraded. ${waitingCopy}Jobs and Base payments can still complete, but public proof roots may be delayed. ${detail}`;
+  }
+
   function renderErrorBanner(message: string) {
     return (
       <div className="status-banner status-banner-with-action">
@@ -3015,6 +3083,7 @@ export function App() {
   const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
   const mastheadSteps = isCoordinateView ? "Agents: team, threads, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const zekoHealthWarning = zekoHealthWarningCopy();
 
   function renderHeader() {
     return (
@@ -3611,6 +3680,7 @@ export function App() {
         </section>
 
         {error ? renderErrorBanner(error) : null}
+        {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
 
         {error && activeSection !== "explore" && activeSection !== "coordinate" ? (
           <section className="step-stack">
@@ -4662,6 +4732,7 @@ export function App() {
       </section>
 
       {error ? renderErrorBanner(error) : null}
+      {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
       {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection === "coordinate" ? (
