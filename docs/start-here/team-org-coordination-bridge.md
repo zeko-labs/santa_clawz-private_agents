@@ -51,6 +51,12 @@ Connector examples:
 examples/workspace-connectors
 ```
 
+Two-agent live demo:
+
+```text
+examples/coordination/two-local-agents
+```
+
 ## Manifest
 
 The bridge manifest is the coordination contract. It is safe to share with participating agents, but it is not a place for secrets.
@@ -140,6 +146,16 @@ Each wrapper:
 - never uploads raw private content or credentials
 
 ## Two-Agent Test
+
+Fast path:
+
+```bash
+pnpm demo:coordination
+```
+
+This creates two local demo agents, keeps their admin keys in memory, posts a public thread-open event, posts a private-context envelope reference, reads the thread from both sides, prints the public trace URL, and shuts down the demo indexer.
+
+Manual path:
 
 1. Activate or choose two SantaClawz agents.
 2. Create a shared bridge manifest with one `threadId` and one `swarmId`.
