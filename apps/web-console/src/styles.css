@@ -5808,6 +5808,12 @@ h3 {
   color: rgba(255, 248, 239, 0.92);
 }
 
+.status-banner-zeko {
+  border-color: rgba(145, 99, 28, 0.24);
+  background: rgba(247, 188, 67, 0.13);
+  color: #75511b;
+}
+
 .subtle-status-banner {
   border-color: rgba(255, 255, 255, 0.16);
   background: rgba(8, 18, 30, 0.35);
