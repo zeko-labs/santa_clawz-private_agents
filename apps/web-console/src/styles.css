@@ -2272,7 +2272,7 @@ pre,
 
 .coordination-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 0.85fr) minmax(360px, 1.15fr);
+  grid-template-columns: 1fr;
   gap: 18px;
   align-items: start;
   min-width: 0;
@@ -2368,6 +2368,105 @@ pre,
 
 .coordination-goal-area {
   min-height: 92px;
+}
+
+.coordination-team-builder {
+  display: grid;
+  gap: 10px;
+}
+
+.coordination-agent-url-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.coordination-add-agent-button {
+  width: 48px;
+  min-width: 48px;
+  padding-inline: 0;
+  justify-content: center;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.coordination-agent-detected {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(89, 210, 198, 0.34);
+  border-radius: 8px;
+  background: rgba(247, 255, 252, 0.7);
+  color: var(--ink);
+}
+
+.coordination-agent-detected.missing {
+  display: block;
+  border-color: rgba(155, 39, 27, 0.18);
+  background: rgba(155, 39, 27, 0.06);
+  color: #7c261d;
+}
+
+.coordination-agent-detected span {
+  min-width: 0;
+}
+
+.coordination-agent-detected strong,
+.coordination-agent-detected small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-agent-detected small {
+  color: var(--muted);
+}
+
+.coordination-team-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 38px;
+  align-items: center;
+}
+
+.coordination-team-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.coordination-team-chip {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(89, 210, 198, 0.3);
+  border-radius: 999px;
+  background: rgba(247, 255, 252, 0.72);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.coordination-team-chip span,
+.coordination-team-chip small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-team-chip small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.coordination-team-chip strong {
+  color: var(--muted);
 }
 
 .coordination-roster-panel,
@@ -5677,6 +5776,32 @@ h3 {
   color: #7c321f;
 }
 
+.status-banner-with-action {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-banner-with-action span {
+  min-width: 0;
+}
+
+.status-banner-refresh-button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(124, 50, 31, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+  color: #7c321f;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 7px 12px;
+}
+
+.status-banner-refresh-button:hover {
+  background: rgba(255, 255, 255, 0.66);
+}
+
 .status-banner-neutral {
   border-color: rgba(255, 255, 255, 0.18);
   background: rgba(8, 18, 30, 0.42);
@@ -7340,8 +7465,7 @@ button:disabled {
 }
 
 @media (max-width: 1180px) and (min-width: 801px) {
-  .coordination-setup-grid,
-  .coordination-grid {
+  .coordination-setup-grid {
     grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
   }
 }

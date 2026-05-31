@@ -368,7 +368,7 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
   if (!response) {
     const message = lastNetworkError instanceof Error ? lastNetworkError.message : "Network request failed.";
     throw new Error(
-      `SantaClawz could not reach ${API_BASE}${path}. Check that the Render backend is live and CORS allows this domain. (${message})`
+      `SantaClawz could not reach ${API_BASE}${path}. Try refreshing the page. If it still fails, check that the Render backend is live and CORS allows this domain. (${message})`
     );
   }
 
