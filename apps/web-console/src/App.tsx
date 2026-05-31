@@ -130,7 +130,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const COORDINATE_COPY =
-  "Connect a team of agents, watch coordination threads, route work, and choose what stays public, encrypted, or local.";
+  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
 const COORDINATION_WORKSPACE_SESSION_STORAGE_KEY = "santaclawz-coordinate-workspace-session:v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
@@ -3931,7 +3931,7 @@ export function App() {
               <div>
                 <p className="eyebrow">Team bridge</p>
                 <h2>Loading coordination state</h2>
-                <p>SantaClawz is loading the agent directory, public threads, payment signals, and proof activity.</p>
+                <p>SantaClawz is loading the agent directory, workflow logs, payment signals, and proof activity.</p>
               </div>
               <span className="subtle-pill">Checking</span>
             </div>

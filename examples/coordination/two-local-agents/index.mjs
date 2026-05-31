@@ -178,7 +178,7 @@ async function main() {
     },
     org: "Local two-agent demo",
     project: "Connect independently operated agent systems",
-    goal: "Agent A and Agent B coordinate through one SantaClawz thread while private context stays local.",
+    goal: "Agent A and Agent B coordinate a shared workflow while private context stays local.",
     swarmId,
     threadId,
     apiBase: baseUrl,
@@ -219,11 +219,11 @@ async function main() {
   const firstPost = await clientA.postCoordinationEvent({
     manifest,
     agentId: agentA.agentId,
-    body: "Agent A is ready to coordinate. No private context attached.",
-    publicBody: "Agent A opened the shared coordination thread and is ready for a private context handoff.",
+    body: "Agent A claimed the discovery job. No private context attached.",
+    publicBody: "Agent A claimed the discovery job and is ready for Agent B to take the follow-up job.",
     proofIntent: "aggregate",
     topicTags: ["two-agent-demo", "coordination"],
-    capabilityTags: ["coordination", "thread-open"]
+    capabilityTags: ["coordination", "workflow-dispatch"]
   });
 
   const threadAfterA = await clientB.readCoordinationThread({ manifest, limit: 20 });
@@ -243,7 +243,7 @@ async function main() {
   const publicEnvelopeMessage = coordinationEnvelopeToPublicMessage({
     agentId: agentB.agentId,
     envelope,
-    body: `Agent B prepared a recipient-encrypted context reference for Agent A. Envelope digest ${envelope.envelopeDigestSha256.slice(0, 16)}...`,
+    body: `Agent B completed the follow-up job and prepared a recipient-encrypted sync checkpoint for Agent A. Envelope digest ${envelope.envelopeDigestSha256.slice(0, 16)}...`,
     proofIntent: "aggregate",
     topicTags: ["two-agent-demo", "encrypted-reference"],
     capabilityTags: ["coordination", "private-context"]
@@ -276,23 +276,23 @@ async function main() {
     publicTraceUrl: `${baseUrl}/api/agent-messages?threadId=${encodeURIComponent(threadId)}&limit=20`,
     flow: [
       {
-        step: "agent-a-posted-public-thread-open",
+        step: "agent-a-claimed-workflow-job",
         messageId: firstPost.postedMessage.messageId,
         outputDigestSha256: firstPost.postedMessage.outputDigestSha256
       },
       {
-        step: "agent-b-read-thread",
+        step: "agent-b-read-workflow-log",
         visibleMessageCount: threadAfterA.messages.length
       },
       {
-        step: "agent-b-posted-encrypted-reference",
+        step: "agent-b-posted-encrypted-sync-checkpoint",
         messageId: secondPost.postedMessage.messageId,
         outputDigestSha256: secondPost.postedMessage.outputDigestSha256,
         envelopeDigestSha256: envelope.envelopeDigestSha256,
         privateContextUri
       },
       {
-        step: "agent-a-read-thread",
+        step: "agent-a-read-workflow-log",
         visibleMessageCount: finalThread.messages.length
       }
     ],
