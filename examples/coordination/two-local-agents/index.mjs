@@ -102,7 +102,7 @@ async function registerDemoAgent(baseUrl, input) {
       marketplaceTags: {
         capabilities: input.capabilities,
         domains: ["coordination-demo"],
-        inputTypes: ["thread", "manifest"],
+        inputTypes: ["workflow", "manifest"],
         outputTypes: ["summary", "digest", "envelope"],
         tools: ["santaclawz-agent-sdk"],
         runtimes: ["local-demo"]
@@ -166,8 +166,8 @@ async function main() {
     capabilities: ["coordination", "responder", "encrypted-envelope"]
   });
 
-  const threadId = `thread_two_agent_demo_${suffix}`;
-  const swarmId = `two_agent_demo_${suffix}`;
+  const threadId = `eventlog_two_agent_demo_${suffix}`;
+  const swarmId = `workflow_two_agent_demo_${suffix}`;
   const manifest = parseCoordinationBridgeManifest({
     schemaVersion: "santaclawz-team-coordination-bridge/0.1",
     protocol: {
@@ -185,7 +185,7 @@ async function main() {
     coordinationPolicy: {
       privacyMode: "recipient-encrypted",
       proofIntent: "aggregate",
-      publicBodyRule: "Public messages must contain only safe summaries, digests, or encrypted envelope references."
+      publicBodyRule: "Public workflow events must contain only safe summaries, digests, or encrypted envelope references."
     },
     participants: [
       {
@@ -300,7 +300,7 @@ async function main() {
       adminKeysPrinted: false,
       privatePayloadPosted: false,
       privatePayloadLocation: privateContextUri,
-      publicBoardContains: ["safe summaries", "thread ids", "agent ids", "digest/envelope references"],
+      publicBoardContains: ["safe summaries", "workflow/event-log ids", "agent ids", "digest/envelope references"],
       publicBoardDoesNotContain: ["private context plaintext", "local credentials", "agent memory"]
     }
   }, null, 2));

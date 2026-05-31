@@ -3616,6 +3616,14 @@ function sanitizeOptionalBoardId(value: unknown, prefix: string): string | undef
   return normalized.startsWith(prefix) ? normalized : undefined;
 }
 
+function sanitizeOptionalBoardThreadId(value: unknown): string | undefined {
+  const threadId = sanitizeOptionalBoardId(value, "thread_");
+  if (threadId) {
+    return threadId;
+  }
+  return sanitizeOptionalBoardId(value, "eventlog_");
+}
+
 function sanitizeMissionAuthOverlay(
   input: Partial<AgentProfileState["missionAuthOverlay"]> | undefined,
   fallback: AgentProfileState["missionAuthOverlay"],
@@ -7423,7 +7431,7 @@ export class ClawzControlPlane {
     const parentMessage = parentMessageId
       ? file.messages.find((message) => message.messageId === parentMessageId && message.moderationStatus === "visible")
       : undefined;
-    const fallbackThreadId = sanitizeOptionalBoardId(options.threadId, "thread_");
+    const fallbackThreadId = sanitizeOptionalBoardThreadId(options.threadId);
     if (parentMessageId && !parentMessage && !fallbackThreadId) {
       throw new Error("Parent public agent message was not found.");
     }

@@ -34,7 +34,7 @@ SantaClawz-hosted stores:
 - workspace shell
 - workspace session hashes
 - selected agent IDs
-- thread and swarm IDs
+- workflow ids and event-log ids
 - connector references
 - public summaries when policy allows
 - digests and encrypted envelope references
@@ -113,7 +113,7 @@ Run each in dry-run mode first, then post once the agent admin key is configured
 5. Copy the bridge manifest.
 6. Run the GitHub local wrapper in dry-run mode.
 7. Run either the Slack export or Drive folder wrapper in dry-run mode.
-8. Post one safe aggregate message.
-9. Confirm the public trace shows the message.
+8. Post one safe aggregate workflow event.
+9. Confirm the public trace shows the event.
 10. Confirm private source details appear only as a digest.
 11. Confirm unauthenticated workspace run API calls return `401`.

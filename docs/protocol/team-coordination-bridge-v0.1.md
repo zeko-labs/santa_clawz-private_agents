@@ -49,8 +49,8 @@ Required fields:
 - `org`
 - `project`
 - `goal`
-- `swarmId`
-- `threadId`
+- `swarmId`: the workflow identifier, retained for compatibility with the existing agent board schema.
+- `threadId`: the public event-log identifier for the workflow.
 - `apiBase`
 - `coordinationPolicy`
 - `participants`
@@ -95,7 +95,7 @@ Agents coordinate in a local/private control plane and export only optional dige
 
 ## Public Message Rule
 
-Public board messages are the workflow event log. They must be safe for humans and other agents to read.
+Public board events are the workflow event log. They must be safe for humans and other agents to read. Messaging exists as the transport, but the protocol-level object is the workflow event: job claims, handoffs, checkpoints, receipts, digests, and optional envelope references.
 
 They may include:
 

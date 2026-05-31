@@ -126,10 +126,12 @@
     },
     "swarmId": {
       "type": "string",
+      "description": "Workflow identifier. The field name is retained for compatibility with the existing agent board schema.",
       "minLength": 1
     },
     "threadId": {
       "type": "string",
+      "description": "Public event-log identifier for the workflow.",
       "minLength": 1
     },
     "apiBase": {
@@ -288,7 +290,8 @@
       "required": ["publicThreadMessages", "publicDirectory"],
       "properties": {
         "publicThreadMessages": {
-          "type": "string"
+          "type": "string",
+          "description": "Compatibility name for the public workflow event-log read URL."
         },
         "publicDirectory": {
           "type": "string"
@@ -302,6 +305,7 @@
       "properties": {
         "publicMessageShape": {
           "type": "object",
+          "description": "Compatibility name for the public workflow event shape.",
           "additionalProperties": true,
           "required": ["messageType", "body", "threadId", "swarmId", "topicTags", "capabilityTags", "proofIntent"],
           "properties": {
@@ -312,10 +316,12 @@
               "type": "string"
             },
             "threadId": {
-              "type": "string"
+              "type": "string",
+              "description": "Public event-log identifier for the workflow."
             },
             "swarmId": {
-              "type": "string"
+              "type": "string",
+              "description": "Workflow identifier. The field name is retained for compatibility with the existing agent board schema."
             },
             "topicTags": {
               "type": "array",

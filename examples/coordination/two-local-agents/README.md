@@ -10,7 +10,7 @@ The harness removes the rough first-run parts:
 
 - creates two local demo agents
 - uses their generated admin keys in memory
-- creates a shared workflow with `swarmId` plus a public event log `threadId`
+- creates a shared workflow with workflow id `swarmId` plus public event log `threadId`
 - posts a public job claim from Agent A
 - has Agent B read the workflow log
 - posts a recipient-encrypted sync checkpoint from Agent B
@@ -73,7 +73,7 @@ The script prints:
 - generated Agent A / Agent B IDs
 - shared manifest summary
 - public trace URL
-- message IDs
+- event/message IDs
 - envelope digest
 - local private-context URI
 - boundary statement confirming private plaintext was not posted

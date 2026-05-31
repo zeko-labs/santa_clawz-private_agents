@@ -1853,9 +1853,9 @@ function defaultCoordinationDraft(): CoordinationDraft {
     workspaceDomain: "example.com",
     identityProvider: "email-code",
     projectName: "Market launch review",
-    goal: "Coordinate research, critique, and synthesis agents around one shared decision package.",
-    threadId: "thread_team_launch_review",
-    swarmId: "team_launch_review",
+    goal: "Coordinate research, critique, and synthesis agents through job claims and sync checkpoints around one shared decision package.",
+    threadId: "eventlog_team_launch_review",
+    swarmId: "workflow_team_launch_review",
     budgetUsd: "1.00",
     requesterContact: "team-bridge@example.com",
     privacyMode: "digest-only",
@@ -2020,7 +2020,7 @@ function buildBridgeManifest(input: {
           canonicalStores: [
             "workspace shell",
             "agent ids",
-            "thread and swarm ids",
+            "workflow ids and event-log ids",
             "privacy policy lane",
             "public summaries when allowed",
             "digests and encrypted envelope references",
@@ -2077,8 +2077,8 @@ function buildBridgeManifest(input: {
         proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "digest_or_envelope",
         publicBodyRule:
           input.draft.privacyMode === "public-summary"
-            ? "Public messages may include safe summaries."
-            : "Public messages must avoid private payloads; use digest-backed or encrypted envelopes."
+            ? "Public workflow events may include safe summaries."
+            : "Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
       },
       participants: input.agents.map((agent) => ({
         agentId: agent.agentId,
@@ -2095,14 +2095,14 @@ function buildBridgeManifest(input: {
       write: {
         publicMessageShape: {
           messageType: "dispatch",
-          body: "Safe public coordination update.",
+          body: "Safe workflow checkpoint.",
           threadId: input.draft.threadId,
           swarmId: input.draft.swarmId,
           topicTags: ["team-coordination", input.draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")],
           capabilityTags: tagCsvToList(input.draft.requiredCapabilities),
           proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "agent_chatter"
         },
-        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private payloads."
+        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private workflow payloads."
       }
     },
     null,
@@ -3268,7 +3268,7 @@ export function App() {
   const mastheadCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
-  const mastheadSteps = isCoordinateView ? "Agents: team, threads, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const mastheadSteps = isCoordinateView ? "Bridge: roster, workflow, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
   const zekoHealthWarning = zekoHealthWarningCopy();
 
   function renderHeader() {
@@ -4683,7 +4683,7 @@ export function App() {
           "",
           coordinationDraft.goal,
           "",
-          `Coordinate through SantaClawz thread ${coordinationDraft.threadId} and swarm ${coordinationDraft.swarmId}.`,
+          `Coordinate workflow ${coordinationDraft.swarmId} through SantaClawz event log ${coordinationDraft.threadId}.`,
           `Workspace: ${coordinationDraft.orgName} (${coordinationDraft.workspaceDomain}) via ${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)}.`,
           `Selected agents: ${selectedCoordinationAgents.map((agent) => agent.agentId).join(", ") || "open roster"}.`,
           `Tool touchpoints: ${toolTouchpoints.join(", ") || "none declared"}.`,
@@ -4938,9 +4938,9 @@ export function App() {
                   <small>{coordinationSessionActive ? coordinationWorkspaceSession?.email : coordinationDraft.workspaceDomain}</small>
                 </div>
                 <div>
-                  <span>Trace</span>
+                  <span>Workflow</span>
                   <strong>{coordinationThreads.length}</strong>
-                  <small>{coordinationMessages.length} messages</small>
+                  <small>{coordinationMessages.length} events</small>
                 </div>
                 <div>
                   <span>Data</span>
@@ -4960,8 +4960,8 @@ export function App() {
               </div>
 
               <div className="coordination-ids">
-                <span>Thread <strong>{coordinationDraft.threadId}</strong></span>
-                <span>Swarm <strong>{coordinationDraft.swarmId}</strong></span>
+                <span>Event log <strong>{coordinationDraft.threadId}</strong></span>
+                <span>Workflow <strong>{coordinationDraft.swarmId}</strong></span>
               </div>
 
               <div className="coordination-envelope-strip">
@@ -5114,7 +5114,7 @@ export function App() {
                   <span className="subtle-pill live">Workspace saved</span>
                   <code>{coordinationWorkspaceResult.run.runId}</code>
                   <small>
-                    {coordinationWorkspaceResult.stats.publicMessageCount} public messages • {coordinationWorkspaceResult.stats.selectedAgentCount} agents • hosted org data {String(coordinationWorkspaceResult.stats.hostedOrgData)}
+                    {coordinationWorkspaceResult.stats.publicMessageCount} public events • {coordinationWorkspaceResult.stats.selectedAgentCount} agents • hosted org data {String(coordinationWorkspaceResult.stats.hostedOrgData)}
                   </small>
                 </div>
               ) : null}
@@ -5127,7 +5127,7 @@ export function App() {
             <div className="section-head compact-head">
               <div>
                 <p className="eyebrow">Observability</p>
-                <h2>Public coordination trace</h2>
+                <h2>Public workflow trace</h2>
               </div>
               <button
                 type="button"
@@ -5136,15 +5136,15 @@ export function App() {
                   void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
                 }}
               >
-                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy feed URL"}
+                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
               </button>
             </div>
 
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>No matching thread traffic yet</strong>
-                  <p className="panel-copy">Agents can post public summaries to this thread while keeping private work in envelopes or local systems.</p>
+                  <strong>No workflow events yet</strong>
+                  <p className="panel-copy">Agents can claim jobs and sync checkpoints here while keeping private work in envelopes or local systems.</p>
                 </article>
               ) : (
                 coordinationThreads.slice(0, 6).map((thread) => (
@@ -5152,7 +5152,7 @@ export function App() {
                     <div className="coordination-thread-head">
                       <div>
                         <strong>{thread.threadId || thread.swarmId || thread.key}</strong>
-                        <span>{thread.messages.length} messages • latest {formatRelativeTime(thread.latestAtIso)}</span>
+                        <span>{thread.messages.length} events • latest {formatRelativeTime(thread.latestAtIso)}</span>
                       </div>
                       <span className="board-proof-pill confirmed">public trace</span>
                     </div>
