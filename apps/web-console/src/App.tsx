@@ -1855,18 +1855,45 @@ function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
   return "Post only digests and safe metadata to the canonical network.";
 }
 
-function agentCoordinationScore(agent: AgentRegistryEntry) {
-  return (
-    (agent.runtimeStatus === "live" ? 4 : 0) +
-    (agent.paymentProfileReady ? 2 : 0) +
-    (agent.paidExecutionReady ? 2 : 0) +
-    Math.min(4, agent.completionScore?.completedJobCount ?? 0) +
-    Math.min(3, marketplaceTagsForDisplay(agent.marketplaceTags, 6).length)
-  );
-}
-
 function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
+}
+
+function extractAgentIdFromCoordinationInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const agentIdPattern = /[a-z0-9][a-z0-9-]*--session_agent_[a-z0-9]+/i;
+  const directMatch = trimmed.match(agentIdPattern);
+  if (directMatch) {
+    return directMatch[0];
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const pathMatch = decodeURIComponent(url.pathname).match(agentIdPattern);
+    return pathMatch?.[0] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function findCoordinationAgentFromInput(value: string, registry: AgentRegistryEntry[]) {
+  const normalizedInput = value.trim();
+  if (!normalizedInput) {
+    return undefined;
+  }
+  const extractedAgentId = extractAgentIdFromCoordinationInput(normalizedInput);
+  return registry.find((agent) => {
+    if (agent.agentId === extractedAgentId) {
+      return true;
+    }
+    return [agent.publicAgentUrl, agent.publicHireUrl]
+      .filter((url): url is string => Boolean(url))
+      .some((url) => url.trim() === normalizedInput);
+  });
 }
 
 function buildBridgeManifest(input: {
@@ -2127,6 +2154,7 @@ export function App() {
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(defaultCoordinationDraft());
   const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
+  const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
@@ -2986,7 +3014,7 @@ export function App() {
   const mastheadCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
-  const mastheadSteps = isCoordinateView ? "Bridge: roster, threads, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const mastheadSteps = isCoordinateView ? "Agents: team, threads, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
 
   function renderHeader() {
     return (
@@ -3904,23 +3932,22 @@ export function App() {
     (currentExploreAgentPage - 1) * EXPLORE_AGENTS_PAGE_SIZE,
     currentExploreAgentPage * EXPLORE_AGENTS_PAGE_SIZE
   );
-  const coordinationCandidates = [...registry]
-    .sort((left, right) => {
-      const scoreDelta = agentCoordinationScore(right) - agentCoordinationScore(left);
-      if (scoreDelta !== 0) {
-        return scoreDelta;
-      }
-      return (right.lastUpdatedAtIso ?? "").localeCompare(left.lastUpdatedAtIso ?? "");
-    })
-    .slice(0, 18);
-  const defaultCoordinationAgentIds = coordinationCandidates.slice(0, 4).map((agent) => agent.agentId);
-  const effectiveCoordinationAgentIds =
-    coordinationAgentIds.length > 0 ? coordinationAgentIds : defaultCoordinationAgentIds;
-  const selectedCoordinationAgents = effectiveCoordinationAgentIds
+  const selectedCoordinationAgents = coordinationAgentIds
     .map((agentId) => registryByAgentId.get(agentId))
     .filter((agent): agent is AgentRegistryEntry => Boolean(agent))
     .slice(0, 8);
   const selectedCoordinationAgentIdSet = new Set(selectedCoordinationAgents.map((agent) => agent.agentId));
+  const coordinationLookupAgent = findCoordinationAgentFromInput(coordinationAgentUrl, registry);
+  const coordinationLookupAlreadyAdded = Boolean(
+    coordinationLookupAgent && selectedCoordinationAgentIdSet.has(coordinationLookupAgent.agentId)
+  );
+  const coordinationLookupStatus = coordinationAgentUrl.trim()
+    ? coordinationLookupAgent
+      ? coordinationLookupAlreadyAdded
+        ? "Already on this team"
+        : "Registered agent found"
+      : "No registered agent found for that URL"
+    : "";
   const coordinationMessages = agentBoard.messages
     .filter((message) =>
       selectedCoordinationAgentIdSet.has(message.agentId) ||
@@ -4172,12 +4199,20 @@ export function App() {
 
   function toggleCoordinationAgent(agentId: string) {
     setCoordinationAgentIds((current) => {
-      const baseSelection = current.length > 0 ? current : defaultCoordinationAgentIds;
-      if (baseSelection.includes(agentId)) {
-        return baseSelection.filter((selectedAgentId) => selectedAgentId !== agentId);
+      if (current.includes(agentId)) {
+        return current.filter((selectedAgentId) => selectedAgentId !== agentId);
       }
-      return [...baseSelection, agentId].slice(0, 8);
+      return [...current, agentId].slice(0, 8);
     });
+    setCoordinationError(null);
+  }
+
+  function addCoordinationLookupAgent() {
+    if (!coordinationLookupAgent || coordinationLookupAlreadyAdded) {
+      return;
+    }
+    setCoordinationAgentIds((current) => [...current, coordinationLookupAgent.agentId].slice(0, 8));
+    setCoordinationAgentUrl("");
     setCoordinationError(null);
   }
 
@@ -4256,8 +4291,70 @@ export function App() {
             >
               <div className="section-head compact-head">
                 <div>
-                  <p className="eyebrow">Bridge setup</p>
                   <h2>Start a team agent run</h2>
+                </div>
+              </div>
+
+              <div className="coordination-team-builder">
+                <label className="field coordination-agent-url-field">
+                  <span>Agent profile or hire URL</span>
+                  <div className="coordination-agent-url-row">
+                    <input
+                      className="text-input"
+                      value={coordinationAgentUrl}
+                      onChange={(event: ValueInputEvent) => {
+                        setCoordinationAgentUrl(event.target.value);
+                      }}
+                      placeholder="https://www.santaclawz.ai/agent/..."
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button coordination-add-agent-button"
+                      disabled={!coordinationLookupAgent || coordinationLookupAlreadyAdded}
+                      onClick={addCoordinationLookupAgent}
+                      aria-label="Add agent to team"
+                    >
+                      +
+                    </button>
+                  </div>
+                </label>
+
+                {coordinationLookupStatus ? (
+                  <div className={coordinationLookupAgent ? "coordination-agent-detected" : "coordination-agent-detected missing"}>
+                    {coordinationLookupAgent ? (
+                      <>
+                        <span className="explore-card-avatar subtle">{agentInitials(coordinationLookupAgent.agentName)}</span>
+                        <span>
+                          <strong>{coordinationLookupAgent.agentName}</strong>
+                          <small>{coordinationLookupStatus} • {presenceStatusLabel(coordinationLookupAgent.runtimeStatus)}</small>
+                        </span>
+                      </>
+                    ) : (
+                      <span>{coordinationLookupStatus}</span>
+                    )}
+                  </div>
+                ) : null}
+
+                <div className="coordination-team-list" aria-label="Selected coordination agents">
+                  {selectedCoordinationAgents.length === 0 ? (
+                    <span className="coordination-team-empty">Paste an agent URL above, then add it to the team.</span>
+                  ) : (
+                    selectedCoordinationAgents.map((agent) => (
+                      <button
+                        key={agent.agentId}
+                        type="button"
+                        className="coordination-team-chip"
+                        onClick={() => {
+                          toggleCoordinationAgent(agent.agentId);
+                        }}
+                        title="Remove from team"
+                      >
+                        <span>{agent.agentName}</span>
+                        <small>{presenceStatusLabel(agent.runtimeStatus)}</small>
+                        <strong aria-hidden="true">×</strong>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -4409,53 +4506,6 @@ export function App() {
         </section>
 
         <div className="coordination-grid">
-          <section className="panel coordination-roster-panel">
-            <div className="section-head compact-head">
-              <div>
-                <p className="eyebrow">Roster</p>
-                <h2>Participants</h2>
-              </div>
-              <span className="subtle-pill">{coordinationCandidates.length} candidates</span>
-            </div>
-
-            <div className="coordination-agent-list">
-              {coordinationCandidates.length === 0 ? (
-                <article className="coordination-empty-card">
-                  <strong>No public agents yet</strong>
-                  <p className="panel-copy">Activate agents first, then return here to form an org bridge.</p>
-                </article>
-              ) : (
-                coordinationCandidates.map((agent) => {
-                  const selected = selectedCoordinationAgentIdSet.has(agent.agentId);
-                  return (
-                    <button
-                      key={agent.agentId}
-                      type="button"
-                      className={`coordination-agent-card${selected ? " selected" : ""}`}
-                      onClick={() => {
-                        toggleCoordinationAgent(agent.agentId);
-                      }}
-                    >
-                      <span className="explore-card-avatar subtle">{agentInitials(agent.agentName)}</span>
-                      <span className="coordination-agent-copy">
-                        <strong>{agent.agentName}</strong>
-                        <small>{agent.headline || agent.representedPrincipal || agent.agentId}</small>
-                        <span className="coordination-agent-tags">
-                          {marketplaceTagsForDisplay(agent.marketplaceTags, 3).map((tag) => (
-                            <span key={`${agent.agentId}-${tag}`} className="explore-tag">{tag}</span>
-                          ))}
-                        </span>
-                      </span>
-                      <span className={`agent-card-status-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
-                        {presenceStatusLabel(agent.runtimeStatus)}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </section>
-
           <section className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
