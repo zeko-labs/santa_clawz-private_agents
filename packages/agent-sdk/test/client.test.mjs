@@ -130,9 +130,12 @@ async function main() {
       artifactBytesDigestMatches,
       buildClawzFeeStackPreview,
       buildClawzFeeSplitExactPaymentPayload,
+      buildCoordinationEnvelope,
       buildClawzQuoteAcceptanceWalletProof,
       buildSantaClawzBuyerInboxEnvelope,
       buyerInboxEnvelopeDigestSha256,
+      coordinationEnvelopeToPublicMessage,
+      parseCoordinationBridgeManifest,
       validateClawzFeeCompatibility,
       withClawzPlatformRetry
     } = await import(
@@ -338,6 +341,52 @@ async function main() {
       sessionId: pricingUpdate.sessionId
     });
     assert.equal(restoreUpdate.profile.availability, "active");
+
+    const coordinationManifest = parseCoordinationBridgeManifest({
+      schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+      org: "SDK test org",
+      project: "Coordination SDK",
+      goal: "Post safe digest-backed coordination updates.",
+      swarmId: "sdk_coordination_swarm",
+      threadId: "thread_sdk_coordination",
+      apiBase: baseUrl,
+      coordinationPolicy: {
+        privacyMode: "recipient-encrypted"
+      },
+      participants: [
+        {
+          agentId: pricingUpdate.agentId,
+          name: "SDK enrollment agent"
+        }
+      ]
+    });
+    const coordinationEnvelope = buildCoordinationEnvelope({
+      manifest: coordinationManifest,
+      senderAgentId: pricingUpdate.agentId,
+      body: "Private packet stored locally.",
+      uri: "local://sdk/private-packet",
+      proofIntent: "aggregate"
+    });
+    assert.equal(coordinationEnvelope.visibility, "recipient-encrypted");
+    assert.match(coordinationEnvelope.envelopeDigestSha256, /^[a-f0-9]{64}$/);
+    const coordinationMessage = coordinationEnvelopeToPublicMessage({
+      agentId: pricingUpdate.agentId,
+      envelope: coordinationEnvelope
+    });
+    assert.equal(coordinationMessage.threadId, "thread_sdk_coordination");
+    assert.equal(coordinationMessage.outputDigestSha256, coordinationEnvelope.envelopeDigestSha256);
+    const postedCoordination = await adminClient.postCoordinationEvent({
+      manifest: coordinationManifest,
+      agentId: pricingUpdate.agentId,
+      body: "Private packet stored locally.",
+      uri: "local://sdk/private-packet",
+      proofIntent: "aggregate"
+    });
+    assert.equal(postedCoordination.ok, true);
+    assert.equal(postedCoordination.postedMessage.threadId, "thread_sdk_coordination");
+    assert.equal(postedCoordination.postedMessage.outputDigestSha256.length, 64);
+    const coordinationThread = await client.readCoordinationThread({ manifest: coordinationManifest, limit: 10 });
+    assert.ok(coordinationThread.messages.some((message) => message.threadId === "thread_sdk_coordination"));
 
     const currentBundle = await client.getProofBundle();
     assert.notEqual(currentBundle.bundleDigest.sha256Hex, bundle.bundleDigest.sha256Hex);

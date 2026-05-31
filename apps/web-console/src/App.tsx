@@ -79,6 +79,12 @@ type CoordinationDraft = {
   requiredCapabilities: string;
   toolTouchpoints: string;
 };
+type CoordinationEnvelopeDraft = {
+  body: string;
+  uri: string;
+  recipientAgentId: string;
+  recipientPublicKey: string;
+};
 type CoordinationEmailChallenge = {
   workspaceId: string;
   challengeId: string;
@@ -1858,6 +1864,38 @@ function defaultCoordinationDraft(): CoordinationDraft {
   };
 }
 
+function defaultCoordinationEnvelopeDraft(): CoordinationEnvelopeDraft {
+  return {
+    body: "Private workspace packet stored in the local connector wrapper.",
+    uri: "local://workspace/private-packet",
+    recipientAgentId: "",
+    recipientPublicKey: ""
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => {
+    return `${JSON.stringify(key)}:${stableJsonStringify((value as Record<string, unknown>)[key])}`;
+  }).join(",")}}`;
+}
+
+function simpleEnvelopeDigest(value: unknown) {
+  const stableValue = stableJsonStringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < stableValue.length; index += 1) {
+    hash ^= stableValue.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  const shortHash = (hash >>> 0).toString(16).padStart(8, "0");
+  return shortHash.repeat(8).slice(0, 64);
+}
+
 function coordinationIdentityProviderLabel(provider: CoordinationDraft["identityProvider"]) {
   if (provider === "google") {
     return "Google";
@@ -1964,6 +2002,12 @@ function buildBridgeManifest(input: {
   return JSON.stringify(
     {
       schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+      protocol: {
+        name: "santaclawz-team-coordination-bridge",
+        stability: "early-adopter",
+        compatibleEnvelopeVersions: ["santaclawz-agent-message-envelope/1.0"],
+        compatiblePublicMessageBoard: "santaclawz-agent-board/1.0"
+      },
       hostedWorkspace: {
         org: input.draft.orgName,
         workspaceDomain: input.draft.workspaceDomain,
@@ -2273,6 +2317,7 @@ export function App() {
   const [exploreAgentPage, setExploreAgentPage] = useState(1);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(defaultCoordinationDraft());
+  const [coordinationEnvelopeDraft, setCoordinationEnvelopeDraft] = useState<CoordinationEnvelopeDraft>(defaultCoordinationEnvelopeDraft());
   const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
@@ -4217,6 +4262,61 @@ export function App() {
       ? "Email code"
       : `${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)} declared`;
   const workspaceSaveReady = routeWorkReady && coordinationSessionActive;
+  const coordinationEnvelopeSender = selectedCoordinationAgents[0]?.agentId ?? "agent_coordination_sender";
+  const coordinationEnvelopeRecipient =
+    coordinationEnvelopeDraft.recipientAgentId.trim() || selectedCoordinationAgents[1]?.agentId || selectedCoordinationAgents[0]?.agentId || "";
+  const coordinationEnvelopeDigest = simpleEnvelopeDigest({
+    body: coordinationEnvelopeDraft.body,
+    uri: coordinationEnvelopeDraft.uri,
+    threadId: coordinationDraft.threadId,
+    swarmId: coordinationDraft.swarmId
+  });
+  const coordinationEnvelopeWithoutDigest = {
+    schemaVersion: "santaclawz-agent-message-envelope/1.0",
+    messageId: `msg_${coordinationEnvelopeDigest.slice(0, 24)}`,
+    threadId: coordinationDraft.threadId,
+    swarmId: coordinationDraft.swarmId,
+    sentAtIso: new Date().toISOString(),
+    kind: "dispatch",
+    visibility: "recipient-encrypted",
+    sender: { agentId: coordinationEnvelopeSender },
+    ...(coordinationEnvelopeRecipient
+      ? {
+          recipient: {
+            agentId: coordinationEnvelopeRecipient,
+            ...(coordinationEnvelopeDraft.recipientPublicKey.trim()
+              ? { publicKey: coordinationEnvelopeDraft.recipientPublicKey.trim() }
+              : {})
+          }
+        }
+      : {}),
+    protocolLaneTags: ["team-coordination", "recipient-encrypted"],
+    marketplaceTags: {
+      jobTags: ["team-coordination"],
+      capabilityTags: tagCsvToList(coordinationDraft.requiredCapabilities),
+      outputTags: ["encrypted-envelope", "digest"]
+    },
+    payload: {
+      mode: "encrypted-reference",
+      mediaType: "application/vnd.santaclawz.coordination+json",
+      digestSha256: coordinationEnvelopeDigest,
+      uri: coordinationEnvelopeDraft.uri,
+      encryption: {
+        scheme: coordinationEnvelopeDraft.recipientPublicKey.trim() ? "x25519-sealed-box" : "custom",
+        ...(coordinationEnvelopeDraft.recipientPublicKey.trim()
+          ? { recipientPublicKey: coordinationEnvelopeDraft.recipientPublicKey.trim() }
+          : {})
+      }
+    },
+    zekoAnchor: {
+      anchorMode: "aggregate"
+    }
+  };
+  const coordinationEnvelope = {
+    ...coordinationEnvelopeWithoutDigest,
+    envelopeDigestSha256: simpleEnvelopeDigest(coordinationEnvelopeWithoutDigest)
+  };
+  const coordinationEnvelopeJson = JSON.stringify(coordinationEnvelope, null, 2);
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4414,6 +4514,14 @@ export function App() {
   function updateCoordinationDraft(patch: Partial<CoordinationDraft>) {
     setCoordinationDraft({
       ...coordinationDraft,
+      ...patch
+    });
+    setCoordinationError(null);
+  }
+
+  function updateCoordinationEnvelopeDraft(patch: Partial<CoordinationEnvelopeDraft>) {
+    setCoordinationEnvelopeDraft({
+      ...coordinationEnvelopeDraft,
       ...patch
     });
     setCoordinationError(null);
@@ -4854,6 +4962,48 @@ export function App() {
               <div className="coordination-ids">
                 <span>Thread <strong>{coordinationDraft.threadId}</strong></span>
                 <span>Swarm <strong>{coordinationDraft.swarmId}</strong></span>
+              </div>
+
+              <div className="coordination-envelope-strip">
+                <div>
+                  <strong>Encrypted envelope</strong>
+                  <small>Public trace gets the digest; private payload stays in the local wrapper or recipient store.</small>
+                </div>
+                <div className="coordination-envelope-controls">
+                  <input
+                    className="text-input"
+                    value={coordinationEnvelopeDraft.uri}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationEnvelopeDraft({ uri: event.target.value });
+                    }}
+                    placeholder="encrypted reference uri"
+                  />
+                  <input
+                    className="text-input"
+                    value={coordinationEnvelopeDraft.recipientPublicKey}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationEnvelopeDraft({ recipientPublicKey: event.target.value });
+                    }}
+                    placeholder="recipient public key"
+                  />
+                </div>
+                <textarea
+                  className="text-area coordination-envelope-body"
+                  value={coordinationEnvelopeDraft.body}
+                  onChange={(event: ValueInputEvent) => {
+                    updateCoordinationEnvelopeDraft({ body: event.target.value });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("coordination-envelope", coordinationEnvelopeJson);
+                  }}
+                >
+                  {copiedKey === "coordination-envelope" ? "Copied" : "Copy envelope"}
+                </button>
+                <small className="coordination-dev-code">Digest: {coordinationEnvelope.envelopeDigestSha256}</small>
               </div>
 
               <div className="coordination-session-strip">

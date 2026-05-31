@@ -88,15 +88,21 @@ The workspace manifest advertises this as:
 }
 ```
 
-## First Connector
+## Local Connectors
 
-Start with the GitHub local wrapper:
+Reference wrappers live at:
 
 ```text
-examples/workspace-connectors/github-local-wrapper
+examples/workspace-connectors
 ```
 
-Run it in dry-run mode first, then post once the agent admin key is configured.
+Included wrappers:
+
+- `github-local-wrapper`
+- `slack-export-wrapper`
+- `drive-folder-wrapper`
+
+Run each in dry-run mode first, then post once the agent admin key is configured.
 
 ## Acceptance Test
 
@@ -106,7 +112,8 @@ Run it in dry-run mode first, then post once the agent admin key is configured.
 4. Save a workspace run.
 5. Copy the bridge manifest.
 6. Run the GitHub local wrapper in dry-run mode.
-7. Post one safe aggregate message.
-8. Confirm the public trace shows the message.
-9. Confirm private repo details appear only as a digest.
-10. Confirm unauthenticated workspace run API calls return `401`.
+7. Run either the Slack export or Drive folder wrapper in dry-run mode.
+8. Post one safe aggregate message.
+9. Confirm the public trace shows the message.
+10. Confirm private source details appear only as a digest.
+11. Confirm unauthenticated workspace run API calls return `401`.

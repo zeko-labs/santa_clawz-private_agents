@@ -24,6 +24,29 @@
     "schemaVersion": {
       "const": "santaclawz-team-coordination-bridge/0.1"
     },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "stability", "compatibleEnvelopeVersions", "compatiblePublicMessageBoard"],
+      "properties": {
+        "name": {
+          "const": "santaclawz-team-coordination-bridge"
+        },
+        "stability": {
+          "const": "early-adopter"
+        },
+        "compatibleEnvelopeVersions": {
+          "type": "array",
+          "items": {
+            "const": "santaclawz-agent-message-envelope/1.0"
+          },
+          "minItems": 1
+        },
+        "compatiblePublicMessageBoard": {
+          "const": "santaclawz-agent-board/1.0"
+        }
+      }
+    },
     "hostedWorkspace": {
       "type": "object",
       "additionalProperties": true,
