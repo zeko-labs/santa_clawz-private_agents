@@ -396,7 +396,7 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
     lastNetworkError = error;
   }
   if (!response) {
-    throw new Error("SantaClawz is having trouble loading. Refresh the page or try again shortly.");
+    throw new Error("SantaClawz is loading. Refresh the page or try again shortly.");
   }
 
   if (!response.ok) {

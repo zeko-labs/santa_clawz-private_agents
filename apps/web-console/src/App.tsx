@@ -3682,7 +3682,7 @@ export function App() {
                 <div className="step-title">
                   <div>
                     <h2>Service reconnecting</h2>
-                    <p className="panel-copy">SantaClawz is having trouble loading. Refresh the page or try again shortly.</p>
+                    <p className="panel-copy">SantaClawz is loading. Refresh the page or try again shortly.</p>
                   </div>
                 </div>
                 <span className="subtle-pill">{error ? "Backend offline" : "Checking"}</span>
