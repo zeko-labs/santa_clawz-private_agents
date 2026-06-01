@@ -5108,7 +5108,10 @@ export function App() {
                               setActivationMethod(method.id);
                             }}
                           >
-                            <span>{method.label}</span>
+                            <span className="activation-choice-line">
+                              <strong>{method.id === "pnpm" ? "A" : "B"}</strong>
+                              <span>{method.label}</span>
+                            </span>
                             <small>{method.badge}</small>
                           </button>
                         ))}
