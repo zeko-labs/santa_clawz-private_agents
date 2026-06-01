@@ -3024,14 +3024,9 @@ export function App() {
     }
   }
 
-  function shortStatusDetail(detail?: string) {
-    const normalized = detail?.trim() ?? "";
-    return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
-  }
-
   function zekoHealthWarningCopy() {
     if (zekoHealthError) {
-      return `Zeko testnet status could not be checked. Public proof anchoring may be delayed. ${shortStatusDetail(zekoHealthError)}`;
+      return "Zeko testnet status check failed. Public proof updates may be delayed.";
     }
 
     const anchor = zekoHealth?.socialAnchor;
@@ -3049,9 +3044,7 @@ export function App() {
     const waitingCopy = waitingCount > 0
       ? `${waitingCount} public proof milestone${waitingCount === 1 ? "" : "s"} waiting to anchor. `
       : "";
-    const detail = shortStatusDetail(anchor.lastError ?? firstAlert);
-
-    return `Zeko testnet proof anchoring is degraded. ${waitingCopy}Jobs and Base payments can still complete, but public proof roots may be delayed. ${detail}`;
+    return `Zeko testnet proofs are delayed. ${waitingCopy}Jobs and Base payments can still complete.`;
   }
 
   function renderErrorBanner(message: string) {
@@ -3688,8 +3681,8 @@ export function App() {
               <div className="step-head">
                 <div className="step-title">
                   <div>
-                    <h2>Connect backend</h2>
-                    <p className="panel-copy">The static site is live. The onboarding API still needs to answer from Render.</p>
+                    <h2>Service reconnecting</h2>
+                    <p className="panel-copy">SantaClawz is loading. Refresh the page or try again shortly.</p>
                   </div>
                 </div>
                 <span className="subtle-pill">{error ? "Backend offline" : "Checking"}</span>

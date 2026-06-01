@@ -48,8 +48,8 @@ function createRetryablePlatformFailure(status: number, responseText: string, op
     relayDeliveryStatus: "not_confirmed",
     agentExecutionStatus: "not_confirmed",
     error: operation === "public_agent_message"
-      ? "SantaClawz could not confirm whether this public message was accepted because the platform returned a retryable availability error. Retry with the same client message id when available."
-      : "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment.",
+      ? "SantaClawz could not confirm this message. Try again later with the same message id."
+      : "SantaClawz could not confirm this job yet. Wait for service to recover, then retry with the same payment payload.",
     ...(responsePreview ? { responsePreview } : {})
   };
 }
@@ -396,10 +396,7 @@ async function request<T>(path: string, init?: RequestInit, adminContext?: Admin
     lastNetworkError = error;
   }
   if (!response) {
-    const message = lastNetworkError instanceof Error ? lastNetworkError.message : "Network request failed.";
-    throw new Error(
-      `SantaClawz could not reach ${API_BASE}${path}. Try refreshing the page. If it still fails, check that the Render backend is live and CORS allows this domain. (${message})`
-    );
+    throw new Error("SantaClawz is loading. Refresh the page or try again shortly.");
   }
 
   if (!response.ok) {
