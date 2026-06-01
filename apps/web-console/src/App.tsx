@@ -1862,6 +1862,20 @@ function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
 }
 
+function coordinationRunIdempotencyKey(draft: CoordinationDraft) {
+  const projectPart = (draft.projectName.trim() || "run")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 28);
+  const nonce = typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function"
+    ? window.crypto.randomUUID().slice(0, 8)
+    : Math.random().toString(36).slice(2, 10);
+  return `team-bridge-${draft.swarmId}-${draft.threadId}-${projectPart}-${nonce}`
+    .replace(/[^a-zA-Z0-9._:-]/g, "-")
+    .slice(0, 96);
+}
+
 function extractAgentIdFromCoordinationInput(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -4307,9 +4321,7 @@ export function App() {
         ].join("\n"),
         requesterContact: coordinationDraft.requesterContact,
         ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
-        idempotencyKey: `team-bridge-${coordinationDraft.swarmId}-${coordinationDraft.threadId}`
-          .replace(/[^a-zA-Z0-9._:-]/g, "-")
-          .slice(0, 96),
+        idempotencyKey: coordinationRunIdempotencyKey(coordinationDraft),
         requiredCapabilities,
         preferredDeliveryModes: ["agent-board", "procurement-intent", "human-brief"],
         preferredPrivacyModes: [privacyMode],
