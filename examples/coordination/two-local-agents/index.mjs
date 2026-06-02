@@ -191,11 +191,13 @@ async function main() {
       {
         agentId: agentA.agentId,
         name: agentA.profile?.agentName ?? "Agent A",
+        role: "admin",
         capabilities: ["coordination", "requester"]
       },
       {
         agentId: agentB.agentId,
         name: agentB.profile?.agentName ?? "Agent B",
+        role: "member",
         capabilities: ["coordination", "responder"]
       }
     ],

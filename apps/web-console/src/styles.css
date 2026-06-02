@@ -2232,7 +2232,6 @@ pre,
   min-width: 0;
 }
 
-.coordination-handoff-card,
 .coordination-stat-card,
 .coordination-empty-card,
 .coordination-policy-grid article {
@@ -2289,148 +2288,9 @@ pre,
   align-items: start;
 }
 
-.coordination-handoff-card {
-  display: grid;
-  gap: 14px;
-  padding: 14px;
-  background: rgba(255, 255, 255, 0.56);
-}
-
-.coordination-handoff-wide {
-  order: -1;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.45fr) minmax(180px, 0.45fr);
-  align-items: stretch;
-}
-
-.coordination-handoff-metrics {
-  display: grid;
-  gap: 10px;
-}
-
-.coordination-handoff-wide .coordination-handoff-metrics {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.coordination-handoff-metrics div {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(56px, auto);
-  gap: 3px 10px;
-  align-items: baseline;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(18, 35, 54, 0.08);
-}
-
-.coordination-handoff-metrics div:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
-.coordination-handoff-wide .coordination-handoff-metrics div {
-  padding: 0 12px 0 0;
-  border-right: 1px solid rgba(18, 35, 54, 0.08);
-  border-bottom: 0;
-}
-
-.coordination-handoff-wide .coordination-handoff-metrics div:last-child {
-  padding-right: 0;
-  border-right: 0;
-}
-
-.coordination-handoff-metrics span,
-.coordination-handoff-metrics small,
-.coordination-ids {
-  color: var(--muted);
-}
-
-.coordination-handoff-metrics span {
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.coordination-handoff-metrics strong {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  color: var(--ink);
-  font-size: 1.05rem;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-.coordination-handoff-metrics small {
-  overflow-wrap: anywhere;
-}
-
-.coordination-ids,
-.coordination-intent-result {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-radius: 8px;
-  background: rgba(18, 35, 54, 0.05);
-}
-
-.coordination-ids strong,
-.coordination-intent-result code {
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.coordination-intent-result small {
-  color: var(--muted);
-}
-
-.coordination-session-strip,
-.coordination-envelope-strip {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
-}
-
-.coordination-session-strip strong,
-.coordination-envelope-strip strong {
-  color: var(--ink);
-}
-
-.coordination-session-strip small,
-.coordination-envelope-strip small {
-  color: var(--muted);
-}
-
-.coordination-session-controls,
-.coordination-envelope-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-}
-
-.coordination-session-controls .text-input,
-.coordination-envelope-controls .text-input {
-  min-width: 0;
-}
-
-.coordination-session-controls .primary-button,
-.coordination-session-controls .secondary-button,
-.coordination-envelope-strip .secondary-button {
-  min-height: 40px;
-  padding-inline: 12px;
-}
-
-.coordination-envelope-body {
-  min-height: 68px;
-}
-
-.coordination-dev-code {
-  font-family: var(--mono);
-  overflow-wrap: anywhere;
-}
-
 .coordination-handoff-actions {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -2522,16 +2382,15 @@ pre,
 
 .coordination-team-chip {
   display: inline-grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(120px, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   max-width: 100%;
   padding: 8px 10px;
   border: 1px solid rgba(89, 210, 198, 0.3);
-  border-radius: 999px;
+  border-radius: 8px;
   background: rgba(247, 255, 252, 0.72);
   color: var(--ink);
-  cursor: pointer;
 }
 
 .coordination-team-chip span,
@@ -2546,8 +2405,25 @@ pre,
   font-size: 0.75rem;
 }
 
-.coordination-team-chip strong {
+.coordination-team-chip select {
+  min-height: 30px;
+  border: 1px solid rgba(18, 35, 54, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.coordination-team-chip button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid rgba(18, 35, 54, 0.1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
   color: var(--muted);
+  cursor: pointer;
 }
 
 .coordination-roster-panel,
@@ -7378,23 +7254,11 @@ button:disabled {
 
   .coordination-summary-grid,
   .coordination-setup-grid,
-  .coordination-handoff-wide,
   .coordination-grid,
   .coordination-policy-grid,
   .coordination-field-grid,
-  .coordination-session-controls,
-  .coordination-envelope-controls {
+  .coordination-handoff-actions {
     grid-template-columns: 1fr;
-  }
-
-  .coordination-handoff-wide .coordination-handoff-metrics {
-    grid-template-columns: 1fr;
-  }
-
-  .coordination-handoff-wide .coordination-handoff-metrics div {
-    padding: 0 0 10px;
-    border-right: 0;
-    border-bottom: 1px solid rgba(18, 35, 54, 0.08);
   }
 
   .coordination-agent-card {
@@ -7578,17 +7442,8 @@ button:disabled {
 }
 
 @media (max-width: 1180px) and (min-width: 801px) {
-  .coordination-handoff-wide {
-    grid-template-columns: 1fr;
-  }
-
-  .coordination-handoff-wide .coordination-handoff-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .coordination-handoff-wide .coordination-handoff-metrics div {
-    padding: 0;
-    border-right: 0;
+  .coordination-setup-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

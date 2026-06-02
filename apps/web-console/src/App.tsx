@@ -21,7 +21,6 @@ import {
   checkAndSaveMissionAuthOverlay,
   checkMissionAuthOverlay,
   createEnrollmentTicket,
-  createProcurementIntent,
   type EnrollmentTicketResponse,
   fetchAgentBoardMessages,
   fetchAgentRuntimeAvailability,
@@ -34,17 +33,12 @@ import {
   issueOwnershipChallenge,
   type OwnershipChallengeIssueResponse,
   prepareRecoveryKit,
-  type ProcurementIntentResponse,
-  requestWorkspaceEmailCode,
   runLiveSessionTurnFlow,
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
   sponsorWallet,
-  type HostedWorkspaceRunResponse,
-  upsertHostedWorkspaceRun,
   updateAgentProfile,
   verifyOwnershipChallenge,
-  verifyWorkspaceEmailCode,
   type ZekoHealthState
 } from "./api.js";
 import { BuyerWorkroom } from "./BuyerWorkroom.js";
@@ -65,6 +59,7 @@ type ExploreActivityItem =
 type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
+type CoordinationAgentRole = "admin" | "member";
 type CoordinationDraft = {
   orgName: string;
   workspaceDomain: string;
@@ -78,27 +73,6 @@ type CoordinationDraft = {
   privacyMode: CoordinationPrivacyMode;
   requiredCapabilities: string;
   toolTouchpoints: string;
-};
-type CoordinationEnvelopeDraft = {
-  body: string;
-  uri: string;
-  recipientAgentId: string;
-  recipientPublicKey: string;
-};
-type CoordinationEmailChallenge = {
-  workspaceId: string;
-  challengeId: string;
-  expiresAtIso: string;
-  deliveryMode: "dev-returned" | "email-sent";
-  devCode?: string;
-};
-type CoordinationWorkspaceSession = {
-  workspaceId: string;
-  workspaceSessionToken: string;
-  role: string;
-  expiresAtIso: string;
-  email: string;
-  savedAtIso: string;
 };
 type SdkWidgetDraft = {
   agentName: string;
@@ -132,7 +106,6 @@ const EXPLORE_STEPS = "";
 const COORDINATE_COPY =
   "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
-const COORDINATION_WORKSPACE_SESSION_STORAGE_KEY = "santaclawz-coordinate-workspace-session:v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
@@ -633,6 +606,24 @@ function initialSelectedSessionId(route: AppRouteState) {
     return route.sessionId;
   }
   return route.section === "activate" && !route.agentId ? ONBOARDING_SESSION_ID : null;
+}
+
+function consoleStateRequestFor(section: NavSectionKey, selectedSessionId: string | null, sharedAgentId: string | null) {
+  if (selectedSessionId) {
+    return { sessionId: selectedSessionId, agentId: undefined };
+  }
+  if (sharedAgentId) {
+    return { sessionId: undefined, agentId: sharedAgentId };
+  }
+  if (section === "activate" || section === "coordinate" || section === "explore") {
+    return { sessionId: ONBOARDING_SESSION_ID, agentId: undefined };
+  }
+  return { sessionId: undefined, agentId: undefined };
+}
+
+function isRegisteredAgentAdminAccessError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message === "Admin key required to manage this registered agent.";
 }
 
 function buildPublicAgentUrl(agentId: string) {
@@ -1849,61 +1840,19 @@ function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], 
 
 function defaultCoordinationDraft(): CoordinationDraft {
   return {
-    orgName: "Example team",
-    workspaceDomain: "example.com",
+    orgName: "Local coordination",
+    workspaceDomain: "local.santaclawz",
     identityProvider: "email-code",
-    projectName: "Market launch review",
+    projectName: "Team coordination",
     goal: "Coordinate research, critique, and synthesis agents through job claims and sync checkpoints around one shared decision package.",
     threadId: "eventlog_team_launch_review",
     swarmId: "workflow_team_launch_review",
-    budgetUsd: "1.00",
-    requesterContact: "team-bridge@example.com",
+    budgetUsd: "",
+    requesterContact: "coordination@santaclawz.local",
     privacyMode: "digest-only",
-    requiredCapabilities: "research, critique, synthesis",
-    toolTouchpoints: "slack, github, drive"
+    requiredCapabilities: "",
+    toolTouchpoints: ""
   };
-}
-
-function defaultCoordinationEnvelopeDraft(): CoordinationEnvelopeDraft {
-  return {
-    body: "Private workspace packet stored in the local connector wrapper.",
-    uri: "local://workspace/private-packet",
-    recipientAgentId: "",
-    recipientPublicKey: ""
-  };
-}
-
-function stableJsonStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
-  }
-  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => {
-    return `${JSON.stringify(key)}:${stableJsonStringify((value as Record<string, unknown>)[key])}`;
-  }).join(",")}}`;
-}
-
-function simpleEnvelopeDigest(value: unknown) {
-  const stableValue = stableJsonStringify(value);
-  let hash = 2166136261;
-  for (let index = 0; index < stableValue.length; index += 1) {
-    hash ^= stableValue.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  const shortHash = (hash >>> 0).toString(16).padStart(8, "0");
-  return shortHash.repeat(8).slice(0, 64);
-}
-
-function coordinationIdentityProviderLabel(provider: CoordinationDraft["identityProvider"]) {
-  if (provider === "google") {
-    return "Google";
-  }
-  if (provider === "operator-managed") {
-    return "Operator managed";
-  }
-  return "Email code";
 }
 
 function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
@@ -1934,20 +1883,6 @@ function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
 
 function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
-}
-
-function coordinationRunIdempotencyKey(draft: CoordinationDraft) {
-  const projectPart = (draft.projectName.trim() || "run")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 28);
-  const nonce = typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function"
-    ? window.crypto.randomUUID().slice(0, 8)
-    : Math.random().toString(36).slice(2, 10);
-  return `team-bridge-${draft.swarmId}-${draft.threadId}-${projectPart}-${nonce}`
-    .replace(/[^a-zA-Z0-9._:-]/g, "-")
-    .slice(0, 96);
 }
 
 function extractAgentIdFromCoordinationInput(value: string): string {
@@ -1990,6 +1925,7 @@ function findCoordinationAgentFromInput(value: string, registry: AgentRegistryEn
 function buildBridgeManifest(input: {
   draft: CoordinationDraft;
   agents: AgentRegistryEntry[];
+  agentRoles: Record<string, CoordinationAgentRole>;
   apiBase: string;
 }) {
   const toolTouchpoints = tagCsvToList(input.draft.toolTouchpoints);
@@ -2010,22 +1946,21 @@ function buildBridgeManifest(input: {
       },
       hostedWorkspace: {
         org: input.draft.orgName,
-        workspaceDomain: input.draft.workspaceDomain,
         identityProvider: input.draft.identityProvider,
         loginMode,
-        defaultHumanRoles: ["workspace-admin", "operator", "observer"],
+        defaultHumanRoles: ["admin", "member"],
         toolTouchpoints,
         dataPolicy: {
           hostedOrgData: false,
           canonicalStores: [
-            "workspace shell",
+            "coordination run shell",
             "agent ids",
             "workflow ids and event-log ids",
             "privacy policy lane",
             "public summaries when allowed",
             "digests and encrypted envelope references",
             "aggregate counts",
-            "proof and procurement events"
+            "proof events"
           ],
           privateDataStaysWith: "customer agents, customer tools, or customer-controlled private wrappers"
         }
@@ -2061,10 +1996,17 @@ function buildBridgeManifest(input: {
           "public summaries when policy allows",
           "digest-only coordination events",
           "recipient-encrypted envelope references",
-          "aggregate workspace participation totals"
+          "aggregate coordination participation totals"
         ],
         connectorReferenceRule:
           "Connector records are declared integration references until a customer wrapper or hosted connector binds credentials outside the canonical public payload."
+      },
+      runSetup: {
+        adminManaged: true,
+        roleModel: "admin-member",
+        derivedBySantaClawz: ["swarmId", "threadId", "manifestDigestSha256"],
+        agentOnboardingRule:
+          "Participating agents use the SantaClawz-derived workflow id, event-log id, manifest, and assigned role for onboarding and workflow processing."
       },
       org: input.draft.orgName,
       project: input.draft.projectName,
@@ -2083,6 +2025,7 @@ function buildBridgeManifest(input: {
       participants: input.agents.map((agent) => ({
         agentId: agent.agentId,
         name: agent.agentName,
+        role: input.agentRoles[agent.agentId] ?? "member",
         status: agent.runtimeStatus,
         capabilities: marketplaceTagsForDisplay(agent.marketplaceTags, 8),
         publicProfileUrl: buildPublicAgentUrl(agent.agentId),
@@ -2317,15 +2260,9 @@ export function App() {
   const [exploreAgentPage, setExploreAgentPage] = useState(1);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(defaultCoordinationDraft());
-  const [coordinationEnvelopeDraft, setCoordinationEnvelopeDraft] = useState<CoordinationEnvelopeDraft>(defaultCoordinationEnvelopeDraft());
   const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
+  const [coordinationAgentRoles, setCoordinationAgentRoles] = useState<Record<string, CoordinationAgentRole>>({});
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
-  const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
-  const [coordinationWorkspaceResult, setCoordinationWorkspaceResult] = useState<HostedWorkspaceRunResponse | null>(null);
-  const [coordinationLoginEmail, setCoordinationLoginEmail] = useState(defaultCoordinationDraft().requesterContact);
-  const [coordinationLoginCode, setCoordinationLoginCode] = useState("");
-  const [coordinationEmailChallenge, setCoordinationEmailChallenge] = useState<CoordinationEmailChallenge | null>(null);
-  const [coordinationWorkspaceSession, setCoordinationWorkspaceSession] = useState<CoordinationWorkspaceSession | null>(null);
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
@@ -2412,37 +2349,10 @@ export function App() {
   }
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const rawSession = window.localStorage.getItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY);
-    if (!rawSession) {
-      return;
-    }
-    try {
-      const parsed = JSON.parse(rawSession) as Partial<CoordinationWorkspaceSession>;
-      if (
-        typeof parsed.workspaceId === "string" &&
-        typeof parsed.workspaceSessionToken === "string" &&
-        typeof parsed.role === "string" &&
-        typeof parsed.expiresAtIso === "string" &&
-        typeof parsed.email === "string" &&
-        Date.parse(parsed.expiresAtIso) > Date.now()
-      ) {
-        setCoordinationWorkspaceSession(parsed as CoordinationWorkspaceSession);
-        setCoordinationLoginEmail(parsed.email);
-        return;
-      }
-    } catch {
-      // Ignore corrupt local session cache and let the operator request a new code.
-    }
-    window.localStorage.removeItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
+    const consoleStateRequest = consoleStateRequestFor(activeSection, selectedSessionId, sharedAgentId);
 
-    void fetchConsoleState(selectedSessionId ?? undefined, selectedSessionId ? undefined : sharedAgentId ?? undefined)
+    void fetchConsoleState(consoleStateRequest.sessionId, consoleStateRequest.agentId)
       .then((nextState) => {
         if (cancelled) {
           return;
@@ -2458,6 +2368,11 @@ export function App() {
       })
       .catch((nextError: Error) => {
         if (!cancelled) {
+          if ((activeSection === "coordinate" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
+            setError(null);
+            clearBackgroundError();
+            return;
+          }
           if (state) {
             reportBackgroundError(nextError, "SantaClawz background refresh failed.");
           } else {
@@ -2521,7 +2436,8 @@ export function App() {
 
     let cancelled = false;
     const intervalId = window.setInterval(() => {
-      void fetchConsoleState(selectedSessionId ?? undefined, selectedSessionId ? undefined : sharedAgentId ?? undefined)
+      const consoleStateRequest = consoleStateRequestFor(activeSection, selectedSessionId, sharedAgentId);
+      void fetchConsoleState(consoleStateRequest.sessionId, consoleStateRequest.agentId)
         .then((nextState) => {
           if (!cancelled) {
             setState(nextState);
@@ -2529,6 +2445,10 @@ export function App() {
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
+            if ((activeSection === "coordinate" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
+              clearBackgroundError();
+              return;
+            }
             reportBackgroundError(nextError, "SantaClawz background refresh failed.");
           }
         });
@@ -2538,7 +2458,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [selectedSessionId, state]);
+  }, [activeSection, selectedSessionId, sharedAgentId, state]);
 
   useEffect(() => {
     if (!state) {
@@ -3207,10 +3127,18 @@ export function App() {
     setError(null);
 
     try {
-      const nextState = await fetchConsoleState(selectedSessionId ?? undefined, selectedSessionId ? undefined : sharedAgentId ?? undefined);
+      const consoleStateRequest = consoleStateRequestFor(activeSection, selectedSessionId, sharedAgentId);
+      const nextState = await fetchConsoleState(consoleStateRequest.sessionId, consoleStateRequest.agentId);
       setState(nextState);
-      setSelectedSessionId(nextState.session.sessionId);
+      if (activeSection === "activate") {
+        setSelectedSessionId(nextState.session.sessionId);
+      }
     } catch (nextError) {
+      if ((activeSection === "coordinate" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
+        setError(null);
+        clearBackgroundError();
+        return;
+      }
       setError(nextError instanceof Error ? nextError.message : "Could not reach the SantaClawz API.");
     } finally {
       setPendingAction(null);
@@ -4238,85 +4166,14 @@ export function App() {
       }>())
       .values()
   ).sort((left, right) => timestampValue(right.latestAtIso) - timestampValue(left.latestAtIso));
-  const liveCoordinationAgentCount = selectedCoordinationAgents.filter((agent) => agent.runtimeStatus === "live").length;
-  const coordinationCapabilityTags = Array.from(
-    new Set(selectedCoordinationAgents.flatMap((agent) => marketplaceTagsForDisplay(agent.marketplaceTags, 8)))
-  ).slice(0, 10);
   const bridgeManifest = buildBridgeManifest({
     draft: coordinationDraft,
     agents: selectedCoordinationAgents,
+    agentRoles: coordinationAgentRoles,
     apiBase
   });
   const publicCoordinationThreadUrl =
     `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
-  const coordinationPrivacyCopy = coordinationPrivacyDetail(coordinationDraft.privacyMode);
-  const routeWorkReady = coordinationDraft.goal.trim().length > 0 && coordinationDraft.requesterContact.trim().length > 0;
-  const coordinationSessionActive = Boolean(
-    coordinationWorkspaceSession &&
-    coordinationWorkspaceSession.workspaceId === (coordinationWorkspaceResult?.workspace.workspaceId ?? coordinationWorkspaceSession.workspaceId) &&
-    Date.parse(coordinationWorkspaceSession.expiresAtIso) > Date.now()
-  );
-  const coordinationSessionLabel = coordinationSessionActive
-    ? `Verified ${coordinationWorkspaceSession?.role ?? "workspace"}`
-    : coordinationDraft.identityProvider === "email-code"
-      ? "Email code"
-      : `${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)} declared`;
-  const workspaceSaveReady = routeWorkReady && coordinationSessionActive;
-  const coordinationEnvelopeSender = selectedCoordinationAgents[0]?.agentId ?? "agent_coordination_sender";
-  const coordinationEnvelopeRecipient =
-    coordinationEnvelopeDraft.recipientAgentId.trim() || selectedCoordinationAgents[1]?.agentId || selectedCoordinationAgents[0]?.agentId || "";
-  const coordinationEnvelopeDigest = simpleEnvelopeDigest({
-    body: coordinationEnvelopeDraft.body,
-    uri: coordinationEnvelopeDraft.uri,
-    threadId: coordinationDraft.threadId,
-    swarmId: coordinationDraft.swarmId
-  });
-  const coordinationEnvelopeWithoutDigest = {
-    schemaVersion: "santaclawz-agent-message-envelope/1.0",
-    messageId: `msg_${coordinationEnvelopeDigest.slice(0, 24)}`,
-    threadId: coordinationDraft.threadId,
-    swarmId: coordinationDraft.swarmId,
-    sentAtIso: new Date().toISOString(),
-    kind: "dispatch",
-    visibility: "recipient-encrypted",
-    sender: { agentId: coordinationEnvelopeSender },
-    ...(coordinationEnvelopeRecipient
-      ? {
-          recipient: {
-            agentId: coordinationEnvelopeRecipient,
-            ...(coordinationEnvelopeDraft.recipientPublicKey.trim()
-              ? { publicKey: coordinationEnvelopeDraft.recipientPublicKey.trim() }
-              : {})
-          }
-        }
-      : {}),
-    protocolLaneTags: ["team-coordination", "recipient-encrypted"],
-    marketplaceTags: {
-      jobTags: ["team-coordination"],
-      capabilityTags: tagCsvToList(coordinationDraft.requiredCapabilities),
-      outputTags: ["encrypted-envelope", "digest"]
-    },
-    payload: {
-      mode: "encrypted-reference",
-      mediaType: "application/vnd.santaclawz.coordination+json",
-      digestSha256: coordinationEnvelopeDigest,
-      uri: coordinationEnvelopeDraft.uri,
-      encryption: {
-        scheme: coordinationEnvelopeDraft.recipientPublicKey.trim() ? "x25519-sealed-box" : "custom",
-        ...(coordinationEnvelopeDraft.recipientPublicKey.trim()
-          ? { recipientPublicKey: coordinationEnvelopeDraft.recipientPublicKey.trim() }
-          : {})
-      }
-    },
-    zekoAnchor: {
-      anchorMode: "aggregate"
-    }
-  };
-  const coordinationEnvelope = {
-    ...coordinationEnvelopeWithoutDigest,
-    envelopeDigestSha256: simpleEnvelopeDigest(coordinationEnvelopeWithoutDigest)
-  };
-  const coordinationEnvelopeJson = JSON.stringify(coordinationEnvelope, null, 2);
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4512,89 +4369,21 @@ export function App() {
     setCoordinationError(null);
   }
 
-  function updateCoordinationEnvelopeDraft(patch: Partial<CoordinationEnvelopeDraft>) {
-    setCoordinationEnvelopeDraft({
-      ...coordinationEnvelopeDraft,
-      ...patch
-    });
-    setCoordinationError(null);
-  }
-
-  async function requestCoordinationEmailCodeAction() {
-    const email = coordinationLoginEmail.trim() || coordinationDraft.requesterContact.trim();
-    if (!email) {
-      setCoordinationError("Add a workspace email before requesting a login code.");
-      return;
-    }
-    setPendingAction("coordinate-request-email-code");
-    setCoordinationError(null);
-    try {
-      const challenge = await requestWorkspaceEmailCode({
-        orgName: coordinationDraft.orgName,
-        workspaceDomain: coordinationDraft.workspaceDomain,
-        email
-      });
-      setCoordinationLoginEmail(email);
-      setCoordinationEmailChallenge({
-        workspaceId: challenge.workspaceId,
-        challengeId: challenge.challengeId,
-        expiresAtIso: challenge.expiresAtIso,
-        deliveryMode: challenge.deliveryMode,
-        ...(challenge.devCode ? { devCode: challenge.devCode } : {})
-      });
-      setCoordinationLoginCode(challenge.devCode ?? "");
-    } catch (nextError) {
-      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not request a workspace login code.");
-    } finally {
-      setPendingAction(null);
-    }
-  }
-
-  async function verifyCoordinationEmailCodeAction() {
-    if (!coordinationEmailChallenge) {
-      setCoordinationError("Request a workspace login code first.");
-      return;
-    }
-    if (!coordinationLoginCode.trim()) {
-      setCoordinationError("Enter the workspace login code.");
-      return;
-    }
-    setPendingAction("coordinate-verify-email-code");
-    setCoordinationError(null);
-    try {
-      const session = await verifyWorkspaceEmailCode({
-        challengeId: coordinationEmailChallenge.challengeId,
-        email: coordinationLoginEmail,
-        code: coordinationLoginCode
-      });
-      const nextSession: CoordinationWorkspaceSession = {
-        workspaceId: session.workspaceId,
-        workspaceSessionToken: session.workspaceSessionToken,
-        role: session.role,
-        expiresAtIso: session.expiresAtIso,
-        email: coordinationLoginEmail,
-        savedAtIso: new Date().toISOString()
-      };
-      setCoordinationWorkspaceSession(nextSession);
-      setCoordinationEmailChallenge(null);
-      setCoordinationLoginCode("");
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(nextSession));
-      }
-    } catch (nextError) {
-      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not verify the workspace login code.");
-    } finally {
-      setPendingAction(null);
-    }
-  }
-
   function toggleCoordinationAgent(agentId: string) {
-    setCoordinationAgentIds((current) => {
-      if (current.includes(agentId)) {
-        return current.filter((selectedAgentId) => selectedAgentId !== agentId);
-      }
-      return [...current, agentId].slice(0, 8);
-    });
+    const alreadySelected = coordinationAgentIds.includes(agentId);
+    if (alreadySelected) {
+      setCoordinationAgentIds((current) => current.filter((selectedAgentId) => selectedAgentId !== agentId));
+      setCoordinationAgentRoles((roles) => {
+        const { [agentId]: _removed, ...remainingRoles } = roles;
+        return remainingRoles;
+      });
+    } else {
+      setCoordinationAgentIds((current) => [...current, agentId].slice(0, 8));
+      setCoordinationAgentRoles((roles) => ({
+        ...roles,
+        [agentId]: coordinationAgentIds.length === 0 ? "admin" : "member"
+      }));
+    }
     setCoordinationError(null);
   }
 
@@ -4603,117 +4392,20 @@ export function App() {
       return;
     }
     setCoordinationAgentIds((current) => [...current, coordinationLookupAgent.agentId].slice(0, 8));
+    setCoordinationAgentRoles((roles) => ({
+      ...roles,
+      [coordinationLookupAgent.agentId]: coordinationAgentIds.length === 0 ? "admin" : "member"
+    }));
     setCoordinationAgentUrl("");
     setCoordinationError(null);
   }
 
-  async function saveCoordinationWorkspaceAction(procurementIntentId?: string) {
-    if (!coordinationDraft.goal.trim()) {
-      setCoordinationError("Add a coordination goal before saving the workspace run.");
-      return null;
-    }
-    if (!coordinationDraft.requesterContact.trim()) {
-      setCoordinationError("Add a requester contact before saving the workspace run.");
-      return null;
-    }
-    if (!coordinationWorkspaceSession || Date.parse(coordinationWorkspaceSession.expiresAtIso) <= Date.now()) {
-      setCoordinationError("Verify a workspace session before saving the workspace run.");
-      return null;
-    }
-
-    setPendingAction(procurementIntentId ? "coordinate-save-after-procurement" : "coordinate-save-workspace");
+  function updateCoordinationAgentRole(agentId: string, role: CoordinationAgentRole) {
+    setCoordinationAgentRoles((roles) => ({
+      ...roles,
+      [agentId]: role
+    }));
     setCoordinationError(null);
-
-    try {
-      const nextWorkspace = await upsertHostedWorkspaceRun({
-        workspaceSessionToken: coordinationWorkspaceSession.workspaceSessionToken,
-        orgName: coordinationDraft.orgName,
-        workspaceDomain: coordinationDraft.workspaceDomain,
-        identityProvider: coordinationDraft.identityProvider,
-        projectName: coordinationDraft.projectName,
-        goal: coordinationDraft.goal,
-        threadId: coordinationDraft.threadId,
-        swarmId: coordinationDraft.swarmId,
-        requesterContact: coordinationDraft.requesterContact,
-        ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
-        privacyMode: coordinationDraft.privacyMode,
-        requiredCapabilities: tagCsvToList(coordinationDraft.requiredCapabilities),
-        selectedAgentIds: selectedCoordinationAgents.map((agent) => agent.agentId),
-        toolTouchpoints: tagCsvToList(coordinationDraft.toolTouchpoints),
-        manifest: JSON.parse(bridgeManifest) as Record<string, unknown>,
-        ...(procurementIntentId ? { procurementIntentId } : {})
-      });
-      setCoordinationWorkspaceResult(nextWorkspace);
-      return nextWorkspace;
-    } catch (nextError) {
-      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not save the hosted workspace run.");
-      return null;
-    } finally {
-      setPendingAction(null);
-    }
-  }
-
-  async function createCoordinationProcurementAction() {
-    if (!coordinationDraft.goal.trim()) {
-      setCoordinationError("Add a coordination goal before routing work.");
-      return;
-    }
-    if (!coordinationDraft.requesterContact.trim()) {
-      setCoordinationError("Add a requester contact so agents have a return path.");
-      return;
-    }
-
-    setPendingAction("coordinate-procurement");
-    setCoordinationError(null);
-
-    try {
-      const privacyMode = coordinationDraft.privacyMode;
-      const requiredCapabilities = tagCsvToList(coordinationDraft.requiredCapabilities);
-      const toolTouchpoints = tagCsvToList(coordinationDraft.toolTouchpoints);
-      const nextResult = await createProcurementIntent({
-        taskPrompt: [
-          coordinationDraft.projectName,
-          "",
-          coordinationDraft.goal,
-          "",
-          `Coordinate workflow ${coordinationDraft.swarmId} through SantaClawz event log ${coordinationDraft.threadId}.`,
-          `Workspace: ${coordinationDraft.orgName} (${coordinationDraft.workspaceDomain}) via ${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)}.`,
-          `Selected agents: ${selectedCoordinationAgents.map((agent) => agent.agentId).join(", ") || "open roster"}.`,
-          `Tool touchpoints: ${toolTouchpoints.join(", ") || "none declared"}.`,
-          `Policy: ${coordinationPrivacyLabel(privacyMode)}. ${coordinationPrivacyDetail(privacyMode)}`
-        ].join("\n"),
-        requesterContact: coordinationDraft.requesterContact,
-        ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
-        idempotencyKey: coordinationRunIdempotencyKey(coordinationDraft),
-        requiredCapabilities,
-        preferredDeliveryModes: ["agent-board", "procurement-intent", "human-brief"],
-        preferredPrivacyModes: [privacyMode],
-        marketplaceTags: {
-          capabilityTags: requiredCapabilities,
-          jobTags: ["team-coordination"],
-          outputTags: ["coordination-brief"],
-          inputTags: ["santaclawz-agent-board", "openclaw-runtime", ...toolTouchpoints]
-        },
-        jobPrivacy: {
-          visibility: privacyMode === "public-summary" ? "public" : "private",
-          publicLifecycleEvents: true,
-          publicArtifactMetadata: privacyMode === "public-summary",
-          publicSummaryOnly: privacyMode !== "public-summary"
-        },
-        artifactDelivery: {
-          requestedFormat: "coordination-brief",
-          threadId: coordinationDraft.threadId,
-          swarmId: coordinationDraft.swarmId,
-          manifestSchemaVersion: "santaclawz-team-coordination-bridge/0.1"
-        }
-      });
-      setCoordinationResult(nextResult);
-      await saveCoordinationWorkspaceAction(nextResult.intent.intentId);
-    } catch (nextError) {
-      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not create the coordination procurement intent.");
-    } finally {
-      setPendingAction(null);
-    }
   }
 
   function renderCoordinationPage() {
@@ -4725,12 +4417,12 @@ export function App() {
               className="coordination-route-form"
               onSubmit={(event: FormSubmitEvent) => {
                 event.preventDefault();
-                void createCoordinationProcurementAction();
+                void copyValue("coordination-manifest", bridgeManifest);
               }}
             >
               <div className="section-head compact-head">
                 <div>
-                  <h2>Start a team agent run</h2>
+                  <h2>Start a coordination run</h2>
                 </div>
               </div>
 
@@ -4779,76 +4471,40 @@ export function App() {
                     <span className="coordination-team-empty">Paste an agent URL above, then add it to the team.</span>
                   ) : (
                     selectedCoordinationAgents.map((agent) => (
-                      <button
+                      <div
                         key={agent.agentId}
-                        type="button"
                         className="coordination-team-chip"
-                        onClick={() => {
-                          toggleCoordinationAgent(agent.agentId);
-                        }}
-                        title="Remove from team"
                       >
                         <span>{agent.agentName}</span>
                         <small>{presenceStatusLabel(agent.runtimeStatus)}</small>
-                        <strong aria-hidden="true">×</strong>
-                      </button>
+                        <select
+                          aria-label={`Role for ${agent.agentName}`}
+                          value={coordinationAgentRoles[agent.agentId] ?? "member"}
+                          onChange={(event: ValueInputEvent) => {
+                            updateCoordinationAgentRole(agent.agentId, event.target.value as CoordinationAgentRole);
+                          }}
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            toggleCoordinationAgent(agent.agentId);
+                          }}
+                          aria-label={`Remove ${agent.agentName}`}
+                          title="Remove from run"
+                        >
+                          ×
+                        </button>
+                      </div>
                     ))
                   )}
                 </div>
               </div>
 
-              <div className="field-grid coordination-field-grid">
-                <label className="field">
-                  <span>Workspace</span>
-                  <input
-                    className="text-input"
-                    value={coordinationDraft.orgName}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ orgName: event.target.value });
-                    }}
-                  />
-                </label>
-                <label className="field">
-                  <span>Domain</span>
-                  <input
-                    className="text-input"
-                    value={coordinationDraft.workspaceDomain}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ workspaceDomain: event.target.value });
-                    }}
-                  />
-                </label>
-              </div>
-
-              <div className="field-grid coordination-field-grid">
-                <label className="field">
-                  <span>Login</span>
-                  <select
-                    className="select-input"
-                    value={coordinationDraft.identityProvider}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ identityProvider: event.target.value as CoordinationDraft["identityProvider"] });
-                    }}
-                  >
-                    <option value="email-code">Email code</option>
-                    <option value="google">Google</option>
-                    <option value="operator-managed">Operator managed</option>
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Project</span>
-                  <input
-                    className="text-input"
-                    value={coordinationDraft.projectName}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ projectName: event.target.value });
-                    }}
-                  />
-                </label>
-              </div>
-
               <label className="field">
-                <span>Goal</span>
+                <span>Team goal</span>
                 <textarea
                   className="text-area coordination-goal-area"
                   value={coordinationDraft.goal}
@@ -4858,233 +4514,28 @@ export function App() {
                 />
               </label>
 
-              <div className="field-grid coordination-field-grid">
-                <label className="field">
-                  <span>Contact</span>
-                  <input
-                    className="text-input"
-                    value={coordinationDraft.requesterContact}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ requesterContact: event.target.value });
-                    }}
-                  />
-                </label>
-                <label className="field">
-                  <span>Budget</span>
-                  <input
-                    className="text-input"
-                    value={coordinationDraft.budgetUsd}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ budgetUsd: event.target.value });
-                    }}
-                  />
-                </label>
-              </div>
-
-              <div className="field-grid coordination-field-grid">
-                <label className="field">
-                  <span>Policy</span>
-                  <select
-                    className="select-input"
-                    value={coordinationDraft.privacyMode}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
-                    }}
-                  >
-                    <option value="digest-only">Digest only</option>
-                    <option value="public-summary">Public summaries</option>
-                    <option value="recipient-encrypted">Recipient encrypted</option>
-                    <option value="local-private">Local private</option>
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Capabilities</span>
-                  <input
-                    className="text-input"
-                    value={coordinationDraft.requiredCapabilities}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ requiredCapabilities: event.target.value });
-                    }}
-                  />
-                </label>
-              </div>
-
               <label className="field">
-                <span>Touchpoints</span>
-                <input
-                  className="text-input"
-                  value={coordinationDraft.toolTouchpoints}
+                <span>Policy</span>
+                <select
+                  className="select-input"
+                  value={coordinationDraft.privacyMode}
                   onChange={(event: ValueInputEvent) => {
-                    updateCoordinationDraft({ toolTouchpoints: event.target.value });
+                    updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
                   }}
-                />
+                >
+                  <option value="digest-only">Digest only</option>
+                  <option value="public-summary">Public summaries</option>
+                  <option value="recipient-encrypted">Recipient encrypted</option>
+                  <option value="local-private">Local private</option>
+                </select>
               </label>
 
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
-            </form>
-
-            <aside className="coordination-handoff-card">
-              <div className="coordination-handoff-metrics">
-                <div>
-                  <span>Login</span>
-                  <strong>{coordinationSessionLabel}</strong>
-                  <small>{coordinationSessionActive ? coordinationWorkspaceSession?.email : coordinationDraft.workspaceDomain}</small>
-                </div>
-                <div>
-                  <span>Workflow</span>
-                  <strong>{coordinationThreads.length}</strong>
-                  <small>{coordinationMessages.length} events</small>
-                </div>
-                <div>
-                  <span>Data</span>
-                  <strong>Local</strong>
-                  <small>SantaClawz stores shell, digests, refs, and counts</small>
-                </div>
-                <div>
-                  <span>Policy</span>
-                  <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}</strong>
-                  <small>{coordinationPrivacyCopy}</small>
-                </div>
-                <div>
-                  <span>Security</span>
-                  <strong>Ready</strong>
-                  <small>KMS broker + zk mission auth overlay</small>
-                </div>
-              </div>
-
-              <div className="coordination-ids">
-                <span>Event log <strong>{coordinationDraft.threadId}</strong></span>
-                <span>Workflow <strong>{coordinationDraft.swarmId}</strong></span>
-              </div>
-
-              <div className="coordination-envelope-strip">
-                <div>
-                  <strong>Encrypted envelope</strong>
-                  <small>Public trace gets the digest; private payload stays in the local wrapper or recipient store.</small>
-                </div>
-                <div className="coordination-envelope-controls">
-                  <input
-                    className="text-input"
-                    value={coordinationEnvelopeDraft.uri}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationEnvelopeDraft({ uri: event.target.value });
-                    }}
-                    placeholder="encrypted reference uri"
-                  />
-                  <input
-                    className="text-input"
-                    value={coordinationEnvelopeDraft.recipientPublicKey}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationEnvelopeDraft({ recipientPublicKey: event.target.value });
-                    }}
-                    placeholder="recipient public key"
-                  />
-                </div>
-                <textarea
-                  className="text-area coordination-envelope-body"
-                  value={coordinationEnvelopeDraft.body}
-                  onChange={(event: ValueInputEvent) => {
-                    updateCoordinationEnvelopeDraft({ body: event.target.value });
-                  }}
-                />
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    void copyValue("coordination-envelope", coordinationEnvelopeJson);
-                  }}
-                >
-                  {copiedKey === "coordination-envelope" ? "Copied" : "Copy envelope"}
-                </button>
-                <small className="coordination-dev-code">Digest: {coordinationEnvelope.envelopeDigestSha256}</small>
-              </div>
-
-              <div className="coordination-session-strip">
-                <div>
-                  <strong>Workspace session</strong>
-                  <small>
-                    {coordinationSessionActive
-                      ? `Stored locally until ${new Date(coordinationWorkspaceSession?.expiresAtIso ?? "").toLocaleDateString()}`
-                      : coordinationDraft.identityProvider === "email-code"
-                        ? "One-time code auth is local-ready; production email delivery is provider config."
-                        : "Provider is declared for the workspace handoff."}
-                  </small>
-                </div>
-                {coordinationDraft.identityProvider === "email-code" ? (
-                  <div className="coordination-session-controls">
-                    <input
-                      className="text-input"
-                      value={coordinationLoginEmail}
-                      placeholder={coordinationDraft.requesterContact}
-                      onChange={(event: ValueInputEvent) => {
-                        setCoordinationLoginEmail(event.target.value);
-                        setCoordinationError(null);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={pendingAction === "coordinate-request-email-code"}
-                      onClick={() => {
-                        void requestCoordinationEmailCodeAction();
-                      }}
-                    >
-                      {pendingAction === "coordinate-request-email-code" ? "Sending..." : "Send code"}
-                    </button>
-                    {coordinationEmailChallenge ? (
-                      <>
-                        <input
-                          className="text-input"
-                          value={coordinationLoginCode}
-                          placeholder="Code"
-                          onChange={(event: ValueInputEvent) => {
-                            setCoordinationLoginCode(event.target.value);
-                            setCoordinationError(null);
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="primary-button"
-                          disabled={pendingAction === "coordinate-verify-email-code"}
-                          onClick={() => {
-                            void verifyCoordinationEmailCodeAction();
-                          }}
-                        >
-                          {pendingAction === "coordinate-verify-email-code" ? "Checking..." : "Verify"}
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-                {coordinationEmailChallenge?.devCode ? (
-                  <small className="coordination-dev-code">Local/dev code: {coordinationEmailChallenge.devCode}</small>
-                ) : null}
-              </div>
 
               <div className="coordination-handoff-actions">
                 <button
                   type="button"
-                  className="secondary-button"
-                  disabled={!workspaceSaveReady || pendingAction === "coordinate-save-workspace"}
-                  onClick={() => {
-                    void saveCoordinationWorkspaceAction();
-                  }}
-                >
-                  {pendingAction === "coordinate-save-workspace" ? "Saving..." : "Save workspace"}
-                </button>
-                <button
-                  type="button"
                   className="primary-button"
-                  disabled={!workspaceSaveReady || pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement"}
-                  onClick={() => {
-                    void createCoordinationProcurementAction();
-                  }}
-                >
-                  {pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement" ? "Creating..." : "Create intent"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
                   onClick={() => {
                     void copyValue("coordination-manifest", bridgeManifest);
                   }}
@@ -5095,23 +4546,7 @@ export function App() {
                   Open trace
                 </a>
               </div>
-
-              {coordinationResult ? (
-                <div className="coordination-intent-result">
-                  <span className="subtle-pill live">Intent created</span>
-                  <code>{String(coordinationResult.intent.intentId)}</code>
-                </div>
-              ) : null}
-              {coordinationWorkspaceResult ? (
-                <div className="coordination-intent-result">
-                  <span className="subtle-pill live">Workspace saved</span>
-                  <code>{coordinationWorkspaceResult.run.runId}</code>
-                  <small>
-                    {coordinationWorkspaceResult.stats.publicMessageCount} public events • {coordinationWorkspaceResult.stats.selectedAgentCount} agents • hosted org data {String(coordinationWorkspaceResult.stats.hostedOrgData)}
-                  </small>
-                </div>
-              ) : null}
-            </aside>
+            </form>
           </div>
         </section>
 

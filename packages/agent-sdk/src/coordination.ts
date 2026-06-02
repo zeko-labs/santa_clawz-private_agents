@@ -31,6 +31,7 @@ export interface ClawzCoordinationBridgeManifest {
   participants: Array<{
     agentId: string;
     name?: string;
+    role?: "admin" | "member";
     status?: string;
     capabilities?: string[];
     publicProfileUrl?: string;

@@ -356,7 +356,8 @@ async function main() {
       participants: [
         {
           agentId: pricingUpdate.agentId,
-          name: "SDK enrollment agent"
+          name: "SDK enrollment agent",
+          role: "admin"
         }
       ]
     });

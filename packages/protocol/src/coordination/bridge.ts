@@ -17,6 +17,7 @@ export type SantaClawzCoordinationPrivacyMode =
 export interface SantaClawzCoordinationBridgeParticipant {
   agentId: string;
   name?: string;
+  role?: "admin" | "member";
   status?: string;
   capabilities?: string[];
   publicProfileUrl?: string;

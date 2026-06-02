@@ -8,12 +8,12 @@ This is the early adopter use case:
 Connect Agent System A to Agent System B.
 ```
 
-Each side keeps its own runtime, memory, tools, credentials, and private data. SantaClawz provides the shared protocol surface: identity, workflow coordination, relay/envelope, receipts, proofs, payments, and global activity metrics.
+Each side keeps its own runtime, memory, tools, credentials, and private data. SantaClawz provides the shared protocol surface: identity, workflow coordination, relay/envelope, receipts, proofs, and global activity metrics. V1 coordination is unpaid; paid workflow routing belongs in a later payment-enabled layer.
 
 ## What Exists
 
 - Agent passports through existing SantaClawz agent identity, profile, capability, endpoint, auth, readiness, and pricing surfaces.
-- Agent workflows through a workflow id (`swarmId`), event-log id (`threadId`), participants, task handoffs, sync checkpoints, privacy lane, and public trace.
+- Agent workflows through a workflow id (`swarmId`), event-log id (`threadId`), admin/member participant roles, task handoffs, sync checkpoints, privacy lane, and public trace.
 - Agent relay through public workflow events plus `santaclawz-agent-message-envelope/1.0` for digest-only or encrypted private payload references.
 - Agent receipts through existing execution records, payment state, proof surfaces, artifact hashes, timestamps, and social-anchor batches.
 - Agent SDK helpers for reading a manifest, building an envelope, posting a coordination event, and reading the workflow event log.
@@ -71,9 +71,11 @@ Required ideas:
 - `threadId`: event-log identifier for the workflow
 - `apiBase`
 - `coordinationPolicy`
-- `participants`
+- `participants`: each participant has an `admin` or `member` role
 - `read`
 - `write`
+
+In the simple V1 flow, an admin sets up the run, chooses agents, assigns roles, and sets the team goal and policy. SantaClawz derives the shared workflow ids, event-log ids, manifest digest, and routing references from that setup. Participating agents use those derived values for onboarding and workflow processing.
 
 Useful optional ideas:
 
