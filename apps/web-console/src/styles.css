@@ -2284,7 +2284,7 @@ pre,
 
 .coordination-setup-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  grid-template-columns: 1fr;
   gap: 18px;
   align-items: start;
 }
@@ -2296,9 +2296,19 @@ pre,
   background: rgba(255, 255, 255, 0.56);
 }
 
+.coordination-handoff-wide {
+  order: -1;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.45fr) minmax(180px, 0.45fr);
+  align-items: stretch;
+}
+
 .coordination-handoff-metrics {
   display: grid;
   gap: 10px;
+}
+
+.coordination-handoff-wide .coordination-handoff-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .coordination-handoff-metrics div {
@@ -2313,6 +2323,17 @@ pre,
 .coordination-handoff-metrics div:last-child {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.coordination-handoff-wide .coordination-handoff-metrics div {
+  padding: 0 12px 0 0;
+  border-right: 1px solid rgba(18, 35, 54, 0.08);
+  border-bottom: 0;
+}
+
+.coordination-handoff-wide .coordination-handoff-metrics div:last-child {
+  padding-right: 0;
+  border-right: 0;
 }
 
 .coordination-handoff-metrics span,
@@ -2490,6 +2511,13 @@ pre,
 .coordination-team-empty {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.coordination-team-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
 }
 
 .coordination-team-chip {
@@ -3658,6 +3686,11 @@ pre,
   font-size: 0.74rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.explore-tag-team {
+  background: rgba(41, 96, 168, 0.1);
+  color: #24538c;
 }
 
 .runtime-status-pill {
@@ -7372,12 +7405,23 @@ button:disabled {
 
   .coordination-summary-grid,
   .coordination-setup-grid,
+  .coordination-handoff-wide,
   .coordination-grid,
   .coordination-policy-grid,
   .coordination-field-grid,
   .coordination-session-controls,
   .coordination-envelope-controls {
     grid-template-columns: 1fr;
+  }
+
+  .coordination-handoff-wide .coordination-handoff-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .coordination-handoff-wide .coordination-handoff-metrics div {
+    padding: 0 0 10px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(18, 35, 54, 0.08);
   }
 
   .coordination-agent-card {
@@ -7561,8 +7605,17 @@ button:disabled {
 }
 
 @media (max-width: 1180px) and (min-width: 801px) {
-  .coordination-setup-grid {
-    grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  .coordination-handoff-wide {
+    grid-template-columns: 1fr;
+  }
+
+  .coordination-handoff-wide .coordination-handoff-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coordination-handoff-wide .coordination-handoff-metrics div {
+    padding: 0;
+    border-right: 0;
   }
 }
 
