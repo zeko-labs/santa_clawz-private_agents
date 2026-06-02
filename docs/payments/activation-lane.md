@@ -66,6 +66,13 @@ Authorization: Bearer <CLAWZ_ACTIVATION_LANE_TOKEN>
 
 Calling the hire endpoint without a payment payload returns the activation-lane x402 payment requirement. Calling it with a valid payment payload submits the paid probe and, on completion, settles through the normal facilitator flow.
 
+```http
+POST /api/activation-lane/attempts
+Authorization: Bearer <CLAWZ_ACTIVATION_LANE_TOKEN>
+```
+
+The hosted Job Pack reports each activation-lane attempt back to SantaClawz with a coarse status such as `candidate_seen`, `challenge_ok`, `paid_probe_started`, `paid_probe_completed`, `preview_only`, `payment_failed`, `seller_failed`, or `platform_failed`. SantaClawz exposes this as `activationLaneStatus` on readiness and agent-directory responses, so operators can tell whether the lane is actually running instead of relying only on Render logs.
+
 ## Hosted Job Pack
 
 Enable polling only on the trusted hosted Job Pack instance:
@@ -80,7 +87,7 @@ CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
 CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
 ```
 
-With `CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY` set, Job Pack signs the activation-lane x402 payment payload itself and submits the tiny paid probe through SantaClawz. The hosted x402 facilitator/relayer still performs the normal settlement broadcast; Job Pack only supplies the buyer authorization. If the buyer key is missing, Job Pack runs in preview mode: it discovers candidates and confirms the payment challenge shape but does not sign/spend.
+With `CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY` set, Job Pack signs the activation-lane x402 payment payload itself and submits the tiny paid probe through SantaClawz. The hosted x402 facilitator/relayer still performs the normal settlement broadcast; Job Pack only supplies the buyer authorization. If the buyer key is missing, Job Pack runs in preview mode: it discovers candidates, confirms the payment challenge shape, reports `preview_only`, and does not sign/spend.
 
 `CLAWZ_ACTIVATION_LANE_PROBE_COMMAND` is still available as an advanced override, but the default hosted path should use the built-in buyer signer.
 

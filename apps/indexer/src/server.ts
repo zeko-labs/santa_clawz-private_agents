@@ -8,6 +8,8 @@ import {
   type AgentBoardMessageType,
   type AgentMarketplaceTags,
   type AgentPaymentRail,
+  type AgentActivationLaneAttemptStatus,
+  type AgentActivationProbeClassification,
   type AgentProfileState,
   type AgentRuntimeStatus,
   type AgentX402RailPlan,
@@ -46,6 +48,7 @@ import {
   type CreateProcurementIntentOptions,
   type ExecutionIntentTransitionOptions,
   type HostedWorkspaceIdentityProvider,
+  type RecordActivationLaneAttemptOptions,
   type UpsertHostedWorkspaceRunOptions
 } from "./control-plane.js";
 import { ArtifactSafetyError, ArtifactScanUnavailableError, ArtifactStore } from "./artifact-store.js";
@@ -600,6 +603,39 @@ function activationLaneAmountUsd() {
 function activationLaneRetrySeconds() {
   const rawValue = Number.parseInt(process.env.CLAWZ_ACTIVATION_LANE_RETRY_SECONDS ?? "3600", 10);
   return Number.isFinite(rawValue) ? Math.max(60, rawValue) : 3600;
+}
+
+function parseActivationLaneAttemptStatus(value: unknown): AgentActivationLaneAttemptStatus {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (
+    normalized === "candidate_seen" ||
+    normalized === "challenge_ok" ||
+    normalized === "paid_probe_started" ||
+    normalized === "paid_probe_completed" ||
+    normalized === "payment_failed" ||
+    normalized === "seller_failed" ||
+    normalized === "platform_failed" ||
+    normalized === "preview_only" ||
+    normalized === "unknown_failed"
+  ) {
+    return normalized;
+  }
+  return "unknown_failed";
+}
+
+function parseActivationProbeClassification(value: unknown): AgentActivationProbeClassification | undefined {
+  return value === "payment" || value === "platform" || value === "seller" || value === "unknown" ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function tokenQuery(request: IndexerRequest) {
@@ -6247,6 +6283,61 @@ app.post("/api/activation-lane/agents/:agentId/hire", (request, response) => {
   handleAgentHireRequest(request, response);
 });
 
+app.post("/api/activation-lane/attempts", route(async (request, response) => {
+  if (!requireActivationLaneAccess(request, response)) {
+    return;
+  }
+  const body = isRecord(request.body) ? request.body : {};
+  const agentId = optionalString(body.agentId);
+  if (!agentId) {
+    response.status(400).json({
+      ok: false,
+      code: "activation_lane_agent_id_required",
+      error: "agentId is required."
+    });
+    return;
+  }
+  const sessionId = optionalString(body.sessionId);
+  const classification = parseActivationProbeClassification(body.classification);
+  const mode = optionalString(body.mode);
+  const httpStatus = optionalNumber(body.httpStatus ?? body.statusCode);
+  const requestId = optionalString(body.requestId);
+  const ledgerId = optionalString(body.ledgerId);
+  const paymentPayloadDigestSha256 = optionalString(body.paymentPayloadDigestSha256);
+  const responseDigestSha256 = optionalString(body.responseDigestSha256);
+  const error = optionalString(body.error);
+  const occurredAtIso = optionalString(body.occurredAtIso);
+  const attemptOptions: RecordActivationLaneAttemptOptions = {
+    agentId,
+    ...(sessionId ? { sessionId } : {}),
+    status: parseActivationLaneAttemptStatus(body.status),
+    ...(classification ? { classification } : {}),
+    ...(typeof body.ok === "boolean" ? { ok: body.ok } : {}),
+    ...(mode ? { mode } : {}),
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(ledgerId ? { ledgerId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
+    ...(responseDigestSha256 ? { responseDigestSha256 } : {}),
+    ...(error ? { error } : {}),
+    ...(occurredAtIso ? { occurredAtIso } : {})
+  };
+  try {
+    const attempt = await controlPlane.recordActivationLaneAttempt(attemptOptions);
+    clearConsoleStateCache();
+    response.json({
+      ok: true,
+      attempt
+    });
+  } catch (error) {
+    response.status(400).json({
+      ok: false,
+      code: "activation_lane_attempt_rejected",
+      error: errorMessage(error, "Unable to record activation-lane attempt.")
+    });
+  }
+}));
+
 app.get("/api/activation-lane/candidates", route(async (request, response) => {
   if (!requireActivationLaneAccess(request, response)) {
     return;
@@ -6291,6 +6382,7 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
         blockers: agent.readiness?.blockers ?? []
       },
       ...(agent.activationProbes ? { activationProbes: agent.activationProbes } : {}),
+      ...(agent.activationLaneStatus ? { activationLaneStatus: agent.activationLaneStatus } : {}),
       ...(agent.lastUpdatedAtIso ? { lastUpdatedAtIso: agent.lastUpdatedAtIso } : {})
     }));
 
