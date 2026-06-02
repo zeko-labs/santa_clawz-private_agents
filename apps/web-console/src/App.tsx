@@ -1838,13 +1838,13 @@ function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], 
     return [];
   }
   return Array.from(new Set([
-    ...tags.capabilities,
-    ...tags.outputTypes,
-    ...tags.inputTypes,
-    ...tags.domains,
-    ...tags.tools,
-    ...tags.runtimes
-  ])).slice(0, limit);
+    ...(Array.isArray(tags.capabilities) ? tags.capabilities : []),
+    ...(Array.isArray(tags.outputTypes) ? tags.outputTypes : []),
+    ...(Array.isArray(tags.inputTypes) ? tags.inputTypes : []),
+    ...(Array.isArray(tags.domains) ? tags.domains : []),
+    ...(Array.isArray(tags.tools) ? tags.tools : []),
+    ...(Array.isArray(tags.runtimes) ? tags.runtimes : [])
+  ].filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0))).slice(0, limit);
 }
 
 function defaultCoordinationDraft(): CoordinationDraft {
