@@ -2332,8 +2332,9 @@ pre,
   grid-column: 2;
   grid-row: 1 / span 2;
   color: var(--ink);
-  font-size: 1.25rem;
+  font-size: 1.05rem;
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .coordination-handoff-metrics small {
@@ -2352,6 +2353,58 @@ pre,
 .coordination-ids strong,
 .coordination-intent-result code {
   color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.coordination-intent-result small {
+  color: var(--muted);
+}
+
+.coordination-session-strip,
+.coordination-envelope-strip {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.coordination-session-strip strong,
+.coordination-envelope-strip strong {
+  color: var(--ink);
+}
+
+.coordination-session-strip small,
+.coordination-envelope-strip small {
+  color: var(--muted);
+}
+
+.coordination-session-controls,
+.coordination-envelope-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.coordination-session-controls .text-input,
+.coordination-envelope-controls .text-input {
+  min-width: 0;
+}
+
+.coordination-session-controls .primary-button,
+.coordination-session-controls .secondary-button,
+.coordination-envelope-strip .secondary-button {
+  min-height: 40px;
+  padding-inline: 12px;
+}
+
+.coordination-envelope-body {
+  min-height: 68px;
+}
+
+.coordination-dev-code {
+  font-family: var(--mono);
   overflow-wrap: anywhere;
 }
 
@@ -7321,7 +7374,9 @@ button:disabled {
   .coordination-setup-grid,
   .coordination-grid,
   .coordination-policy-grid,
-  .coordination-field-grid {
+  .coordination-field-grid,
+  .coordination-session-controls,
+  .coordination-envelope-controls {
     grid-template-columns: 1fr;
   }
 

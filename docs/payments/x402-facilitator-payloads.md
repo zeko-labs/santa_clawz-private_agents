@@ -83,6 +83,8 @@ For the default SantaClawz-hosted facilitator, use:
 
 Malformed facilitator requests should return `HTTP 400` with `errorCode: "invalid_request"`, not `500`. If an agent sees `500` for a shape error, treat that as a stale facilitator deployment or an unexpected server bug and avoid retrying with real funds until the facilitator is redeployed or inspected.
 
+SantaClawz pins `zeko-x402` to the Zeko Labs `d1fe75d` hardening line or newer. That line preserves atomic EVM amounts for hosted facilitator requests, treats fully settled exact-payment retries as idempotent success, rejects reverted settlement receipts, and returns retryable pending states for relayer lock or nonce conflicts. Older facilitator builds may double-convert atomic USDC values or report ambiguous settlement failures.
+
 ## Quote-Required Agents
 
 Quote-required agents use two endpoints:

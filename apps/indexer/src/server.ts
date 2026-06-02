@@ -44,7 +44,9 @@ import {
   type CreateBuyerRouterPlanOptions,
   type CreateExecutionIntentOptions,
   type CreateProcurementIntentOptions,
-  type ExecutionIntentTransitionOptions
+  type ExecutionIntentTransitionOptions,
+  type HostedWorkspaceIdentityProvider,
+  type UpsertHostedWorkspaceRunOptions
 } from "./control-plane.js";
 import { ArtifactSafetyError, ArtifactScanUnavailableError, ArtifactStore } from "./artifact-store.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
@@ -446,6 +448,31 @@ type BuyerRouterPlanBody = {
   marketplaceTags?: unknown;
   selectedAgentId?: unknown;
 };
+type HostedWorkspaceEmailCodeBody = {
+  orgName?: unknown;
+  workspaceDomain?: unknown;
+  email?: unknown;
+  challengeId?: unknown;
+  code?: unknown;
+};
+type HostedWorkspaceRunBody = {
+  orgName?: unknown;
+  workspaceDomain?: unknown;
+  workspaceSessionToken?: unknown;
+  identityProvider?: unknown;
+  projectName?: unknown;
+  goal?: unknown;
+  threadId?: unknown;
+  swarmId?: unknown;
+  requesterContact?: unknown;
+  budgetUsd?: unknown;
+  privacyMode?: unknown;
+  requiredCapabilities?: unknown;
+  selectedAgentIds?: unknown;
+  toolTouchpoints?: unknown;
+  manifest?: unknown;
+  procurementIntentId?: unknown;
+};
 type ProcurementBidBody = {
   idempotencyKey?: unknown;
   agentId?: unknown;
@@ -508,6 +535,10 @@ function bearerTokenHeader(request: IndexerRequest) {
 
 function activationLaneTokenHeader(request: IndexerRequest) {
   return optionalString(request.header("x-santaclawz-activation-lane-key")) ?? bearerTokenHeader(request);
+}
+
+function workspaceSessionTokenHeader(request: IndexerRequest) {
+  return optionalString(request.header("x-santaclawz-workspace-session")) ?? bearerTokenHeader(request);
 }
 
 function activationLaneToken() {
@@ -1400,6 +1431,43 @@ function parseProcurementIntentBody(body: unknown, idempotencyKey?: string): Cre
     ...(parseArtifactDeliveryPreference(value.artifactDelivery)
       ? { artifactDelivery: parseArtifactDeliveryPreference(value.artifactDelivery)! }
       : {})
+  };
+}
+
+function parseHostedWorkspaceIdentityProvider(value: unknown): HostedWorkspaceIdentityProvider {
+  return value === "google" || value === "operator-managed" ? value : "email-code";
+}
+
+function parseWorkspacePrivacyMode(value: unknown): UpsertHostedWorkspaceRunOptions["privacyMode"] {
+  return value === "public-summary" ||
+    value === "recipient-encrypted" ||
+    value === "local-private" ||
+    value === "digest-only"
+    ? value
+    : "digest-only";
+}
+
+function parseHostedWorkspaceRunBody(body: unknown, workspaceSessionToken: string): UpsertHostedWorkspaceRunOptions {
+  const value = isRecord(body) ? body as HostedWorkspaceRunBody : {};
+  const budgetUsd = optionalString(value.budgetUsd);
+  const procurementIntentId = optionalString(value.procurementIntentId);
+  return {
+    orgName: optionalString(value.orgName) ?? "",
+    workspaceDomain: optionalString(value.workspaceDomain) ?? "",
+    workspaceSessionToken,
+    identityProvider: parseHostedWorkspaceIdentityProvider(value.identityProvider),
+    projectName: optionalString(value.projectName) ?? "",
+    goal: optionalString(value.goal) ?? "",
+    threadId: optionalString(value.threadId) ?? "",
+    swarmId: optionalString(value.swarmId) ?? "",
+    requesterContact: optionalString(value.requesterContact) ?? "",
+    ...(budgetUsd ? { budgetUsd } : {}),
+    privacyMode: parseWorkspacePrivacyMode(value.privacyMode),
+    requiredCapabilities: stringArray(value.requiredCapabilities),
+    selectedAgentIds: stringArray(value.selectedAgentIds),
+    toolTouchpoints: stringArray(value.toolTouchpoints),
+    ...(isRecord(value.manifest) ? { manifest: value.manifest } : {}),
+    ...(procurementIntentId ? { procurementIntentId } : {})
   };
 }
 
@@ -3721,6 +3789,101 @@ app.get("/api/procurement/intents", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to list procurement intents."
+    });
+  }
+}));
+
+app.post("/api/workspaces/auth/email-code", route(async (request, response) => {
+  try {
+    const body = (isRecord(request.body) ? request.body : {}) as HostedWorkspaceEmailCodeBody;
+    response.json(await controlPlane.requestHostedWorkspaceEmailCode({
+      orgName: optionalString(body.orgName) ?? "",
+      workspaceDomain: optionalString(body.workspaceDomain) ?? "",
+      email: optionalString(body.email) ?? ""
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to request workspace email code."
+    });
+  }
+}));
+
+app.post("/api/workspaces/auth/email-code/verify", route(async (request, response) => {
+  try {
+    const body = (isRecord(request.body) ? request.body : {}) as HostedWorkspaceEmailCodeBody;
+    response.json(await controlPlane.verifyHostedWorkspaceEmailCode({
+      challengeId: optionalString(body.challengeId) ?? "",
+      email: optionalString(body.email) ?? "",
+      code: optionalString(body.code) ?? ""
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to verify workspace email code."
+    });
+  }
+}));
+
+app.get("/api/workspaces/runs", route(async (request, response) => {
+  try {
+    const workspaceSessionToken = workspaceSessionTokenHeader(request);
+    if (!workspaceSessionToken) {
+      response.status(401).json({
+        error: "Workspace session token is required.",
+        code: "workspace_session_required"
+      });
+      return;
+    }
+    const workspaceId = queryString(request.query, "workspaceId");
+    const limit = queryString(request.query, "limit");
+    response.json(await controlPlane.listHostedWorkspaceRuns({
+      workspaceSessionToken,
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    }));
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to list workspace runs."
+    });
+  }
+}));
+
+app.post("/api/workspaces/runs", route(async (request, response) => {
+  try {
+    const workspaceSessionToken = workspaceSessionTokenHeader(request);
+    if (!workspaceSessionToken) {
+      response.status(401).json({
+        error: "Workspace session token is required.",
+        code: "workspace_session_required"
+      });
+      return;
+    }
+    response.json(await controlPlane.upsertHostedWorkspaceRun(parseHostedWorkspaceRunBody(request.body ?? null, workspaceSessionToken)));
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to save workspace run."
+    });
+  }
+}));
+
+app.get("/api/workspaces/runs/:runId", route(async (request, response) => {
+  try {
+    const workspaceSessionToken = workspaceSessionTokenHeader(request);
+    if (!workspaceSessionToken) {
+      response.status(401).json({
+        error: "Workspace session token is required.",
+        code: "workspace_session_required"
+      });
+      return;
+    }
+    const runId = request.params.runId;
+    if (!runId) {
+      response.status(400).json({ error: "runId is required." });
+      return;
+    }
+    response.json(await controlPlane.getHostedWorkspaceRun(runId, { workspaceSessionToken }));
+  } catch (error) {
+    response.status(403).json({
+      error: error instanceof Error ? error.message : "Unable to load workspace run."
     });
   }
 }));
