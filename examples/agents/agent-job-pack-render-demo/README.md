@@ -161,6 +161,7 @@ The worker logs structured JSON events to Render logs:
 - `real-worker-completed`
 - `real-worker-failed`
 - `activation-lane-poller-started`
+- `activation-lane-attempt-report-failed`
 - `activation-lane-candidate-processed`
 
 Search those logs by SantaClawz `request_id` when a paid relay trace reaches `worker_ack` but not `worker_completed`.

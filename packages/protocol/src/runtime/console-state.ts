@@ -583,6 +583,17 @@ export interface AgentCompletionScore {
 
 export type AgentActivationProbeClassification = "payment" | "platform" | "seller" | "unknown";
 
+export type AgentActivationLaneAttemptStatus =
+  | "candidate_seen"
+  | "challenge_ok"
+  | "paid_probe_started"
+  | "paid_probe_completed"
+  | "payment_failed"
+  | "seller_failed"
+  | "platform_failed"
+  | "preview_only"
+  | "unknown_failed";
+
 export interface AgentActivationProbeStats {
   totalProbeCount: number;
   completedProbeCount: number;
@@ -590,6 +601,18 @@ export interface AgentActivationProbeStats {
   lastProbeAtIso?: string;
   lastProbeStatus?: "completed" | "failed" | "pending";
   lastProbeClassification?: AgentActivationProbeClassification;
+  label: string;
+}
+
+export interface AgentActivationLaneStatus {
+  totalAttemptCount: number;
+  lastAttemptAtIso?: string;
+  lastAttemptStatus?: AgentActivationLaneAttemptStatus;
+  lastAttemptClassification?: AgentActivationProbeClassification;
+  lastAttemptMode?: string;
+  lastHttpStatus?: number;
+  lastRequestId?: string;
+  lastError?: string;
   label: string;
 }
 
@@ -728,6 +751,7 @@ export interface AgentRegistryEntry {
   completionScore?: AgentCompletionScore;
   jobActivityStats?: AgentJobActivityStats;
   activationProbes?: AgentActivationProbeStats;
+  activationLaneStatus?: AgentActivationLaneStatus;
   marketplaceTagStats?: AgentMarketplaceTagStat[];
   published: boolean;
   pendingSocialAnchorCount: number;
@@ -1216,6 +1240,7 @@ export interface AgentReadinessState {
     classification?: AgentActivationProbeClassification;
   }>;
   activationProbes?: AgentActivationProbeStats;
+  activationLaneStatus?: AgentActivationLaneStatus;
   lastJobStatus?: "none" | "submitted" | "quoted" | "completed" | "failed";
   blockers: string[];
 }
@@ -1248,6 +1273,7 @@ export interface ConsoleStateResponse {
   completionScore?: AgentCompletionScore;
   jobActivityStats?: AgentJobActivityStats;
   activationProbes?: AgentActivationProbeStats;
+  activationLaneStatus?: AgentActivationLaneStatus;
   protocolOwnerFeePolicy: ProtocolOwnerFeePolicy;
   adminAccess: AdminAccessState;
   ingressAccess?: IngressAccessState;

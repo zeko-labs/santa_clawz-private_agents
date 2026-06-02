@@ -201,6 +201,7 @@ export interface ClawzAgentReadinessResponse extends Record<string, unknown> {
   readinessWarnings?: string[];
   readinessNotes?: Array<Record<string, unknown>>;
   activationProbes?: Record<string, unknown>;
+  activationLaneStatus?: Record<string, unknown>;
   limits?: {
     taskPromptMaxChars?: number;
     requesterContactMaxChars?: number;

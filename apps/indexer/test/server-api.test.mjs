@@ -2455,6 +2455,55 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(activationCandidatesWithBadToken.status, 401);
     assert.equal(activationCandidatesWithBadToken.payload.code, "activation_lane_auth_required");
 
+    const activationAttemptMissingToken = await requestJson(`${baseUrl}/api/activation-lane/attempts`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentId,
+        sessionId,
+        status: "preview_only"
+      })
+    });
+    assert.equal(activationAttemptMissingToken.status, 401);
+    assert.equal(activationAttemptMissingToken.payload.code, "activation_lane_auth_required");
+
+    const activationAttempt = await requestJson(`${baseUrl}/api/activation-lane/attempts`, {
+      method: "POST",
+      headers: {
+        "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+      },
+      body: JSON.stringify({
+        agentId,
+        sessionId,
+        status: "preview_only",
+        classification: "payment",
+        ok: false,
+        mode: "payment_required_preview",
+        httpStatus: 402,
+        error: "missing hosted activation buyer key"
+      })
+    });
+    assert.equal(activationAttempt.status, 200);
+    assert.equal(activationAttempt.payload.ok, true);
+    assert.equal(activationAttempt.payload.attempt.agentId, agentId);
+    assert.equal(activationAttempt.payload.attempt.status, "preview_only");
+
+    const readyAfterActivationAttempt = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/ready`);
+    assert.equal(readyAfterActivationAttempt.status, 200);
+    assert.equal(readyAfterActivationAttempt.payload.readiness.activationLaneStatus.totalAttemptCount, 1);
+    assert.equal(readyAfterActivationAttempt.payload.readiness.activationLaneStatus.lastAttemptStatus, "preview_only");
+    assert.equal(
+      readyAfterActivationAttempt.payload.readiness.readinessNotes.some((note) => note.code === "activation_lane_preview_only"),
+      true
+    );
+
+    const activationCandidatesAfterAttempt = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
+      headers: {
+        authorization: "Bearer test_activation_lane_token"
+      }
+    });
+    const attemptedCandidate = activationCandidatesAfterAttempt.payload.candidates.find((candidate) => candidate.agentId === agentId);
+    assert.equal(attemptedCandidate.activationLaneStatus.lastAttemptStatus, "preview_only");
+
     const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({

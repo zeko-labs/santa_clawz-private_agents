@@ -26,6 +26,8 @@ import {
   type AgentRuntimeStatus,
   type AgentRuntimeAvailabilityState,
   type AgentRegistryEntry,
+  type AgentActivationLaneAttemptStatus,
+  type AgentActivationLaneStatus,
   type AgentActivationProbeClassification,
   type AgentActivationProbeStats,
   type ExecutionIntentLifecycleEntry,
@@ -153,6 +155,12 @@ const HIRE_REQUEST_GLOBAL_SAFETY_RETAIN_LIMIT = parseBoundedIntegerEnv(
   100_000,
   HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT,
   1_000_000
+);
+const ACTIVATION_LANE_ATTEMPT_RETAIN_LIMIT = parseBoundedIntegerEnv(
+  "CLAWZ_ACTIVATION_LANE_ATTEMPT_RETAIN_LIMIT",
+  10_000,
+  500,
+  100_000
 );
 type LiveFlowKind = "first-turn" | "next-turn" | "abort-turn" | "refund-turn" | "revoke-disclosure";
 type HireIngressRequestKind = SantaClawzHireRequestType;
@@ -1033,6 +1041,44 @@ function mergeHireRelayTrace(input: {
 interface HireRequestFile {
   requests: HireRequestRecord[];
   jobActivityStatsBySessionId?: Record<string, AgentJobActivityStats>;
+}
+
+interface ActivationLaneAttemptRecord {
+  attemptId: string;
+  agentId: string;
+  sessionId: string;
+  occurredAtIso: string;
+  status: AgentActivationLaneAttemptStatus;
+  classification?: AgentActivationProbeClassification;
+  ok?: boolean;
+  mode?: string;
+  httpStatus?: number;
+  requestId?: string;
+  ledgerId?: string;
+  paymentPayloadDigestSha256?: string;
+  responseDigestSha256?: string;
+  error?: string;
+}
+
+interface ActivationLaneAttemptFile {
+  schemaVersion: "santaclawz-activation-lane-attempts/1.0";
+  attempts: ActivationLaneAttemptRecord[];
+}
+
+export interface RecordActivationLaneAttemptOptions {
+  agentId: string;
+  sessionId?: string;
+  status: AgentActivationLaneAttemptStatus;
+  classification?: AgentActivationProbeClassification;
+  ok?: boolean;
+  mode?: string;
+  httpStatus?: number;
+  requestId?: string;
+  ledgerId?: string;
+  paymentPayloadDigestSha256?: string;
+  responseDigestSha256?: string;
+  error?: string;
+  occurredAtIso?: string;
 }
 
 type JobStageStatus = "pending" | "active" | "blocked" | "completed" | "accepted" | "revision_requested";
@@ -2149,6 +2195,13 @@ function buildDefaultHireRequestFile(): HireRequestFile {
   };
 }
 
+function buildDefaultActivationLaneAttemptFile(): ActivationLaneAttemptFile {
+  return {
+    schemaVersion: "santaclawz-activation-lane-attempts/1.0",
+    attempts: []
+  };
+}
+
 function buildDefaultJobCollaborationFile(): JobCollaborationFile {
   return {
     stages: [],
@@ -2668,6 +2721,86 @@ function buildActivationProbeStats(
   };
 }
 
+function activationLaneStatusLabel(status?: AgentActivationLaneAttemptStatus, classification?: AgentActivationProbeClassification) {
+  switch (status) {
+    case "candidate_seen":
+      return "Activation lane saw this agent";
+    case "challenge_ok":
+      return "Activation lane payment challenge verified";
+    case "paid_probe_started":
+      return "Activation paid smoke started";
+    case "paid_probe_completed":
+      return "Activation paid smoke completed";
+    case "payment_failed":
+      return "Activation paid smoke payment failed";
+    case "seller_failed":
+      return "Activation paid smoke reached seller but failed";
+    case "platform_failed":
+      return "Activation paid smoke hit platform or relay issue";
+    case "preview_only":
+      return "Activation lane preview only; no payment submitted";
+    case "unknown_failed":
+      return `Activation lane failed${classification ? `: ${classification}` : ""}`;
+    default:
+      return "No activation lane attempts yet";
+  }
+}
+
+function sanitizeActivationLaneAttemptStatus(value: string): AgentActivationLaneAttemptStatus {
+  const allowed = new Set<AgentActivationLaneAttemptStatus>([
+    "candidate_seen",
+    "challenge_ok",
+    "paid_probe_started",
+    "paid_probe_completed",
+    "payment_failed",
+    "seller_failed",
+    "platform_failed",
+    "preview_only",
+    "unknown_failed"
+  ]);
+  if (allowed.has(value as AgentActivationLaneAttemptStatus)) {
+    return value as AgentActivationLaneAttemptStatus;
+  }
+  return "unknown_failed";
+}
+
+function sanitizeActivationProbeClassification(value?: string): AgentActivationProbeClassification | undefined {
+  return value === "payment" || value === "platform" || value === "seller" || value === "unknown"
+    ? value
+    : undefined;
+}
+
+function buildActivationLaneStatus(
+  attemptFile: ActivationLaneAttemptFile,
+  sessionId: string,
+  activationProbes?: AgentActivationProbeStats
+): AgentActivationLaneStatus {
+  const attempts = attemptFile.attempts
+    .filter((attempt) => attempt.sessionId === sessionId)
+    .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso));
+  const last = attempts[0];
+  if (!last) {
+    return {
+      totalAttemptCount: 0,
+      label:
+        activationProbes && activationProbes.totalProbeCount > 0
+          ? activationProbes.label
+          : "No activation lane attempts yet"
+    };
+  }
+  return {
+    totalAttemptCount: attempts.length,
+    lastAttemptAtIso: last.occurredAtIso,
+    lastAttemptStatus: last.status,
+    ...(last.classification ? { lastAttemptClassification: last.classification } : {}),
+    ...(last.mode ? { lastAttemptMode: last.mode } : {}),
+    ...(typeof last.httpStatus === "number" ? { lastHttpStatus: last.httpStatus } : {}),
+    ...(last.requestId ? { lastRequestId: last.requestId } : {}),
+    ...(last.error ? { lastError: last.error } : {}),
+    label: activationLaneStatusLabel(last.status, last.classification)
+  };
+}
+
 function hireRequestRetentionKey(request: HireRequestRecord) {
   return `${request.sessionId}:${request.requestId}`;
 }
@@ -2920,6 +3053,7 @@ function buildAgentReadinessState(input: {
   paymentReady: boolean;
   paidExecutionProofByHistory?: PaidExecutionProofState;
   activationProbes?: AgentActivationProbeStats;
+  activationLaneStatus?: AgentActivationLaneStatus;
   lastJobStatus?: AgentReadinessState["lastJobStatus"];
 }): AgentReadinessState {
   const heartbeatLive = input.heartbeat.status === "live";
@@ -3009,6 +3143,18 @@ function buildAgentReadinessState(input: {
       classification: latestProbeFailed
     });
   }
+  if (
+    paidMode &&
+    !paidExecutionProven &&
+    input.activationLaneStatus?.lastAttemptStatus === "preview_only"
+  ) {
+    readinessNotes.push({
+      code: "activation_lane_preview_only",
+      severity: "info",
+      message: "Activation lane found this agent but only ran a preview; no paid smoke was submitted.",
+      ...(input.activationLaneStatus.lastAttemptAtIso ? { atIso: input.activationLaneStatus.lastAttemptAtIso } : {})
+    });
+  }
 
   return {
     relayConnected: input.relayConnected,
@@ -3026,6 +3172,7 @@ function buildAgentReadinessState(input: {
     ...(readinessWarnings.length ? { readinessWarnings } : {}),
     ...(readinessNotes.length ? { readinessNotes } : {}),
     ...(input.activationProbes ? { activationProbes: input.activationProbes } : {}),
+    ...(input.activationLaneStatus ? { activationLaneStatus: input.activationLaneStatus } : {}),
     lastJobStatus: input.lastJobStatus ?? "none",
     blockers
   };
@@ -3978,6 +4125,7 @@ export class ClawzControlPlane {
   private readonly liveFlowStatusPath: string;
   private readonly sponsorQueuePath: string;
   private readonly hireRequestPath: string;
+  private readonly activationLaneAttemptPath: string;
   private readonly jobCollaborationPath: string;
   private readonly paymentLedgerPath: string;
   private readonly executionIntentPath: string;
@@ -4017,6 +4165,7 @@ export class ClawzControlPlane {
     this.liveFlowStatusPath = path.join(baseDir, "state", "live-session-turn-flow.json");
     this.sponsorQueuePath = path.join(baseDir, "state", "wallet-sponsor-queue.json");
     this.hireRequestPath = path.join(baseDir, "state", "hire-requests.json");
+    this.activationLaneAttemptPath = path.join(baseDir, "state", "activation-lane-attempts.json");
     this.jobCollaborationPath = path.join(baseDir, "state", "job-collaboration.json");
     this.paymentLedgerPath = path.join(baseDir, "state", "payment-ledger.json");
     this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
@@ -4301,6 +4450,77 @@ export class ClawzControlPlane {
       requests: retainHireRequests(file.requests),
       jobActivityStatsBySessionId: file.jobActivityStatsBySessionId ?? {}
     });
+  }
+
+  private async loadActivationLaneAttemptFile(): Promise<ActivationLaneAttemptFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<ActivationLaneAttemptFile>(this.activationLaneAttemptPath);
+    if (file?.attempts) {
+      return {
+        schemaVersion: "santaclawz-activation-lane-attempts/1.0",
+        attempts: file.attempts
+          .filter((attempt) => attempt.agentId && attempt.sessionId && attempt.occurredAtIso)
+          .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso))
+          .slice(0, ACTIVATION_LANE_ATTEMPT_RETAIN_LIMIT)
+      };
+    }
+
+    const fallback = buildDefaultActivationLaneAttemptFile();
+    await this.saveActivationLaneAttemptFile(fallback);
+    return fallback;
+  }
+
+  private async saveActivationLaneAttemptFile(file: ActivationLaneAttemptFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.activationLaneAttemptPath, {
+      schemaVersion: "santaclawz-activation-lane-attempts/1.0",
+      attempts: file.attempts
+        .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso))
+        .slice(0, ACTIVATION_LANE_ATTEMPT_RETAIN_LIMIT)
+    });
+  }
+
+  async recordActivationLaneAttempt(options: RecordActivationLaneAttemptOptions): Promise<ActivationLaneAttemptRecord> {
+    const agentId = options.agentId.trim();
+    if (!agentId) {
+      throw new Error("agentId is required.");
+    }
+    const state = await this.loadState();
+    const resolvedSessionId = this.resolveSessionIdFromAgentId(state, agentId);
+    if (!resolvedSessionId) {
+      throw new Error(`Unknown agent: ${agentId}`);
+    }
+    if (options.sessionId && options.sessionId !== resolvedSessionId) {
+      throw new Error("The provided activation-lane sessionId does not match the agentId.");
+    }
+    const occurredAtMs = Date.parse(options.occurredAtIso ?? "");
+    const occurredAtIso = Number.isFinite(occurredAtMs) ? new Date(occurredAtMs).toISOString() : new Date().toISOString();
+    const record: ActivationLaneAttemptRecord = {
+      attemptId: `act_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      agentId,
+      sessionId: resolvedSessionId,
+      occurredAtIso,
+      status: sanitizeActivationLaneAttemptStatus(options.status),
+      ...(options.classification ? { classification: options.classification } : {}),
+      ...(typeof options.ok === "boolean" ? { ok: options.ok } : {}),
+      ...(options.mode?.trim() ? { mode: options.mode.trim().slice(0, 80) } : {}),
+      ...(typeof options.httpStatus === "number" && Number.isFinite(options.httpStatus)
+        ? { httpStatus: Math.trunc(options.httpStatus) }
+        : {}),
+      ...(options.requestId?.trim() ? { requestId: options.requestId.trim().slice(0, 96) } : {}),
+      ...(options.ledgerId?.trim() ? { ledgerId: options.ledgerId.trim().slice(0, 96) } : {}),
+      ...(options.paymentPayloadDigestSha256?.trim()
+        ? { paymentPayloadDigestSha256: options.paymentPayloadDigestSha256.trim().slice(0, 96) }
+        : {}),
+      ...(options.responseDigestSha256?.trim() ? { responseDigestSha256: options.responseDigestSha256.trim().slice(0, 96) } : {}),
+      ...(options.error?.trim() ? { error: options.error.trim().slice(0, 280) } : {})
+    };
+    const file = await this.loadActivationLaneAttemptFile();
+    await this.saveActivationLaneAttemptFile({
+      schemaVersion: "santaclawz-activation-lane-attempts/1.0",
+      attempts: [record, ...file.attempts]
+    });
+    return record;
   }
 
   private async loadJobCollaborationFile(): Promise<JobCollaborationFile> {
@@ -9031,13 +9251,23 @@ export class ClawzControlPlane {
     const state = await this.loadState();
     const events = await this.loadEvents();
     const normalizedExceptions = this.normalizePrivacyExceptions(state);
-    const [manifests, deployment, liveFlow, sponsorQueueFile, socialAnchorQueueFile, hireRequestFile, runtimeHeartbeatFile] = await Promise.all([
+    const [
+      manifests,
+      deployment,
+      liveFlow,
+      sponsorQueueFile,
+      socialAnchorQueueFile,
+      hireRequestFile,
+      activationLaneAttemptFile,
+      runtimeHeartbeatFile
+    ] = await Promise.all([
       this.blobStore.listManifests(state.currentSessionId),
       this.getDeploymentState(),
       this.getLiveFlowState(),
       this.loadSponsorQueueFile(),
       this.loadSocialAnchorQueueFile(),
       this.loadHireRequestFile(),
+      this.loadActivationLaneAttemptFile(),
       this.loadRuntimeHeartbeatFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
@@ -9095,6 +9325,7 @@ export class ClawzControlPlane {
     );
     const publicProfileView = Boolean(options.agentId || options.sessionId) && !adminAccess.hasAdminAccess;
     const activationProbes = buildActivationProbeStats(hireRequestFile, focus.sessionId);
+    const activationLaneStatus = buildActivationLaneStatus(activationLaneAttemptFile, focus.sessionId, activationProbes);
     const readiness = buildAgentReadinessState({
       profile,
       ownership,
@@ -9107,6 +9338,7 @@ export class ClawzControlPlane {
         includePrivate: !publicProfileView
       }),
       activationProbes,
+      activationLaneStatus,
       lastJobStatus: lastHireStatusForSession(hireRequestFile, focus.sessionId, {
         includePrivate: !publicProfileView,
         includeActivationLane: false
@@ -9157,6 +9389,7 @@ export class ClawzControlPlane {
       completionScore,
       jobActivityStats,
       activationProbes,
+      activationLaneStatus,
       protocolOwnerFeePolicy,
       adminAccess,
       ingressAccess,
@@ -9201,9 +9434,18 @@ export class ClawzControlPlane {
     const events = await this.loadEvents();
     const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
     const profile = this.profileForSession(state, sessionId, trustModeId);
-    const [heartbeatFile, hireRequestFile, deployment, liveFlow, socialAnchorQueueFile, reachability] = await Promise.all([
+    const [
+      heartbeatFile,
+      hireRequestFile,
+      activationLaneAttemptFile,
+      deployment,
+      liveFlow,
+      socialAnchorQueueFile,
+      reachability
+    ] = await Promise.all([
       this.loadRuntimeHeartbeatFile(),
       this.loadHireRequestFile(),
+      this.loadActivationLaneAttemptFile(),
       this.getDeploymentState(),
       this.getLiveFlowState(),
       this.loadSocialAnchorQueueFile(),
@@ -9234,6 +9476,7 @@ export class ClawzControlPlane {
     });
     const ownership = this.ownershipForSession(state, sessionId);
     const activationProbes = buildActivationProbeStats(hireRequestFile, sessionId);
+    const activationLaneStatus = buildActivationLaneStatus(activationLaneAttemptFile, sessionId, activationProbes);
     const readiness = buildAgentReadinessState({
       profile,
       ownership,
@@ -9244,6 +9487,7 @@ export class ClawzControlPlane {
       paymentReady: hasReadyPaymentProfile(profile),
       paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, { includePrivate: true }),
       activationProbes,
+      activationLaneStatus,
       lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, {
         includePrivate: false,
         includeActivationLane: false
@@ -9461,12 +9705,13 @@ export class ClawzControlPlane {
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
-    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile] = await Promise.all([
+    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile, activationLaneAttemptFile] = await Promise.all([
       this.getLiveFlowState(),
       this.getDeploymentState(),
       this.loadSocialAnchorQueueFile(),
       this.loadRuntimeHeartbeatFile(),
-      this.loadHireRequestFile()
+      this.loadHireRequestFile(),
+      this.loadActivationLaneAttemptFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const materializer = new ReplayMaterializer(events);
@@ -9514,6 +9759,7 @@ export class ClawzControlPlane {
             : runtimeHeartbeat.reason;
         const paymentReady = hasReadyPaymentProfile(profile);
         const activationProbes = buildActivationProbeStats(hireRequestFile, sessionId);
+        const activationLaneStatus = buildActivationLaneStatus(activationLaneAttemptFile, sessionId, activationProbes);
         const readiness = buildAgentReadinessState({
           profile,
           ownership,
@@ -9524,6 +9770,7 @@ export class ClawzControlPlane {
           paymentReady,
           paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, { includePrivate: true }),
           activationProbes,
+          activationLaneStatus,
           lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, {
             includePrivate: false,
             includeActivationLane: false
@@ -9597,6 +9844,7 @@ export class ClawzControlPlane {
           completionScore,
           jobActivityStats,
           activationProbes,
+          activationLaneStatus,
           marketplaceTags: sanitizeAgentMarketplaceTags(profile.marketplaceTags, emptyAgentMarketplaceTags()),
           contextRequirements: sanitizeContextRequirements(profile.contextRequirements, emptyContextRequirements()),
           marketplaceTagStats,

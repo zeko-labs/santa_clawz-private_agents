@@ -700,6 +700,49 @@ def activation_lane_http_json(method: str, url: str, token: str, payload: Option
             return exc.code, {"ok": False, "error": raw}
 
 
+def activation_attempt_status_for_result(result: dict[str, Any]) -> str:
+    if result.get("ok") is True:
+        return "preview_only" if result.get("mode") == "payment_required_preview" else "paid_probe_completed"
+    classification = result.get("classification")
+    if classification == "payment":
+        return "payment_failed"
+    if classification == "seller":
+        return "seller_failed"
+    if classification == "platform":
+        return "platform_failed"
+    return "unknown_failed"
+
+
+def report_activation_lane_attempt(candidate: dict[str, Any], token: str, status: str, result: Optional[dict[str, Any]] = None) -> None:
+    agent_id = str(candidate.get("agentId", ""))
+    if not agent_id:
+        return
+    result = result or {}
+    response_value = result.get("response")
+    payload = {
+        "agentId": agent_id,
+        "sessionId": str(candidate.get("sessionId", "")),
+        "status": status,
+        "ok": bool(result.get("ok")) if "ok" in result else status in ("candidate_seen", "challenge_ok", "paid_probe_started"),
+        "mode": str(result.get("mode", "")),
+        "classification": str(result.get("classification", "")),
+        "httpStatus": result.get("status"),
+        "requestId": (response_value or {}).get("requestId") if isinstance(response_value, dict) else "",
+        "ledgerId": ((response_value or {}).get("payment") or {}).get("ledgerId") if isinstance(response_value, dict) and isinstance((response_value or {}).get("payment"), dict) else "",
+        "paymentPayloadDigestSha256": str(result.get("paymentPayloadDigestSha256", "")),
+        "responseDigestSha256": sha256_text(stable_json_dumps(response_value)) if isinstance(response_value, (dict, list)) else "",
+        "error": str(result.get("error", "")),
+        "occurredAtIso": now_iso(),
+    }
+    try:
+        api_base = os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/")
+        status_code, response = activation_lane_http_json("POST", f"{api_base}/api/activation-lane/attempts", token, payload, timeout_seconds=20)
+        if status_code >= 400:
+            log_event({"type": "activation-lane-attempt-report-failed", "agent_id": agent_id, "status": status_code, "response": response})
+    except Exception as exc:
+        log_event({"type": "activation-lane-attempt-report-error", "agent_id": agent_id, "error": str(exc)})
+
+
 def activation_lane_state() -> dict[str, Any]:
     if not ACTIVATION_LANE_STATE.exists():
         return {"agents": {}}
@@ -1041,8 +1084,22 @@ def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> 
     challenge_status, payment_requirement = activation_lane_http_json("POST", f"{endpoint}?activationLane=true", token, request_body, timeout_seconds=30)
     if challenge_status != 402 or not isinstance(payment_requirement, dict):
         result = {"ok": False, "mode": "builtin_challenge", "status": challenge_status, "response": payment_requirement}
-        return {**result, "classification": classify_activation_probe_result(result)}
+        final_result = {**result, "classification": classify_activation_probe_result(result)}
+        report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+        return final_result
+    report_activation_lane_attempt(candidate, token, "challenge_ok", {
+        "ok": True,
+        "mode": "builtin_challenge",
+        "status": challenge_status,
+        "response": payment_requirement,
+        "classification": "unknown",
+    })
     payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
+    report_activation_lane_attempt(candidate, token, "paid_probe_started", {
+        "ok": True,
+        "mode": "builtin_x402",
+        "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
+    })
     paid_status, paid_payload = activation_lane_http_json(
         "POST",
         f"{endpoint}?activationLane=true",
@@ -1056,7 +1113,9 @@ def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> 
         "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
         "response": paid_payload,
     }
-    return {**result, "classification": classify_activation_probe_result(result)}
+    final_result = {**result, "classification": classify_activation_probe_result(result)}
+    report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+    return final_result
 
 
 def process_activation_candidate(candidate: dict[str, Any], token: str, command: str | None) -> dict[str, Any]:
@@ -1090,7 +1149,9 @@ def process_activation_candidate(candidate: dict[str, Any], token: str, command:
         "paymentRequired": status == 402,
         "response": payload,
     }
-    return {**result, "classification": classify_activation_probe_result(result)}
+    final_result = {**result, "classification": classify_activation_probe_result(result)}
+    report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+    return final_result
 
 
 def activation_lane_loop(interval_seconds: int) -> None:
@@ -1128,6 +1189,11 @@ def activation_lane_loop(interval_seconds: int) -> None:
                 retry_after_seconds = max(60, candidate_retry_seconds)
                 if int(time.time() * 1000) - last_attempt_ms < retry_after_seconds * 1000:
                     continue
+                report_activation_lane_attempt(candidate, token, "candidate_seen", {
+                    "ok": True,
+                    "mode": "candidate_poll",
+                    "classification": "unknown",
+                })
                 result = process_activation_candidate(candidate, token, command)
                 state["agents"][agent_id] = {
                     "last_attempt_ms": int(time.time() * 1000),

@@ -234,6 +234,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
 function isActivationLanePath(pathname: string, method: string): boolean {
   return (
     (method === "GET" && pathname === "/api/activation-lane/candidates") ||
+    (method === "POST" && pathname === "/api/activation-lane/attempts") ||
     (method === "POST" && /^\/api\/activation-lane\/agents\/[^/]+\/hire$/.test(pathname))
   );
 }
