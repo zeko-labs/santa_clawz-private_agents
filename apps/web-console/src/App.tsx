@@ -1110,18 +1110,18 @@ function proofAnchorOccurredAt(item: SocialAnchorCandidate) {
 
 function proofActivityBadge(item: SocialAnchorCandidate) {
   if (item.kind === "hire-request-submitted") {
-    return "Hire proof";
+    return "Hire";
   }
   if (item.kind === "paid-execution-completed") {
-    return "Execution proof";
+    return "Execution";
   }
   if (item.kind === "quote-returned" || item.kind === "quote-accepted") {
-    return "Quote proof";
+    return "Quote";
   }
   if (item.kind === "hire-request-failed") {
-    return "Failure proof";
+    return "Failed";
   }
-  return "Proof confirmed";
+  return "Confirmed";
 }
 
 function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
@@ -4369,14 +4369,7 @@ export function App() {
   const activationCommandPreview = activationCommand.split("\n")[0];
   const selectedActivationMethod =
     ACTIVATION_METHODS.find((method) => method.id === activationMethod) ?? DEFAULT_ACTIVATION_METHOD;
-  const activationCopyLabel =
-    activationMethod === "manual"
-      ? copiedKey === "activation-command"
-        ? "Copied"
-        : "Copy setup values"
-      : copiedKey === "activation-command"
-        ? "Copied"
-        : "Copy command";
+  const activationCopyLabel = copiedKey === "activation-command" ? "Copied" : "Copy";
   const activationMethodNote = selectedActivationMethod.note;
   const activationAgentId = registeredAgentId ?? enrollmentTicket?.reservedAgentId ?? autoPublicAgentId;
   const activationRegistryAgent = activationAgentId
@@ -4391,7 +4384,7 @@ export function App() {
     : activationRegistryAgent || isRegisteredSession
       ? {
           label: "Connected",
-          className: "runtime-status-waiting"
+          className: "runtime-status-live"
         }
       : activationTicketExpired
         ? {
@@ -4401,7 +4394,7 @@ export function App() {
         : enrollmentTicket
           ? {
               label: "Active",
-              className: "runtime-status-waiting"
+              className: "runtime-status-live"
             }
           : {
               label: "Pending",
@@ -5589,7 +5582,11 @@ export function App() {
                 </a>
               </div>
               <p className="panel-copy">
-                <span className="desktop-copy">Generate an activation ticket from the info above to go live and get paid.</span>
+                <span className="desktop-copy">
+                  {enrollmentTicket
+                    ? "Choose the agent setup and run the command to go live and get paid."
+                    : "Generate an activation ticket from the info above to go live and get paid."}
+                </span>
                 <span className="mobile-copy">Activate your agent to go live and get paid.</span>
               </p>
             </div>
@@ -5650,10 +5647,7 @@ export function App() {
                               setActivationMethod(method.id);
                             }}
                           >
-                            <span className="activation-choice-line">
-                              <strong>{method.id === "pnpm" ? "A" : "B"}</strong>
-                              <span>{method.label}</span>
-                            </span>
+                            <strong>{method.label}</strong>
                             <small>{method.badge}</small>
                           </button>
                         ))}
@@ -5687,10 +5681,6 @@ export function App() {
                   <div className="activation-command-card">
                     <div className="activation-command-details">
                       <div className="activation-command-summary">
-                        <span className="activation-command-summary-copy">
-                          <strong>{activationMethodNote}</strong>
-                          <code>{activationCommandPreview}</code>
-                        </span>
                         <button
                           type="button"
                           className="activation-command-copy-button"
@@ -5701,6 +5691,10 @@ export function App() {
                           <span className="copy-icon" aria-hidden="true" />
                           {activationCopyLabel}
                         </button>
+                        <span className="activation-command-summary-copy">
+                          <strong>{activationMethodNote}</strong>
+                          <code>{activationCommandPreview}</code>
+                        </span>
                       </div>
                       <div className="command-strip compact-command-strip activation-command-strip">
                         <pre className="activation-command-code">{activationCommand}</pre>
