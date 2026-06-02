@@ -1,6 +1,7 @@
 export * from "./events/event-types.js";
 export * from "./events/validation.js";
 export * from "./agent-communication/envelope.js";
+export * from "./coordination/bridge.js";
 export * from "./golden/vectors.js";
 export * from "./hire/request.js";
 export * from "./hire/return.js";

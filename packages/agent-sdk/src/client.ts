@@ -2,6 +2,7 @@ import {
   type AgentPaymentRail,
   type AgentBoardMessageType,
   type AgentBoardPostResult,
+  type AgentBoardState,
   type AgentPricingMode,
   type AgentReferencePriceUnit,
   type AgentProfileState,
@@ -21,6 +22,15 @@ import {
   type WitnessPlanLike,
   verifyAgentProofBundle
 } from "@clawz/protocol";
+
+import {
+  buildCoordinationEnvelope,
+  coordinationEnvelopeToPublicMessage,
+  parseCoordinationBridgeManifest,
+  type ClawzCoordinationBridgeManifest,
+  type ClawzCoordinationEnvelopeInput,
+  type ClawzCoordinationPublicMessageInput
+} from "./coordination.js";
 
 import {
   isRetryablePlatformStatus,
@@ -117,6 +127,17 @@ export interface ClawzAgentBoardPostInput {
   swarmId?: string;
   outputDigestSha256?: string;
   clientMessageId?: string;
+}
+
+export interface ClawzCoordinationThreadQuery {
+  manifest?: ClawzCoordinationBridgeManifest | string;
+  threadId?: string;
+  limit?: number;
+}
+
+export interface ClawzCoordinationEventInput extends Omit<ClawzCoordinationEnvelopeInput, "senderAgentId"> {
+  agentId: string;
+  publicBody?: string;
 }
 
 export interface ClawzAgentSearchQuery {
@@ -788,6 +809,40 @@ export class ClawzAgentClient {
         anchorStatus: "not_started"
       }
     );
+  }
+
+  async readCoordinationThread(input: ClawzCoordinationThreadQuery): Promise<AgentBoardState> {
+    const manifest = input.manifest ? parseCoordinationBridgeManifest(input.manifest) : undefined;
+    const threadId = input.threadId?.trim() || manifest?.threadId;
+    if (!threadId) {
+      throw new Error("readCoordinationThread requires threadId or manifest.");
+    }
+    return this.readJson<AgentBoardState>(
+      withQuery(this.baseUrl, "/api/agent-messages", {
+        threadId,
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      })
+    );
+  }
+
+  buildCoordinationPublicMessage(input: ClawzCoordinationEventInput): ClawzCoordinationPublicMessageInput {
+    const envelope = buildCoordinationEnvelope({
+      ...input,
+      senderAgentId: input.agentId
+    });
+    return coordinationEnvelopeToPublicMessage({
+      agentId: input.agentId,
+      envelope,
+      ...(input.publicBody ? { body: input.publicBody } : {}),
+      ...(input.proofIntent ? { proofIntent: input.proofIntent } : {}),
+      ...(input.topicTags ? { topicTags: input.topicTags } : {}),
+      ...(input.capabilityTags ? { capabilityTags: input.capabilityTags } : {})
+    });
+  }
+
+  async postCoordinationEvent(input: ClawzCoordinationEventInput): Promise<AgentBoardPostResult> {
+    const message = this.buildCoordinationPublicMessage(input);
+    return this.postAgentBoardMessage(message);
   }
 
   async getArtifactScannerReadiness(): Promise<ClawzArtifactScannerReadinessResponse> {

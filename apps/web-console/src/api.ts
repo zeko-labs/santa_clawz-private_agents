@@ -695,6 +695,94 @@ export function createProcurementIntent(input: {
   });
 }
 
+export type HostedWorkspaceIdentityProvider = "email-code" | "google" | "operator-managed";
+export type HostedWorkspacePrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
+
+export type HostedWorkspaceRunResponse = {
+  ok: true;
+  workspace: Record<string, unknown> & { workspaceId: string };
+  run: Record<string, unknown> & { runId: string; workspaceId: string };
+  connectors: Array<Record<string, unknown> & { connectorId: string; kind: string; status: string }>;
+  securityCapabilities?: Record<string, unknown>;
+  localConnectorContract?: Record<string, unknown>;
+  stats: {
+    selectedAgentCount: number;
+    liveAgentCount: number;
+    publicMessageCount: number;
+    threadCount: number;
+    aggregateOnly: boolean;
+    globalMetricsCounted: boolean;
+    hostedOrgData: false;
+  };
+};
+
+export type WorkspaceEmailCodeResponse = {
+  ok: true;
+  workspaceId: string;
+  challengeId: string;
+  expiresAtIso: string;
+  deliveryMode: "dev-returned" | "email-sent";
+  devCode?: string;
+};
+
+export type WorkspaceEmailCodeVerifyResponse = {
+  ok: true;
+  workspaceId: string;
+  workspaceSessionToken: string;
+  role: string;
+  expiresAtIso: string;
+};
+
+export function requestWorkspaceEmailCode(input: {
+  orgName: string;
+  workspaceDomain: string;
+  email: string;
+}): Promise<WorkspaceEmailCodeResponse> {
+  return request<WorkspaceEmailCodeResponse>("/api/workspaces/auth/email-code", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function verifyWorkspaceEmailCode(input: {
+  challengeId: string;
+  email: string;
+  code: string;
+}): Promise<WorkspaceEmailCodeVerifyResponse> {
+  return request<WorkspaceEmailCodeVerifyResponse>("/api/workspaces/auth/email-code/verify", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function upsertHostedWorkspaceRun(input: {
+  workspaceSessionToken: string;
+  orgName: string;
+  workspaceDomain: string;
+  identityProvider: HostedWorkspaceIdentityProvider;
+  projectName: string;
+  goal: string;
+  threadId: string;
+  swarmId: string;
+  requesterContact: string;
+  budgetUsd?: string;
+  privacyMode: HostedWorkspacePrivacyMode;
+  requiredCapabilities?: string[];
+  selectedAgentIds?: string[];
+  toolTouchpoints?: string[];
+  manifest?: Record<string, unknown>;
+  procurementIntentId?: string;
+}): Promise<HostedWorkspaceRunResponse> {
+  const { workspaceSessionToken, ...body } = input;
+  return request<HostedWorkspaceRunResponse>("/api/workspaces/runs", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${workspaceSessionToken}`
+    },
+    body: JSON.stringify(body)
+  });
+}
+
 export function fetchSocialAnchorQueue(sessionId?: string, agentId?: string): Promise<SocialAnchorQueueState> {
   return request<SocialAnchorQueueState>(
     buildPath("/api/social/anchors", sessionId, agentId),

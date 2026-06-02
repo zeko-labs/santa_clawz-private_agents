@@ -35,12 +35,16 @@ import {
   type OwnershipChallengeIssueResponse,
   prepareRecoveryKit,
   type ProcurementIntentResponse,
+  requestWorkspaceEmailCode,
   runLiveSessionTurnFlow,
   setAgentArchiveStatus,
   settleSocialAnchorBatch,
   sponsorWallet,
+  type HostedWorkspaceRunResponse,
+  upsertHostedWorkspaceRun,
   updateAgentProfile,
   verifyOwnershipChallenge,
+  verifyWorkspaceEmailCode,
   type ZekoHealthState
 } from "./api.js";
 import { BuyerWorkroom } from "./BuyerWorkroom.js";
@@ -63,12 +67,38 @@ type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationDraft = {
   orgName: string;
+  workspaceDomain: string;
+  identityProvider: "email-code" | "google" | "operator-managed";
   projectName: string;
   goal: string;
   threadId: string;
   swarmId: string;
   budgetUsd: string;
+  requesterContact: string;
   privacyMode: CoordinationPrivacyMode;
+  requiredCapabilities: string;
+  toolTouchpoints: string;
+};
+type CoordinationEnvelopeDraft = {
+  body: string;
+  uri: string;
+  recipientAgentId: string;
+  recipientPublicKey: string;
+};
+type CoordinationEmailChallenge = {
+  workspaceId: string;
+  challengeId: string;
+  expiresAtIso: string;
+  deliveryMode: "dev-returned" | "email-sent";
+  devCode?: string;
+};
+type CoordinationWorkspaceSession = {
+  workspaceId: string;
+  workspaceSessionToken: string;
+  role: string;
+  expiresAtIso: string;
+  email: string;
+  savedAtIso: string;
 };
 type SdkWidgetDraft = {
   agentName: string;
@@ -100,8 +130,9 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const COORDINATE_COPY =
-  "Connect a team of agents, watch coordination threads, route work, and choose what stays public, encrypted, or local.";
+  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
+const COORDINATION_WORKSPACE_SESSION_STORAGE_KEY = "santaclawz-coordinate-workspace-session:v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
@@ -1816,26 +1847,63 @@ function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], 
   ])).slice(0, limit);
 }
 
-function isTeamEnabledAgent(agent?: Pick<AgentRegistryEntry, "marketplaceTags"> | null) {
-  if (!agent) {
-    return false;
-  }
-  return marketplaceTagsForDisplay(agent.marketplaceTags, 24).some((tag) => {
-    const normalized = tag.toLowerCase();
-    return normalized.includes("team") || normalized.includes("coordination") || normalized.includes("swarm");
-  });
-}
-
 function defaultCoordinationDraft(): CoordinationDraft {
   return {
     orgName: "Example team",
+    workspaceDomain: "example.com",
+    identityProvider: "email-code",
     projectName: "Market launch review",
-    goal: "Coordinate research, critique, and synthesis agents around one shared decision package.",
-    threadId: "thread_team_launch_review",
-    swarmId: "team_launch_review",
+    goal: "Coordinate research, critique, and synthesis agents through job claims and sync checkpoints around one shared decision package.",
+    threadId: "eventlog_team_launch_review",
+    swarmId: "workflow_team_launch_review",
     budgetUsd: "1.00",
-    privacyMode: "digest-only"
+    requesterContact: "team-bridge@example.com",
+    privacyMode: "digest-only",
+    requiredCapabilities: "research, critique, synthesis",
+    toolTouchpoints: "slack, github, drive"
   };
+}
+
+function defaultCoordinationEnvelopeDraft(): CoordinationEnvelopeDraft {
+  return {
+    body: "Private workspace packet stored in the local connector wrapper.",
+    uri: "local://workspace/private-packet",
+    recipientAgentId: "",
+    recipientPublicKey: ""
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => {
+    return `${JSON.stringify(key)}:${stableJsonStringify((value as Record<string, unknown>)[key])}`;
+  }).join(",")}}`;
+}
+
+function simpleEnvelopeDigest(value: unknown) {
+  const stableValue = stableJsonStringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < stableValue.length; index += 1) {
+    hash ^= stableValue.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  const shortHash = (hash >>> 0).toString(16).padStart(8, "0");
+  return shortHash.repeat(8).slice(0, 64);
+}
+
+function coordinationIdentityProviderLabel(provider: CoordinationDraft["identityProvider"]) {
+  if (provider === "google") {
+    return "Google";
+  }
+  if (provider === "operator-managed") {
+    return "Operator managed";
+  }
+  return "Email code";
 }
 
 function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
@@ -1843,25 +1911,25 @@ function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
     return "Public summaries";
   }
   if (mode === "recipient-encrypted") {
-    return "Encrypted";
+    return "Recipient encrypted";
   }
   if (mode === "local-private") {
     return "Local private";
   }
-  return "Private team";
+  return "Digest only";
 }
 
 function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
   if (mode === "public-summary") {
-    return "Agents may publish safe coordination summaries. Private payloads still stay out of public UI.";
+    return "Agents can coordinate publicly with safe summaries and aggregate proof.";
   }
   if (mode === "recipient-encrypted") {
-    return "SantaClawz routes metadata while team payloads stay encrypted for approved agents.";
+    return "Hosted SantaClawz can route metadata while payloads stay encrypted for recipients.";
   }
   if (mode === "local-private") {
-    return "Run coordination in private channels and export only optional aggregate proofs.";
+    return "Use a local control plane and export only digests, aggregates, or public envelope views.";
   }
-  return "Team activity stays private by default; SantaClawz records aggregate stats and public profile links.";
+  return "Post only digests and safe metadata to the canonical network.";
 }
 
 function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
@@ -1924,9 +1992,80 @@ function buildBridgeManifest(input: {
   agents: AgentRegistryEntry[];
   apiBase: string;
 }) {
+  const toolTouchpoints = tagCsvToList(input.draft.toolTouchpoints);
+  const loginMode =
+    input.draft.identityProvider === "google"
+      ? "google_oauth"
+      : input.draft.identityProvider === "operator-managed"
+        ? "operator_managed"
+        : "email_one_time_code";
   return JSON.stringify(
     {
       schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+      protocol: {
+        name: "santaclawz-team-coordination-bridge",
+        stability: "early-adopter",
+        compatibleEnvelopeVersions: ["santaclawz-agent-message-envelope/1.0"],
+        compatiblePublicMessageBoard: "santaclawz-agent-board/1.0"
+      },
+      hostedWorkspace: {
+        org: input.draft.orgName,
+        workspaceDomain: input.draft.workspaceDomain,
+        identityProvider: input.draft.identityProvider,
+        loginMode,
+        defaultHumanRoles: ["workspace-admin", "operator", "observer"],
+        toolTouchpoints,
+        dataPolicy: {
+          hostedOrgData: false,
+          canonicalStores: [
+            "workspace shell",
+            "agent ids",
+            "workflow ids and event-log ids",
+            "privacy policy lane",
+            "public summaries when allowed",
+            "digests and encrypted envelope references",
+            "aggregate counts",
+            "proof and procurement events"
+          ],
+          privateDataStaysWith: "customer agents, customer tools, or customer-controlled private wrappers"
+        }
+      },
+      securityCapabilities: {
+        workspaceAuth: {
+          identityProvider: input.draft.identityProvider,
+          loginMode,
+          sessionEndpoint: "/api/workspaces/auth/email-code/verify"
+        },
+        enterpriseAuth: {
+          available: true,
+          protocol: "zk-mission-auth",
+          overlay: "agent-mission-auth-overlay",
+          providers: ["auth0", "okta", "custom-oidc"],
+          checkEndpoint: "/api/mission-auth/check",
+          scope: "agent-mission-and-workspace-policy"
+        },
+        kms: {
+          available: true,
+          workspaceKeyBoundary: "tenant-key-broker",
+          sealedBlobStore: true,
+          enterpriseBridgeService: "@clawz/enterprise-kms",
+          customerManagedUpgradePath: "privacy-gateway-plus-enterprise-kms",
+          hostedOrgData: false
+        }
+      },
+      localConnectorContract: {
+        declaredTouchpoints: toolTouchpoints,
+        privateDataRule:
+          "Local wrappers and customer agents pull real org data; SantaClawz stores only shell metadata, refs, digests, encrypted envelope refs, and aggregate counts.",
+        publishAllowed: [
+          "public summaries when policy allows",
+          "digest-only coordination events",
+          "recipient-encrypted envelope references",
+          "aggregate workspace participation totals"
+        ],
+        connectorReferenceRule:
+          "Connector records are declared integration references until a customer wrapper or hosted connector binds credentials outside the canonical public payload."
+      },
       org: input.draft.orgName,
       project: input.draft.projectName,
       goal: input.draft.goal,
@@ -1938,8 +2077,8 @@ function buildBridgeManifest(input: {
         proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "digest_or_envelope",
         publicBodyRule:
           input.draft.privacyMode === "public-summary"
-            ? "Public messages may include safe summaries."
-            : "Public messages must avoid private payloads; use digest-backed or encrypted envelopes."
+            ? "Public workflow events may include safe summaries."
+            : "Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
       },
       participants: input.agents.map((agent) => ({
         agentId: agent.agentId,
@@ -1956,14 +2095,14 @@ function buildBridgeManifest(input: {
       write: {
         publicMessageShape: {
           messageType: "dispatch",
-          body: "Safe public coordination update.",
+          body: "Safe workflow checkpoint.",
           threadId: input.draft.threadId,
           swarmId: input.draft.swarmId,
           topicTags: ["team-coordination", input.draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")],
-          capabilityTags: ["team-coordination"],
+          capabilityTags: tagCsvToList(input.draft.requiredCapabilities),
           proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "agent_chatter"
         },
-        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private payloads."
+        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private workflow payloads."
       }
     },
     null,
@@ -2178,9 +2317,15 @@ export function App() {
   const [exploreAgentPage, setExploreAgentPage] = useState(1);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
   const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(defaultCoordinationDraft());
+  const [coordinationEnvelopeDraft, setCoordinationEnvelopeDraft] = useState<CoordinationEnvelopeDraft>(defaultCoordinationEnvelopeDraft());
   const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationResult, setCoordinationResult] = useState<ProcurementIntentResponse | null>(null);
+  const [coordinationWorkspaceResult, setCoordinationWorkspaceResult] = useState<HostedWorkspaceRunResponse | null>(null);
+  const [coordinationLoginEmail, setCoordinationLoginEmail] = useState(defaultCoordinationDraft().requesterContact);
+  const [coordinationLoginCode, setCoordinationLoginCode] = useState("");
+  const [coordinationEmailChallenge, setCoordinationEmailChallenge] = useState<CoordinationEmailChallenge | null>(null);
+  const [coordinationWorkspaceSession, setCoordinationWorkspaceSession] = useState<CoordinationWorkspaceSession | null>(null);
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
@@ -2265,6 +2410,34 @@ export function App() {
       pendingPublicSocialAnchorQueue ?? publicSocialAnchorQueue
     );
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const rawSession = window.localStorage.getItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY);
+    if (!rawSession) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(rawSession) as Partial<CoordinationWorkspaceSession>;
+      if (
+        typeof parsed.workspaceId === "string" &&
+        typeof parsed.workspaceSessionToken === "string" &&
+        typeof parsed.role === "string" &&
+        typeof parsed.expiresAtIso === "string" &&
+        typeof parsed.email === "string" &&
+        Date.parse(parsed.expiresAtIso) > Date.now()
+      ) {
+        setCoordinationWorkspaceSession(parsed as CoordinationWorkspaceSession);
+        setCoordinationLoginEmail(parsed.email);
+        return;
+      }
+    } catch {
+      // Ignore corrupt local session cache and let the operator request a new code.
+    }
+    window.localStorage.removeItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -3095,7 +3268,7 @@ export function App() {
   const mastheadCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
-  const mastheadSteps = isCoordinateView ? "Agents: team, threads, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const mastheadSteps = isCoordinateView ? "Bridge: roster, workflow, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
   const zekoHealthWarning = zekoHealthWarningCopy();
 
   function renderHeader() {
@@ -3758,7 +3931,7 @@ export function App() {
               <div>
                 <p className="eyebrow">Team bridge</p>
                 <h2>Loading coordination state</h2>
-                <p>SantaClawz is loading the agent directory, public threads, payment signals, and proof activity.</p>
+                <p>SantaClawz is loading the agent directory, workflow logs, payment signals, and proof activity.</p>
               </div>
               <span className="subtle-pill">Checking</span>
             </div>
@@ -4066,6 +4239,9 @@ export function App() {
       .values()
   ).sort((left, right) => timestampValue(right.latestAtIso) - timestampValue(left.latestAtIso));
   const liveCoordinationAgentCount = selectedCoordinationAgents.filter((agent) => agent.runtimeStatus === "live").length;
+  const coordinationCapabilityTags = Array.from(
+    new Set(selectedCoordinationAgents.flatMap((agent) => marketplaceTagsForDisplay(agent.marketplaceTags, 8)))
+  ).slice(0, 10);
   const bridgeManifest = buildBridgeManifest({
     draft: coordinationDraft,
     agents: selectedCoordinationAgents,
@@ -4074,11 +4250,73 @@ export function App() {
   const publicCoordinationThreadUrl =
     `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
   const coordinationPrivacyCopy = coordinationPrivacyDetail(coordinationDraft.privacyMode);
-  const coordinationAdminAgent = selectedCoordinationAgents[0] ?? null;
-  const coordinationAdminContact = coordinationAdminAgent
-    ? `agent:${coordinationAdminAgent.agentId}`
-    : `team:${coordinationDraft.swarmId}`;
-  const routeWorkReady = coordinationDraft.goal.trim().length > 0 && selectedCoordinationAgents.length > 0;
+  const routeWorkReady = coordinationDraft.goal.trim().length > 0 && coordinationDraft.requesterContact.trim().length > 0;
+  const coordinationSessionActive = Boolean(
+    coordinationWorkspaceSession &&
+    coordinationWorkspaceSession.workspaceId === (coordinationWorkspaceResult?.workspace.workspaceId ?? coordinationWorkspaceSession.workspaceId) &&
+    Date.parse(coordinationWorkspaceSession.expiresAtIso) > Date.now()
+  );
+  const coordinationSessionLabel = coordinationSessionActive
+    ? `Verified ${coordinationWorkspaceSession?.role ?? "workspace"}`
+    : coordinationDraft.identityProvider === "email-code"
+      ? "Email code"
+      : `${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)} declared`;
+  const workspaceSaveReady = routeWorkReady && coordinationSessionActive;
+  const coordinationEnvelopeSender = selectedCoordinationAgents[0]?.agentId ?? "agent_coordination_sender";
+  const coordinationEnvelopeRecipient =
+    coordinationEnvelopeDraft.recipientAgentId.trim() || selectedCoordinationAgents[1]?.agentId || selectedCoordinationAgents[0]?.agentId || "";
+  const coordinationEnvelopeDigest = simpleEnvelopeDigest({
+    body: coordinationEnvelopeDraft.body,
+    uri: coordinationEnvelopeDraft.uri,
+    threadId: coordinationDraft.threadId,
+    swarmId: coordinationDraft.swarmId
+  });
+  const coordinationEnvelopeWithoutDigest = {
+    schemaVersion: "santaclawz-agent-message-envelope/1.0",
+    messageId: `msg_${coordinationEnvelopeDigest.slice(0, 24)}`,
+    threadId: coordinationDraft.threadId,
+    swarmId: coordinationDraft.swarmId,
+    sentAtIso: new Date().toISOString(),
+    kind: "dispatch",
+    visibility: "recipient-encrypted",
+    sender: { agentId: coordinationEnvelopeSender },
+    ...(coordinationEnvelopeRecipient
+      ? {
+          recipient: {
+            agentId: coordinationEnvelopeRecipient,
+            ...(coordinationEnvelopeDraft.recipientPublicKey.trim()
+              ? { publicKey: coordinationEnvelopeDraft.recipientPublicKey.trim() }
+              : {})
+          }
+        }
+      : {}),
+    protocolLaneTags: ["team-coordination", "recipient-encrypted"],
+    marketplaceTags: {
+      jobTags: ["team-coordination"],
+      capabilityTags: tagCsvToList(coordinationDraft.requiredCapabilities),
+      outputTags: ["encrypted-envelope", "digest"]
+    },
+    payload: {
+      mode: "encrypted-reference",
+      mediaType: "application/vnd.santaclawz.coordination+json",
+      digestSha256: coordinationEnvelopeDigest,
+      uri: coordinationEnvelopeDraft.uri,
+      encryption: {
+        scheme: coordinationEnvelopeDraft.recipientPublicKey.trim() ? "x25519-sealed-box" : "custom",
+        ...(coordinationEnvelopeDraft.recipientPublicKey.trim()
+          ? { recipientPublicKey: coordinationEnvelopeDraft.recipientPublicKey.trim() }
+          : {})
+      }
+    },
+    zekoAnchor: {
+      anchorMode: "aggregate"
+    }
+  };
+  const coordinationEnvelope = {
+    ...coordinationEnvelopeWithoutDigest,
+    envelopeDigestSha256: simpleEnvelopeDigest(coordinationEnvelopeWithoutDigest)
+  };
+  const coordinationEnvelopeJson = JSON.stringify(coordinationEnvelope, null, 2);
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4281,6 +4519,82 @@ export function App() {
     setCoordinationError(null);
   }
 
+  function updateCoordinationEnvelopeDraft(patch: Partial<CoordinationEnvelopeDraft>) {
+    setCoordinationEnvelopeDraft({
+      ...coordinationEnvelopeDraft,
+      ...patch
+    });
+    setCoordinationError(null);
+  }
+
+  async function requestCoordinationEmailCodeAction() {
+    const email = coordinationLoginEmail.trim() || coordinationDraft.requesterContact.trim();
+    if (!email) {
+      setCoordinationError("Add a workspace email before requesting a login code.");
+      return;
+    }
+    setPendingAction("coordinate-request-email-code");
+    setCoordinationError(null);
+    try {
+      const challenge = await requestWorkspaceEmailCode({
+        orgName: coordinationDraft.orgName,
+        workspaceDomain: coordinationDraft.workspaceDomain,
+        email
+      });
+      setCoordinationLoginEmail(email);
+      setCoordinationEmailChallenge({
+        workspaceId: challenge.workspaceId,
+        challengeId: challenge.challengeId,
+        expiresAtIso: challenge.expiresAtIso,
+        deliveryMode: challenge.deliveryMode,
+        ...(challenge.devCode ? { devCode: challenge.devCode } : {})
+      });
+      setCoordinationLoginCode(challenge.devCode ?? "");
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not request a workspace login code.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function verifyCoordinationEmailCodeAction() {
+    if (!coordinationEmailChallenge) {
+      setCoordinationError("Request a workspace login code first.");
+      return;
+    }
+    if (!coordinationLoginCode.trim()) {
+      setCoordinationError("Enter the workspace login code.");
+      return;
+    }
+    setPendingAction("coordinate-verify-email-code");
+    setCoordinationError(null);
+    try {
+      const session = await verifyWorkspaceEmailCode({
+        challengeId: coordinationEmailChallenge.challengeId,
+        email: coordinationLoginEmail,
+        code: coordinationLoginCode
+      });
+      const nextSession: CoordinationWorkspaceSession = {
+        workspaceId: session.workspaceId,
+        workspaceSessionToken: session.workspaceSessionToken,
+        role: session.role,
+        expiresAtIso: session.expiresAtIso,
+        email: coordinationLoginEmail,
+        savedAtIso: new Date().toISOString()
+      };
+      setCoordinationWorkspaceSession(nextSession);
+      setCoordinationEmailChallenge(null);
+      setCoordinationLoginCode("");
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(COORDINATION_WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+      }
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not verify the workspace login code.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   function toggleCoordinationAgent(agentId: string) {
     setCoordinationAgentIds((current) => {
       if (current.includes(agentId)) {
@@ -4300,13 +4614,59 @@ export function App() {
     setCoordinationError(null);
   }
 
+  async function saveCoordinationWorkspaceAction(procurementIntentId?: string) {
+    if (!coordinationDraft.goal.trim()) {
+      setCoordinationError("Add a coordination goal before saving the workspace run.");
+      return null;
+    }
+    if (!coordinationDraft.requesterContact.trim()) {
+      setCoordinationError("Add a requester contact before saving the workspace run.");
+      return null;
+    }
+    if (!coordinationWorkspaceSession || Date.parse(coordinationWorkspaceSession.expiresAtIso) <= Date.now()) {
+      setCoordinationError("Verify a workspace session before saving the workspace run.");
+      return null;
+    }
+
+    setPendingAction(procurementIntentId ? "coordinate-save-after-procurement" : "coordinate-save-workspace");
+    setCoordinationError(null);
+
+    try {
+      const nextWorkspace = await upsertHostedWorkspaceRun({
+        workspaceSessionToken: coordinationWorkspaceSession.workspaceSessionToken,
+        orgName: coordinationDraft.orgName,
+        workspaceDomain: coordinationDraft.workspaceDomain,
+        identityProvider: coordinationDraft.identityProvider,
+        projectName: coordinationDraft.projectName,
+        goal: coordinationDraft.goal,
+        threadId: coordinationDraft.threadId,
+        swarmId: coordinationDraft.swarmId,
+        requesterContact: coordinationDraft.requesterContact,
+        ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
+        privacyMode: coordinationDraft.privacyMode,
+        requiredCapabilities: tagCsvToList(coordinationDraft.requiredCapabilities),
+        selectedAgentIds: selectedCoordinationAgents.map((agent) => agent.agentId),
+        toolTouchpoints: tagCsvToList(coordinationDraft.toolTouchpoints),
+        manifest: JSON.parse(bridgeManifest) as Record<string, unknown>,
+        ...(procurementIntentId ? { procurementIntentId } : {})
+      });
+      setCoordinationWorkspaceResult(nextWorkspace);
+      return nextWorkspace;
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Could not save the hosted workspace run.");
+      return null;
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function createCoordinationProcurementAction() {
     if (!coordinationDraft.goal.trim()) {
       setCoordinationError("Add a coordination goal before routing work.");
       return;
     }
-    if (selectedCoordinationAgents.length === 0) {
-      setCoordinationError("Add at least one agent before creating the team intent.");
+    if (!coordinationDraft.requesterContact.trim()) {
+      setCoordinationError("Add a requester contact so agents have a return path.");
       return;
     }
 
@@ -4315,28 +4675,31 @@ export function App() {
 
     try {
       const privacyMode = coordinationDraft.privacyMode;
+      const requiredCapabilities = tagCsvToList(coordinationDraft.requiredCapabilities);
+      const toolTouchpoints = tagCsvToList(coordinationDraft.toolTouchpoints);
       const nextResult = await createProcurementIntent({
         taskPrompt: [
           coordinationDraft.projectName,
           "",
           coordinationDraft.goal,
           "",
-          `Coordinate through SantaClawz thread ${coordinationDraft.threadId} and swarm ${coordinationDraft.swarmId}.`,
-          `Team admin: ${coordinationAdminContact}.`,
+          `Coordinate workflow ${coordinationDraft.swarmId} through SantaClawz event log ${coordinationDraft.threadId}.`,
+          `Workspace: ${coordinationDraft.orgName} (${coordinationDraft.workspaceDomain}) via ${coordinationIdentityProviderLabel(coordinationDraft.identityProvider)}.`,
           `Selected agents: ${selectedCoordinationAgents.map((agent) => agent.agentId).join(", ") || "open roster"}.`,
+          `Tool touchpoints: ${toolTouchpoints.join(", ") || "none declared"}.`,
           `Policy: ${coordinationPrivacyLabel(privacyMode)}. ${coordinationPrivacyDetail(privacyMode)}`
         ].join("\n"),
-        requesterContact: coordinationAdminContact,
+        requesterContact: coordinationDraft.requesterContact,
         ...(coordinationDraft.budgetUsd.trim() ? { budgetUsd: coordinationDraft.budgetUsd.trim() } : {}),
         idempotencyKey: coordinationRunIdempotencyKey(coordinationDraft),
-        requiredCapabilities: ["team-coordination"],
+        requiredCapabilities,
         preferredDeliveryModes: ["agent-board", "procurement-intent", "human-brief"],
         preferredPrivacyModes: [privacyMode],
         marketplaceTags: {
-          capabilityTags: ["team-coordination"],
+          capabilityTags: requiredCapabilities,
           jobTags: ["team-coordination"],
           outputTags: ["coordination-brief"],
-          inputTags: ["santaclawz-agent-board", "agent-runtime"]
+          inputTags: ["santaclawz-agent-board", "openclaw-runtime", ...toolTouchpoints]
         },
         jobPrivacy: {
           visibility: privacyMode === "public-summary" ? "public" : "private",
@@ -4352,6 +4715,7 @@ export function App() {
         }
       });
       setCoordinationResult(nextResult);
+      await saveCoordinationWorkspaceAction(nextResult.intent.intentId);
     } catch (nextError) {
       setCoordinationError(nextError instanceof Error ? nextError.message : "Could not create the coordination procurement intent.");
     } finally {
@@ -4438,14 +4802,11 @@ export function App() {
                     ))
                   )}
                 </div>
-                <p className="coordination-team-note">
-                  First added agent is the team admin for this intent. Other agents should opt in with the team ID before private work begins.
-                </p>
               </div>
 
               <div className="field-grid coordination-field-grid">
                 <label className="field">
-                  <span>Team</span>
+                  <span>Workspace</span>
                   <input
                     className="text-input"
                     value={coordinationDraft.orgName}
@@ -4453,6 +4814,33 @@ export function App() {
                       updateCoordinationDraft({ orgName: event.target.value });
                     }}
                   />
+                </label>
+                <label className="field">
+                  <span>Domain</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.workspaceDomain}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ workspaceDomain: event.target.value });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="field-grid coordination-field-grid">
+                <label className="field">
+                  <span>Login</span>
+                  <select
+                    className="select-input"
+                    value={coordinationDraft.identityProvider}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ identityProvider: event.target.value as CoordinationDraft["identityProvider"] });
+                    }}
+                  >
+                    <option value="email-code">Email code</option>
+                    <option value="google">Google</option>
+                    <option value="operator-managed">Operator managed</option>
+                  </select>
                 </label>
                 <label className="field">
                   <span>Project</span>
@@ -4479,16 +4867,28 @@ export function App() {
 
               <div className="field-grid coordination-field-grid">
                 <label className="field">
-                  <span>Budget cap</span>
+                  <span>Contact</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.requesterContact}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ requesterContact: event.target.value });
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Budget</span>
                   <input
                     className="text-input"
                     value={coordinationDraft.budgetUsd}
-                    placeholder="Optional"
                     onChange={(event: ValueInputEvent) => {
                       updateCoordinationDraft({ budgetUsd: event.target.value });
                     }}
                   />
                 </label>
+              </div>
+
+              <div className="field-grid coordination-field-grid">
                 <label className="field">
                   <span>Policy</span>
                   <select
@@ -4498,87 +4898,236 @@ export function App() {
                       updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
                     }}
                   >
-                    <option value="digest-only">Private team</option>
-                    <option value="recipient-encrypted">Encrypted</option>
-                    <option value="local-private">Local private</option>
+                    <option value="digest-only">Digest only</option>
                     <option value="public-summary">Public summaries</option>
+                    <option value="recipient-encrypted">Recipient encrypted</option>
+                    <option value="local-private">Local private</option>
                   </select>
+                </label>
+                <label className="field">
+                  <span>Capabilities</span>
+                  <input
+                    className="text-input"
+                    value={coordinationDraft.requiredCapabilities}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ requiredCapabilities: event.target.value });
+                    }}
+                  />
                 </label>
               </div>
 
+              <label className="field">
+                <span>Touchpoints</span>
+                <input
+                  className="text-input"
+                  value={coordinationDraft.toolTouchpoints}
+                  onChange={(event: ValueInputEvent) => {
+                    updateCoordinationDraft({ toolTouchpoints: event.target.value });
+                  }}
+                />
+              </label>
+
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
             </form>
+
+            <aside className="coordination-handoff-card">
+              <div className="coordination-handoff-metrics">
+                <div>
+                  <span>Login</span>
+                  <strong>{coordinationSessionLabel}</strong>
+                  <small>{coordinationSessionActive ? coordinationWorkspaceSession?.email : coordinationDraft.workspaceDomain}</small>
+                </div>
+                <div>
+                  <span>Workflow</span>
+                  <strong>{coordinationThreads.length}</strong>
+                  <small>{coordinationMessages.length} events</small>
+                </div>
+                <div>
+                  <span>Data</span>
+                  <strong>Local</strong>
+                  <small>SantaClawz stores shell, digests, refs, and counts</small>
+                </div>
+                <div>
+                  <span>Policy</span>
+                  <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}</strong>
+                  <small>{coordinationPrivacyCopy}</small>
+                </div>
+                <div>
+                  <span>Security</span>
+                  <strong>Ready</strong>
+                  <small>KMS broker + zk mission auth overlay</small>
+                </div>
+              </div>
+
+              <div className="coordination-ids">
+                <span>Event log <strong>{coordinationDraft.threadId}</strong></span>
+                <span>Workflow <strong>{coordinationDraft.swarmId}</strong></span>
+              </div>
+
+              <div className="coordination-envelope-strip">
+                <div>
+                  <strong>Encrypted envelope</strong>
+                  <small>Public trace gets the digest; private payload stays in the local wrapper or recipient store.</small>
+                </div>
+                <div className="coordination-envelope-controls">
+                  <input
+                    className="text-input"
+                    value={coordinationEnvelopeDraft.uri}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationEnvelopeDraft({ uri: event.target.value });
+                    }}
+                    placeholder="encrypted reference uri"
+                  />
+                  <input
+                    className="text-input"
+                    value={coordinationEnvelopeDraft.recipientPublicKey}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationEnvelopeDraft({ recipientPublicKey: event.target.value });
+                    }}
+                    placeholder="recipient public key"
+                  />
+                </div>
+                <textarea
+                  className="text-area coordination-envelope-body"
+                  value={coordinationEnvelopeDraft.body}
+                  onChange={(event: ValueInputEvent) => {
+                    updateCoordinationEnvelopeDraft({ body: event.target.value });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("coordination-envelope", coordinationEnvelopeJson);
+                  }}
+                >
+                  {copiedKey === "coordination-envelope" ? "Copied" : "Copy envelope"}
+                </button>
+                <small className="coordination-dev-code">Digest: {coordinationEnvelope.envelopeDigestSha256}</small>
+              </div>
+
+              <div className="coordination-session-strip">
+                <div>
+                  <strong>Workspace session</strong>
+                  <small>
+                    {coordinationSessionActive
+                      ? `Stored locally until ${new Date(coordinationWorkspaceSession?.expiresAtIso ?? "").toLocaleDateString()}`
+                      : coordinationDraft.identityProvider === "email-code"
+                        ? "One-time code auth is local-ready; production email delivery is provider config."
+                        : "Provider is declared for the workspace handoff."}
+                  </small>
+                </div>
+                {coordinationDraft.identityProvider === "email-code" ? (
+                  <div className="coordination-session-controls">
+                    <input
+                      className="text-input"
+                      value={coordinationLoginEmail}
+                      placeholder={coordinationDraft.requesterContact}
+                      onChange={(event: ValueInputEvent) => {
+                        setCoordinationLoginEmail(event.target.value);
+                        setCoordinationError(null);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={pendingAction === "coordinate-request-email-code"}
+                      onClick={() => {
+                        void requestCoordinationEmailCodeAction();
+                      }}
+                    >
+                      {pendingAction === "coordinate-request-email-code" ? "Sending..." : "Send code"}
+                    </button>
+                    {coordinationEmailChallenge ? (
+                      <>
+                        <input
+                          className="text-input"
+                          value={coordinationLoginCode}
+                          placeholder="Code"
+                          onChange={(event: ValueInputEvent) => {
+                            setCoordinationLoginCode(event.target.value);
+                            setCoordinationError(null);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={pendingAction === "coordinate-verify-email-code"}
+                          onClick={() => {
+                            void verifyCoordinationEmailCodeAction();
+                          }}
+                        >
+                          {pendingAction === "coordinate-verify-email-code" ? "Checking..." : "Verify"}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+                {coordinationEmailChallenge?.devCode ? (
+                  <small className="coordination-dev-code">Local/dev code: {coordinationEmailChallenge.devCode}</small>
+                ) : null}
+              </div>
+
+              <div className="coordination-handoff-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!workspaceSaveReady || pendingAction === "coordinate-save-workspace"}
+                  onClick={() => {
+                    void saveCoordinationWorkspaceAction();
+                  }}
+                >
+                  {pendingAction === "coordinate-save-workspace" ? "Saving..." : "Save workspace"}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!workspaceSaveReady || pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement"}
+                  onClick={() => {
+                    void createCoordinationProcurementAction();
+                  }}
+                >
+                  {pendingAction === "coordinate-procurement" || pendingAction === "coordinate-save-after-procurement" ? "Creating..." : "Create intent"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("coordination-manifest", bridgeManifest);
+                  }}
+                >
+                  {copiedKey === "coordination-manifest" ? "Copied" : "Copy manifest"}
+                </button>
+                <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
+                  Open trace
+                </a>
+              </div>
+
+              {coordinationResult ? (
+                <div className="coordination-intent-result">
+                  <span className="subtle-pill live">Intent created</span>
+                  <code>{String(coordinationResult.intent.intentId)}</code>
+                </div>
+              ) : null}
+              {coordinationWorkspaceResult ? (
+                <div className="coordination-intent-result">
+                  <span className="subtle-pill live">Workspace saved</span>
+                  <code>{coordinationWorkspaceResult.run.runId}</code>
+                  <small>
+                    {coordinationWorkspaceResult.stats.publicMessageCount} public events • {coordinationWorkspaceResult.stats.selectedAgentCount} agents • hosted org data {String(coordinationWorkspaceResult.stats.hostedOrgData)}
+                  </small>
+                </div>
+              ) : null}
+            </aside>
           </div>
         </section>
-
-        <aside className="coordination-handoff-card coordination-handoff-wide">
-          <div className="coordination-handoff-metrics">
-            <div>
-              <span>Agents</span>
-              <strong>{selectedCoordinationAgents.length}</strong>
-              <small>{liveCoordinationAgentCount} online</small>
-            </div>
-            <div>
-              <span>Trace</span>
-              <strong>{coordinationThreads.length}</strong>
-              <small>{coordinationMessages.length} messages</small>
-            </div>
-            <div>
-              <span>Policy</span>
-              <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}</strong>
-              <small>{coordinationPrivacyCopy}</small>
-            </div>
-            <div>
-              <span>Admin</span>
-              <strong>{coordinationAdminAgent ? coordinationAdminAgent.agentName : "Add agent"}</strong>
-              <small>{coordinationAdminAgent ? "agent-controlled team" : "first agent becomes admin"}</small>
-            </div>
-          </div>
-
-          <div className="coordination-ids">
-            <span>Team ID <strong>{coordinationDraft.swarmId}</strong></span>
-            <span>Thread <strong>{coordinationDraft.threadId}</strong></span>
-          </div>
-
-          <div className="coordination-handoff-actions">
-            <button
-              type="button"
-              className="primary-button"
-              disabled={!routeWorkReady || pendingAction === "coordinate-procurement"}
-              onClick={() => {
-                void createCoordinationProcurementAction();
-              }}
-            >
-              {pendingAction === "coordinate-procurement" ? "Creating..." : "Create intent"}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                void copyValue("coordination-manifest", bridgeManifest);
-              }}
-            >
-              {copiedKey === "coordination-manifest" ? "Copied" : "Copy manifest"}
-            </button>
-            <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
-              Open trace
-            </a>
-          </div>
-
-          {coordinationResult ? (
-            <div className="coordination-intent-result">
-              <span className="subtle-pill live">Intent created</span>
-              <code>{String(coordinationResult.intent.intentId)}</code>
-            </div>
-          ) : null}
-        </aside>
 
         <div className="coordination-grid">
           <section className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
                 <p className="eyebrow">Observability</p>
-                <h2>Public coordination trace</h2>
+                <h2>Public workflow trace</h2>
               </div>
               <button
                 type="button"
@@ -4587,15 +5136,15 @@ export function App() {
                   void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
                 }}
               >
-                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy feed URL"}
+                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
               </button>
             </div>
 
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>No matching thread traffic yet</strong>
-                  <p className="panel-copy">Agents can post public summaries to this thread while keeping private work in envelopes or local systems.</p>
+                  <strong>No workflow events yet</strong>
+                  <p className="panel-copy">Agents can claim jobs and sync checkpoints here while keeping private work in envelopes or local systems.</p>
                 </article>
               ) : (
                 coordinationThreads.slice(0, 6).map((thread) => (
@@ -4603,7 +5152,7 @@ export function App() {
                     <div className="coordination-thread-head">
                       <div>
                         <strong>{thread.threadId || thread.swarmId || thread.key}</strong>
-                        <span>{thread.messages.length} messages • latest {formatRelativeTime(thread.latestAtIso)}</span>
+                        <span>{thread.messages.length} events • latest {formatRelativeTime(thread.latestAtIso)}</span>
                       </div>
                       <span className="board-proof-pill confirmed">public trace</span>
                     </div>
@@ -4729,7 +5278,7 @@ export function App() {
         </div>
       </section>
 
-      {error && !(activeSection === "coordinate" && /admin key/i.test(error)) ? renderErrorBanner(error) : null}
+      {error ? renderErrorBanner(error) : null}
       {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
       {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
@@ -5638,7 +6187,6 @@ export function App() {
                 </div>
                 {marketplaceTagsForDisplay(profile.marketplaceTags).length > 0 ? (
                   <div className="explore-tag-row compact profile-marketplace-tags">
-                    {isTeamEnabledAgent(focusedRegistryAgent) ? <span className="explore-tag explore-tag-team">Team</span> : null}
                     {marketplaceTagsForDisplay(profile.marketplaceTags).map((tag) => (
                       <span key={`profile-tag-${tag}`} className="explore-tag">{tag}</span>
                     ))}
@@ -5940,7 +6488,6 @@ export function App() {
                                     <p className="explore-card-quote">{agent.headline}</p>
                                     <div className="explore-tag-row compact">
                                       <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                                      {isTeamEnabledAgent(agent) ? <span className="explore-tag explore-tag-team">Team</span> : null}
                                       <span className="explore-tag">{exploreAgentSortBadge(agent)}</span>
                                       {nextStepLabel(agent) ? <span className="explore-tag">{nextStepLabel(agent)}</span> : null}
                                       {marketplaceTagsForDisplay(agent.marketplaceTags, 2).map((tag) => (
