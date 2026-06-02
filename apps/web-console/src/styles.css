@@ -2297,6 +2297,7 @@ pre,
 }
 
 .coordination-handoff-wide {
+  order: -1;
   grid-template-columns: minmax(0, 1fr) minmax(180px, 0.45fr) minmax(180px, 0.45fr);
   align-items: stretch;
 }
