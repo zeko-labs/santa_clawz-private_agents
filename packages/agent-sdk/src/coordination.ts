@@ -41,6 +41,28 @@ export interface ClawzCoordinationBridgeManifest {
   write?: Record<string, unknown>;
 }
 
+export type ClawzCoordinationParticipant = ClawzCoordinationBridgeManifest["participants"][number];
+
+export interface ClawzCoordinationAgentSetup {
+  schemaVersion: "santaclawz-coordination-agent-setup/0.1";
+  agentId: string;
+  role: "admin" | "member";
+  participant: ClawzCoordinationParticipant;
+  manifest: ClawzCoordinationBridgeManifest;
+  apiBase: string;
+  threadId: string;
+  swarmId: string;
+  privacyMode: ClawzCoordinationPrivacyMode;
+  publicTraceUrl: string;
+  adminKey?: string;
+}
+
+export interface ClawzCoordinationAgentSetupInput {
+  manifest: ClawzCoordinationBridgeManifest | string;
+  agentId: string;
+  adminKey?: string;
+}
+
 export interface ClawzCoordinationEnvelopeInput {
   manifest: ClawzCoordinationBridgeManifest;
   senderAgentId: string;
@@ -95,6 +117,53 @@ export function parseCoordinationBridgeManifest(input: string | ClawzCoordinatio
     throw new Error("Coordination bridge manifest requires participants.");
   }
   return manifest;
+}
+
+export function createCoordinationAgentSetup(input: ClawzCoordinationAgentSetupInput): ClawzCoordinationAgentSetup {
+  const manifest = parseCoordinationBridgeManifest(input.manifest);
+  const agentId = input.agentId.trim();
+  if (!agentId) {
+    throw new Error("createCoordinationAgentSetup requires agentId.");
+  }
+  const participant = manifest.participants.find((candidate) => candidate.agentId === agentId);
+  if (!participant) {
+    throw new Error(`Agent ${agentId} is not a participant in this coordination setup.`);
+  }
+  const publicTraceUrl = typeof manifest.read?.publicThreadMessages === "string"
+    ? manifest.read.publicThreadMessages
+    : `${manifest.apiBase.replace(/\/$/, "")}/api/agent-messages?threadId=${encodeURIComponent(manifest.threadId)}&limit=100`;
+  return {
+    schemaVersion: "santaclawz-coordination-agent-setup/0.1",
+    agentId,
+    role: participant.role ?? "member",
+    participant,
+    manifest,
+    apiBase: manifest.apiBase,
+    threadId: manifest.threadId,
+    swarmId: manifest.swarmId,
+    privacyMode: manifest.coordinationPolicy.privacyMode,
+    publicTraceUrl,
+    ...(input.adminKey?.trim() ? { adminKey: input.adminKey.trim() } : {})
+  };
+}
+
+export function parseCoordinationAgentSetup(input: string | ClawzCoordinationAgentSetup): ClawzCoordinationAgentSetup {
+  const setup = typeof input === "string" ? JSON.parse(input) as ClawzCoordinationAgentSetup : input;
+  if (setup.schemaVersion !== "santaclawz-coordination-agent-setup/0.1") {
+    throw new Error("Unsupported coordination agent setup schemaVersion.");
+  }
+  const expected = createCoordinationAgentSetup({
+    manifest: setup.manifest,
+    agentId: setup.agentId,
+    ...(setup.adminKey ? { adminKey: setup.adminKey } : {})
+  });
+  if (setup.threadId !== expected.threadId || setup.swarmId !== expected.swarmId || setup.apiBase !== expected.apiBase) {
+    throw new Error("Coordination agent setup does not match its embedded manifest.");
+  }
+  return {
+    ...expected,
+    publicTraceUrl: setup.publicTraceUrl || expected.publicTraceUrl
+  };
 }
 
 export function buildCoordinationEnvelope(input: ClawzCoordinationEnvelopeInput): AgentMessageEnvelope {

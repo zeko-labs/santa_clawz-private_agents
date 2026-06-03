@@ -135,6 +135,8 @@ async function main() {
       buildSantaClawzBuyerInboxEnvelope,
       buyerInboxEnvelopeDigestSha256,
       coordinationEnvelopeToPublicMessage,
+      createCoordinationAgentSetup,
+      parseCoordinationAgentSetup,
       parseCoordinationBridgeManifest,
       validateClawzFeeCompatibility,
       withClawzPlatformRetry
@@ -361,6 +363,16 @@ async function main() {
         }
       ]
     });
+    const coordinationAgentSetup = createCoordinationAgentSetup({
+      manifest: coordinationManifest,
+      agentId: pricingUpdate.agentId,
+      adminKey: "sdk-test-admin-key"
+    });
+    assert.equal(coordinationAgentSetup.schemaVersion, "santaclawz-coordination-agent-setup/0.1");
+    assert.equal(coordinationAgentSetup.role, "admin");
+    assert.equal(coordinationAgentSetup.threadId, "thread_sdk_coordination");
+    assert.equal(coordinationAgentSetup.adminKey, "sdk-test-admin-key");
+    assert.equal(parseCoordinationAgentSetup(JSON.stringify(coordinationAgentSetup)).agentId, pricingUpdate.agentId);
     const coordinationEnvelope = buildCoordinationEnvelope({
       manifest: coordinationManifest,
       senderAgentId: pricingUpdate.agentId,
