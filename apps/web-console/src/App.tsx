@@ -4699,7 +4699,7 @@ export function App() {
                   onChange={(event: ValueInputEvent) => {
                     updateCoordinationDraft({ goal: event.target.value });
                   }}
-                  placeholder="(e.g. Coordinate agent workflows across organization, decentralized intelligence swarm, agent training, etc..)"
+                  placeholder="(e.g. coordinate agent workflows across organization, decentralized intelligence swarm, agent training, etc..)"
                 />
               </label>
 
