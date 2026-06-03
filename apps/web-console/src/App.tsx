@@ -4412,10 +4412,9 @@ export function App() {
   const activationCommand = enrollmentTicket
     ? buildTicketedActivationCommand(activationMethod, enrollmentTicket.ticket, profile.runtimeDelivery)
     : cliEnrollCommand;
-  const activationCommandPreview = activationCommand.split("\n")[0];
   const selectedActivationMethod =
     ACTIVATION_METHODS.find((method) => method.id === activationMethod) ?? DEFAULT_ACTIVATION_METHOD;
-  const activationCopyLabel = copiedKey === "activation-command" ? "Copied" : "Copy";
+  const activationCopyLabel = copiedKey === "activation-ticket" ? "Copied" : "Copy ticket";
   const activationMethodNote = selectedActivationMethod.note;
   const activationAgentId = registeredAgentId ?? enrollmentTicket?.reservedAgentId ?? autoPublicAgentId;
   const activationRegistryAgent = activationAgentId
@@ -5390,27 +5389,29 @@ export function App() {
                 ) : null}
                 {enrollmentTicket ? (
                   <div className="activation-command-card">
-                    <div className="activation-command-details">
-                      <div className="activation-command-summary">
+                    <details className="activation-command-details">
+                      <summary className="activation-command-summary">
                         <button
                           type="button"
                           className="activation-command-copy-button"
-                          onClick={() => {
-                            void copyValue("activation-command", activationCommand);
+                          onClick={(event: { preventDefault: () => void; stopPropagation: () => void }) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void copyValue("activation-ticket", enrollmentTicket.ticket);
                           }}
                         >
                           <span className="copy-icon" aria-hidden="true" />
                           {activationCopyLabel}
                         </button>
                         <span className="activation-command-summary-copy">
-                          <strong>{activationMethodNote}</strong>
-                          <code>{activationCommandPreview}</code>
+                          <strong>Ticket ready</strong>
+                          <code>{activationMethodNote}</code>
                         </span>
-                      </div>
+                      </summary>
                       <div className="command-strip compact-command-strip activation-command-strip">
                         <pre className="activation-command-code">{activationCommand}</pre>
                       </div>
-                    </div>
+                    </details>
                   </div>
                 ) : null}
               </div>
