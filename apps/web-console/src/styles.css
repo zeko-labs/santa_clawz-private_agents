@@ -2328,6 +2328,18 @@ pre,
   color: rgba(74, 91, 112, 0.5);
 }
 
+.coordination-cli-handoff-button {
+  gap: 8px;
+}
+
+.coordination-cli-handoff-button:disabled {
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.coordination-cli-handoff-button .copy-icon {
+  color: rgba(18, 35, 54, 0.66);
+}
+
 .coordination-privacy-row {
   display: grid;
   grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1fr);
@@ -2374,6 +2386,58 @@ pre,
   color: rgba(74, 91, 112, 0.82);
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.coordination-setup-steps {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 0;
+  counter-reset: coordination-step;
+  color: rgba(74, 91, 112, 0.82);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  list-style: none;
+}
+
+.coordination-setup-steps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.coordination-setup-steps li::before {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(18, 35, 54, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  color: rgba(74, 91, 112, 0.72);
+  content: counter(coordination-step);
+  counter-increment: coordination-step;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.coordination-setup-steps li.active {
+  color: var(--ink);
+}
+
+.coordination-setup-steps li.active::before {
+  border-color: rgba(67, 143, 113, 0.3);
+  background: rgba(226, 250, 239, 0.82);
+  color: #2d7055;
+}
+
+.coordination-setup-steps li.complete::before {
+  border-color: rgba(67, 143, 113, 0.34);
+  background: #2d7055;
+  color: #fff;
+  content: "✓";
 }
 
 .text-area.coordination-goal-area {

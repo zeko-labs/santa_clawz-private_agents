@@ -2053,6 +2053,50 @@ function buildBridgeManifest(input: {
   );
 }
 
+function coordinationShellComment(value: string) {
+  return value.replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7E]/g, "").trim() || "Agent";
+}
+
+function coordinationShellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function buildCoordinationCliHandoff(input: {
+  manifestJson: string;
+  agents: AgentRegistryEntry[];
+  publicTraceUrl: string;
+}) {
+  const agentEnvSteps = input.agents.map((agent) => (
+    [
+      `# ${coordinationShellComment(agent.agentName)}`,
+      `# Agent id: ${coordinationShellComment(agent.agentId)}`,
+      `# Give only this agent's files to this agent runtime or wrapper:`,
+      `# ./.santaclawz/coordination/${agent.agentId}.setup.json`,
+      `# ./.santaclawz/coordination/${agent.agentId}.env`,
+      `pnpm coordination:setup accept --setup ${coordinationShellQuote(`./.santaclawz/coordination/${agent.agentId}.setup.json`)} --format env`
+    ].join("\n")
+  ));
+
+  return [
+    "# SantaClawz team coordination handoff",
+    "# Run from the SantaClawz repo or your team wrapper.",
+    "mkdir -p ./.santaclawz/coordination",
+    "cat > ./.santaclawz/coordination/bridge.json <<'SANTACLAWZ_BRIDGE_JSON'",
+    input.manifestJson,
+    "SANTACLAWZ_BRIDGE_JSON",
+    "",
+    "# Split the team manifest into per-agent setup JSON and env files.",
+    "pnpm coordination:setup split --manifest ./.santaclawz/coordination/bridge.json --out-dir ./.santaclawz/coordination",
+    "",
+    "# Load the matching generated setup inside each participating agent runtime.",
+    ...agentEnvSteps,
+    "",
+    "# Keep SANTACLAWZ_AGENT_ADMIN_KEY and connector credentials in each agent's local secret store.",
+    `# Public-safe workflow trace: ${input.publicTraceUrl}`,
+    "# SDK alternative: parse the generated *.setup.json with parseCoordinationAgentSetup from @clawz/agent-sdk."
+  ].join("\n");
+}
+
 function normalizeProfileDraft(input?: Partial<AgentProfileState> | null): AgentProfileDraft {
   const legacyPayoutAddress =
     typeof (input as { payoutAddress?: unknown } | undefined)?.payoutAddress === "string"
@@ -2264,6 +2308,7 @@ export function App() {
   const [coordinationAgentRoles, setCoordinationAgentRoles] = useState<Record<string, CoordinationAgentRole>>({});
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
+  const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -2879,8 +2924,10 @@ export function App() {
       window.setTimeout(() => {
         setCopiedKey(null);
       }, 1600);
+      return true;
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Copy failed.");
+      return false;
     }
   }
 
@@ -4174,6 +4221,11 @@ export function App() {
   });
   const publicCoordinationThreadUrl =
     `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
+  const coordinationCliHandoff = buildCoordinationCliHandoff({
+    manifestJson: bridgeManifest,
+    agents: selectedCoordinationAgents,
+    publicTraceUrl: publicCoordinationThreadUrl
+  });
   const selectedCoordinationRoles = selectedCoordinationAgents.map((agent, index) => (
     coordinationAgentRoles[agent.agentId] ?? (index === 0 ? "admin" : "member")
   ));
@@ -4188,14 +4240,32 @@ export function App() {
       ? "Add a short team goal so agents know what workflow they are coordinating around."
       : !coordinationHasRoles
         ? "Assign roles and keep at least one Admin before copying setup."
-        : "Next: copy agent setup into your agent wrapper or CLI. Open public trace to watch safe claims, checkpoints, and handoffs.";
+        : coordinationSetupCopied
+          ? "Setup copied. Next: paste it into your SDK/wrapper, or copy CLI handoff to generate per-agent setup/env files."
+          : "Next: copy setup JSON for an SDK/wrapper, or copy CLI handoff to generate per-agent setup files.";
 
-  function copyCoordinationSetup() {
+  async function copyCoordinationSetup() {
     if (!coordinationSetupReady) {
       setCoordinationError(coordinationActionHelp);
       return;
     }
-    void copyValue("coordination-manifest", bridgeManifest);
+    const copied = await copyValue("coordination-manifest", bridgeManifest);
+    if (copied) {
+      setCoordinationSetupCopied(true);
+      setCoordinationError(null);
+    }
+  }
+
+  async function copyCoordinationCliHandoff() {
+    if (!coordinationSetupReady) {
+      setCoordinationError(coordinationActionHelp);
+      return;
+    }
+    const copied = await copyValue("coordination-cli-handoff", coordinationCliHandoff);
+    if (copied) {
+      setCoordinationSetupCopied(true);
+      setCoordinationError(null);
+    }
   }
 
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
@@ -4391,6 +4461,7 @@ export function App() {
       ...patch
     });
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function toggleCoordinationAgent(agentId: string) {
@@ -4409,6 +4480,7 @@ export function App() {
       }));
     }
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function addCoordinationLookupAgent() {
@@ -4422,6 +4494,7 @@ export function App() {
     }));
     setCoordinationAgentUrl("");
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function updateCoordinationAgentRole(agentId: string, role: CoordinationAgentRole) {
@@ -4430,6 +4503,7 @@ export function App() {
       [agentId]: role
     }));
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function renderCoordinationPage() {
@@ -4441,7 +4515,7 @@ export function App() {
               className="coordination-route-form"
               onSubmit={(event: FormSubmitEvent) => {
                 event.preventDefault();
-                copyCoordinationSetup();
+                void copyCoordinationSetup();
               }}
             >
               <div className="section-head compact-head">
@@ -4571,19 +4645,39 @@ export function App() {
                   disabled={!coordinationSetupReady}
                   title={coordinationSetupReady ? "Copy agent setup" : coordinationActionHelp}
                   onClick={() => {
-                    copyCoordinationSetup();
+                    void copyCoordinationSetup();
                   }}
                 >
                   <span className="copy-icon" aria-hidden="true" />
                   {copiedKey === "coordination-manifest" ? "Copied setup" : "Copy agent setup"}
                 </button>
-                <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
-                  Open public trace
-                </a>
+                <button
+                  type="button"
+                  className="secondary-button coordination-cli-handoff-button"
+                  disabled={!coordinationSetupReady}
+                  title={coordinationSetupReady ? "Copy CLI handoff" : coordinationActionHelp}
+                  onClick={() => {
+                    void copyCoordinationCliHandoff();
+                  }}
+                >
+                  <span className="copy-icon" aria-hidden="true" />
+                  {copiedKey === "coordination-cli-handoff" ? "Copied CLI" : "Copy CLI handoff"}
+                </button>
               </div>
               <p className="coordination-action-help">
                 {coordinationActionHelp}
               </p>
+              <ol className="coordination-setup-steps" aria-label="Coordination setup steps">
+                <li className={coordinationSetupReady ? "complete" : "active"}>
+                  Add agents, roles, team goal, and privacy policy.
+                </li>
+                <li className={coordinationSetupCopied ? "complete" : coordinationSetupReady ? "active" : ""}>
+                  Copy setup JSON for an SDK/wrapper, or copy CLI handoff for a ready command block.
+                </li>
+                <li className={coordinationSetupCopied ? "active" : ""}>
+                  Run the handoff, distribute each generated setup/env file to its matching agent, then watch the trace below.
+                </li>
+              </ol>
             </form>
           </div>
         </section>
