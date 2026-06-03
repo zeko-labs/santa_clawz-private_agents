@@ -876,6 +876,20 @@ function formatRelativeTime(value?: string) {
   return new Date(timestamp).toLocaleDateString();
 }
 
+function formatTimeRemaining(expiresAtIso?: string, nowMs = Date.now()) {
+  const expiresAtMs = timestampValue(expiresAtIso);
+  if (!expiresAtMs || expiresAtMs <= nowMs) {
+    return "expired";
+  }
+  const totalMinutes = Math.max(1, Math.ceil((expiresAtMs - nowMs) / 60000));
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m left`;
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h ${minutes}m left` : `${hours}h left`;
+}
+
 function emptyAgentBoardState(): AgentBoardState {
   return {
     schemaVersion: "santaclawz-agent-board/1.0",
@@ -2321,6 +2335,7 @@ export function App() {
   const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [coordinationSetupIssuing, setCoordinationSetupIssuing] = useState(false);
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
+  const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -2861,6 +2876,19 @@ export function App() {
   useEffect(() => {
     setDuplicateClaimTarget(null);
   }, [profile.openClawUrl, profile.runtimeDelivery.runtimeIngressUrl]);
+
+  useEffect(() => {
+    if (!coordinationSetupTicket) {
+      return;
+    }
+    setCoordinationTicketNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setCoordinationTicketNowMs(Date.now());
+    }, 30_000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [coordinationSetupTicket]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -4254,17 +4282,53 @@ export function App() {
   const coordinationHasRoles = selectedCoordinationRoles.every((role) => role === "admin" || role === "member") &&
     selectedCoordinationRoles.includes("admin");
   const coordinationSetupReady = coordinationHasAgents && coordinationHasTeamGoal && coordinationHasRoles;
+  const coordinationSetupTicketExpired = coordinationSetupTicket
+    ? Date.parse(coordinationSetupTicket.expiresAtIso) <= coordinationTicketNowMs
+    : false;
+  const coordinationSetupTicketExpiryTime = coordinationSetupTicket
+    ? new Date(coordinationSetupTicket.expiresAtIso).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit"
+      })
+    : "";
+  const coordinationSetupTicketPreview = coordinationSetupTicket ? ticketPreview(coordinationSetupTicket.ticket) : "";
+  const coordinationSetupTicketRemaining = coordinationSetupTicket
+    ? formatTimeRemaining(coordinationSetupTicket.expiresAtIso, coordinationTicketNowMs)
+    : "";
+  const coordinationSetupTicketHandoff = coordinationSetupTicket
+    ? buildCoordinationSetupTicketHandoff({
+        ticket: coordinationSetupTicket,
+        apiBase,
+        agents: selectedCoordinationAgents
+      })
+    : "";
+  const coordinationSetupStatus = coordinationSetupTicketExpired
+    ? {
+        label: "Expired",
+        className: "runtime-status-offline"
+      }
+    : coordinationSetupTicket
+      ? {
+          label: "Active",
+          className: "runtime-status-live"
+        }
+      : {
+          label: "Pending",
+          className: "runtime-status-waiting"
+        };
   const coordinationActionHelp = !coordinationHasAgents
     ? "Add at least one registered agent URL to enable setup copy."
     : !coordinationHasTeamGoal
       ? "Add a short team goal so agents know what workflow they are coordinating around."
       : !coordinationHasRoles
         ? "Assign roles and keep at least one Admin before copying setup."
-        : coordinationSetupCopied
-          ? "Setup ticket copied. Share it with participating agent runtimes; each agent claims its own setup before the ticket expires."
-          : "Next: create a short-lived setup ticket. SantaClawz stores the run setup and agents claim their own config by ticket.";
+        : coordinationSetupTicketExpired
+          ? "Setup ticket expired. Reissue the ticket, then share the fresh ticket with participating agent runtimes."
+          : coordinationSetupTicket
+            ? "Setup ticket active. Copy it into your team agent runner, private deployment channel, or each participating agent runtime."
+            : "Next: create a short-lived setup ticket. SantaClawz stores the run setup and agents claim their own config by ticket.";
 
-  async function copyCoordinationSetupTicket() {
+  async function issueCoordinationSetupTicket() {
     if (!coordinationSetupReady) {
       setCoordinationError(coordinationActionHelp);
       return;
@@ -4272,20 +4336,30 @@ export function App() {
     setCoordinationSetupIssuing(true);
     try {
       const ticket = await createCoordinationSetupTicket(bridgeManifestPayload);
-      const copied = await copyValue("coordination-setup-ticket", buildCoordinationSetupTicketHandoff({
-        ticket,
-        apiBase,
-        agents: selectedCoordinationAgents
-      }));
-      if (copied) {
-        setCoordinationSetupTicket(ticket);
-        setCoordinationSetupCopied(true);
-        setCoordinationError(null);
-      }
+      setCoordinationSetupTicket(ticket);
+      setCoordinationSetupCopied(false);
+      setCoordinationTicketNowMs(Date.now());
+      setCoordinationError(null);
     } catch (nextError) {
       setCoordinationError(nextError instanceof Error ? nextError.message : "Unable to create setup ticket.");
     } finally {
       setCoordinationSetupIssuing(false);
+    }
+  }
+
+  async function copyCoordinationSetupTicket() {
+    if (!coordinationSetupTicket) {
+      setCoordinationError("Create a setup ticket first.");
+      return;
+    }
+    if (coordinationSetupTicketExpired) {
+      setCoordinationError("Setup ticket expired. Reissue a fresh ticket before sharing it.");
+      return;
+    }
+    const copied = await copyValue("coordination-setup-ticket", coordinationSetupTicketHandoff);
+    if (copied) {
+      setCoordinationSetupCopied(true);
+      setCoordinationError(null);
     }
   }
 
@@ -4540,7 +4614,7 @@ export function App() {
               className="coordination-route-form"
               onSubmit={(event: FormSubmitEvent) => {
                 event.preventDefault();
-                void copyCoordinationSetupTicket();
+                void issueCoordinationSetupTicket();
               }}
             >
               <div className="section-head compact-head">
@@ -4666,38 +4740,109 @@ export function App() {
                 </p>
               </div>
 
-              <div className="coordination-handoff-actions">
-                <button
-                  type="button"
-                  className="activation-command-copy-button coordination-copy-setup-button"
-                  disabled={!coordinationSetupReady || coordinationSetupIssuing}
-                  title={coordinationSetupReady ? "Create setup ticket" : coordinationActionHelp}
-                  onClick={() => {
-                    void copyCoordinationSetupTicket();
-                  }}
-                >
-                  <span className="copy-icon" aria-hidden="true" />
-                  {coordinationSetupIssuing
-                    ? "Creating ticket"
-                    : copiedKey === "coordination-setup-ticket"
-                      ? "Copied setup ticket"
-                      : "Create setup ticket"}
-                </button>
+              <div className="activation-ticket-method-row coordination-ticket-method-row">
+                <div className={coordinationSetupTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
+                  {coordinationSetupTicket ? (
+                    <>
+                      <span
+                        className={`subtle-pill activation-ticket-pill coordination-ticket-pill${coordinationSetupTicketExpired ? "" : " live"}`}
+                        title={coordinationSetupTicket.ticket}
+                      >
+                        <span className="activation-ticket-id">{coordinationSetupTicketPreview}</span>
+                        <span aria-hidden="true"> · </span>
+                        <span>expires {coordinationSetupTicketExpiryTime}</span>
+                        <span aria-hidden="true"> · </span>
+                        <span>{coordinationSetupTicketRemaining}</span>
+                      </span>
+                      <span className={`activation-inline-status ${coordinationSetupStatus.className}`}>
+                        <span aria-hidden="true" />
+                        {coordinationSetupStatus.label}
+                      </span>
+                      <button
+                        type="button"
+                        className="activation-reissue-button"
+                        disabled={coordinationSetupIssuing || !coordinationSetupReady}
+                        onClick={() => {
+                          void issueCoordinationSetupTicket();
+                        }}
+                      >
+                        {coordinationSetupIssuing ? "Reissuing..." : "Reissue ticket"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="activation-command-copy-button coordination-create-ticket-button"
+                        disabled={!coordinationSetupReady || coordinationSetupIssuing}
+                        title={coordinationSetupReady ? "Create setup ticket" : coordinationActionHelp}
+                        onClick={() => {
+                          void issueCoordinationSetupTicket();
+                        }}
+                      >
+                        <span className="copy-icon" aria-hidden="true" />
+                        {coordinationSetupIssuing ? "Creating ticket" : "Create setup ticket"}
+                      </button>
+                      <span className="subtle-pill activation-pending-pill">Pending</span>
+                    </>
+                  )}
+                </div>
               </div>
               <p className="coordination-action-help">
-                {coordinationSetupTicket
-                  ? `${coordinationActionHelp} Ticket expires ${new Date(coordinationSetupTicket.expiresAtIso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-                  : coordinationActionHelp}
+                {coordinationActionHelp}
               </p>
+              {coordinationSetupTicket ? (
+                <div className="activation-command-card coordination-ticket-card">
+                  <div className="activation-command-details">
+                    <div className="activation-command-summary">
+                      <button
+                        type="button"
+                        className="activation-command-copy-button"
+                        disabled={coordinationSetupTicketExpired}
+                        onClick={() => {
+                          void copyCoordinationSetupTicket();
+                        }}
+                      >
+                        <span className="copy-icon" aria-hidden="true" />
+                        {copiedKey === "coordination-setup-ticket" && coordinationSetupCopied ? "Copied" : "Copy"}
+                      </button>
+                      <span className="activation-command-summary-copy">
+                        <strong>{coordinationSetupTicketExpired ? "Ticket expired" : "Copy setup ticket"}</strong>
+                        <code>{coordinationSetupTicketExpired ? "Reissue a fresh ticket before sharing" : "Ticket + per-agent claim commands"}</code>
+                      </span>
+                    </div>
+                    <div className="coordination-ticket-next-steps">
+                      <div>
+                        <strong>Preferred path</strong>
+                        <span>Put the ticket in your team agent runner, deployment script, local wrapper, or secret manager. Each enrolled agent claims only its own setup with its agent id.</span>
+                      </div>
+                      <div>
+                        <strong>Manual fallback</strong>
+                        <span>Send the ticket privately to the operator of each selected agent. Do not post it in a public Slack, Telegram, Discord, or open channel.</span>
+                      </div>
+                      <div>
+                        <strong>SantaClawz role</strong>
+                        <span>SantaClawz stores the run setup and claim endpoint; V1 does not automatically message external agent owners because the ticket is a bearer setup credential.</span>
+                      </div>
+                    </div>
+                    <div className="command-strip compact-command-strip activation-command-strip coordination-ticket-command-strip">
+                      <pre className="activation-command-code">{coordinationSetupTicketHandoff}</pre>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <ol className="coordination-setup-steps" aria-label="Coordination setup steps">
                 <li className={coordinationSetupReady ? "complete" : "active"}>
                   Add agents, roles, team goal, and privacy policy.
                 </li>
-                <li className={coordinationSetupCopied ? "complete" : coordinationSetupReady ? "active" : ""}>
+                <li className={coordinationSetupTicket ? "complete" : coordinationSetupReady ? "active" : ""}>
                   Create one short-lived setup ticket for this run.
                 </li>
+                <li className={coordinationSetupCopied ? "complete" : coordinationSetupTicket ? "active" : ""}>
+                  Copy the ticket package and share it through your private agent runner or operator channel.
+                </li>
                 <li className={coordinationSetupCopied ? "active" : ""}>
-                  Share the ticket with participating agents. Each agent claims its own setup through the CLI, SDK, or claim API.
+                  Agents claim setup by ticket, then publish safe workflow checkpoints to the trace below.
                 </li>
               </ol>
             </form>
