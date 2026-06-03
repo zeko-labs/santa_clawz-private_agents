@@ -140,6 +140,36 @@ function sameAddress(left, right) {
   return typeof left === "string" && typeof right === "string" && left.toLowerCase() === right.toLowerCase();
 }
 
+function nestedValue(value, keys) {
+  let current = value;
+  for (const key of keys) {
+    if (!isRecord(current)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+function nestedString(value, keys) {
+  const current = nestedValue(value, keys);
+  return typeof current === "string" && current.trim().length > 0 ? current.trim() : "";
+}
+
+function sellerAuthorizationValue(paymentPayload) {
+  return (
+    nestedString(paymentPayload, ["payload", "authorization", "value"]) ||
+    nestedString(paymentPayload, ["authorization", "typedData", "message", "value"]) ||
+    nestedString(paymentPayload, ["authorization", "authorization", "value"])
+  );
+}
+
+function protocolFeeAuthorizationValue(paymentPayload) {
+  return (
+    nestedString(paymentPayload, ["payload", "feeAuthorization", "authorization", "value"]) ||
+    nestedString(paymentPayload, ["feeAuthorization", "typedData", "message", "value"]) ||
+    nestedString(paymentPayload, ["feeAuthorization", "authorization", "value"])
+  );
+}
+
 function sameAsset(left, right) {
   if (isRecord(left) && isRecord(right)) {
     return left.symbol === right.symbol &&
@@ -247,6 +277,9 @@ function validatePaymentPayload(input) {
       add(errors, hostedFeeSplit.grossAmount === String(paymentPayload.amount), "accepted.extra.feeSplit.grossAmount must equal paymentPayload.amount.");
       add(errors, String(hostedFeeSplit.sellerAmount ?? "") === String(feeSplit.sellerAmount ?? ""), "accepted.extra.feeSplit.sellerAmount does not match the advertised split.");
       add(errors, String(hostedFeeSplit.protocolFeeAmount ?? "") === String(feeSplit.protocolFeeAmount ?? ""), "accepted.extra.feeSplit.protocolFeeAmount does not match the advertised split.");
+      add(errors, sellerAuthorizationValue(paymentPayload) === String(feeSplit.sellerAmount ?? ""), "seller authorization.value must equal the advertised sellerAmount, not the gross amount.");
+      add(errors, protocolFeeAuthorizationValue(paymentPayload) === String(feeSplit.protocolFeeAmount ?? ""), "protocol fee authorization.value must equal the advertised protocolFeeAmount.");
+      add(errors, sameAddress(hostedFeeSplit.sellerPayTo, feeSplit.sellerPayTo), "accepted.extra.feeSplit.sellerPayTo does not match the advertised split.");
       add(errors, sameAddress(hostedFeeSplit.protocolFeePayTo, feeSplit.protocolFeePayTo), "accepted.extra.feeSplit.protocolFeePayTo does not match the advertised split.");
     }
   } else if (isRecord(paymentPayload.feeAuthorization)) {
