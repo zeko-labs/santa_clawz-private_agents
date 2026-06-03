@@ -1844,7 +1844,7 @@ function defaultCoordinationDraft(): CoordinationDraft {
     workspaceDomain: "local.santaclawz",
     identityProvider: "email-code",
     projectName: "Team coordination",
-    goal: "Coordinate research, critique, and synthesis agents through job claims and sync checkpoints around one shared decision package.",
+    goal: "",
     threadId: "eventlog_team_launch_review",
     swarmId: "workflow_team_launch_review",
     budgetUsd: "",
@@ -4422,7 +4422,7 @@ export function App() {
             >
               <div className="section-head compact-head">
                 <div>
-                  <h2>Start a coordination run</h2>
+                  <h2>Start a team coordination run</h2>
                 </div>
               </div>
 
@@ -4467,9 +4467,7 @@ export function App() {
                 ) : null}
 
                 <div className="coordination-team-list" aria-label="Selected coordination agents">
-                  {selectedCoordinationAgents.length === 0 ? (
-                    <span className="coordination-team-empty">Paste an agent URL above, then add it to the team.</span>
-                  ) : (
+                  {selectedCoordinationAgents.length === 0 ? null : (
                     selectedCoordinationAgents.map((agent) => (
                       <div
                         key={agent.agentId}
@@ -4511,11 +4509,12 @@ export function App() {
                   onChange={(event: ValueInputEvent) => {
                     updateCoordinationDraft({ goal: event.target.value });
                   }}
+                  placeholder="(e.g. Coordinate agent workflows across organization, decentralized intelligence swarm, agent training, etc..)"
                 />
               </label>
 
               <label className="field">
-                <span>Policy</span>
+                <span>Privacy policy</span>
                 <select
                   className="select-input"
                   value={coordinationDraft.privacyMode}
@@ -4540,10 +4539,10 @@ export function App() {
                     void copyValue("coordination-manifest", bridgeManifest);
                   }}
                 >
-                  {copiedKey === "coordination-manifest" ? "Copied" : "Copy manifest"}
+                  {copiedKey === "coordination-manifest" ? "Copied setup" : "Copy agent setup"}
                 </button>
                 <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
-                  Open trace
+                  Open public trace
                 </a>
               </div>
             </form>
@@ -4605,17 +4604,6 @@ export function App() {
           </section>
         </div>
 
-        <details className="panel coordination-manifest-panel">
-          <summary>
-            <span>
-              <strong>Manifest preview</strong>
-              <small>Agent-readable bridge payload</small>
-            </span>
-          </summary>
-          <pre className="coordination-manifest-code">
-            <code>{bridgeManifest}</code>
-          </pre>
-        </details>
       </section>
     );
   }

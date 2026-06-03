@@ -2301,7 +2301,11 @@ pre,
 }
 
 .coordination-goal-area {
-  min-height: 92px;
+  min-height: 60px;
+}
+
+.coordination-goal-area::placeholder {
+  color: rgba(74, 91, 112, 0.52);
 }
 
 .coordination-team-builder {
