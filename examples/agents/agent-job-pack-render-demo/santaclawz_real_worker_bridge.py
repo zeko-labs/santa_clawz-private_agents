@@ -1218,8 +1218,9 @@ def activation_lane_loop(interval_seconds: int) -> None:
 
 def maybe_start_activation_lane_poller() -> None:
     if not env_truthy("CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED"):
+        log_event({"type": "activation-lane-disabled", "reason": "CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED is not enabled"})
         return
-    interval_seconds = max(5, int(os.environ.get("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", "10")))
+    interval_seconds = max(5, int(os.environ.get("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", "30")))
     thread = threading.Thread(target=activation_lane_loop, args=(interval_seconds,), name="activation-lane-poller", daemon=True)
     thread.start()
 

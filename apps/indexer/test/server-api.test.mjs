@@ -2435,6 +2435,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(activationCandidates.status, 200);
     assert.equal(activationCandidates.payload.lane, "activation_lane");
     assert.equal(activationCandidates.payload.amountUsd, "0.002001");
+    assert.equal(activationCandidates.payload.intervalSeconds, 30);
     assert.equal(
       activationCandidates.payload.candidates.some((candidate) => candidate.agentId === agentId),
       true
@@ -2536,6 +2537,23 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(provenPaidAgentHeartbeat.status, 200);
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.provenBy, "heartbeat_probe");
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.lastProvenBuild, "server-api-test-build");
+
+    const activationDiagnostics = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&includeDiagnostics=true`,
+      {
+        headers: {
+          "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(activationDiagnostics.status, 200);
+    assert.equal(activationDiagnostics.payload.total, 0);
+    assert.equal(activationDiagnostics.payload.diagnostics.totalRegisteredMatching, 1);
+    assert.equal(activationDiagnostics.payload.diagnostics.totalEligible, 0);
+    assert.deepEqual(
+      activationDiagnostics.payload.diagnostics.excludedAgents[0]?.exclusionReasons,
+      ["paid-execution-already-proven"]
+    );
 
     const forcedActivationCandidates = await requestJson(
       `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&force=true`,
