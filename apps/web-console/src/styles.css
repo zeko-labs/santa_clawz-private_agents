@@ -2291,28 +2291,66 @@ pre,
 }
 
 .coordination-handoff-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
 }
 
 .coordination-handoff-actions .primary-button,
 .coordination-handoff-actions .secondary-button {
-  width: 100%;
+  min-width: 190px;
+  min-height: 46px;
   justify-content: center;
 }
 
-.coordination-policy-action-row {
+.coordination-copy-setup-button {
+  min-width: 190px;
+  min-height: 46px;
+  padding: 10px 16px;
+  justify-content: center;
+}
+
+.coordination-privacy-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.72fr) minmax(190px, 0.72fr);
-  gap: 10px;
+  grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1fr);
+  gap: 14px;
   align-items: end;
 }
 
-.coordination-policy-action-row .primary-button,
-.coordination-policy-action-row .secondary-button {
-  width: 100%;
-  justify-content: center;
+.coordination-select-wrap {
+  position: relative;
+  display: block;
+}
+
+.coordination-select-wrap::after {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid rgba(18, 35, 54, 0.74);
+  border-bottom: 2px solid rgba(18, 35, 54, 0.74);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.coordination-select-wrap .select-input {
+  appearance: none;
+  padding-right: 52px;
+}
+
+.coordination-privacy-copy {
+  min-height: 52px;
+  margin: 0 0 2px;
+  color: rgba(74, 91, 112, 0.86);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.coordination-privacy-copy strong {
+  color: var(--ink);
 }
 
 .text-area.coordination-goal-area {
@@ -7293,7 +7331,7 @@ button:disabled {
   .coordination-grid,
   .coordination-policy-grid,
   .coordination-field-grid,
-  .coordination-policy-action-row,
+  .coordination-privacy-row,
   .coordination-handoff-actions {
     grid-template-columns: 1fr;
   }

@@ -1860,12 +1860,12 @@ function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
     return "Public summaries";
   }
   if (mode === "recipient-encrypted") {
-    return "Recipient encrypted";
+    return "Recipient-encrypted refs";
   }
   if (mode === "local-private") {
     return "Local private";
   }
-  return "Digest only";
+  return "Digest-only trace";
 }
 
 function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
@@ -4517,29 +4517,39 @@ export function App() {
 
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
-              <div className="coordination-policy-action-row">
+              <div className="coordination-privacy-row">
                 <label className="field coordination-privacy-field">
                   <span>Privacy policy</span>
-                  <select
-                    className="select-input"
-                    value={coordinationDraft.privacyMode}
-                    onChange={(event: ValueInputEvent) => {
-                      updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
-                    }}
-                  >
-                    <option value="digest-only">Digest only</option>
-                    <option value="public-summary">Public summaries</option>
-                    <option value="recipient-encrypted">Recipient encrypted</option>
-                    <option value="local-private">Local private</option>
-                  </select>
+                  <div className="coordination-select-wrap">
+                    <select
+                      className="select-input"
+                      value={coordinationDraft.privacyMode}
+                      onChange={(event: ValueInputEvent) => {
+                        updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
+                      }}
+                    >
+                      <option value="digest-only">{coordinationPrivacyLabel("digest-only")}</option>
+                      <option value="public-summary">{coordinationPrivacyLabel("public-summary")}</option>
+                      <option value="recipient-encrypted">{coordinationPrivacyLabel("recipient-encrypted")}</option>
+                      <option value="local-private">{coordinationPrivacyLabel("local-private")}</option>
+                    </select>
+                  </div>
                 </label>
+                <p className="coordination-privacy-copy">
+                  <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}.</strong>{" "}
+                  {coordinationPrivacyDetail(coordinationDraft.privacyMode)}
+                </p>
+              </div>
+
+              <div className="coordination-handoff-actions">
                 <button
                   type="button"
-                  className="primary-button"
+                  className="activation-command-copy-button coordination-copy-setup-button"
                   onClick={() => {
                     void copyValue("coordination-manifest", bridgeManifest);
                   }}
                 >
+                  <span className="copy-icon" aria-hidden="true" />
                   {copiedKey === "coordination-manifest" ? "Copied setup" : "Copy agent setup"}
                 </button>
                 <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
