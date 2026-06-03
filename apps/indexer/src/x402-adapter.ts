@@ -334,7 +334,46 @@ function encodeBase64Json(value: JsonRecord): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
 
-function normalizePaymentRequiredEvmAmounts(value: JsonRecord): JsonRecord {
+function sameAddress(left: unknown, right: unknown): boolean {
+  return (
+    typeof left === "string" &&
+    typeof right === "string" &&
+    left.trim().toLowerCase() === right.trim().toLowerCase()
+  );
+}
+
+function matchingAcceptForRail(
+  paymentRequired: JsonRecord,
+  paymentPayload: JsonRecord
+): JsonRecord | undefined {
+  const accepts = Array.isArray(paymentRequired.accepts) ? paymentRequired.accepts : [];
+  return accepts.find((accept): accept is JsonRecord => {
+    if (!isRecord(accept)) {
+      return false;
+    }
+    return (
+      accept.network === paymentPayload.networkId &&
+      accept.settlementRail === paymentPayload.settlementRail &&
+      sameAddress(accept.payTo, paymentPayload.payTo)
+    );
+  });
+}
+
+function matchingRuntimeRailForAccept(
+  accept: JsonRecord,
+  runtimeRails: AgentX402RailPlan[] | undefined
+): AgentX402RailPlan | undefined {
+  return runtimeRails?.find((rail) => (
+    rail.networkId === accept.network &&
+    rail.settlementRail === accept.settlementRail &&
+    sameAddress(rail.payTo, accept.payTo)
+  ));
+}
+
+function normalizePaymentRequiredEvmAmounts(value: JsonRecord, input: {
+  plan?: AgentX402Plan;
+  runtimeRails?: AgentX402RailPlan[];
+} = {}): JsonRecord {
   const normalized: JsonRecord = { ...value };
   const accepts = Array.isArray(normalized.accepts) ? normalized.accepts : [];
   normalized.accepts = accepts.map((accept) => {
@@ -344,7 +383,26 @@ function normalizePaymentRequiredEvmAmounts(value: JsonRecord): JsonRecord {
 
     const extensions = isRecord(accept.extensions) ? accept.extensions : undefined;
     const evm = extensions && isRecord(extensions.evm) ? extensions.evm : undefined;
-    const feeSplit = evm && isRecord(evm.feeSplit) ? evm.feeSplit : undefined;
+    const existingFeeSplit = evm && isRecord(evm.feeSplit) ? evm.feeSplit : undefined;
+    const runtimeRail = matchingRuntimeRailForAccept(accept, input.runtimeRails);
+    const feePreview = runtimeRail
+      ? input.plan?.feePreviewByRail?.find((preview) => preview.rail === runtimeRail.rail)
+      : undefined;
+    const exactFeeSplit = exactFeeSplitForRail(feePreview);
+    const feeSplit = existingFeeSplit ?? (
+      accept.settlementModel === "x402-exact-evm-fee-split-v1" && exactFeeSplit && runtimeRail?.payTo
+        ? {
+            version: "protocol-owner-fee-v1",
+            sellerPayTo: runtimeRail.payTo,
+            protocolFeePayTo: exactFeeSplit.protocolFeePayTo,
+            feeBps: exactFeeSplit.feeBps,
+            grossAmount: exactFeeSplit.grossAmount,
+            sellerAmount: exactFeeSplit.sellerAmount,
+            protocolFeeAmount: exactFeeSplit.protocolFeeAmount,
+            feeSettlementMode: exactFeeSplit.feeSettlementMode
+          }
+        : undefined
+    );
     const grossAmount = typeof feeSplit?.grossAmount === "string" ? feeSplit.grossAmount.trim() : "";
     if (!grossAmount || !/^\d+$/.test(grossAmount)) {
       return accept;
@@ -353,15 +411,17 @@ function normalizePaymentRequiredEvmAmounts(value: JsonRecord): JsonRecord {
     // The SantaClawz x402 contract treats EVM payment amount fields as token
     // minor units. Keep decimal display values in price/amountUsd, but force
     // accepts[].amount to the atomic gross amount when an exact fee split exists.
-    const normalizedExtensions = isRecord(extensions)
-      ? {
-          ...extensions,
-          evm: {
-            ...(evm ?? {}),
-            amountUnit: "atomic"
-          }
+    const normalizedExtensions = {
+      ...(extensions ?? {}),
+      evm: {
+        ...(evm ?? {}),
+        amountUnit: "atomic",
+        feeSplit: {
+          ...(existingFeeSplit ?? {}),
+          ...feeSplit
         }
-      : extensions;
+      }
+    };
     return {
       ...accept,
       amount: grossAmount,
@@ -1641,7 +1701,8 @@ export function buildAgentX402RuntimeContext(input: {
   } satisfies JsonRecord;
 
   const paymentRequired = normalizePaymentRequiredEvmAmounts(
-    zekoX402Module.buildPaymentRequired(paymentContext) as JsonRecord
+    zekoX402Module.buildPaymentRequired(paymentContext) as JsonRecord,
+    { plan: input.plan, runtimeRails }
   );
 
   return {
@@ -1714,7 +1775,8 @@ export async function buildQuoteIntentX402RuntimeContext(input: {
     ...runtime,
     paymentContext,
     paymentRequired: normalizePaymentRequiredEvmAmounts(
-      requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord
+      requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord,
+      { plan: runtime.plan, runtimeRails: runtime.runtimeRails }
     ),
     catalog: requireZekoX402Module().buildCatalog(paymentContext) as JsonRecord
   };
@@ -1776,7 +1838,8 @@ export async function buildActivationLaneX402RuntimeContext(input: {
     ...runtime,
     paymentContext,
     paymentRequired: normalizePaymentRequiredEvmAmounts(
-      requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord
+      requireZekoX402Module().buildPaymentRequired(paymentContext) as JsonRecord,
+      { plan: runtime.plan, runtimeRails: runtime.runtimeRails }
     ),
     catalog: requireZekoX402Module().buildCatalog(paymentContext) as JsonRecord
   };
@@ -1856,6 +1919,52 @@ function parseAtomicAmount(value: unknown): bigint | undefined {
   return BigInt(value.trim());
 }
 
+function nestedRecord(value: unknown, keys: string[]): JsonRecord | undefined {
+  let current: unknown = value;
+  for (const key of keys) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return isRecord(current) ? current : undefined;
+}
+
+function nestedString(value: unknown, keys: string[]): string | undefined {
+  let current: unknown = value;
+  for (const key of keys) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return typeof current === "string" && current.trim().length > 0 ? current.trim() : undefined;
+}
+
+function hostedPayloadFeeSplit(paymentPayload: JsonRecord): JsonRecord | undefined {
+  return (
+    nestedRecord(paymentPayload, ["accepted", "extra", "feeSplit"]) ??
+    nestedRecord(paymentPayload, ["extensions", "santaclawz", "feeSplit"]) ??
+    nestedRecord(paymentPayload, ["extensions", "evm", "feeSplit"])
+  );
+}
+
+function sellerAuthorizationValue(paymentPayload: JsonRecord): string | undefined {
+  return (
+    nestedString(paymentPayload, ["payload", "authorization", "value"]) ??
+    nestedString(paymentPayload, ["authorization", "typedData", "message", "value"]) ??
+    nestedString(paymentPayload, ["authorization", "authorization", "value"])
+  );
+}
+
+function protocolFeeAuthorizationValue(paymentPayload: JsonRecord): string | undefined {
+  return (
+    nestedString(paymentPayload, ["payload", "feeAuthorization", "authorization", "value"]) ??
+    nestedString(paymentPayload, ["feeAuthorization", "typedData", "message", "value"]) ??
+    nestedString(paymentPayload, ["feeAuthorization", "authorization", "value"])
+  );
+}
+
 function remoteVerificationFundingError(remoteVerification: JsonRecord): string | undefined {
   const balance = parseAtomicAmount(remoteVerification.balance);
   const feeSplit = isRecord(remoteVerification.feeSplit) ? remoteVerification.feeSplit : undefined;
@@ -1886,7 +1995,11 @@ function x402VerificationErrorCode(message: string | undefined): string | undefi
   return "x402_facilitator_verification_failed";
 }
 
-function assertHostedFacilitatorPayloadShape(paymentPayload: JsonRecord, rail: AgentX402RailPlan): void {
+function assertHostedFacilitatorPayloadShape(
+  paymentPayload: JsonRecord,
+  rail: AgentX402RailPlan,
+  paymentRequired: JsonRecord
+): void {
   if (!rail.facilitatorUrl || rail.settlementRail !== "evm") {
     return;
   }
@@ -1910,6 +2023,71 @@ function assertHostedFacilitatorPayloadShape(paymentPayload: JsonRecord, rail: A
         `Missing or malformed: ${missing.join(", ")}.`,
         "Pass the raw signed x402 payload emitted by the x402 client, a body shaped as { paymentPayload }, or a service-keyed wrapper unwrapped by pnpm buyer:pay-quote.",
         "Do not post the payment requirements object itself as the payment payload."
+      ].join(" ")
+    );
+  }
+
+  const accept = matchingAcceptForRail(paymentRequired, paymentPayload);
+  const requirementFeeSplit = nestedRecord(accept, ["extensions", "evm", "feeSplit"]);
+  if (accept?.settlementModel !== "x402-exact-evm-fee-split-v1" && !requirementFeeSplit) {
+    return;
+  }
+
+  if (!requirementFeeSplit) {
+    throw new Error(
+      "SantaClawz x402 payment requirement is missing exact fee-split metadata. Retry after refreshing the payment requirement; do not sign a gross-only payload for this rail."
+    );
+  }
+
+  const grossAmount = optionalString(requirementFeeSplit.grossAmount);
+  const sellerAmount = optionalString(requirementFeeSplit.sellerAmount);
+  const protocolFeeAmount = optionalString(requirementFeeSplit.protocolFeeAmount);
+  const sellerPayTo = optionalString(requirementFeeSplit.sellerPayTo) ?? optionalString(accept?.payTo);
+  const protocolFeePayTo = optionalString(requirementFeeSplit.protocolFeePayTo);
+  const hostedFeeSplit = hostedPayloadFeeSplit(paymentPayload);
+  const sellerValue = sellerAuthorizationValue(paymentPayload);
+  const feeValue = protocolFeeAuthorizationValue(paymentPayload);
+  const exactMissing: string[] = [];
+  if (!grossAmount) exactMissing.push("payment requirement extensions.evm.feeSplit.grossAmount");
+  if (!sellerAmount) exactMissing.push("payment requirement extensions.evm.feeSplit.sellerAmount");
+  if (!protocolFeeAmount) exactMissing.push("payment requirement extensions.evm.feeSplit.protocolFeeAmount");
+  if (!sellerPayTo) exactMissing.push("payment requirement extensions.evm.feeSplit.sellerPayTo");
+  if (!protocolFeePayTo) exactMissing.push("payment requirement extensions.evm.feeSplit.protocolFeePayTo");
+  if (!hostedFeeSplit) exactMissing.push("paymentPayload.accepted.extra.feeSplit");
+  if (!paymentPayload.feeAuthorization && !nestedRecord(paymentPayload, ["payload", "feeAuthorization"])) {
+    exactMissing.push("paymentPayload.feeAuthorization");
+  }
+  if (!sellerValue) exactMissing.push("seller authorization.value");
+  if (!feeValue) exactMissing.push("protocol fee authorization.value");
+  if (exactMissing.length > 0) {
+    throw new Error(
+      [
+        "Invalid exact fee-split x402 payment payload.",
+        `Missing or malformed: ${exactMissing.join(", ")}.`,
+        "For x402-exact-evm-fee-split-v1, buyers must sign two EIP-3009 authorizations: seller authorization.value equals extensions.evm.feeSplit.sellerAmount, and feeAuthorization.authorization.value equals extensions.evm.feeSplit.protocolFeeAmount.",
+        "Refresh the 402 payment requirement and rebuild the buyer payload with the current SantaClawz buyer tooling."
+      ].join(" ")
+    );
+  }
+
+  const splitMismatch: string[] = [];
+  if (hostedFeeSplit) {
+    if (hostedFeeSplit.grossAmount !== grossAmount) splitMismatch.push("accepted.extra.feeSplit.grossAmount");
+    if (hostedFeeSplit.sellerAmount !== sellerAmount) splitMismatch.push("accepted.extra.feeSplit.sellerAmount");
+    if (hostedFeeSplit.protocolFeeAmount !== protocolFeeAmount) splitMismatch.push("accepted.extra.feeSplit.protocolFeeAmount");
+    if (!sameAddress(hostedFeeSplit.sellerPayTo, sellerPayTo)) splitMismatch.push("accepted.extra.feeSplit.sellerPayTo");
+    if (!sameAddress(hostedFeeSplit.protocolFeePayTo, protocolFeePayTo)) splitMismatch.push("accepted.extra.feeSplit.protocolFeePayTo");
+  }
+  if (paymentPayload.amount !== grossAmount) splitMismatch.push("paymentPayload.amount");
+  if (sellerValue !== sellerAmount) splitMismatch.push("seller authorization.value");
+  if (feeValue !== protocolFeeAmount) splitMismatch.push("protocol fee authorization.value");
+  if (splitMismatch.length > 0) {
+    throw new Error(
+      [
+        "Exact fee-split x402 payment payload does not match the advertised SantaClawz split.",
+        `Mismatched fields: ${splitMismatch.join(", ")}.`,
+        `Expected grossAmount=${grossAmount}, sellerAmount=${sellerAmount}, protocolFeeAmount=${protocolFeeAmount}.`,
+        "The top-level amount is the buyer gross amount, but the seller EIP-3009 authorization must sign sellerAmount, not grossAmount."
       ].join(" ")
     );
   }
@@ -2095,7 +2273,7 @@ export async function verifyAgentX402Payment(input: {
     };
   }
 
-  assertHostedFacilitatorPayloadShape(input.paymentPayload, verification.rail);
+  assertHostedFacilitatorPayloadShape(input.paymentPayload, verification.rail, input.runtime.paymentRequired);
 
   const remoteVerification = (await facilitator.verify({
     paymentPayload: input.paymentPayload,
@@ -2137,7 +2315,7 @@ export async function settleAgentX402Payment(input: {
   if (!facilitator) {
     throw new Error(`No live facilitator is configured for ${verification.rail.rail}.`);
   }
-  assertHostedFacilitatorPayloadShape(input.paymentPayload, verification.rail);
+  assertHostedFacilitatorPayloadShape(input.paymentPayload, verification.rail, input.runtime.paymentRequired);
 
   const remoteSettlement = await settleWithFacilitatorRetry({
     facilitator,
