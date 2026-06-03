@@ -5304,6 +5304,28 @@ export function App() {
 
             <div className="register-cli-stack">
                 <div className="activation-ticket-method-row">
+                  {enrollmentTicket ? (
+                    <div className="activation-method-inline">
+                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
+                        {ACTIVATION_METHODS.map((method) => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            className={activationMethod === method.id ? "active" : ""}
+                            aria-selected={activationMethod === method.id}
+                            role="tab"
+                            onClick={() => {
+                              setActivationMethod(method.id);
+                            }}
+                          >
+                            <strong>{method.label}</strong>
+                            <small>{method.badge}</small>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className={enrollmentTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
                     {enrollmentTicket ? (
                       <>
@@ -5343,28 +5365,6 @@ export function App() {
                       </>
                     )}
                   </div>
-
-                  {enrollmentTicket ? (
-                    <div className="activation-method-inline">
-                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
-                        {ACTIVATION_METHODS.map((method) => (
-                          <button
-                            key={method.id}
-                            type="button"
-                            className={activationMethod === method.id ? "active" : ""}
-                            aria-selected={activationMethod === method.id}
-                            role="tab"
-                            onClick={() => {
-                              setActivationMethod(method.id);
-                            }}
-                          >
-                            <strong>{method.label}</strong>
-                            <small>{method.badge}</small>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
 
                 </div>
                 {duplicateClaimTarget ? (
