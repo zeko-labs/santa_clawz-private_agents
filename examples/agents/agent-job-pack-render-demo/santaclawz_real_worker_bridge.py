@@ -121,6 +121,14 @@ def env_int(name: str, default: int, minimum: int | None = None) -> int:
     return max(minimum, value) if minimum is not None else value
 
 
+def module_available(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
 def normalize_service(payload: dict[str, Any]) -> str:
     service = first_string(
         payload.get("service"),
@@ -639,6 +647,7 @@ class Handler(BaseHTTPRequestHandler):
                     "hasToken": bool(activation_lane_token),
                     "hasBuyerPrivateKey": bool(os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()),
                     "hasProbeCommand": bool(os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND", "").strip()),
+                    "ethAccountAvailable": module_available("eth_account"),
                     "intervalSeconds": env_int("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", 30, 5),
                     "cooldownSeconds": env_int("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", 3600, 60),
                     "statePath": str(ACTIVATION_LANE_STATE),
@@ -1086,7 +1095,7 @@ def classify_activation_probe_result(result: dict[str, Any]) -> str:
     if (
         status >= 500
         or operational.get("relayDeliveryStatus") == "failed"
-        or any(term in text for term in ("relay", "timeout", "temporarily unavailable", "502", "503", "504", "platform"))
+        or any(term in text for term in ("relay", "timeout", "temporarily unavailable", "502", "503", "504", "platform", "eth-account", "dependency", "requirements.txt"))
     ):
         return "platform"
     return "unknown"
@@ -1119,18 +1128,41 @@ def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> 
         "response": payment_requirement,
         "classification": "unknown",
     })
-    payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
+    try:
+        payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "mode": "builtin_x402_build",
+            "status": challenge_status,
+            "error": str(exc),
+            "response": payment_requirement,
+        }
+        final_result = {**result, "classification": classify_activation_probe_result(result)}
+        report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+        return final_result
     report_activation_lane_attempt(candidate, token, "paid_probe_started", {
         "ok": True,
         "mode": "builtin_x402",
         "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
     })
-    paid_status, paid_payload = activation_lane_http_json(
-        "POST",
-        f"{endpoint}?activationLane=true",
-        token,
-        {**request_body, "paymentPayload": payment_payload},
-    )
+    try:
+        paid_status, paid_payload = activation_lane_http_json(
+            "POST",
+            f"{endpoint}?activationLane=true",
+            token,
+            {**request_body, "paymentPayload": payment_payload},
+        )
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "mode": "builtin_x402_submit",
+            "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
+            "error": str(exc),
+        }
+        final_result = {**result, "classification": classify_activation_probe_result(result)}
+        report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+        return final_result
     result = {
         "ok": activation_paid_execution_ok(paid_status, paid_payload if isinstance(paid_payload, dict) else {}),
         "mode": "builtin_x402",
