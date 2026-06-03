@@ -215,10 +215,6 @@ pre,
   height: 21px;
 }
 
-.site-social-link.x svg {
-  transform: translateX(3px);
-}
-
 .site-social-link.discord svg {
   width: 27px;
   height: 27px;
