@@ -113,6 +113,14 @@ def env_truthy(name: str, default: str = "") -> bool:
     return str(os.environ.get(name, default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name: str, default: int, minimum: int | None = None) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, value) if minimum is not None else value
+
+
 def normalize_service(payload: dict[str, Any]) -> str:
     service = first_string(
         payload.get("service"),
@@ -611,6 +619,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
+        activation_lane_enabled = env_truthy("CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED")
+        activation_lane_token = (
+            os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN")
+            or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN")
+            or ""
+        ).strip()
         self.write_response(
             200,
             {
@@ -619,6 +633,17 @@ class Handler(BaseHTTPRequestHandler):
                 "hireEndpoint": "/hire",
                 "agent": "agent/local_agent.py --mode santaclawz-run",
                 "qualityGate": "deliverables + verification manifest + zeko attestation required",
+                "activationLane": {
+                    "enabled": activation_lane_enabled,
+                    "apiBase": os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/"),
+                    "hasToken": bool(activation_lane_token),
+                    "hasBuyerPrivateKey": bool(os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()),
+                    "hasProbeCommand": bool(os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND", "").strip()),
+                    "intervalSeconds": env_int("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", 30, 5),
+                    "cooldownSeconds": env_int("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", 3600, 60),
+                    "statePath": str(ACTIVATION_LANE_STATE),
+                    "statePersisted": ACTIVATION_LANE_STATE.exists(),
+                },
             },
         )
 
