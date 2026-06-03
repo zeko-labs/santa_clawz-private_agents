@@ -2117,6 +2117,12 @@ pre,
   text-wrap: normal;
 }
 
+.coordinate-masthead .masthead-copyline .desktop-copy {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
 .coordinate-masthead .masthead-footer {
   margin-top: 12px;
 }
@@ -2342,15 +2348,21 @@ pre,
 }
 
 .coordination-privacy-copy {
+  display: flex;
+  align-items: center;
   min-height: 52px;
-  margin: 0 0 2px;
+  margin: 0;
   color: rgba(74, 91, 112, 0.86);
   font-size: 0.88rem;
   line-height: 1.45;
 }
 
-.coordination-privacy-copy strong {
-  color: var(--ink);
+.coordination-action-help {
+  max-width: 760px;
+  margin: -2px 0 0;
+  color: rgba(74, 91, 112, 0.82);
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .text-area.coordination-goal-area {

@@ -104,7 +104,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const COORDINATE_COPY =
-  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
+  "Connect a team of agents, share workflows, route work, and select privacy policy.";
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
@@ -4536,7 +4536,6 @@ export function App() {
                   </div>
                 </label>
                 <p className="coordination-privacy-copy">
-                  <strong>{coordinationPrivacyLabel(coordinationDraft.privacyMode)}.</strong>{" "}
                   {coordinationPrivacyDetail(coordinationDraft.privacyMode)}
                 </p>
               </div>
@@ -4556,6 +4555,9 @@ export function App() {
                   Open public trace
                 </a>
               </div>
+              <p className="coordination-action-help">
+                Next: copy agent setup into your agent wrapper or CLI. Open public trace to watch safe claims, checkpoints, and handoffs.
+              </p>
             </form>
           </div>
         </section>
