@@ -10917,18 +10917,31 @@ export class ClawzControlPlane {
     };
   }
 
+  private activeCoordinationSetupTickets(
+    tickets: Record<string, CoordinationSetupTicketRecord>,
+    nowMs = Date.now()
+  ): Record<string, CoordinationSetupTicketRecord> {
+    return Object.fromEntries(
+      Object.entries(tickets).filter(([_ticketId, record]) =>
+        record.status === "pending" && Date.parse(record.expiresAtIso) > nowMs
+      )
+    );
+  }
+
   async issueCoordinationSetupTicket(input: { manifest: unknown }): Promise<CoordinationSetupTicketIssueResult> {
     const issuedAtIso = new Date().toISOString();
-    const expiresAtIso = new Date(Date.now() + COORDINATION_SETUP_TICKET_TTL_MS).toISOString();
+    const nowMs = Date.parse(issuedAtIso);
+    const expiresAtIso = new Date(nowMs + COORDINATION_SETUP_TICKET_TTL_MS).toISOString();
     const normalized = this.normalizeCoordinationManifest(input.manifest);
     const ticketId = buildCoordinationSetupTicketId();
     const ticketSecret = buildCoordinationSetupTicketSecret();
     const ticket = buildCoordinationSetupTicketToken(ticketId, ticketSecret);
     const state = await this.loadState();
+    const activeTickets = this.activeCoordinationSetupTickets(state.coordinationSetupTicketsById, nowMs);
     await this.saveState({
       ...state,
       coordinationSetupTicketsById: {
-        ...state.coordinationSetupTicketsById,
+        ...activeTickets,
         [ticketId]: {
           ticketId,
           ticketHash: sha256Hex(ticket),
@@ -10963,15 +10976,11 @@ export class ClawzControlPlane {
       throw new Error("Coordination setup ticket was not found.");
     }
     if (Date.parse(record.expiresAtIso) <= Date.now()) {
+      const remainingTickets = { ...state.coordinationSetupTicketsById };
+      delete remainingTickets[record.ticketId];
       await this.saveState({
         ...state,
-        coordinationSetupTicketsById: {
-          ...state.coordinationSetupTicketsById,
-          [record.ticketId]: {
-            ...record,
-            status: "expired"
-          }
-        }
+        coordinationSetupTicketsById: remainingTickets
       });
       throw new Error("Coordination setup ticket expired. Ask the run admin for a fresh ticket.");
     }
