@@ -5109,6 +5109,7 @@ pre,
   align-items: center;
   padding: 12px 14px;
   list-style: none;
+  cursor: pointer;
 }
 
 .activation-command-summary::-webkit-details-marker {
@@ -5119,9 +5120,25 @@ pre,
   content: none;
 }
 
+.activation-command-summary::after {
+  content: "Show command";
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #68798b;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .activation-command-details[open] .activation-command-summary::before {
   margin-top: 4px;
   transform: rotate(45deg);
+}
+
+.activation-command-details[open] .activation-command-summary::after {
+  content: "Hide command";
 }
 
 .activation-command-summary-copy {
