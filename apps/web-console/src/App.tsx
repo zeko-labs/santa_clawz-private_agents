@@ -2264,6 +2264,7 @@ export function App() {
   const [coordinationAgentRoles, setCoordinationAgentRoles] = useState<Record<string, CoordinationAgentRole>>({});
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
+  const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -2879,8 +2880,10 @@ export function App() {
       window.setTimeout(() => {
         setCopiedKey(null);
       }, 1600);
+      return true;
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Copy failed.");
+      return false;
     }
   }
 
@@ -4188,14 +4191,20 @@ export function App() {
       ? "Add a short team goal so agents know what workflow they are coordinating around."
       : !coordinationHasRoles
         ? "Assign roles and keep at least one Admin before copying setup."
-        : "Next: copy agent setup into your agent wrapper or CLI. Open public trace to watch safe claims, checkpoints, and handoffs.";
+        : coordinationSetupCopied
+          ? "Setup copied. Give it to your agent wrapper or CLI, then open the trace to watch public-safe workflow events."
+          : "Next: copy agent setup into your agent wrapper or CLI. The trace opens after setup is copied.";
 
-  function copyCoordinationSetup() {
+  async function copyCoordinationSetup() {
     if (!coordinationSetupReady) {
       setCoordinationError(coordinationActionHelp);
       return;
     }
-    void copyValue("coordination-manifest", bridgeManifest);
+    const copied = await copyValue("coordination-manifest", bridgeManifest);
+    if (copied) {
+      setCoordinationSetupCopied(true);
+      setCoordinationError(null);
+    }
   }
 
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
@@ -4391,6 +4400,7 @@ export function App() {
       ...patch
     });
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function toggleCoordinationAgent(agentId: string) {
@@ -4409,6 +4419,7 @@ export function App() {
       }));
     }
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function addCoordinationLookupAgent() {
@@ -4422,6 +4433,7 @@ export function App() {
     }));
     setCoordinationAgentUrl("");
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function updateCoordinationAgentRole(agentId: string, role: CoordinationAgentRole) {
@@ -4430,6 +4442,7 @@ export function App() {
       [agentId]: role
     }));
     setCoordinationError(null);
+    setCoordinationSetupCopied(false);
   }
 
   function renderCoordinationPage() {
@@ -4441,7 +4454,7 @@ export function App() {
               className="coordination-route-form"
               onSubmit={(event: FormSubmitEvent) => {
                 event.preventDefault();
-                copyCoordinationSetup();
+                void copyCoordinationSetup();
               }}
             >
               <div className="section-head compact-head">
@@ -4571,19 +4584,41 @@ export function App() {
                   disabled={!coordinationSetupReady}
                   title={coordinationSetupReady ? "Copy agent setup" : coordinationActionHelp}
                   onClick={() => {
-                    copyCoordinationSetup();
+                    void copyCoordinationSetup();
                   }}
                 >
                   <span className="copy-icon" aria-hidden="true" />
                   {copiedKey === "coordination-manifest" ? "Copied setup" : "Copy agent setup"}
                 </button>
-                <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
-                  Open public trace
-                </a>
+                {coordinationSetupCopied ? (
+                  <a className="secondary-button" href={publicCoordinationThreadUrl} target="_blank" rel="noreferrer">
+                    Open public trace
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary-button coordination-trace-button"
+                    disabled
+                    title={coordinationSetupReady ? "Copy agent setup first" : coordinationActionHelp}
+                  >
+                    Open public trace
+                  </button>
+                )}
               </div>
               <p className="coordination-action-help">
                 {coordinationActionHelp}
               </p>
+              <ol className="coordination-setup-steps" aria-label="Coordination setup steps">
+                <li className={coordinationSetupReady ? "complete" : "active"}>
+                  Add agents, roles, team goal, and privacy policy.
+                </li>
+                <li className={coordinationSetupCopied ? "complete" : coordinationSetupReady ? "active" : ""}>
+                  Copy setup and give it to the participating agents through your wrapper or CLI.
+                </li>
+                <li className={coordinationSetupCopied ? "active" : ""}>
+                  Open the public trace to watch safe claims, checkpoints, and handoffs.
+                </li>
+              </ol>
             </form>
           </div>
         </section>
