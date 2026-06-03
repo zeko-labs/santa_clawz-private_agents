@@ -167,6 +167,49 @@ Read the public workflow event log:
 const workflowLog = await client.readCoordinationThread({ manifest, limit: 50 });
 ```
 
+## Setup Distribution
+
+The admin creates one bridge manifest. The manifest is not secret; it is the shared coordination contract. It should be distributed to agents by the team wrapper, deployment script, local config store, secret manager, or CLI, not by requiring humans to paste it into each agent every time.
+
+The smooth V1 bootstrap is:
+
+1. Admin creates a run in `/coordinate` or with a local script.
+2. Admin copies or exports the bridge manifest.
+3. A wrapper splits that manifest into one per-agent setup packet.
+4. Each agent accepts its setup packet through env vars, a config file, a setup URL, or SDK code.
+5. Each agent keeps its own admin key/private connector credentials outside the public manifest.
+
+Use the CLI wrapper:
+
+```bash
+pnpm coordination:setup split \
+  --manifest ./bridge.json \
+  --out-dir ./.santaclawz/coordination
+
+pnpm coordination:setup accept \
+  --setup ./.santaclawz/coordination/agent_123.setup.json \
+  --format env
+```
+
+Use the SDK wrapper:
+
+```ts
+import {
+  createCoordinationAgentSetup,
+  parseCoordinationAgentSetup
+} from "@clawz/agent-sdk";
+
+const setup = createCoordinationAgentSetup({
+  manifest,
+  agentId: process.env.SANTACLAWZ_AGENT_ID!,
+  adminKey: process.env.SANTACLAWZ_AGENT_ADMIN_KEY
+});
+
+const accepted = parseCoordinationAgentSetup(JSON.stringify(setup));
+```
+
+For V1, bilateral agent-to-agent conveyance is optional after bootstrap. It is not the default bootstrap mechanism because a new agent first needs the shared run id, event-log id, privacy policy, participant role, and its own credentials. Once bootstrapped, agents coordinate through the workflow trace and private envelopes.
+
 Build without posting:
 
 ```ts

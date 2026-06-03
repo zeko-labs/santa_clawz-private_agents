@@ -16,7 +16,8 @@ Each side keeps its own runtime, memory, tools, credentials, and private data. S
 - Agent workflows through a workflow id (`swarmId`), event-log id (`threadId`), admin/member participant roles, task handoffs, sync checkpoints, privacy lane, and public trace.
 - Agent relay through public workflow events plus `santaclawz-agent-message-envelope/1.0` for digest-only or encrypted private payload references.
 - Agent receipts through existing execution records, payment state, proof surfaces, artifact hashes, timestamps, and social-anchor batches.
-- Agent SDK helpers for reading a manifest, building an envelope, posting a coordination event, and reading the workflow event log.
+- Agent SDK helpers for accepting setup, reading a manifest, building an envelope, posting a coordination event, and reading the workflow event log.
+- CLI setup wrapper for turning one admin-created bridge manifest into per-agent setup files or env vars.
 - Local connector examples for GitHub, Slack exports, and Drive/local folders.
 
 ## Protocol Surfaces
@@ -116,6 +117,47 @@ const workflowLog = await client.readCoordinationThread({ manifest, limit: 50 })
 
 The SDK posts only a safe public workflow event. Private payloads stay local, sealed, recipient-held, or customer-controlled and are represented by `outputDigestSha256`.
 
+## Setup Distribution
+
+The copied setup from `/coordinate` is a convenience path, not the long-term delivery mechanism. The intended V1 flow is:
+
+1. Admin creates the run and chooses agents/roles.
+2. SantaClawz produces one shared bridge manifest.
+3. The org wrapper or CLI splits that manifest into per-agent setup packets.
+4. Each agent accepts its setup packet from a file, env var, setup URL, or SDK call.
+5. Each agent keeps its own admin key and private connector credentials in its local wrapper or secret manager.
+
+CLI:
+
+```bash
+pnpm coordination:setup split \
+  --manifest ./bridge.json \
+  --out-dir ./.santaclawz/coordination
+
+pnpm coordination:setup accept \
+  --setup ./.santaclawz/coordination/agent_123.setup.json \
+  --format env
+```
+
+SDK:
+
+```ts
+import {
+  createCoordinationAgentSetup,
+  parseCoordinationAgentSetup
+} from "@clawz/agent-sdk";
+
+const setup = createCoordinationAgentSetup({
+  manifest,
+  agentId: process.env.SANTACLAWZ_AGENT_ID!,
+  adminKey: process.env.SANTACLAWZ_AGENT_ADMIN_KEY
+});
+
+const accepted = parseCoordinationAgentSetup(JSON.stringify(setup));
+```
+
+Agents do not need to bilaterally negotiate the initial setup. Bilateral/private agent messages are useful after bootstrap for workflow handoffs, but the bootstrap should come from the admin-controlled wrapper so every participant gets the same `swarmId`, `threadId`, role, and privacy policy.
+
 ## `/coordinate`
 
 `/coordinate` is a helper surface, not the protocol itself.
@@ -126,7 +168,6 @@ Use it to:
 - choose participating agents
 - set `swarmId` and `threadId`
 - choose a privacy lane
-- copy an encrypted envelope reference
 - watch the public workflow trace
 
 Agents can ignore the UI and use the SDK/API directly.
@@ -161,7 +202,7 @@ Manual path:
 
 1. Activate or choose two SantaClawz agents.
 2. Create a shared bridge manifest with one `swarmId` and one `threadId`. The `swarmId` names the shared workflow; the `threadId` is the public event log for that workflow.
-3. Give the manifest to both local agent systems.
+3. Use `pnpm coordination:setup split` or the SDK setup helper to generate per-agent setup packets.
 4. Agent A posts a public-safe dispatch: "I will do this job."
 5. Agent B reads the workflow log and takes a related job.
 6. Agent B posts a digest-only or recipient-encrypted sync checkpoint.

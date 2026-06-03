@@ -215,10 +215,6 @@ pre,
   height: 21px;
 }
 
-.site-social-link.x svg {
-  transform: translateX(3px);
-}
-
 .site-social-link.discord svg {
   width: 27px;
   height: 27px;
@@ -2103,7 +2099,12 @@ pre,
 }
 
 .coordinate-masthead .masthead-content {
+  gap: 0;
   min-height: auto;
+}
+
+.coordinate-masthead .masthead-copy {
+  max-width: 100%;
 }
 
 .coordinate-masthead .masthead-copy > h1 {
@@ -2111,8 +2112,9 @@ pre,
 }
 
 .coordinate-masthead .masthead-copyline {
-  max-width: 620px;
+  max-width: 100%;
   font-size: 0.95rem;
+  text-wrap: normal;
 }
 
 .coordinate-masthead .masthead-footer {
@@ -2300,8 +2302,23 @@ pre,
   justify-content: center;
 }
 
-.coordination-goal-area {
-  min-height: 60px;
+.coordination-policy-action-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.72fr) minmax(190px, 0.72fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.coordination-policy-action-row .primary-button,
+.coordination-policy-action-row .secondary-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.text-area.coordination-goal-area {
+  min-height: 76px;
+  height: 76px;
+  resize: none;
 }
 
 .coordination-goal-area::placeholder {
@@ -2310,7 +2327,7 @@ pre,
 
 .coordination-team-builder {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .coordination-agent-url-row {
@@ -2331,18 +2348,21 @@ pre,
 
 .coordination-agent-detected {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
   align-items: center;
-  padding: 10px;
-  border: 1px solid rgba(89, 210, 198, 0.34);
-  border-radius: 8px;
-  background: rgba(247, 255, 252, 0.7);
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid rgba(89, 210, 198, 0.28);
+  border-radius: 16px;
+  background: rgba(247, 255, 252, 0.74);
   color: var(--ink);
+  box-shadow: 0 14px 30px rgba(18, 35, 54, 0.05);
 }
 
 .coordination-agent-detected.missing {
   display: block;
+  min-height: auto;
   border-color: rgba(155, 39, 27, 0.18);
   background: rgba(155, 39, 27, 0.06);
   color: #7c261d;
@@ -2365,11 +2385,8 @@ pre,
 }
 
 .coordination-team-list {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
-  min-height: 38px;
-  align-items: center;
 }
 
 .coordination-team-empty {
@@ -2385,44 +2402,53 @@ pre,
 }
 
 .coordination-team-chip {
-  display: inline-grid;
-  grid-template-columns: minmax(120px, 1fr) auto auto;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 34px;
+  gap: 12px;
   align-items: center;
-  max-width: 100%;
-  padding: 8px 10px;
-  border: 1px solid rgba(89, 210, 198, 0.3);
-  border-radius: 8px;
-  background: rgba(247, 255, 252, 0.72);
+  width: 100%;
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid rgba(89, 210, 198, 0.28);
+  border-radius: 16px;
+  background: rgba(247, 255, 252, 0.74);
   color: var(--ink);
+  box-shadow: 0 14px 30px rgba(18, 35, 54, 0.05);
 }
 
-.coordination-team-chip span,
-.coordination-team-chip small {
+.coordination-team-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.coordination-team-copy span,
+.coordination-team-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.coordination-team-chip small {
+.coordination-team-copy small {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.86rem;
 }
 
 .coordination-team-chip select {
-  min-height: 30px;
+  min-height: 42px;
   border: 1px solid rgba(18, 35, 54, 0.12);
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.82);
   color: var(--ink);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   font-weight: 800;
+  padding-inline: 12px 28px;
 }
 
 .coordination-team-chip button {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
   border: 1px solid rgba(18, 35, 54, 0.1);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.72);
@@ -2436,6 +2462,11 @@ pre,
 .coordination-manifest-panel {
   border-radius: 8px;
   min-width: 0;
+}
+
+.coordination-thread-panel {
+  display: grid;
+  gap: 18px;
 }
 
 .coordination-agent-list,
@@ -2557,8 +2588,9 @@ pre,
 
 .coordination-empty-card {
   display: grid;
-  gap: 8px;
-  padding: 18px;
+  gap: 10px;
+  padding: 22px 24px;
+  border-radius: 16px;
 }
 
 .coordination-policy-grid {
@@ -7261,6 +7293,7 @@ button:disabled {
   .coordination-grid,
   .coordination-policy-grid,
   .coordination-field-grid,
+  .coordination-policy-action-row,
   .coordination-handoff-actions {
     grid-template-columns: 1fr;
   }
