@@ -95,6 +95,14 @@ const CONSOLE_STATE_CACHE_MAX_ENTRIES = Math.max(
   10,
   Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_MAX_ENTRIES ?? "120"))
 );
+const PAYMENT_LEDGER_CACHE_TTL_MS = Math.max(
+  0,
+  Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_TTL_MS ?? "5000"))
+);
+const PAYMENT_LEDGER_CACHE_MAX_ENTRIES = Math.max(
+  10,
+  Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_MAX_ENTRIES ?? "80"))
+);
 const USD_MICRO_SCALE = 1_000_000n;
 const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
 const ACTIVATION_LANE_DEFAULT_EPSILON_USD = "0.000001";
@@ -128,12 +136,24 @@ const consoleStateInflight = new Map<string, {
   epoch: number;
   promise: Promise<unknown>;
 }>();
+const paymentLedgerCache = new Map<string, {
+  expiresAtMs: number;
+  payload: unknown;
+}>();
+const paymentLedgerInflight = new Map<string, {
+  epoch: number;
+  promise: Promise<unknown>;
+}>();
 let consoleStateCacheEpoch = 0;
+let paymentLedgerCacheEpoch = 0;
 
 function clearConsoleStateCache() {
   consoleStateCacheEpoch += 1;
+  paymentLedgerCacheEpoch += 1;
   consoleStateCache.clear();
   consoleStateInflight.clear();
+  paymentLedgerCache.clear();
+  paymentLedgerInflight.clear();
 }
 
 function pruneConsoleStateCache(nowMs = Date.now()) {
@@ -148,6 +168,21 @@ function pruneConsoleStateCache(nowMs = Date.now()) {
       break;
     }
     consoleStateCache.delete(oldest.value);
+  }
+}
+
+function prunePaymentLedgerCache(nowMs = Date.now()) {
+  for (const [key, entry] of paymentLedgerCache.entries()) {
+    if (entry.expiresAtMs <= nowMs) {
+      paymentLedgerCache.delete(key);
+    }
+  }
+  while (paymentLedgerCache.size > PAYMENT_LEDGER_CACHE_MAX_ENTRIES) {
+    const oldest = paymentLedgerCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    paymentLedgerCache.delete(oldest.value);
   }
 }
 
@@ -2161,13 +2196,18 @@ function paymentLedgerListOptionsFromQuery(query: unknown) {
     queryString(query, "paymentPayloadDigestSha256") ??
     queryString(query, "paymentPayloadDigest") ??
     queryString(query, "payloadDigest");
+  const scoped = Boolean(agentId || sessionId || quoteIntentId || hireRequestId || paymentPayloadDigestSha256);
+  const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+  const boundedLimit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit)
+    ? Math.max(1, Math.min(parsedLimit, scoped ? 500 : 100))
+    : undefined;
   return {
     ...(agentId ? { agentId } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(quoteIntentId ? { quoteIntentId } : {}),
     ...(hireRequestId ? { hireRequestId } : {}),
     ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
-    ...(limit ? { limit: Number.parseInt(limit, 10) } : {})
+    ...(boundedLimit !== undefined ? { limit: boundedLimit } : {})
   };
 }
 
@@ -4643,7 +4683,45 @@ app.get("/api/x402/payment-state", route(async (request, response) => {
 
 app.get("/api/payments", route(async (request, response) => {
   try {
-    response.json(await controlPlane.listPaymentLedger(paymentLedgerListOptionsFromQuery(request.query)));
+    const options = paymentLedgerListOptionsFromQuery(request.query);
+    const cacheKey = [
+      "payments",
+      options.agentId ? `agent:${options.agentId}` : "",
+      options.sessionId ? `session:${options.sessionId}` : "",
+      options.quoteIntentId ? `intent:${options.quoteIntentId}` : "",
+      options.hireRequestId ? `hire:${options.hireRequestId}` : "",
+      options.paymentPayloadDigestSha256 ? `digest:${options.paymentPayloadDigestSha256}` : "",
+      `limit:${options.limit ?? 100}`
+    ].join("|");
+    const cached = PAYMENT_LEDGER_CACHE_TTL_MS > 0 ? paymentLedgerCache.get(cacheKey) : undefined;
+    if (cached && cached.expiresAtMs > Date.now()) {
+      response.set("x-santaclawz-cache", "hit");
+      response.json(cached.payload);
+      return;
+    }
+    const cacheEpoch = paymentLedgerCacheEpoch;
+    const inflight = paymentLedgerInflight.get(cacheKey);
+    if (inflight && inflight.epoch === cacheEpoch) {
+      const payload = await inflight.promise;
+      response.set("x-santaclawz-cache", "inflight");
+      response.json(payload);
+      return;
+    }
+    const payloadPromise = controlPlane.listPaymentLedger(options)
+      .finally(() => {
+        paymentLedgerInflight.delete(cacheKey);
+      });
+    paymentLedgerInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
+    const payload = await payloadPromise;
+    if (PAYMENT_LEDGER_CACHE_TTL_MS > 0 && cacheEpoch === paymentLedgerCacheEpoch) {
+      paymentLedgerCache.set(cacheKey, {
+        expiresAtMs: Date.now() + PAYMENT_LEDGER_CACHE_TTL_MS,
+        payload
+      });
+      prunePaymentLedgerCache();
+    }
+    response.set("x-santaclawz-cache", "miss");
+    response.json(payload);
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to list payments."
