@@ -2296,36 +2296,60 @@ pre,
   align-items: start;
 }
 
-.coordination-handoff-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-.coordination-handoff-actions .primary-button,
-.coordination-handoff-actions .secondary-button {
-  min-width: 190px;
-  min-height: 46px;
-  justify-content: center;
-}
-
-.coordination-copy-setup-button {
+.coordination-create-ticket-button {
   min-width: 190px;
   min-height: 46px;
   padding: 10px 16px;
   justify-content: center;
 }
 
-.coordination-copy-setup-button:disabled {
+.coordination-create-ticket-button:disabled {
   border-color: rgba(18, 35, 54, 0.12);
   background: rgba(255, 255, 255, 0.7);
   color: rgba(74, 91, 112, 0.62);
   box-shadow: none;
 }
 
-.coordination-copy-setup-button:disabled .copy-icon {
+.coordination-create-ticket-button:disabled .copy-icon {
   color: rgba(74, 91, 112, 0.5);
+}
+
+.coordination-ticket-method-row {
+  margin-top: 2px;
+}
+
+.coordination-ticket-card {
+  margin-top: 2px;
+}
+
+.coordination-ticket-next-steps {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.coordination-ticket-next-steps div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.coordination-ticket-next-steps strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.coordination-ticket-next-steps span {
+  color: rgba(74, 91, 112, 0.86);
+  font-size: 0.84rem;
+  line-height: 1.42;
+}
+
+.coordination-ticket-command-strip {
+  border-top: 1px solid rgba(18, 35, 54, 0.08);
 }
 
 .coordination-privacy-row {
@@ -5085,6 +5109,7 @@ pre,
   align-items: center;
   padding: 12px 14px;
   list-style: none;
+  cursor: pointer;
 }
 
 .activation-command-summary::-webkit-details-marker {
@@ -5095,9 +5120,25 @@ pre,
   content: none;
 }
 
+.activation-command-summary::after {
+  content: "Show command";
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #68798b;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .activation-command-details[open] .activation-command-summary::before {
   margin-top: 4px;
   transform: rotate(45deg);
+}
+
+.activation-command-details[open] .activation-command-summary::after {
+  content: "Hide command";
 }
 
 .activation-command-summary-copy {
@@ -7412,9 +7453,12 @@ button:disabled {
   .coordination-grid,
   .coordination-policy-grid,
   .coordination-field-grid,
-  .coordination-privacy-row,
-  .coordination-handoff-actions {
+  .coordination-privacy-row {
     grid-template-columns: 1fr;
+  }
+
+  .coordination-ticket-next-steps {
+    padding: 0 10px 10px;
   }
 
   .coordination-agent-card {

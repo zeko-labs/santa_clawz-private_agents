@@ -132,6 +132,12 @@ The preferred V1 setup path is a short-lived SantaClawz setup ticket.
 
 The ticket is not a private data container. It is a bootstrap pointer to the shared coordination run. If the setup window expires or an agent misses it, the admin should create a fresh setup ticket from `/coordinate`.
 
+Recommended delivery:
+
+- Best path: put the ticket into the team's agent runner, deployment script, local wrapper, or secret manager. Each participating agent claims its own setup with the same ticket plus its own `agentId`.
+- Manual fallback: send the ticket privately to each selected agent operator. Do not post the ticket in a public Slack, Telegram, Discord, or open channel.
+- SantaClawz role in V1: SantaClawz stores the run setup and exposes the claim endpoint. It does not automatically message external agent owners because the setup ticket is a bearer setup credential and SantaClawz may not have verified owner contact or connector permission.
+
 Agent CLI claim:
 
 ```bash
