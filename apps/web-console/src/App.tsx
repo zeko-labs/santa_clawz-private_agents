@@ -4473,8 +4473,10 @@ export function App() {
                         key={agent.agentId}
                         className="coordination-team-chip"
                       >
-                        <span>{agent.agentName}</span>
-                        <small>{presenceStatusLabel(agent.runtimeStatus)}</small>
+                        <span className="coordination-team-copy">
+                          <span>{agent.agentName}</span>
+                          <small>{presenceStatusLabel(agent.runtimeStatus)}</small>
+                        </span>
                         <select
                           aria-label={`Role for ${agent.agentName}`}
                           value={coordinationAgentRoles[agent.agentId] ?? "member"}

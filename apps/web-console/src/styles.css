@@ -2352,18 +2352,21 @@ pre,
 
 .coordination-agent-detected {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
   align-items: center;
-  padding: 10px;
-  border: 1px solid rgba(89, 210, 198, 0.34);
-  border-radius: 8px;
-  background: rgba(247, 255, 252, 0.7);
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid rgba(89, 210, 198, 0.28);
+  border-radius: 16px;
+  background: rgba(247, 255, 252, 0.74);
   color: var(--ink);
+  box-shadow: 0 14px 30px rgba(18, 35, 54, 0.05);
 }
 
 .coordination-agent-detected.missing {
   display: block;
+  min-height: auto;
   border-color: rgba(155, 39, 27, 0.18);
   background: rgba(155, 39, 27, 0.06);
   color: #7c261d;
@@ -2386,10 +2389,8 @@ pre,
 }
 
 .coordination-team-list {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
-  align-items: center;
 }
 
 .coordination-team-empty {
@@ -2405,44 +2406,53 @@ pre,
 }
 
 .coordination-team-chip {
-  display: inline-grid;
-  grid-template-columns: minmax(120px, 1fr) auto auto;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 34px;
+  gap: 12px;
   align-items: center;
-  max-width: 100%;
-  padding: 8px 10px;
-  border: 1px solid rgba(89, 210, 198, 0.3);
-  border-radius: 8px;
-  background: rgba(247, 255, 252, 0.72);
+  width: 100%;
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid rgba(89, 210, 198, 0.28);
+  border-radius: 16px;
+  background: rgba(247, 255, 252, 0.74);
   color: var(--ink);
+  box-shadow: 0 14px 30px rgba(18, 35, 54, 0.05);
 }
 
-.coordination-team-chip span,
-.coordination-team-chip small {
+.coordination-team-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.coordination-team-copy span,
+.coordination-team-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.coordination-team-chip small {
+.coordination-team-copy small {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.86rem;
 }
 
 .coordination-team-chip select {
-  min-height: 30px;
+  min-height: 42px;
   border: 1px solid rgba(18, 35, 54, 0.12);
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.82);
   color: var(--ink);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   font-weight: 800;
+  padding-inline: 12px 28px;
 }
 
 .coordination-team-chip button {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
   border: 1px solid rgba(18, 35, 54, 0.1);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.72);
