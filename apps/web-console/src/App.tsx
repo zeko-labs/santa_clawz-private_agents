@@ -4174,6 +4174,30 @@ export function App() {
   });
   const publicCoordinationThreadUrl =
     `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
+  const selectedCoordinationRoles = selectedCoordinationAgents.map((agent, index) => (
+    coordinationAgentRoles[agent.agentId] ?? (index === 0 ? "admin" : "member")
+  ));
+  const coordinationHasAgents = selectedCoordinationAgents.length > 0;
+  const coordinationHasTeamGoal = coordinationDraft.goal.trim().length >= 8;
+  const coordinationHasRoles = selectedCoordinationRoles.every((role) => role === "admin" || role === "member") &&
+    selectedCoordinationRoles.includes("admin");
+  const coordinationSetupReady = coordinationHasAgents && coordinationHasTeamGoal && coordinationHasRoles;
+  const coordinationActionHelp = !coordinationHasAgents
+    ? "Add at least one registered agent URL to enable setup copy."
+    : !coordinationHasTeamGoal
+      ? "Add a short team goal so agents know what workflow they are coordinating around."
+      : !coordinationHasRoles
+        ? "Assign roles and keep at least one Admin before copying setup."
+        : "Next: copy agent setup into your agent wrapper or CLI. Open public trace to watch safe claims, checkpoints, and handoffs.";
+
+  function copyCoordinationSetup() {
+    if (!coordinationSetupReady) {
+      setCoordinationError(coordinationActionHelp);
+      return;
+    }
+    void copyValue("coordination-manifest", bridgeManifest);
+  }
+
   function exploreAgentSortBadge(agent: AgentRegistryEntry) {
     if (exploreAgentSort === "jobs") {
       const completedJobs = agent.completionScore?.completedJobCount ?? 0;
@@ -4417,7 +4441,7 @@ export function App() {
               className="coordination-route-form"
               onSubmit={(event: FormSubmitEvent) => {
                 event.preventDefault();
-                void copyValue("coordination-manifest", bridgeManifest);
+                copyCoordinationSetup();
               }}
             >
               <div className="section-head compact-head">
@@ -4544,8 +4568,10 @@ export function App() {
                 <button
                   type="button"
                   className="activation-command-copy-button coordination-copy-setup-button"
+                  disabled={!coordinationSetupReady}
+                  title={coordinationSetupReady ? "Copy agent setup" : coordinationActionHelp}
                   onClick={() => {
-                    void copyValue("coordination-manifest", bridgeManifest);
+                    copyCoordinationSetup();
                   }}
                 >
                   <span className="copy-icon" aria-hidden="true" />
@@ -4556,7 +4582,7 @@ export function App() {
                 </a>
               </div>
               <p className="coordination-action-help">
-                Next: copy agent setup into your agent wrapper or CLI. Open public trace to watch safe claims, checkpoints, and handoffs.
+                {coordinationActionHelp}
               </p>
             </form>
           </div>
