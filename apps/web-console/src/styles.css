@@ -2103,7 +2103,12 @@ pre,
 }
 
 .coordinate-masthead .masthead-content {
+  gap: 0;
   min-height: auto;
+}
+
+.coordinate-masthead .masthead-copy {
+  max-width: 100%;
 }
 
 .coordinate-masthead .masthead-copy > h1 {
@@ -2111,8 +2116,9 @@ pre,
 }
 
 .coordinate-masthead .masthead-copyline {
-  max-width: 620px;
+  max-width: 100%;
   font-size: 0.95rem;
+  text-wrap: normal;
 }
 
 .coordinate-masthead .masthead-footer {
@@ -2300,8 +2306,23 @@ pre,
   justify-content: center;
 }
 
-.coordination-goal-area {
-  min-height: 60px;
+.coordination-policy-action-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.72fr) minmax(190px, 0.72fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.coordination-policy-action-row .primary-button,
+.coordination-policy-action-row .secondary-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.text-area.coordination-goal-area {
+  min-height: 76px;
+  height: 76px;
+  resize: none;
 }
 
 .coordination-goal-area::placeholder {
@@ -2310,7 +2331,7 @@ pre,
 
 .coordination-team-builder {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .coordination-agent-url-row {
@@ -2368,7 +2389,6 @@ pre,
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  min-height: 38px;
   align-items: center;
 }
 
@@ -2436,6 +2456,11 @@ pre,
 .coordination-manifest-panel {
   border-radius: 8px;
   min-width: 0;
+}
+
+.coordination-thread-panel {
+  display: grid;
+  gap: 18px;
 }
 
 .coordination-agent-list,
@@ -2557,8 +2582,9 @@ pre,
 
 .coordination-empty-card {
   display: grid;
-  gap: 8px;
-  padding: 18px;
+  gap: 10px;
+  padding: 22px 24px;
+  border-radius: 16px;
 }
 
 .coordination-policy-grid {
@@ -7261,6 +7287,7 @@ button:disabled {
   .coordination-grid,
   .coordination-policy-grid,
   .coordination-field-grid,
+  .coordination-policy-action-row,
   .coordination-handoff-actions {
     grid-template-columns: 1fr;
   }

@@ -3196,7 +3196,7 @@ export function App() {
   const mastheadCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
   const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
   const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
-  const mastheadSteps = isCoordinateView ? "Bridge: roster, workflow, routing, policy" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const mastheadSteps = isCoordinateView ? "" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
   const zekoHealthWarning = zekoHealthWarningCopy();
 
   function renderHeader() {
@@ -4466,9 +4466,9 @@ export function App() {
                   </div>
                 ) : null}
 
-                <div className="coordination-team-list" aria-label="Selected coordination agents">
-                  {selectedCoordinationAgents.length === 0 ? null : (
-                    selectedCoordinationAgents.map((agent) => (
+                {selectedCoordinationAgents.length > 0 ? (
+                  <div className="coordination-team-list" aria-label="Selected coordination agents">
+                    {selectedCoordinationAgents.map((agent) => (
                       <div
                         key={agent.agentId}
                         className="coordination-team-chip"
@@ -4496,9 +4496,9 @@ export function App() {
                           ×
                         </button>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <label className="field">
@@ -4513,25 +4513,24 @@ export function App() {
                 />
               </label>
 
-              <label className="field">
-                <span>Privacy policy</span>
-                <select
-                  className="select-input"
-                  value={coordinationDraft.privacyMode}
-                  onChange={(event: ValueInputEvent) => {
-                    updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
-                  }}
-                >
-                  <option value="digest-only">Digest only</option>
-                  <option value="public-summary">Public summaries</option>
-                  <option value="recipient-encrypted">Recipient encrypted</option>
-                  <option value="local-private">Local private</option>
-                </select>
-              </label>
-
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
-              <div className="coordination-handoff-actions">
+              <div className="coordination-policy-action-row">
+                <label className="field coordination-privacy-field">
+                  <span>Privacy policy</span>
+                  <select
+                    className="select-input"
+                    value={coordinationDraft.privacyMode}
+                    onChange={(event: ValueInputEvent) => {
+                      updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
+                    }}
+                  >
+                    <option value="digest-only">Digest only</option>
+                    <option value="public-summary">Public summaries</option>
+                    <option value="recipient-encrypted">Recipient encrypted</option>
+                    <option value="local-private">Local private</option>
+                  </select>
+                </label>
                 <button
                   type="button"
                   className="primary-button"
@@ -4553,7 +4552,6 @@ export function App() {
           <section className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
-                <p className="eyebrow">Observability</p>
                 <h2>Public workflow trace</h2>
               </div>
               <button
