@@ -4475,23 +4475,12 @@ export function App() {
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
   const paidOutcomeFallbackCount = agentCompletionScore?.evaluatedJobCount ?? 0;
-  const paidJobActivityCount = agentJobActivityStats?.paidExecutionCount ?? paidOutcomeFallbackCount;
-  const paidCompletedActivityCount = agentJobActivityStats?.completedJobCount ?? agentCompletionScore?.completedJobCount ?? 0;
-  const paidIncompleteActivityCount = agentJobActivityStats?.failedJobCount ?? agentCompletionScore?.failedJobCount ?? 0;
   const publicJobActivityCount = agentJobActivityStats?.publicJobCount ?? paidOutcomeFallbackCount;
   const privateJobActivityCount = agentJobActivityStats?.privateJobCount ?? 0;
   const agentJobActivityLabel =
     agentJobActivityStats || paidOutcomeFallbackCount > 0
       ? `${publicJobActivityCount} public / ${privateJobActivityCount} private`
       : "No job totals yet";
-  const agentJobActivityDetail =
-    paidJobActivityCount > 0
-      ? `${paidCompletedActivityCount} completed / ${paidIncompleteActivityCount} incomplete`
-      : agentJobActivityStats && agentJobActivityStats.totalJobCount > 0
-        ? `${agentJobActivityStats.totalJobCount} total jobs`
-        : paidOutcomeFallbackCount > 0
-          ? "Visibility split starts with new jobs"
-          : "Public/private jobs will appear here";
   const agentTrustSignals = [
     { label: "Published", complete: published },
     { label: "Verified", complete: state.ownership.status === "verified" },
@@ -5962,7 +5951,6 @@ export function App() {
                       </span>
                       <span className="proof-score-pill job-activity-pill">
                         {agentJobActivityLabel}
-                        <small>{agentJobActivityDetail}</small>
                       </span>
                     </div>
                     <div className="proof-signal-panel" aria-label="Agent readiness checks">
