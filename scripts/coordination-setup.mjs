@@ -8,11 +8,14 @@ function usage() {
   pnpm coordination:setup split --manifest ./bridge.json --out-dir ./.santaclawz/coordination
   pnpm coordination:setup accept --manifest ./bridge.json --agent-id agent_... --admin-key sk_... --format env
   pnpm coordination:setup accept --setup ./agent_....setup.json --format json
+  pnpm coordination:setup claim --ticket scz_coord_... --agent-id agent_... --api-base https://api.santaclawz.ai --format env
 
 Options:
   --manifest <path|url>        Bridge manifest JSON. Falls back to SANTACLAWZ_BRIDGE_MANIFEST_JSON.
   --setup <path|url>           Per-agent setup JSON for accept mode.
+  --ticket <token>             Short-lived SantaClawz setup ticket for claim mode.
   --agent-id <id>              Participant agent id for accept mode.
+  --api-base <url>             SantaClawz API base for claim mode. Default: SANTACLAWZ_API_BASE or http://127.0.0.1:4318
   --admin-key <key>            Optional local admin key to include in the generated setup/env.
   --admin-keys <path>          Optional JSON object of agentId -> admin key for split mode.
   --out-dir <path>             Output directory for split mode. Default: ./.santaclawz/coordination
@@ -148,6 +151,38 @@ async function acceptSetup(sdk) {
   console.log(JSON.stringify(setup, null, 2));
 }
 
+async function claimSetup(sdk) {
+  const ticket = argValue("ticket", process.env.SANTACLAWZ_COORDINATION_SETUP_TICKET ?? "");
+  const agentId = argValue("agent-id", process.env.SANTACLAWZ_AGENT_ID ?? "");
+  const apiBase = argValue("api-base", process.env.SANTACLAWZ_API_BASE ?? "http://127.0.0.1:4318").replace(/\/+$/, "");
+  const format = argValue("format", "json");
+  if (!ticket) {
+    throw new Error("--ticket or SANTACLAWZ_COORDINATION_SETUP_TICKET is required for claim mode.");
+  }
+  if (!agentId) {
+    throw new Error("--agent-id or SANTACLAWZ_AGENT_ID is required for claim mode.");
+  }
+  const response = await fetch(`${apiBase}/api/coordination/setup-tickets/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ticket, agentId })
+  });
+  const payloadText = await response.text();
+  const payload = payloadText ? JSON.parse(payloadText) : {};
+  if (!response.ok) {
+    throw new Error(typeof payload.error === "string" ? payload.error : `Claim failed: ${response.status}`);
+  }
+  const setup = sdk.parseCoordinationAgentSetup(payload);
+  if (format === "env") {
+    process.stdout.write(envOutput(setup));
+    return;
+  }
+  if (format !== "json") {
+    throw new Error("--format must be json or env.");
+  }
+  console.log(JSON.stringify(setup, null, 2));
+}
+
 async function main() {
   const command = process.argv[2];
   if (!command || command === "--help" || command === "help") {
@@ -161,6 +196,10 @@ async function main() {
   }
   if (command === "accept") {
     await acceptSetup(sdk);
+    return;
+  }
+  if (command === "claim") {
+    await claimSetup(sdk);
     return;
   }
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);

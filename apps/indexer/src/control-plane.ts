@@ -136,6 +136,9 @@ const MAINNET_FREE_TEST_LIMIT_GLOBAL =
   Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_GLOBAL_HIRE_LIMIT_PER_DAY ?? "", 10) || 20;
 const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
+const COORDINATION_SETUP_TICKET_TTL_MS = 15 * 60 * 1000;
+const COORDINATION_SETUP_TICKET_SCHEMA_VERSION = "santaclawz-coordination-setup-ticket/0.1";
+const COORDINATION_AGENT_SETUP_SCHEMA_VERSION = "santaclawz-coordination-agent-setup/0.1";
 const JOB_COMPLETION_SCORE_WINDOW_SIZE = 100;
 const JOB_COMPLETION_STALE_MS = 30 * 60 * 1000;
 const HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT = parseBoundedIntegerEnv(
@@ -238,7 +241,7 @@ const ALL_LIVE_FLOW_METHODS = Array.from(
 );
 
 interface ConsolePersistenceState {
-  schemaVersion: 6;
+  schemaVersion: 7;
   currentSessionId: string;
   activeMode: TrustModeId;
   wallet: ShadowWalletState;
@@ -251,6 +254,7 @@ interface ConsolePersistenceState {
   publishedSessionsBySession: Record<string, PublishedSessionRecord>;
   deletedAgentRegistrationsBySession: Record<string, DeletedAgentRegistrationRecord>;
   enrollmentTicketsById: Record<string, EnrollmentTicketRecord>;
+  coordinationSetupTicketsById: Record<string, CoordinationSetupTicketRecord>;
 }
 
 interface SessionAdminAccessRecord {
@@ -307,6 +311,16 @@ interface EnrollmentTicketRecord {
   redeemedAtIso?: string;
   redeemedSessionId?: string;
   redeemedAgentId?: string;
+}
+
+interface CoordinationSetupTicketRecord {
+  ticketId: string;
+  ticketHash: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  status: "pending" | "expired";
+  manifest: Record<string, unknown>;
+  claimedAgentsById: Record<string, { claimedAtIso: string }>;
 }
 
 export class DuplicatePublicClawzUrlError extends Error {
@@ -626,6 +640,34 @@ interface EnrollmentTicketIssueResult {
 
 interface EnrollmentTicketRedeemResult extends ConsoleStateResponse {
   issuedOwnershipChallenge?: OwnershipChallengeIssueResult["issuedOwnershipChallenge"];
+}
+
+interface CoordinationSetupTicketIssueResult {
+  schemaVersion: typeof COORDINATION_SETUP_TICKET_SCHEMA_VERSION;
+  ticket: string;
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  claimEndpoint: "/api/coordination/setup-tickets/claim";
+  participantAgentIds: string[];
+  privacyMode: string;
+  threadId: string;
+  swarmId: string;
+}
+
+interface CoordinationSetupTicketClaimResult {
+  schemaVersion: typeof COORDINATION_AGENT_SETUP_SCHEMA_VERSION;
+  ticketId: string;
+  agentId: string;
+  role: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  apiBase: string;
+  threadId: string;
+  swarmId: string;
+  privacyMode: string;
+  publicTraceUrl: string;
+  manifest: Record<string, unknown>;
 }
 
 interface OwnershipActionOptions {
@@ -1601,7 +1643,7 @@ function buildPrivacyExceptions(nowIso: string): PrivacyExceptionQueueItem[] {
 
 function buildDefaultState(nowIso: string): ConsolePersistenceState {
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     currentSessionId: DEFAULT_SESSION_ID,
     activeMode: "private",
     wallet: buildWalletState(nowIso),
@@ -1619,7 +1661,8 @@ function buildDefaultState(nowIso: string): ConsolePersistenceState {
     },
     publishedSessionsBySession: {},
     deletedAgentRegistrationsBySession: {},
-    enrollmentTicketsById: {}
+    enrollmentTicketsById: {},
+    coordinationSetupTicketsById: {}
   };
 }
 
@@ -1741,11 +1784,36 @@ function buildEnrollmentTicketToken(ticketId: string, secret: string) {
   return `scz_enroll_${ticketId}_${secret}`;
 }
 
+function buildCoordinationSetupTicketId() {
+  return `coord_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+}
+
+function buildCoordinationSetupTicketSecret() {
+  return `${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`;
+}
+
+function buildCoordinationSetupTicketToken(ticketId: string, secret: string) {
+  return `scz_coord_${ticketId}_${secret}`;
+}
+
 function parseEnrollmentTicketToken(ticket: string) {
   const normalized = ticket.trim();
   const match = /^scz_enroll_(enr_[a-f0-9]{20})_([a-f0-9]{64})$/i.exec(normalized);
   if (!match) {
     throw new Error("Enrollment ticket is malformed.");
+  }
+  return {
+    ticket: normalized,
+    ticketId: match[1]!,
+    secret: match[2]!
+  };
+}
+
+function parseCoordinationSetupTicketToken(ticket: string) {
+  const normalized = ticket.trim();
+  const match = /^scz_coord_(coord_[a-f0-9]{20})_([a-f0-9]{64})$/i.exec(normalized);
+  if (!match) {
+    throw new Error("Coordination setup ticket is malformed.");
   }
   return {
     ticket: normalized,
@@ -4234,7 +4302,7 @@ export class ClawzControlPlane {
             };
       const migratedState: ConsolePersistenceState = {
         ...state,
-        schemaVersion: 6,
+        schemaVersion: 7,
         agentIdsBySession:
           state.agentIdsBySession && Object.keys(state.agentIdsBySession).length > 0
             ? state.agentIdsBySession
@@ -4257,10 +4325,11 @@ export class ClawzControlPlane {
               ),
         publishedSessionsBySession: state.publishedSessionsBySession ?? {},
         deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {},
-        enrollmentTicketsById: state.enrollmentTicketsById ?? {}
+        enrollmentTicketsById: state.enrollmentTicketsById ?? {},
+        coordinationSetupTicketsById: state.coordinationSetupTicketsById ?? {}
       };
       if (
-        state.schemaVersion !== 6 ||
+        state.schemaVersion !== 7 ||
         !state.agentIdsBySession ||
         Object.keys(state.agentIdsBySession).length === 0 ||
         !state.profilesBySession ||
@@ -4270,7 +4339,8 @@ export class ClawzControlPlane {
         !state.ownershipBySession ||
         !state.publishedSessionsBySession ||
         !state.deletedAgentRegistrationsBySession ||
-        !state.enrollmentTicketsById
+        !state.enrollmentTicketsById ||
+        !state.coordinationSetupTicketsById
       ) {
         await this.saveState(migratedState);
       }
@@ -10809,6 +10879,143 @@ export class ClawzControlPlane {
 
   async listSponsorQueue(sessionId?: string): Promise<SponsorQueueState> {
     return this.getSponsorQueueState(sessionId);
+  }
+
+  private normalizeCoordinationManifest(input: unknown) {
+    if (!isRecord(input)) {
+      throw new Error("Coordination setup ticket requires a manifest object.");
+    }
+    const schemaVersion = assertStringValue(input, "schemaVersion", "Coordination manifest");
+    if (schemaVersion !== "santaclawz-team-coordination-bridge/0.1") {
+      throw new Error("Unsupported coordination manifest schemaVersion.");
+    }
+    const threadId = assertStringValue(input, "threadId", "Coordination manifest");
+    const swarmId = assertStringValue(input, "swarmId", "Coordination manifest");
+    const apiBase = assertStringValue(input, "apiBase", "Coordination manifest");
+    const coordinationPolicy = isRecord(input.coordinationPolicy) ? input.coordinationPolicy : {};
+    const privacyMode = assertStringValue(coordinationPolicy, "privacyMode", "Coordination manifest coordinationPolicy");
+    const participants = Array.isArray(input.participants)
+      ? input.participants.filter((participant): participant is Record<string, unknown> => isRecord(participant))
+      : [];
+    if (participants.length === 0) {
+      throw new Error("Coordination manifest must include at least one participant.");
+    }
+    for (const participant of participants) {
+      assertStringValue(participant, "agentId", "Coordination manifest participant");
+      const role = assertStringValue(participant, "role", "Coordination manifest participant");
+      if (role !== "admin" && role !== "member") {
+        throw new Error("Coordination participant role must be admin or member.");
+      }
+    }
+    return {
+      manifest: input,
+      threadId,
+      swarmId,
+      apiBase,
+      privacyMode,
+      participants
+    };
+  }
+
+  async issueCoordinationSetupTicket(input: { manifest: unknown }): Promise<CoordinationSetupTicketIssueResult> {
+    const issuedAtIso = new Date().toISOString();
+    const expiresAtIso = new Date(Date.now() + COORDINATION_SETUP_TICKET_TTL_MS).toISOString();
+    const normalized = this.normalizeCoordinationManifest(input.manifest);
+    const ticketId = buildCoordinationSetupTicketId();
+    const ticketSecret = buildCoordinationSetupTicketSecret();
+    const ticket = buildCoordinationSetupTicketToken(ticketId, ticketSecret);
+    const state = await this.loadState();
+    await this.saveState({
+      ...state,
+      coordinationSetupTicketsById: {
+        ...state.coordinationSetupTicketsById,
+        [ticketId]: {
+          ticketId,
+          ticketHash: sha256Hex(ticket),
+          issuedAtIso,
+          expiresAtIso,
+          status: "pending",
+          manifest: normalized.manifest,
+          claimedAgentsById: {}
+        }
+      }
+    });
+
+    return {
+      schemaVersion: COORDINATION_SETUP_TICKET_SCHEMA_VERSION,
+      ticket,
+      ticketId,
+      issuedAtIso,
+      expiresAtIso,
+      claimEndpoint: "/api/coordination/setup-tickets/claim",
+      participantAgentIds: normalized.participants.map((participant) => assertStringValue(participant, "agentId", "Coordination manifest participant")),
+      privacyMode: normalized.privacyMode,
+      threadId: normalized.threadId,
+      swarmId: normalized.swarmId
+    };
+  }
+
+  async claimCoordinationSetupTicket(input: { ticket: string; agentId: string }): Promise<CoordinationSetupTicketClaimResult> {
+    const parsedTicket = parseCoordinationSetupTicketToken(input.ticket);
+    const state = await this.loadState();
+    const record = state.coordinationSetupTicketsById[parsedTicket.ticketId];
+    if (!record) {
+      throw new Error("Coordination setup ticket was not found.");
+    }
+    if (Date.parse(record.expiresAtIso) <= Date.now()) {
+      await this.saveState({
+        ...state,
+        coordinationSetupTicketsById: {
+          ...state.coordinationSetupTicketsById,
+          [record.ticketId]: {
+            ...record,
+            status: "expired"
+          }
+        }
+      });
+      throw new Error("Coordination setup ticket expired. Ask the run admin for a fresh ticket.");
+    }
+    if (!timingSafeEqualHex(record.ticketHash, sha256Hex(parsedTicket.ticket))) {
+      throw new Error("Coordination setup ticket secret was rejected.");
+    }
+    const normalized = this.normalizeCoordinationManifest(record.manifest);
+    const participant = normalized.participants.find((candidate) => stringValue(candidate, "agentId") === input.agentId);
+    if (!participant) {
+      throw new Error("This agent is not listed on the coordination setup ticket.");
+    }
+    const claimedAtIso = new Date().toISOString();
+    await this.saveState({
+      ...state,
+      coordinationSetupTicketsById: {
+        ...state.coordinationSetupTicketsById,
+        [record.ticketId]: {
+          ...record,
+          claimedAgentsById: {
+            ...record.claimedAgentsById,
+            [input.agentId]: { claimedAtIso }
+          }
+        }
+      }
+    });
+
+    const publicTraceUrl =
+      isRecord(normalized.manifest.read) && typeof normalized.manifest.read.publicThreadMessages === "string"
+        ? normalized.manifest.read.publicThreadMessages
+        : `${normalized.apiBase}/api/agent-messages?threadId=${encodeURIComponent(normalized.threadId)}&limit=100`;
+    return {
+      schemaVersion: COORDINATION_AGENT_SETUP_SCHEMA_VERSION,
+      ticketId: record.ticketId,
+      agentId: input.agentId,
+      role: assertStringValue(participant, "role", "Coordination manifest participant"),
+      issuedAtIso: claimedAtIso,
+      expiresAtIso: record.expiresAtIso,
+      apiBase: normalized.apiBase,
+      threadId: normalized.threadId,
+      swarmId: normalized.swarmId,
+      privacyMode: normalized.privacyMode,
+      publicTraceUrl,
+      manifest: normalized.manifest
+    };
   }
 
   async issueEnrollmentTicket(options: RegisterAgentOptions): Promise<EnrollmentTicketIssueResult> {

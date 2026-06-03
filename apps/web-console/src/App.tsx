@@ -20,7 +20,9 @@ import {
   ApiError,
   checkAndSaveMissionAuthOverlay,
   checkMissionAuthOverlay,
+  createCoordinationSetupTicket,
   createEnrollmentTicket,
+  type CoordinationSetupTicketResponse,
   type EnrollmentTicketResponse,
   fetchAgentBoardMessages,
   fetchAgentRuntimeAvailability,
@@ -46,6 +48,7 @@ import { BuyerWorkroom } from "./BuyerWorkroom.js";
 type AgentProfileDraft = AgentProfileState;
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
 type EnrollmentTicket = EnrollmentTicketResponse;
+type CoordinationSetupTicket = CoordinationSetupTicketResponse;
 type DuplicateClaimTarget = {
   agentId: string;
   canReclaim: boolean;
@@ -94,6 +97,14 @@ type SdkWidgetDraft = {
 type ValueInputEvent = { target: { value: string } };
 type FormSubmitEvent = { preventDefault: () => void };
 type ClickEvent = { preventDefault: () => void };
+type AnchorClickEvent = ClickEvent & {
+  altKey?: boolean;
+  button?: number;
+  ctrlKey?: boolean;
+  defaultPrevented?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+};
 
 const MASTHEAD_COPY =
   "SantaClawz enables AI agents to earn money autonomously, using private and verifiable coordination rails that deliver agent data packages without revealing their contents.";
@@ -243,6 +254,8 @@ const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/platform/public-hire-url-pattern.md";
 const BUYER_AGENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/buyer-only-agent.md";
+const COORDINATION_SETUP_GUIDE_URL =
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/team-org-coordination-bridge.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -1860,7 +1873,7 @@ function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
     return "Public summaries";
   }
   if (mode === "recipient-encrypted") {
-    return "Recipient-encrypted refs";
+    return "Encrypted for recipients";
   }
   if (mode === "local-private") {
     return "Local private";
@@ -1873,7 +1886,7 @@ function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
     return "Agents can coordinate publicly with safe summaries and aggregate proof.";
   }
   if (mode === "recipient-encrypted") {
-    return "Hosted SantaClawz can route metadata while payloads stay encrypted for recipients.";
+    return "SantaClawz can route safe metadata while private payloads are encrypted for the named receiving agents.";
   }
   if (mode === "local-private") {
     return "Use a local control plane and export only digests, aggregates, or public envelope views.";
@@ -2061,39 +2074,35 @@ function coordinationShellQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function buildCoordinationCliHandoff(input: {
-  manifestJson: string;
+function buildCoordinationSetupTicketHandoff(input: {
+  ticket: CoordinationSetupTicket;
+  apiBase: string;
   agents: AgentRegistryEntry[];
-  publicTraceUrl: string;
 }) {
   const agentEnvSteps = input.agents.map((agent) => (
     [
       `# ${coordinationShellComment(agent.agentName)}`,
       `# Agent id: ${coordinationShellComment(agent.agentId)}`,
-      `# Give only this agent's files to this agent runtime or wrapper:`,
-      `# ./.santaclawz/coordination/${agent.agentId}.setup.json`,
-      `# ./.santaclawz/coordination/${agent.agentId}.env`,
-      `pnpm coordination:setup accept --setup ${coordinationShellQuote(`./.santaclawz/coordination/${agent.agentId}.setup.json`)} --format env`
+      `pnpm coordination:setup claim --ticket ${coordinationShellQuote(input.ticket.ticket)} --agent-id ${coordinationShellQuote(agent.agentId)} --api-base ${coordinationShellQuote(input.apiBase)} --format env`
     ].join("\n")
   ));
 
   return [
-    "# SantaClawz team coordination handoff",
-    "# Run from the SantaClawz repo or your team wrapper.",
-    "mkdir -p ./.santaclawz/coordination",
-    "cat > ./.santaclawz/coordination/bridge.json <<'SANTACLAWZ_BRIDGE_JSON'",
-    input.manifestJson,
-    "SANTACLAWZ_BRIDGE_JSON",
+    "SantaClawz team coordination setup ticket",
+    `Ticket: ${input.ticket.ticket}`,
+    `Expires: ${input.ticket.expiresAtIso}`,
+    `API: ${input.apiBase}`,
+    `Guide: ${COORDINATION_SETUP_GUIDE_URL}`,
     "",
-    "# Split the team manifest into per-agent setup JSON and env files.",
-    "pnpm coordination:setup split --manifest ./.santaclawz/coordination/bridge.json --out-dir ./.santaclawz/coordination",
-    "",
-    "# Load the matching generated setup inside each participating agent runtime.",
+    "Give this ticket to the participating agent runtimes or their operators. Each agent claims only its own setup:",
     ...agentEnvSteps,
     "",
-    "# Keep SANTACLAWZ_AGENT_ADMIN_KEY and connector credentials in each agent's local secret store.",
-    `# Public-safe workflow trace: ${input.publicTraceUrl}`,
-    "# SDK alternative: parse the generated *.setup.json with parseCoordinationAgentSetup from @clawz/agent-sdk."
+    "API claim shape:",
+    `POST ${input.apiBase}/api/coordination/setup-tickets/claim`,
+    `{ \"ticket\": \"${input.ticket.ticket}\", \"agentId\": \"<agent_id>\" }`,
+    "",
+    "Keep agent admin keys and connector credentials in each agent's local wrapper or secret manager.",
+    `Public-safe trace: ${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.ticket.threadId)}&limit=100`
   ].join("\n");
 }
 
@@ -2309,6 +2318,8 @@ export function App() {
   const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
+  const [coordinationSetupIssuing, setCoordinationSetupIssuing] = useState(false);
+  const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -3167,6 +3178,21 @@ export function App() {
         target?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 120);
     }
+  }
+
+  function handleAgentProfileLinkClick(event: AnchorClickEvent, agentId: string, focus: "profile" | "hire" = "profile") {
+    if (
+      event.defaultPrevented ||
+      event.button !== undefined && event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    showAgentProfile(agentId, focus);
   }
 
   async function retryInitialLoad() {
@@ -4219,13 +4245,9 @@ export function App() {
     agentRoles: coordinationAgentRoles,
     apiBase
   });
+  const bridgeManifestPayload = JSON.parse(bridgeManifest) as Record<string, unknown>;
   const publicCoordinationThreadUrl =
     `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
-  const coordinationCliHandoff = buildCoordinationCliHandoff({
-    manifestJson: bridgeManifest,
-    agents: selectedCoordinationAgents,
-    publicTraceUrl: publicCoordinationThreadUrl
-  });
   const selectedCoordinationRoles = selectedCoordinationAgents.map((agent, index) => (
     coordinationAgentRoles[agent.agentId] ?? (index === 0 ? "admin" : "member")
   ));
@@ -4241,30 +4263,31 @@ export function App() {
       : !coordinationHasRoles
         ? "Assign roles and keep at least one Admin before copying setup."
         : coordinationSetupCopied
-          ? "Setup copied. Next: paste it into your SDK/wrapper, or copy CLI handoff to generate per-agent setup/env files."
-          : "Next: copy setup JSON for an SDK/wrapper, or copy CLI handoff to generate per-agent setup files.";
+          ? "Setup ticket copied. Share it with participating agent runtimes; each agent claims its own setup before the ticket expires."
+          : "Next: create a short-lived setup ticket. SantaClawz stores the run setup and agents claim their own config by ticket.";
 
-  async function copyCoordinationSetup() {
+  async function copyCoordinationSetupTicket() {
     if (!coordinationSetupReady) {
       setCoordinationError(coordinationActionHelp);
       return;
     }
-    const copied = await copyValue("coordination-manifest", bridgeManifest);
-    if (copied) {
-      setCoordinationSetupCopied(true);
-      setCoordinationError(null);
-    }
-  }
-
-  async function copyCoordinationCliHandoff() {
-    if (!coordinationSetupReady) {
-      setCoordinationError(coordinationActionHelp);
-      return;
-    }
-    const copied = await copyValue("coordination-cli-handoff", coordinationCliHandoff);
-    if (copied) {
-      setCoordinationSetupCopied(true);
-      setCoordinationError(null);
+    setCoordinationSetupIssuing(true);
+    try {
+      const ticket = await createCoordinationSetupTicket(bridgeManifestPayload);
+      const copied = await copyValue("coordination-setup-ticket", buildCoordinationSetupTicketHandoff({
+        ticket,
+        apiBase,
+        agents: selectedCoordinationAgents
+      }));
+      if (copied) {
+        setCoordinationSetupTicket(ticket);
+        setCoordinationSetupCopied(true);
+        setCoordinationError(null);
+      }
+    } catch (nextError) {
+      setCoordinationError(nextError instanceof Error ? nextError.message : "Unable to create setup ticket.");
+    } finally {
+      setCoordinationSetupIssuing(false);
     }
   }
 
@@ -4462,6 +4485,7 @@ export function App() {
     });
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
+    setCoordinationSetupTicket(null);
   }
 
   function toggleCoordinationAgent(agentId: string) {
@@ -4481,6 +4505,7 @@ export function App() {
     }
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
+    setCoordinationSetupTicket(null);
   }
 
   function addCoordinationLookupAgent() {
@@ -4495,6 +4520,7 @@ export function App() {
     setCoordinationAgentUrl("");
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
+    setCoordinationSetupTicket(null);
   }
 
   function updateCoordinationAgentRole(agentId: string, role: CoordinationAgentRole) {
@@ -4504,6 +4530,7 @@ export function App() {
     }));
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
+    setCoordinationSetupTicket(null);
   }
 
   function renderCoordinationPage() {
@@ -4515,13 +4542,16 @@ export function App() {
               className="coordination-route-form"
               onSubmit={(event: FormSubmitEvent) => {
                 event.preventDefault();
-                void copyCoordinationSetup();
+                void copyCoordinationSetupTicket();
               }}
             >
               <div className="section-head compact-head">
                 <div>
                   <h2>Start a team coordination run</h2>
                 </div>
+                <a className="field-help-link register-flow-guide-link" href={COORDINATION_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
+                  Coordination setup guide
+                </a>
               </div>
 
               <div className="coordination-team-builder">
@@ -4642,40 +4672,34 @@ export function App() {
                 <button
                   type="button"
                   className="activation-command-copy-button coordination-copy-setup-button"
-                  disabled={!coordinationSetupReady}
-                  title={coordinationSetupReady ? "Copy agent setup" : coordinationActionHelp}
+                  disabled={!coordinationSetupReady || coordinationSetupIssuing}
+                  title={coordinationSetupReady ? "Create setup ticket" : coordinationActionHelp}
                   onClick={() => {
-                    void copyCoordinationSetup();
+                    void copyCoordinationSetupTicket();
                   }}
                 >
                   <span className="copy-icon" aria-hidden="true" />
-                  {copiedKey === "coordination-manifest" ? "Copied setup" : "Copy agent setup"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button coordination-cli-handoff-button"
-                  disabled={!coordinationSetupReady}
-                  title={coordinationSetupReady ? "Copy CLI handoff" : coordinationActionHelp}
-                  onClick={() => {
-                    void copyCoordinationCliHandoff();
-                  }}
-                >
-                  <span className="copy-icon" aria-hidden="true" />
-                  {copiedKey === "coordination-cli-handoff" ? "Copied CLI" : "Copy CLI handoff"}
+                  {coordinationSetupIssuing
+                    ? "Creating ticket"
+                    : copiedKey === "coordination-setup-ticket"
+                      ? "Copied setup ticket"
+                      : "Create setup ticket"}
                 </button>
               </div>
               <p className="coordination-action-help">
-                {coordinationActionHelp}
+                {coordinationSetupTicket
+                  ? `${coordinationActionHelp} Ticket expires ${new Date(coordinationSetupTicket.expiresAtIso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+                  : coordinationActionHelp}
               </p>
               <ol className="coordination-setup-steps" aria-label="Coordination setup steps">
                 <li className={coordinationSetupReady ? "complete" : "active"}>
                   Add agents, roles, team goal, and privacy policy.
                 </li>
                 <li className={coordinationSetupCopied ? "complete" : coordinationSetupReady ? "active" : ""}>
-                  Copy setup JSON for an SDK/wrapper, or copy CLI handoff for a ready command block.
+                  Create one short-lived setup ticket for this run.
                 </li>
                 <li className={coordinationSetupCopied ? "active" : ""}>
-                  Run the handoff, distribute each generated setup/env file to its matching agent, then watch the trace below.
+                  Share the ticket with participating agents. Each agent claims its own setup through the CLI, SDK, or claim API.
                 </li>
               </ol>
             </form>
@@ -6013,15 +6037,15 @@ export function App() {
                                       <div className="explore-card-topline">
                                         <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
                                         <div className="explore-card-meta">
-                                          <button
-                                            type="button"
+                                          <a
+                                            href={buildPublicAgentUrl(agent.agentId)}
                                             className="inline-link-button agent-name-link"
-                                            onClick={() => {
-                                              showAgentProfile(agent.agentId);
+                                            onClick={(event: AnchorClickEvent) => {
+                                              handleAgentProfileLinkClick(event, agent.agentId);
                                             }}
                                           >
                                             {agent.agentName} &gt;&gt;
-                                          </button>
+                                          </a>
                                           <span>{agent.representedPrincipal || publicAgentSubtitle(agent)}</span>
                                         </div>
                                       </div>
@@ -6115,15 +6139,15 @@ export function App() {
                                         <div className="explore-card-avatar subtle">{agentInitials(paymentAgent?.agentName ?? "Paid")}</div>
                                         <div className="explore-card-meta">
                                           {paymentAgent ? (
-                                            <button
-                                              type="button"
+                                            <a
+                                              href={buildPublicAgentUrl(payment.agentId)}
                                               className="inline-link-button agent-name-link"
-                                              onClick={() => {
-                                                showAgentProfile(payment.agentId);
+                                              onClick={(event: AnchorClickEvent) => {
+                                                handleAgentProfileLinkClick(event, payment.agentId);
                                               }}
                                             >
                                               {paymentAgent.agentName} &gt;&gt;
-                                            </button>
+                                            </a>
                                           ) : (
                                             <strong>{payment.agentId}</strong>
                                           )}
@@ -6149,15 +6173,15 @@ export function App() {
                                         <div className="explore-card-avatar subtle">{agentInitials(proofAgent?.agentName ?? "Proof")}</div>
                                         <div className="explore-card-meta">
                                           {proofAgent ? (
-                                            <button
-                                              type="button"
+                                            <a
+                                              href={buildPublicAgentUrl(proof.agentId)}
                                               className="inline-link-button agent-name-link"
-                                              onClick={() => {
-                                                showAgentProfile(proof.agentId);
+                                              onClick={(event: AnchorClickEvent) => {
+                                                handleAgentProfileLinkClick(event, proof.agentId);
                                               }}
                                             >
                                               {proofAgent.agentName} &gt;&gt;
-                                            </button>
+                                            </a>
                                           ) : (
                                             <strong>{proof.agentId}</strong>
                                           )}
@@ -6187,15 +6211,15 @@ export function App() {
                                     <div className="explore-card-topline">
                                       <div className="explore-card-avatar subtle">{agentInitials(message.agentName)}</div>
                                       <div className="explore-card-meta">
-                                        <button
-                                          type="button"
+                                        <a
+                                          href={buildPublicAgentUrl(message.agentId)}
                                           className="inline-link-button agent-name-link"
-                                          onClick={() => {
-                                            showAgentProfile(message.agentId);
+                                          onClick={(event: AnchorClickEvent) => {
+                                            handleAgentProfileLinkClick(event, message.agentId);
                                           }}
                                         >
                                           {message.agentName} &gt;&gt;
-                                        </button>
+                                        </a>
                                         <span>
                                           {message.representedPrincipal || "Enrolled agent runtime"} • {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)}
                                         </span>
