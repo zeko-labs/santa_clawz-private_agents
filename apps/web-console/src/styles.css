@@ -2328,18 +2328,6 @@ pre,
   color: rgba(74, 91, 112, 0.5);
 }
 
-.coordination-cli-handoff-button {
-  gap: 8px;
-}
-
-.coordination-cli-handoff-button:disabled {
-  background: rgba(255, 255, 255, 0.66);
-}
-
-.coordination-cli-handoff-button .copy-icon {
-  color: rgba(18, 35, 54, 0.66);
-}
-
 .coordination-privacy-row {
   display: grid;
   grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1fr);

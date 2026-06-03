@@ -350,6 +350,19 @@ export interface EnrollmentTicketResponse {
   };
 }
 
+export interface CoordinationSetupTicketResponse {
+  schemaVersion: "santaclawz-coordination-setup-ticket/0.1";
+  ticket: string;
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  claimEndpoint: "/api/coordination/setup-tickets/claim";
+  participantAgentIds: string[];
+  privacyMode: string;
+  threadId: string;
+  swarmId: string;
+}
+
 async function request<T>(path: string, init?: RequestInit, adminContext?: AdminKeyContext): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
   const method = String(init?.method ?? "GET").toUpperCase();
@@ -587,6 +600,13 @@ export function createEnrollmentTicket(input: {
   return request<EnrollmentTicketResponse>("/api/enrollment/tickets", {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export function createCoordinationSetupTicket(manifest: unknown): Promise<CoordinationSetupTicketResponse> {
+  return request<CoordinationSetupTicketResponse>("/api/coordination/setup-tickets", {
+    method: "POST",
+    body: JSON.stringify({ manifest })
   });
 }
 

@@ -340,6 +340,10 @@ type EnrollmentTicketRedeemBody = {
   openClawUrl?: unknown;
   runtimeIngressUrl?: unknown;
 };
+type CoordinationSetupTicketClaimBody = {
+  ticket?: unknown;
+  agentId?: unknown;
+};
 type ProfileRequestBody = {
   agentName?: unknown;
   representedPrincipal?: unknown;
@@ -5778,6 +5782,39 @@ app.post("/api/enrollment/redeem", route(async (request, response) => {
     }
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to redeem enrollment ticket."
+    });
+  }
+}));
+
+app.post("/api/coordination/setup-tickets", route(async (request, response) => {
+  const body = isRecord(request.body) ? request.body : {};
+  try {
+    response.json(await controlPlane.issueCoordinationSetupTicket({ manifest: body.manifest }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create coordination setup ticket."
+    });
+  }
+}));
+
+app.post("/api/coordination/setup-tickets/claim", route(async (request, response) => {
+  const body = (isRecord(request.body) ? request.body : {}) as CoordinationSetupTicketClaimBody;
+  const ticket = optionalString(body.ticket);
+  const agentId = optionalString(body.agentId);
+  if (!ticket) {
+    response.status(400).json({ error: "ticket is required." });
+    return;
+  }
+  if (!agentId) {
+    response.status(400).json({ error: "agentId is required." });
+    return;
+  }
+
+  try {
+    response.json(await controlPlane.claimCoordinationSetupTicket({ ticket, agentId }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to claim coordination setup ticket."
     });
   }
 }));
