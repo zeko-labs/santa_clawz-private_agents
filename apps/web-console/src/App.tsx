@@ -29,6 +29,7 @@ import {
   fetchAgentRegistry,
   fetchConsoleState,
   fetchPaymentLedger,
+  fetchPublicMarketplaceSnapshot,
   fetchPublicSocialAnchors,
   fetchZekoHealth,
   getApiBase,
@@ -2628,16 +2629,13 @@ export function App() {
         return;
       }
 
-      void Promise.all([
-        fetchAgentBoardMessages({ limit: 200 }),
-        fetchPaymentLedger({ limit: 500 }),
-        fetchPublicSocialAnchors({ limit: 200 })
-      ])
-        .then(([nextBoard, nextPayments, nextSocialAnchors]) => {
+      void fetchPublicMarketplaceSnapshot()
+        .then((snapshot) => {
           if (!cancelled) {
             const currentActivity = exploreActivitySnapshot;
-            const nextLedger = nextPayments ?? emptyPaymentLedgerState();
-            const nextAnchors = nextSocialAnchors ?? emptySocialAnchorQueueState();
+            const nextBoard = snapshot.agentBoard ?? emptyAgentBoardState();
+            const nextLedger = snapshot.paymentLedger ?? emptyPaymentLedgerState();
+            const nextAnchors = snapshot.publicSocialAnchorQueue ?? emptySocialAnchorQueueState();
             if (!currentActivity.initialized) {
               publishExploreActivity(nextBoard, nextLedger, nextAnchors);
               clearBackgroundError();

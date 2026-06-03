@@ -103,6 +103,26 @@ const PAYMENT_LEDGER_CACHE_MAX_ENTRIES = Math.max(
   10,
   Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_MAX_ENTRIES ?? "80"))
 );
+const PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS = Math.max(
+  0,
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS ?? "10000"))
+);
+const PUBLIC_READ_CACHE_TTL_MS = Math.max(
+  0,
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_TTL_MS ?? "5000"))
+);
+const PUBLIC_READ_CACHE_MAX_ENTRIES = Math.max(
+  10,
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_MAX_ENTRIES ?? "120"))
+);
+const PUBLIC_READ_RATE_LIMIT_WINDOW_MS = Math.max(
+  10_000,
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_WINDOW_MS ?? "60000"))
+);
+const PUBLIC_READ_RATE_LIMIT_MAX_COST = Math.max(
+  60,
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST ?? "600"))
+);
 const USD_MICRO_SCALE = 1_000_000n;
 const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
 const ACTIVATION_LANE_DEFAULT_EPSILON_USD = "0.000001";
@@ -144,16 +164,44 @@ const paymentLedgerInflight = new Map<string, {
   epoch: number;
   promise: Promise<unknown>;
 }>();
+const publicMarketplaceSnapshotCache = new Map<string, {
+  expiresAtMs: number;
+  payload: unknown;
+}>();
+const publicMarketplaceSnapshotInflight = new Map<string, {
+  epoch: number;
+  promise: Promise<unknown>;
+}>();
+const publicReadCache = new Map<string, {
+  expiresAtMs: number;
+  payload: unknown;
+}>();
+const publicReadInflight = new Map<string, {
+  epoch: number;
+  promise: Promise<unknown>;
+}>();
+const publicReadRateLimitBuckets = new Map<string, {
+  resetAtMs: number;
+  cost: number;
+}>();
 let consoleStateCacheEpoch = 0;
 let paymentLedgerCacheEpoch = 0;
+let publicMarketplaceSnapshotCacheEpoch = 0;
+let publicReadCacheEpoch = 0;
 
 function clearConsoleStateCache() {
   consoleStateCacheEpoch += 1;
   paymentLedgerCacheEpoch += 1;
+  publicMarketplaceSnapshotCacheEpoch += 1;
+  publicReadCacheEpoch += 1;
   consoleStateCache.clear();
   consoleStateInflight.clear();
   paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
+  publicMarketplaceSnapshotCache.clear();
+  publicMarketplaceSnapshotInflight.clear();
+  publicReadCache.clear();
+  publicReadInflight.clear();
 }
 
 function pruneConsoleStateCache(nowMs = Date.now()) {
@@ -184,6 +232,148 @@ function prunePaymentLedgerCache(nowMs = Date.now()) {
     }
     paymentLedgerCache.delete(oldest.value);
   }
+}
+
+function prunePublicReadCache(nowMs = Date.now()) {
+  for (const [key, entry] of publicReadCache.entries()) {
+    if (entry.expiresAtMs <= nowMs) {
+      publicReadCache.delete(key);
+    }
+  }
+  while (publicReadCache.size > PUBLIC_READ_CACHE_MAX_ENTRIES) {
+    const oldest = publicReadCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    publicReadCache.delete(oldest.value);
+  }
+}
+
+async function cachedPublicRead<T>(cacheKey: string, producer: () => Promise<T>): Promise<{ payload: T; cacheStatus: "hit" | "inflight" | "miss" }> {
+  const cached = PUBLIC_READ_CACHE_TTL_MS > 0 ? publicReadCache.get(cacheKey) : undefined;
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return { payload: cached.payload as T, cacheStatus: "hit" };
+  }
+  const cacheEpoch = publicReadCacheEpoch;
+  const inflight = publicReadInflight.get(cacheKey);
+  if (inflight && inflight.epoch === cacheEpoch) {
+    return { payload: await inflight.promise as T, cacheStatus: "inflight" };
+  }
+  const payloadPromise = producer()
+    .finally(() => {
+      publicReadInflight.delete(cacheKey);
+    });
+  publicReadInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
+  const payload = await payloadPromise;
+  if (PUBLIC_READ_CACHE_TTL_MS > 0 && cacheEpoch === publicReadCacheEpoch) {
+    publicReadCache.set(cacheKey, {
+      expiresAtMs: Date.now() + PUBLIC_READ_CACHE_TTL_MS,
+      payload
+    });
+    prunePublicReadCache();
+  }
+  return { payload, cacheStatus: "miss" };
+}
+
+function publicReadRouteCost(pathname: string, method: string): number {
+  if (method !== "GET") {
+    return 0;
+  }
+  if (pathname === "/health" || pathname === "/ready" || pathname === "/version") {
+    return 0;
+  }
+  if (pathname === "/api/public/marketplace-snapshot") {
+    return 2;
+  }
+  if (pathname === "/api/payments") {
+    return 12;
+  }
+  if (pathname === "/api/console/state") {
+    return 8;
+  }
+  if (pathname === "/api/agents" || pathname === "/api/agent-messages" || pathname === "/api/social/anchors/public") {
+    return 6;
+  }
+  if (pathname === "/api/agents/search") {
+    return 4;
+  }
+  if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname) || /^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
+    return 4;
+  }
+  if (/^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
+    return 8;
+  }
+  return 0;
+}
+
+function hasApiCredential(request: Pick<IndexerRequest, "header">): boolean {
+  return Boolean(
+    request.header("authorization") ||
+    request.header("x-api-key") ||
+    request.header("x-clawz-admin-key") ||
+    request.header("x-santaclawz-activation-lane-key")
+  );
+}
+
+function publicReadClientKey(request: Pick<IndexerRequest, "header" | "ip">): string {
+  const forwardedFor = request.header("x-forwarded-for")?.split(",")[0]?.trim();
+  const realIp = request.header("x-real-ip")?.trim();
+  return forwardedFor || realIp || request.ip || "unknown";
+}
+
+function prunePublicReadRateLimitBuckets(nowMs = Date.now()) {
+  for (const [key, bucket] of publicReadRateLimitBuckets.entries()) {
+    if (bucket.resetAtMs <= nowMs) {
+      publicReadRateLimitBuckets.delete(key);
+    }
+  }
+}
+
+interface PublicReadRateLimitRequest extends IndexerRequest {
+  method: string;
+  path?: string;
+  originalUrl?: string;
+}
+
+interface PublicReadRateLimitResponse extends IndexerResponse {
+  setHeader?(name: string, value: string): void;
+}
+
+function publicReadRateLimitMiddleware(request: unknown, response: unknown, next: () => void) {
+  const typedRequest = request as PublicReadRateLimitRequest;
+  const typedResponse = response as PublicReadRateLimitResponse;
+  const pathname = typedRequest.path ?? typedRequest.originalUrl?.split("?")[0] ?? "";
+  const cost = publicReadRouteCost(pathname, typedRequest.method);
+  if (cost <= 0 || hasApiCredential(typedRequest)) {
+    next();
+    return;
+  }
+
+  const nowMs = Date.now();
+  prunePublicReadRateLimitBuckets(nowMs);
+  const key = publicReadClientKey(typedRequest);
+  const existing = publicReadRateLimitBuckets.get(key);
+  const bucket = existing && existing.resetAtMs > nowMs
+    ? existing
+    : { resetAtMs: nowMs + PUBLIC_READ_RATE_LIMIT_WINDOW_MS, cost: 0 };
+  bucket.cost += cost;
+  publicReadRateLimitBuckets.set(key, bucket);
+  if (bucket.cost <= PUBLIC_READ_RATE_LIMIT_MAX_COST) {
+    next();
+    return;
+  }
+
+  const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAtMs - nowMs) / 1000));
+  typedResponse.set?.("Retry-After", String(retryAfterSeconds));
+  typedResponse.set?.("X-SantaClawz-RateLimit-Cost", String(cost));
+  typedResponse.set?.("X-SantaClawz-RateLimit-Remaining", "0");
+  typedResponse.status(429).json({
+    ok: false,
+    code: "public_read_rate_limited",
+    retryable: true,
+    retryAfterSeconds,
+    error: "SantaClawz public read capacity is busy. Please retry shortly."
+  });
 }
 
 function deploymentVersion() {
@@ -276,6 +466,7 @@ app.options(
   })
 );
 app.use(apiAuthMiddleware(securityConfig));
+app.use(publicReadRateLimitMiddleware);
 app.use(express.json({ limit: "64kb" }));
 app.use((request: CacheInvalidationRequest, response: CacheInvalidationResponse, next: () => void) => {
   if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") {
@@ -3153,6 +3344,69 @@ app.get("/api/agents", route(async (_request, response) => {
   response.json(await controlPlane.listRegisteredAgents());
 }));
 
+app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
+  try {
+    const cacheKey = "public-marketplace-snapshot";
+    const cached = PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS > 0
+      ? publicMarketplaceSnapshotCache.get(cacheKey)
+      : undefined;
+    if (cached && cached.expiresAtMs > Date.now()) {
+      response.set("x-santaclawz-cache", "hit");
+      response.json(cached.payload);
+      return;
+    }
+    const cacheEpoch = publicMarketplaceSnapshotCacheEpoch;
+    const inflight = publicMarketplaceSnapshotInflight.get(cacheKey);
+    if (inflight && inflight.epoch === cacheEpoch) {
+      const payload = await inflight.promise;
+      response.set("x-santaclawz-cache", "inflight");
+      response.json(payload);
+      return;
+    }
+    const payloadPromise = Promise.all([
+      controlPlane.listRegisteredAgents(),
+      controlPlane.listAgentBoardMessages({ limit: 100 }),
+      controlPlane.listPaymentLedger({ limit: 100 }),
+      controlPlane.getSocialAnchorQueueState(undefined, {
+        itemLimit: 100,
+        batchLimit: 20,
+        statuses: ["confirmed"],
+        kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
+      })
+    ])
+      .then(([agents, agentBoard, paymentLedger, publicSocialAnchorQueue]) => ({
+        schemaVersion: "santaclawz-public-marketplace-snapshot/1.0",
+        ok: true,
+        generatedAtIso: new Date().toISOString(),
+        agentSummary: {
+          totalAgentCount: agents.length,
+          onlineAgentCount: agents.filter((agent) => agent.readiness?.heartbeatLive === true).length,
+          forHireAgentCount: agents.filter((agent) => agent.readiness?.hireable === true && agent.paidExecutionReady).length
+        },
+        agentBoard,
+        paymentLedger,
+        publicSocialAnchorQueue
+      }))
+      .finally(() => {
+        publicMarketplaceSnapshotInflight.delete(cacheKey);
+      });
+    publicMarketplaceSnapshotInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
+    const payload = await payloadPromise;
+    if (PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS > 0 && cacheEpoch === publicMarketplaceSnapshotCacheEpoch) {
+      publicMarketplaceSnapshotCache.set(cacheKey, {
+        expiresAtMs: Date.now() + PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS,
+        payload
+      });
+    }
+    response.set("x-santaclawz-cache", "miss");
+    response.json(payload);
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load public marketplace snapshot."
+    });
+  }
+}));
+
 app.get("/api/agents/search", route(async (request, response) => {
   try {
     const q = queryString(request.query, "q")?.toLowerCase();
@@ -3371,20 +3625,37 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
 app.get("/api/agent-messages", route(async (request, response) => {
   try {
     const rawLimit = queryString(request.query, "limit");
-    const limit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    const agentId = queryString(request.query, "agentId");
+    const threadId = queryString(request.query, "threadId");
+    const topic = queryString(request.query, "topic") ?? queryString(request.query, "topicTag");
+    const capability = queryString(request.query, "capability");
     const outputDigest =
       queryString(request.query, "outputDigestSha256") ?? queryString(request.query, "outputDigest");
-    response.json(
-      await controlPlane.listAgentBoardMessages({
-        ...(queryString(request.query, "agentId") ? { agentId: queryString(request.query, "agentId")! } : {}),
-        ...(queryString(request.query, "threadId") ? { threadId: queryString(request.query, "threadId")! } : {}),
-        ...(queryString(request.query, "topic") ? { topic: queryString(request.query, "topic")! } : {}),
-        ...(queryString(request.query, "topicTag") ? { topic: queryString(request.query, "topicTag")! } : {}),
-        ...(queryString(request.query, "capability") ? { capability: queryString(request.query, "capability")! } : {}),
-        ...(outputDigest ? { outputDigestSha256: outputDigest } : {}),
-        ...(typeof limit === "number" && Number.isFinite(limit) ? { limit } : {})
-      })
+    const scoped = Boolean(
+      agentId ||
+      threadId ||
+      topic ||
+      capability ||
+      outputDigest
     );
+    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    const limit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(parsedLimit, scoped ? 200 : 100))
+      : undefined;
+    const options = {
+      ...(agentId ? { agentId } : {}),
+      ...(threadId ? { threadId } : {}),
+      ...(topic ? { topic } : {}),
+      ...(capability ? { capability } : {}),
+      ...(outputDigest ? { outputDigestSha256: outputDigest } : {}),
+      ...(typeof limit === "number" && Number.isFinite(limit) ? { limit } : {})
+    };
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `agent-messages:${JSON.stringify(options)}`,
+      () => controlPlane.listAgentBoardMessages(options)
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    response.json(payload);
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load public agent messages."
@@ -6626,15 +6897,18 @@ app.get("/api/social/anchors", route(async (request, response) => {
 }));
 
 app.get("/api/social/anchors/public", route(async (request, response) => {
-  const limit = queryBoundedInteger(request.query, "limit", 100, 1, 500);
-  const state = await controlPlane.getSocialAnchorQueueState(undefined, {
-    itemLimit: limit,
-    batchLimit: 20,
-    statuses: ["confirmed"],
-    kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
-  });
-
-  response.json(state);
+  const limit = queryBoundedInteger(request.query, "limit", 100, 1, 100);
+  const { payload, cacheStatus } = await cachedPublicRead(
+    `social-anchors-public:${limit}`,
+    () => controlPlane.getSocialAnchorQueueState(undefined, {
+      itemLimit: limit,
+      batchLimit: 20,
+      statuses: ["confirmed"],
+      kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
+    })
+  );
+  response.set("x-santaclawz-cache", cacheStatus);
+  response.json(payload);
 }));
 
 app.get("/api/social/anchors/export", route(async (request, response) => {

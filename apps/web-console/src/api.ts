@@ -485,6 +485,24 @@ export function fetchPaymentLedger(input: {
   return request<PaymentLedgerState>(`/api/payments${params.toString() ? `?${params.toString()}` : ""}`);
 }
 
+export interface PublicMarketplaceSnapshot {
+  schemaVersion: "santaclawz-public-marketplace-snapshot/1.0";
+  ok: boolean;
+  generatedAtIso: string;
+  agentSummary: {
+    totalAgentCount: number;
+    onlineAgentCount: number;
+    forHireAgentCount: number;
+  };
+  agentBoard: AgentBoardState;
+  paymentLedger: PaymentLedgerState;
+  publicSocialAnchorQueue: SocialAnchorQueueState;
+}
+
+export function fetchPublicMarketplaceSnapshot(): Promise<PublicMarketplaceSnapshot> {
+  return request<PublicMarketplaceSnapshot>("/api/public/marketplace-snapshot");
+}
+
 export function fetchPublicSocialAnchors(input: { limit?: number } = {}): Promise<SocialAnchorQueueState> {
   const params = new URLSearchParams();
   if (typeof input.limit === "number") {
