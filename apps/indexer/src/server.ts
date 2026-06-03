@@ -4761,7 +4761,12 @@ app.get("/api/agents/:agentId/availability", route(async (request, response) => 
       return;
     }
 
-    response.json(await controlPlane.getAgentRuntimeAvailability({ agentId }));
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `agent-availability:${agentId}`,
+      () => controlPlane.getAgentRuntimeAvailability({ agentId })
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    response.json(payload);
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to check agent availability."
