@@ -2423,12 +2423,6 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     const consoleStateRequest = consoleStateRequestFor(activeSection, selectedSessionId, sharedAgentId);
-    if (activeSection === "explore" && !sharedAgentId) {
-      setError(null);
-      return () => {
-        cancelled = true;
-      };
-    }
 
     void fetchConsoleState(consoleStateRequest.sessionId, consoleStateRequest.agentId)
       .then((nextState) => {
@@ -3971,68 +3965,14 @@ export function App() {
           </section>
         ) : activeSection === "explore" ? (
           <section id="explore" className="panel explore-panel">
-            <div className="section-head compact-head">
-              <div>
-                <p className="eyebrow">Agent directory</p>
-                <h2>Public agents</h2>
-                <p className="panel-copy">
-                  {registry.length > 0
-                    ? "Showing registered agents while public activity finishes loading."
-                    : backgroundError
-                      ? "SantaClawz is reconnecting to the public directory. Try again shortly."
-                      : "Loading registered agents."}
-                </p>
-              </div>
-              <span className="subtle-pill">{registry.length > 0 ? `${registry.length} agents` : "Checking"}</span>
-            </div>
-            <div className="agent-board-feed agent-board-feed-agents">
-              {registry.length === 0 ? (
-                <article className="explore-card agent-board-empty-card">
-                  <div className="agent-board-empty-mark" aria-hidden="true">AG</div>
+            <div className="explore-grid">
+              <article className="explore-card explore-card-featured">
+                <div className="explore-card-head">
                   <strong>Directory loading</strong>
-                  <p className="panel-copy">SantaClawz is loading the registered agent list.</p>
-                </article>
-              ) : (
-                registry
-                  .filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery))
-                  .slice(0, EXPLORE_AGENTS_PAGE_SIZE)
-                  .map((agent) => (
-                    <article key={agent.agentId} className="explore-card explore-agent-list-card">
-                      <div className="explore-card-head">
-                        <div className="explore-card-topline">
-                          <div className="explore-card-avatar">{agentInitials(agent.agentName)}</div>
-                          <div className="explore-card-meta">
-                            <a
-                              href={buildPublicAgentUrl(agent.agentId)}
-                              className="inline-link-button agent-name-link"
-                              onClick={(event: AnchorClickEvent) => {
-                                handleAgentProfileLinkClick(event, agent.agentId);
-                              }}
-                            >
-                              {agent.agentName} &gt;&gt;
-                            </a>
-                            <span>{agent.representedPrincipal || publicAgentSubtitle(agent)}</span>
-                          </div>
-                        </div>
-                        <span className="agent-card-status-stack" aria-label="Agent status">
-                          <span className={`agent-card-status-pill ${marketplaceStatusClass(exploreStatusLabel(agent))}`}>
-                            {exploreStatusLabel(agent)}
-                          </span>
-                          <span className={`agent-card-status-pill ${presenceStatusClass(agent.runtimeStatus)}`}>
-                            {presenceStatusLabel(agent.runtimeStatus)}
-                          </span>
-                        </span>
-                      </div>
-                      <p className="explore-card-quote">{agent.headline}</p>
-                      <div className="explore-tag-row compact">
-                        <span className="explore-tag">{agent.paymentsEnabled ? referencePriceLine(agent) : "Not accepting paid work"}</span>
-                        {marketplaceTagsForDisplay(agent.marketplaceTags, 2).map((tag) => (
-                          <span key={`${agent.agentId}-fallback-tag-${tag}`} className="explore-tag">{tag}</span>
-                        ))}
-                      </div>
-                    </article>
-                  ))
-              )}
+                  <span className="subtle-pill">Waiting</span>
+                </div>
+                <p className="panel-copy">SantaClawz needs the onboarding API before it can show registered agents here.</p>
+              </article>
             </div>
           </section>
         ) : (
