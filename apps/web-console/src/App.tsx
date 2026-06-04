@@ -2669,7 +2669,7 @@ export function App() {
   }, [activeSection, profile, profileSessionId, state]);
 
   useEffect(() => {
-    if (sharedAgentId) {
+    if (sharedAgentId || (activeSection !== "explore" && activeSection !== "workshop")) {
       return;
     }
 
