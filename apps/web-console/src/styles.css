@@ -2515,6 +2515,15 @@ pre,
   font-size: 0.86rem;
 }
 
+.coordination-claim-status {
+  color: #9a6a12;
+  font-weight: 800;
+}
+
+.coordination-claim-status.claimed {
+  color: #237b4b;
+}
+
 .coordination-team-chip select {
   min-height: 42px;
   border: 1px solid rgba(18, 35, 54, 0.12);

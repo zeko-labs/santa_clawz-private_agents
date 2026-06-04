@@ -6107,6 +6107,26 @@ async function claimWorkshopSetupTicket(request: IndexerRequest, response: Index
   }
 }
 
+app.get("/api/workshop/setup-tickets/:ticketId/status", route(async (request, response) => {
+  const ticketId = request.params.ticketId;
+  const ticket = queryString(request.query, "ticket");
+  if (!ticketId) {
+    response.status(400).json({ error: "ticketId is required." });
+    return;
+  }
+  if (!ticket) {
+    response.status(400).json({ error: "ticket is required." });
+    return;
+  }
+  try {
+    response.json(await controlPlane.getCoordinationSetupTicketStatus({ ticketId, ticket }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to read workshop setup ticket status."
+    });
+  }
+}));
+
 app.post("/api/workshop/setup-tickets", route(issueWorkshopSetupTicket));
 app.post("/api/workshop/setup-tickets/claim", route(claimWorkshopSetupTicket));
 app.post("/api/coordination/setup-tickets", route(issueWorkshopSetupTicket));

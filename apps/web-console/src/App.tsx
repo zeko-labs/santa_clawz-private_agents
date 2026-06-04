@@ -23,7 +23,9 @@ import {
   createCoordinationSetupTicket,
   createEnrollmentTicket,
   type CoordinationSetupTicketResponse,
+  type CoordinationSetupTicketStatusResponse,
   type EnrollmentTicketResponse,
+  fetchCoordinationSetupTicketStatus,
   fetchAgentBoardMessages,
   fetchAgentRuntimeAvailability,
   fetchAgentRegistry,
@@ -1960,6 +1962,17 @@ function writeStoredCoordinationDraft(value: StoredCoordinationDraft) {
   }
 }
 
+function clearStoredCoordinationDraft() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(WORKSHOP_DRAFT_STORAGE_KEY);
+  } catch (_error) {
+    // Ignore storage failures; the visible form reset still completes.
+  }
+}
+
 function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
   if (mode === "public-summary") {
     return "Public summaries";
@@ -2417,6 +2430,7 @@ export function App() {
   const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [coordinationSetupIssuing, setCoordinationSetupIssuing] = useState(false);
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
+  const [coordinationSetupTicketStatus, setCoordinationSetupTicketStatus] = useState<CoordinationSetupTicketStatusResponse | null>(null);
   const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
@@ -2968,6 +2982,33 @@ export function App() {
       setCoordinationTicketNowMs(Date.now());
     }, 30_000);
     return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [coordinationSetupTicket]);
+
+  useEffect(() => {
+    if (!coordinationSetupTicket) {
+      setCoordinationSetupTicketStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const refreshStatus = () => {
+      void fetchCoordinationSetupTicketStatus(coordinationSetupTicket)
+        .then((status) => {
+          if (!cancelled) {
+            setCoordinationSetupTicketStatus(status);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCoordinationSetupTicketStatus(null);
+          }
+        });
+    };
+    refreshStatus();
+    const intervalId = window.setInterval(refreshStatus, 20_000);
+    return () => {
+      cancelled = true;
       window.clearInterval(intervalId);
     };
   }, [coordinationSetupTicket]);
@@ -4386,6 +4427,13 @@ export function App() {
   const coordinationSetupTicketRemaining = coordinationSetupTicket
     ? formatTimeRemaining(coordinationSetupTicket.expiresAtIso, coordinationTicketNowMs)
     : "";
+  const coordinationClaimedAgentsById = coordinationSetupTicketStatus?.claimedAgentsById ?? {};
+  const coordinationClaimedCount = coordinationSetupTicketStatus?.claimedCount ??
+    selectedCoordinationAgents.filter((agent) => coordinationClaimedAgentsById[agent.agentId]).length;
+  const coordinationClaimTotal = coordinationSetupTicketStatus?.totalCount ?? selectedCoordinationAgents.length;
+  const coordinationClaimProgress = coordinationSetupTicket
+    ? `${coordinationClaimedCount}/${coordinationClaimTotal} claimed`
+    : "";
   const coordinationSetupTicketHandoff = coordinationSetupTicket
     ? buildCoordinationSetupTicketHandoff({
         ticket: coordinationSetupTicket,
@@ -4428,6 +4476,20 @@ export function App() {
     try {
       const ticket = await createCoordinationSetupTicket(bridgeManifestPayload);
       setCoordinationSetupTicket(ticket);
+      setCoordinationSetupTicketStatus({
+        schemaVersion: "santaclawz-coordination-setup-ticket-status/0.1",
+        ticketId: ticket.ticketId,
+        issuedAtIso: ticket.issuedAtIso,
+        expiresAtIso: ticket.expiresAtIso,
+        status: "pending",
+        participantAgentIds: ticket.participantAgentIds,
+        claimedCount: 0,
+        totalCount: ticket.participantAgentIds.length,
+        claimedAgentsById: {},
+        privacyMode: ticket.privacyMode,
+        threadId: ticket.threadId,
+        swarmId: ticket.swarmId
+      });
       setCoordinationSetupCopied(false);
       setCoordinationTicketNowMs(Date.now());
       setCoordinationError(null);
@@ -4640,6 +4702,20 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
+  }
+
+  function clearCoordinationWorkshop() {
+    const nextDraft = defaultCoordinationDraft();
+    setCoordinationDraft(nextDraft);
+    setCoordinationAgentIds([]);
+    setCoordinationAgentRoles({});
+    setCoordinationAgentUrl("");
+    setCoordinationError(null);
+    setCoordinationSetupCopied(false);
+    setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
+    clearStoredCoordinationDraft();
   }
 
   function toggleCoordinationAgent(agentId: string) {
@@ -4660,6 +4736,7 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
   }
 
   function addCoordinationLookupAgent() {
@@ -4675,6 +4752,7 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
   }
 
   function updateCoordinationAgentRole(agentId: string, role: CoordinationAgentRole) {
@@ -4685,6 +4763,7 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
   }
 
   function renderCoordinationPage() {
@@ -4757,7 +4836,17 @@ export function App() {
                       >
                         <span className="coordination-team-copy">
                           <span>{agent.agentName}</span>
-                          <small>{presenceStatusLabel(agent.runtimeStatus)}</small>
+                          <small>
+                            {presenceStatusLabel(agent.runtimeStatus)}
+                            {coordinationSetupTicket ? (
+                              <>
+                                {" • "}
+                                <span className={coordinationClaimedAgentsById[agent.agentId] ? "coordination-claim-status claimed" : "coordination-claim-status"}>
+                                  {coordinationClaimedAgentsById[agent.agentId] ? "Claimed" : "Unclaimed"}
+                                </span>
+                              </>
+                            ) : null}
+                          </small>
                         </span>
                         <select
                           aria-label={`Role for ${agent.agentName}`}
@@ -4839,6 +4928,8 @@ export function App() {
                         <span>expires {coordinationSetupTicketExpiryTime}</span>
                         <span aria-hidden="true"> · </span>
                         <span>{coordinationSetupTicketRemaining}</span>
+                        <span aria-hidden="true"> · </span>
+                        <span>{coordinationClaimProgress}</span>
                       </span>
                       <span className={`activation-inline-status ${coordinationSetupStatus.className}`}>
                         <span aria-hidden="true" />
@@ -4853,6 +4944,13 @@ export function App() {
                         }}
                       >
                         {coordinationSetupIssuing ? "Reissuing..." : "Reissue ticket"}
+                      </button>
+                      <button
+                        type="button"
+                        className="activation-reissue-button"
+                        onClick={clearCoordinationWorkshop}
+                      >
+                        Clear page
                       </button>
                     </>
                   ) : (

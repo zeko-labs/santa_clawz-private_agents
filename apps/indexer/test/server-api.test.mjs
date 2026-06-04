@@ -1157,6 +1157,32 @@ async function testProtectedApiAuth() {
     assert.match(publicWorkshopTicket.payload.ticket, /^scz_coord_/);
     assert.equal(publicWorkshopTicket.payload.threadId, "eventlog_public_workshop_auth_smoke");
 
+    const publicWorkshopTicketStatus = await requestJson(
+      `${baseUrl}/api/workshop/setup-tickets/${encodeURIComponent(publicWorkshopTicket.payload.ticketId)}/status?${new URLSearchParams({ ticket: publicWorkshopTicket.payload.ticket }).toString()}`,
+      { method: "GET" }
+    );
+    assert.equal(publicWorkshopTicketStatus.status, 200);
+    assert.equal(publicWorkshopTicketStatus.payload.claimedCount, 0);
+    assert.equal(publicWorkshopTicketStatus.payload.totalCount, 1);
+
+    const publicWorkshopTicketClaim = await requestJson(`${baseUrl}/api/workshop/setup-tickets/claim`, {
+      method: "POST",
+      body: JSON.stringify({
+        ticket: publicWorkshopTicket.payload.ticket,
+        agentId: "agent_public_workshop_auth_smoke"
+      })
+    });
+    assert.equal(publicWorkshopTicketClaim.status, 200);
+    assert.equal(publicWorkshopTicketClaim.payload.agentId, "agent_public_workshop_auth_smoke");
+
+    const publicWorkshopTicketClaimedStatus = await requestJson(
+      `${baseUrl}/api/workshop/setup-tickets/${encodeURIComponent(publicWorkshopTicket.payload.ticketId)}/status?${new URLSearchParams({ ticket: publicWorkshopTicket.payload.ticket }).toString()}`,
+      { method: "GET" }
+    );
+    assert.equal(publicWorkshopTicketClaimedStatus.status, 200);
+    assert.equal(publicWorkshopTicketClaimedStatus.payload.claimedCount, 1);
+    assert.ok(publicWorkshopTicketClaimedStatus.payload.claimedAgentsById.agent_public_workshop_auth_smoke);
+
     const tokenStateAccess = await requestJson(`${baseUrl}/api/executions/hire_missing/state?token=fake`, {
       method: "GET"
     });

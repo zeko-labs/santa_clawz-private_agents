@@ -149,6 +149,10 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && /^\/api\/workshop\/setup-tickets\/[^/]+\/status$/.test(pathname)) {
+    return true;
+  }
+
   if (method === "POST" && /^\/api\/artifact-receipts\/[^/]+\/acknowledge$/.test(pathname)) {
     return true;
   }

@@ -363,6 +363,21 @@ export interface CoordinationSetupTicketResponse {
   swarmId: string;
 }
 
+export interface CoordinationSetupTicketStatusResponse {
+  schemaVersion: "santaclawz-coordination-setup-ticket-status/0.1";
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  status: "pending" | "expired";
+  participantAgentIds: string[];
+  claimedCount: number;
+  totalCount: number;
+  claimedAgentsById: Record<string, { claimedAtIso: string }>;
+  privacyMode: string;
+  threadId: string;
+  swarmId: string;
+}
+
 async function request<T>(path: string, init?: RequestInit, adminContext?: AdminKeyContext): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
   const method = String(init?.method ?? "GET").toUpperCase();
@@ -626,6 +641,13 @@ export function createCoordinationSetupTicket(manifest: unknown): Promise<Coordi
     method: "POST",
     body: JSON.stringify({ manifest })
   });
+}
+
+export function fetchCoordinationSetupTicketStatus(ticket: CoordinationSetupTicketResponse): Promise<CoordinationSetupTicketStatusResponse> {
+  const params = new URLSearchParams({ ticket: ticket.ticket });
+  return request<CoordinationSetupTicketStatusResponse>(
+    `/api/workshop/setup-tickets/${encodeURIComponent(ticket.ticketId)}/status?${params.toString()}`
+  );
 }
 
 export function submitHireRequest(

@@ -656,6 +656,21 @@ interface CoordinationSetupTicketIssueResult {
   swarmId: string;
 }
 
+interface CoordinationSetupTicketStatusResult {
+  schemaVersion: "santaclawz-coordination-setup-ticket-status/0.1";
+  ticketId: string;
+  issuedAtIso: string;
+  expiresAtIso: string;
+  status: "pending" | "expired";
+  participantAgentIds: string[];
+  claimedCount: number;
+  totalCount: number;
+  claimedAgentsById: Record<string, { claimedAtIso: string }>;
+  privacyMode: string;
+  threadId: string;
+  swarmId: string;
+}
+
 interface CoordinationSetupTicketClaimResult {
   schemaVersion: typeof COORDINATION_AGENT_SETUP_SCHEMA_VERSION;
   ticketId: string;
@@ -10967,6 +10982,43 @@ export class ClawzControlPlane {
       expiresAtIso,
       claimEndpoint: "/api/workshop/setup-tickets/claim",
       participantAgentIds: normalized.participants.map((participant) => assertStringValue(participant, "agentId", "Coordination manifest participant")),
+      privacyMode: normalized.privacyMode,
+      threadId: normalized.threadId,
+      swarmId: normalized.swarmId
+    };
+  }
+
+  async getCoordinationSetupTicketStatus(input: { ticketId: string; ticket: string }): Promise<CoordinationSetupTicketStatusResult> {
+    const parsedTicket = parseCoordinationSetupTicketToken(input.ticket);
+    if (parsedTicket.ticketId !== input.ticketId) {
+      throw new Error("Coordination setup ticket id does not match the ticket secret.");
+    }
+    const state = await this.loadState();
+    const record = state.coordinationSetupTicketsById[parsedTicket.ticketId];
+    if (!record) {
+      throw new Error("Coordination setup ticket was not found.");
+    }
+    if (!timingSafeEqualHex(record.ticketHash, sha256Hex(parsedTicket.ticket))) {
+      throw new Error("Coordination setup ticket secret was rejected.");
+    }
+    const normalized = this.normalizeCoordinationManifest(record.manifest);
+    const participantAgentIds = normalized.participants.map((participant) =>
+      assertStringValue(participant, "agentId", "Coordination manifest participant")
+    );
+    const claimedAgentsById = Object.fromEntries(
+      Object.entries(record.claimedAgentsById).filter(([agentId]) => participantAgentIds.includes(agentId))
+    );
+    const expired = Date.parse(record.expiresAtIso) <= Date.now();
+    return {
+      schemaVersion: "santaclawz-coordination-setup-ticket-status/0.1",
+      ticketId: record.ticketId,
+      issuedAtIso: record.issuedAtIso,
+      expiresAtIso: record.expiresAtIso,
+      status: expired ? "expired" : record.status,
+      participantAgentIds,
+      claimedCount: Object.keys(claimedAgentsById).length,
+      totalCount: participantAgentIds.length,
+      claimedAgentsById,
       privacyMode: normalized.privacyMode,
       threadId: normalized.threadId,
       swarmId: normalized.swarmId
