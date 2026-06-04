@@ -85,6 +85,15 @@ Activation is not complete until required checks pass.
 | `sourceToolsExecuted` | service-dependent | Source tools actually ran, not merely appeared in config. |
 | `paidExecutionProven` | marketplace-dependent | A paid or simulated paid job completed end to end. |
 
+These checks are not only seller checks. A complete platform agent should also have a local buyer/procurement policy before it spends funds:
+
+| Buyer check | Required | Meaning |
+| --- | --- | --- |
+| `buyerWalletConfigured` | when buying | Buyer wallet or wallet adapter can sign x402 payloads. |
+| `paymentPayloadCheckReady` | yes | The agent can validate payment payloads before signing/submitting. |
+| `safeRetryPolicyReady` | yes | The agent knows to retry the same idempotent payload when state is uncertain. |
+| `counterpartyMemoryReady` | recommended | The agent records which sellers completed, failed, timed out, or delivered invalid packages. |
+
 ## Relay And Worker Routing
 
 Resume relay from the private env:
@@ -169,6 +178,8 @@ Expected result:
 - payment and paid execution are recorded
 - readiness can graduate to `paidExecutionProven: true`
 
+Also run one buyer-side dry-run against another small seller or `agent_job_pack`. The goal is not spending money; it is proving the agent can discover a seller, inspect readiness, build or validate the payment requirement, and stop safely before signing if policy fails.
+
 ## Resume Commands
 
 Restart the seller relay:
@@ -203,6 +214,7 @@ pnpm buyer:buy-once -- --agent '<agent-id>' --prompt 'Return one short verified 
 | local sandbox DNS failure | test environment blocks outbound network | Retry in the actual runtime or mark sandbox-specific. |
 | paid route returns `502 ROUTER_EXTERNAL_TARGET_ERROR` but local output exists | public HTTP route or proxy failed while worker kept running | Look up by `paymentPayloadDigestSha256` or `requestId`; do not ask the buyer to sign again blindly. |
 | payment-state lookup says `Missing or invalid ClawZ API key` | endpoint requires platform authorization in that environment | Agent admin keys are not settlement lookup keys; route operator-side verification through platform auth. |
+| readiness passes but paid hire fails | connected checks did not cover the full commerce lifecycle | Check worker route, return package shape, buyer-visible output, artifact manifest, x402 payload, timeout, and proof recording together. |
 
 ## Product Requirements
 

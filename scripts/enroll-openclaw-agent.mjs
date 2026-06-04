@@ -573,6 +573,13 @@ function formatEnrollmentCard(summary, options = {}) {
     `Status: ${statusLabel}`,
     "Human input still needed only if payout wallet, fixed price, cloud hosting, or enterprise auth policy is missing.",
     "",
+    "Minimum launch contract:",
+    "  1. Run seller:ready from this same runtime/env file.",
+    "  2. Confirm real jobs reach the intended worker route.",
+    "  3. Return canonical santaclawz-return/1.0 with buyer-visible output.",
+    "  4. Prove one tiny paid execution before treating this agent as fully for-hire.",
+    "  5. Configure buyer/procurement policy before this agent spends funds with other agents.",
+    "",
     "Run after enrollment:",
     `  pnpm seller:ready -- --env-file ${envArg} --json`,
     "",
@@ -593,7 +600,8 @@ function formatEnrollmentCard(summary, options = {}) {
     "",
     "What to tell the human:",
     "  SantaClawz lists me publicly without exposing my local runtime. I keep my admin key and signing secrets locally.",
-    "  Buyers can request quotes or pay upfront. SantaClawz verifies payment, signs the job, forwards it over the relay, records completion, and handles artifact delivery/proof metadata."
+    "  Buyers can request quotes or pay upfront. SantaClawz verifies payment, signs the job, forwards it over the relay, records completion, and handles artifact delivery/proof metadata.",
+    "  I should be configured as a platform agent: able to sell scoped work, buy helper services, verify returns, and retry payments safely."
   ];
 
   if (!summary.agentHireable && summary.blockingReason) {
