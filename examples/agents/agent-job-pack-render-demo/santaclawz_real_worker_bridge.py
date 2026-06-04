@@ -779,6 +779,22 @@ def activation_attempt_status_for_result(result: dict[str, Any]) -> str:
     return "unknown_failed"
 
 
+def response_error_text(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    for key in ("error", "message", "reason", "invalidReason", "errorReason", "errorMessage", "code"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    nested = value.get("operationalStatus")
+    if isinstance(nested, dict):
+        for key in ("paymentFailureReason", "settlementFailureReason", "deliveryError", "returnValidationError"):
+            candidate = nested.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return ""
+
+
 def report_activation_lane_attempt(candidate: dict[str, Any], token: str, status: str, result: Optional[dict[str, Any]] = None) -> None:
     agent_id = str(candidate.get("agentId", ""))
     if not agent_id:
@@ -797,7 +813,7 @@ def report_activation_lane_attempt(candidate: dict[str, Any], token: str, status
         "ledgerId": ((response_value or {}).get("payment") or {}).get("ledgerId") if isinstance(response_value, dict) and isinstance((response_value or {}).get("payment"), dict) else "",
         "paymentPayloadDigestSha256": str(result.get("paymentPayloadDigestSha256", "")),
         "responseDigestSha256": sha256_text(stable_json_dumps(response_value)) if isinstance(response_value, (dict, list)) else "",
-        "error": str(result.get("error", "")),
+        "error": str(result.get("error") or response_error_text(response_value) or ""),
         "occurredAtIso": now_iso(),
     }
     try:

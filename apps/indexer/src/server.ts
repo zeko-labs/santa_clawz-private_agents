@@ -6740,7 +6740,7 @@ app.post("/api/activation-lane/attempts", route(async (request, response) => {
 
 type ActivationLaneCandidateAgent = Awaited<ReturnType<ClawzControlPlane["listRegisteredAgents"]>>[number];
 
-function activationLaneExclusionReasons(agent: ActivationLaneCandidateAgent, force: boolean) {
+function activationLaneExclusionReasons(agent: ActivationLaneCandidateAgent, options: { force: boolean; retryAfterSeconds: number }) {
   const reasons: string[] = [];
   if (agent.availability !== "active") {
     reasons.push("not-active");
@@ -6754,8 +6754,14 @@ function activationLaneExclusionReasons(agent: ActivationLaneCandidateAgent, for
   if (!agent.paymentProfileReady) {
     reasons.push("payment-profile-not-ready");
   }
-  if (!force && agent.readiness?.paidExecutionProven === true) {
+  if (!options.force && agent.readiness?.paidExecutionProven === true) {
     reasons.push("paid-execution-already-proven");
+  }
+  const lastAttemptMs = agent.activationLaneStatus?.lastAttemptAtIso
+    ? Date.parse(agent.activationLaneStatus.lastAttemptAtIso)
+    : NaN;
+  if (!options.force && Number.isFinite(lastAttemptMs) && Date.now() - lastAttemptMs < options.retryAfterSeconds * 1000) {
+    reasons.push("activation-lane-cooldown");
   }
   if (agent.readiness?.heartbeatLive !== true) {
     reasons.push("heartbeat-not-live");
@@ -6815,7 +6821,7 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
     .filter((agent) => !requestedAgentId || agent.agentId === requestedAgentId)
     .map((agent) => ({
       agent,
-      exclusionReasons: activationLaneExclusionReasons(agent, force)
+      exclusionReasons: activationLaneExclusionReasons(agent, { force, retryAfterSeconds })
     }));
   const candidates = activationRows
     .filter((row) => row.exclusionReasons.length === 0)

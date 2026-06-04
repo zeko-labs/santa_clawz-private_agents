@@ -2502,8 +2502,24 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         authorization: "Bearer test_activation_lane_token"
       }
     });
-    const attemptedCandidate = activationCandidatesAfterAttempt.payload.candidates.find((candidate) => candidate.agentId === agentId);
-    assert.equal(attemptedCandidate.activationLaneStatus.lastAttemptStatus, "preview_only");
+    assert.equal(
+      activationCandidatesAfterAttempt.payload.candidates.some((candidate) => candidate.agentId === agentId),
+      false
+    );
+
+    const activationCooldownDiagnostics = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&includeDiagnostics=true`,
+      {
+        headers: {
+          "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(activationCooldownDiagnostics.status, 200);
+    assert.deepEqual(
+      activationCooldownDiagnostics.payload.diagnostics.excludedAgents[0]?.exclusionReasons,
+      ["activation-lane-cooldown"]
+    );
 
     const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -2550,9 +2566,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(activationDiagnostics.payload.total, 0);
     assert.equal(activationDiagnostics.payload.diagnostics.totalRegisteredMatching, 1);
     assert.equal(activationDiagnostics.payload.diagnostics.totalEligible, 0);
-    assert.deepEqual(
-      activationDiagnostics.payload.diagnostics.excludedAgents[0]?.exclusionReasons,
-      ["paid-execution-already-proven"]
+    assert.equal(
+      activationDiagnostics.payload.diagnostics.excludedAgents[0]?.exclusionReasons.includes("paid-execution-already-proven"),
+      true
     );
 
     const forcedActivationCandidates = await requestJson(
