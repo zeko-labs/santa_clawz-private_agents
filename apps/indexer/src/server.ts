@@ -121,7 +121,7 @@ const PUBLIC_READ_RATE_LIMIT_WINDOW_MS = Math.max(
 );
 const PUBLIC_READ_RATE_LIMIT_MAX_COST = Math.max(
   60,
-  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST ?? "600"))
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST ?? "2400"))
 );
 const USD_MICRO_SCALE = 1_000_000n;
 const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
@@ -297,8 +297,11 @@ function publicReadRouteCost(pathname: string, method: string): number {
   if (pathname === "/api/agents/search") {
     return 4;
   }
-  if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname) || /^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
-    return 4;
+  if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
+    return 2;
+  }
+  if (/^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
+    return 1;
   }
   if (/^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
     return 8;
