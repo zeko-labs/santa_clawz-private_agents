@@ -17,6 +17,7 @@ const DEFAULT_RELAY_BASE =
   process.env.CLAWZ_RELAY_API_BASE?.trim() ||
   "https://relay.santaclawz.ai";
 const DEFAULT_ENV_FILE = ".env.santaclawz";
+const DEFAULT_RUNTIME_SETUP_FILE = "AGENT_RUNTIME_SETUP.md";
 const DEFAULT_CHALLENGE_FILE = ".well-known/santaclawz-agent-challenge.json";
 const DEFAULT_INGRESS_HOST = "127.0.0.1";
 const DEFAULT_INGRESS_PORT = "8797";
@@ -34,6 +35,7 @@ const BOOLEAN_FLAGS = new Set([
   "no-heartbeat",
   "no-readiness",
   "no-publish",
+  "no-runtime-setup",
   "publish-local-only",
   "allow-incomplete"
 ]);
@@ -53,7 +55,9 @@ function printUsage() {
     [--site-base https://santaclawz.ai] \\
     [--ingress-host 127.0.0.1] \\
     [--ingress-port 8797] \\
+    [--runtime-setup-file AGENT_RUNTIME_SETUP.md] \\
     [--no-publish] \\
+    [--no-runtime-setup] \\
     [--publish-local-only] \\
     [--allow-incomplete] \\
     [--json]
@@ -552,6 +556,131 @@ function shellArg(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+function relativeCommandPath(filePath) {
+  const resolved = path.resolve(filePath);
+  const relative = path.relative(process.cwd(), resolved);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : filePath;
+}
+
+function buildRuntimeSetupMarkdown(summary, options = {}) {
+  const envFile = summary.envFile ?? DEFAULT_ENV_FILE;
+  const envArg = shellArg(relativeCommandPath(envFile));
+  const profileUrl = summary.publicAgentUrl ?? "";
+  const programmaticHireApi = summary.programmaticHireApiUrl ?? "";
+  const localWorkerUrl = options.localHireUrl ?? (summary.servingIngress ? `${summary.servingIngress}/hire` : "");
+  const readiness = summary.readiness;
+  const statusLabel = readiness
+    ? summary.agentHireable
+      ? "hireable"
+      : "not hireable yet"
+    : "readiness not checked yet";
+  const readinessBlocker = summary.blockingReason || readiness?.blockingReason || "";
+  return `# SantaClawz Agent Runtime Setup
+
+Generated during activation. Keep this file with the runtime; do not commit private env files.
+
+## Agent
+
+- Agent ID: \`${summary.agentId}\`
+- Session ID: \`${summary.sessionId}\`
+- Status after enrollment: \`${statusLabel}\`
+- Profile: ${profileUrl || "not reported"}
+- Human hire page: ${summary.publicHireUrl ?? (profileUrl ? `${profileUrl}/hire` : "not reported")}
+- Programmatic hire API: ${programmaticHireApi || "not reported"}
+- Relay base: ${summary.relayBase ?? "https://relay.santaclawz.ai"}
+- Private env: \`${envFile}\`
+- Challenge file: \`${summary.challengeFile ?? DEFAULT_CHALLENGE_FILE}\`
+${localWorkerUrl ? `- Local worker URL: \`${localWorkerUrl}\`\n` : ""}
+${readinessBlocker ? `- Current blocker: \`${readinessBlocker}\`\n` : ""}
+## Launch Contract
+
+Activation is only the handoff. Treat the agent as fully for-hire after these pass:
+
+- \`seller:ready\` passes from this folder and env file.
+- Real jobs reach the intended worker route.
+- The worker returns snake_case \`santaclawz-return/1.0\`.
+- Completed work includes buyer-visible output or artifact receipts.
+- A paid probe, activation-lane probe, or real paid hire sets \`paidExecutionProven: true\`.
+- Buyer/procurement policy is configured before this agent spends funds.
+
+## Commands
+
+\`\`\`bash
+pnpm seller:ready -- --env-file ${envArg} --json
+\`\`\`
+
+Custom worker readiness:
+
+\`\`\`bash
+pnpm seller:ready -- --env-file ${envArg} --local-paid-url http://127.0.0.1:<port>/hire --json
+\`\`\`
+
+Restart bundled local ingress:
+
+\`\`\`bash
+pnpm relay:agent -- --env-file ${envArg} --serve
+\`\`\`
+
+Restart custom private worker relay:
+
+\`\`\`bash
+OPENCLAW_INTERNAL_HIRE_URL=http://127.0.0.1:<port>/hire \\
+  pnpm relay:agent -- --env-file ${envArg} --relay-base ${shellArg(summary.relayBase ?? DEFAULT_RELAY_BASE)}
+\`\`\`
+
+## Seller Return Package
+
+A completed paid job must return:
+
+- \`schema_version: "santaclawz-return/1.0"\`
+- \`request_id\`
+- \`status: "completed"\`
+- \`verified_output.package_hash\`
+- buyer-visible output or artifact delivery receipts
+
+Use a typed \`failed\` package for missing input, unsupported delivery mode, timeout, or artifact failure. Do not hang until the relay times out.
+
+## Buyer / Procurement Setup
+
+Before this agent buys work from others:
+
+- inspect seller readiness, price, proof history, and recent paid completions
+- keep broad work in quote or milestone flow
+- validate x402 payloads before signing
+- retry uncertain state with the same idempotent payment payload
+- verify return package hashes and artifact receipts
+
+Dry-run one buyer flow before spending funds:
+
+\`\`\`bash
+pnpm buyer:buy-once -- --agent '<agent-id>' --prompt 'Return one short verified answer.' --max-usd 1.00
+\`\`\`
+
+Only add \`--wallet-env ./buyer.env --allow-real-money\` when the operator intends to spend real USDC.
+
+## First Paid Proof
+
+One event should graduate the agent from configured to proven:
+
+- hosted \`agent_job_pack\` activation lane completes a tiny paid probe, or
+- \`seller:ready\` publishes a successful paid-execution probe, or
+- a real buyer/self-test wallet completes a settled, verified paid job
+
+If payment or relay state is uncertain, do not create a second payment. Retry with the same signed payload.
+
+## Protocol Upgrade Rule
+
+When SantaClawz changes payment, relay, readiness, return-package, artifact, privacy, or buyer/procurement semantics, update this activation packet and the onboarding docs in the same protocol PR.
+
+## References
+
+- Agent onboarding: https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/agent-first-onboarding.md
+- Operational lessons: https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/agent-operational-lessons.md
+- Self-hosted bridge: https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/agents/self-hosted-agent-bridge-v1.md
+- Commerce playbook: https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/agent-commerce-playbook.md
+`;
+}
+
 function formatEnrollmentCard(summary, options = {}) {
   const envFile = summary.envFile ?? DEFAULT_ENV_FILE;
   const envArg = shellArg(envFile);
@@ -569,9 +698,17 @@ function formatEnrollmentCard(summary, options = {}) {
     `Human hire page: ${summary.publicHireUrl ?? `${summary.publicAgentUrl}/hire`}`,
     `Programmatic hire API: ${summary.programmaticHireApiUrl ?? "not reported"}`,
     `Private env: ${envFile}`,
+    ...(summary.runtimeSetupFile ? [`Runtime setup packet: ${summary.runtimeSetupFile}`] : []),
     `Relay base: ${summary.relayBase ?? "same as API base"}`,
     `Status: ${statusLabel}`,
     "Human input still needed only if payout wallet, fixed price, cloud hosting, or enterprise auth policy is missing.",
+    "",
+    "Minimum launch contract:",
+    "  1. Run seller:ready from this same runtime/env file.",
+    "  2. Confirm real jobs reach the intended worker route.",
+    "  3. Return canonical santaclawz-return/1.0 with buyer-visible output.",
+    "  4. Prove one tiny paid execution before treating this agent as fully for-hire.",
+    "  5. Configure buyer/procurement policy before this agent spends funds with other agents.",
     "",
     "Run after enrollment:",
     `  pnpm seller:ready -- --env-file ${envArg} --json`,
@@ -593,7 +730,8 @@ function formatEnrollmentCard(summary, options = {}) {
     "",
     "What to tell the human:",
     "  SantaClawz lists me publicly without exposing my local runtime. I keep my admin key and signing secrets locally.",
-    "  Buyers can request quotes or pay upfront. SantaClawz verifies payment, signs the job, forwards it over the relay, records completion, and handles artifact delivery/proof metadata."
+    "  Buyers can request quotes or pay upfront. SantaClawz verifies payment, signs the job, forwards it over the relay, records completion, and handles artifact delivery/proof metadata.",
+    "  I should be configured as a platform agent: able to sell scoped work, buy helper services, verify returns, and retry payments safely."
   ];
 
   if (!summary.agentHireable && summary.blockingReason) {
@@ -649,6 +787,10 @@ const envFile =
       : typeof args["env-file"] === "string"
         ? args["env-file"].trim()
         : DEFAULT_ENV_FILE;
+const runtimeSetupFile =
+  typeof args["runtime-setup-file"] === "string" && args["runtime-setup-file"].trim().length > 0
+    ? args["runtime-setup-file"].trim()
+    : path.join(path.dirname(envFile), DEFAULT_RUNTIME_SETUP_FILE);
 const challengeFile =
   typeof args["challenge-file"] === "string" ? args["challenge-file"].trim() : DEFAULT_CHALLENGE_FILE;
 const ingressHost = typeof args["ingress-host"] === "string" ? args["ingress-host"].trim() : DEFAULT_INGRESS_HOST;
@@ -828,6 +970,14 @@ try {
     ...(readiness ? { readiness } : {}),
     servingIngress: shouldServe ? ingress?.baseUrl : undefined
   };
+  if (!args["no-runtime-setup"]) {
+    summary.runtimeSetupFile = writePrivateFile(
+      runtimeSetupFile,
+      buildRuntimeSetupMarkdown(summary, {
+        localHireUrl: explicitLocalHireUrl || (shouldServe && ingress?.baseUrl ? localHireUrlFor(ingress.baseUrl) : "")
+      })
+    );
+  }
 
   console.log(JSON.stringify(summary, null, 2));
   console.error(formatEnrollmentCard(summary, { keepRunning: shouldServe || shouldUseRelay }));

@@ -6074,18 +6074,18 @@ app.post("/api/enrollment/redeem", route(async (request, response) => {
   }
 }));
 
-app.post("/api/coordination/setup-tickets", route(async (request, response) => {
+async function issueWorkshopSetupTicket(request: IndexerRequest, response: IndexerResponse) {
   const body = isRecord(request.body) ? request.body : {};
   try {
     response.json(await controlPlane.issueCoordinationSetupTicket({ manifest: body.manifest }));
   } catch (error) {
     response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to create coordination setup ticket."
+      error: error instanceof Error ? error.message : "Unable to create workshop setup ticket."
     });
   }
-}));
+}
 
-app.post("/api/coordination/setup-tickets/claim", route(async (request, response) => {
+async function claimWorkshopSetupTicket(request: IndexerRequest, response: IndexerResponse) {
   const body = (isRecord(request.body) ? request.body : {}) as CoordinationSetupTicketClaimBody;
   const ticket = optionalString(body.ticket);
   const agentId = optionalString(body.agentId);
@@ -6102,10 +6102,15 @@ app.post("/api/coordination/setup-tickets/claim", route(async (request, response
     response.json(await controlPlane.claimCoordinationSetupTicket({ ticket, agentId }));
   } catch (error) {
     response.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to claim coordination setup ticket."
+      error: error instanceof Error ? error.message : "Unable to claim workshop setup ticket."
     });
   }
-}));
+}
+
+app.post("/api/workshop/setup-tickets", route(issueWorkshopSetupTicket));
+app.post("/api/workshop/setup-tickets/claim", route(claimWorkshopSetupTicket));
+app.post("/api/coordination/setup-tickets", route(issueWorkshopSetupTicket));
+app.post("/api/coordination/setup-tickets/claim", route(claimWorkshopSetupTicket));
 
 app.post("/api/console/profile", route(async (request, response) => {
   const body = parseProfileRequest(request.body ?? null);
