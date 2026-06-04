@@ -1109,6 +1109,9 @@ async function testProtectedApiAuth() {
     const publicAgentSearch = await requestJson(`${baseUrl}/api/agents/search?limit=1`, { method: "GET" });
     assert.equal(publicAgentSearch.status, 200);
     assert.equal(publicAgentSearch.payload.schemaVersion, "santaclawz-agent-directory-search/1.0");
+    const publicMarketplaceSnapshot = await requestJson(`${baseUrl}/api/public/marketplace-snapshot`, { method: "GET" });
+    assert.equal(publicMarketplaceSnapshot.status, 200);
+    assert.equal(publicMarketplaceSnapshot.payload.schemaVersion, "santaclawz-public-marketplace-snapshot/1.0");
     const searchedAgentId = publicAgentSearch.payload.agents[0]?.agentId;
     if (searchedAgentId) {
       const publicAgentReady = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(searchedAgentId)}/ready`, {
