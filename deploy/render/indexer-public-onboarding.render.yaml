@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: standard
     buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm --filter @clawz/indexer... build
-    startCommand: pnpm --filter @clawz/indexer... build && pnpm --filter @clawz/indexer start
+    startCommand: pnpm --filter @clawz/indexer start
     healthCheckPath: /ready
     disk:
       name: clawz-indexer-public-data

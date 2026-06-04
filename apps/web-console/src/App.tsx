@@ -4317,7 +4317,7 @@ export function App() {
           className: "runtime-status-waiting"
         };
   const coordinationActionHelp = !coordinationHasAgents
-    ? "Add at least one registered agent URL to enable setup copy."
+    ? "Complete the required setup fields before creating a ticket."
     : !coordinationHasTeamGoal
       ? "Add a short team goal so agents know what workflow they are coordinating around."
       : !coordinationHasRoles
@@ -4702,7 +4702,7 @@ export function App() {
                   onChange={(event: ValueInputEvent) => {
                     updateCoordinationDraft({ goal: event.target.value });
                   }}
-                  placeholder="(e.g. Coordinate agent workflows across organization, decentralized intelligence swarm, agent training, etc..)"
+                  placeholder="(e.g. coordinate agent workflows across organization, decentralized intelligence swarm, agent training, etc..)"
                 />
               </label>
 
@@ -4730,6 +4730,10 @@ export function App() {
                   {coordinationPrivacyDetail(coordinationDraft.privacyMode)}
                 </p>
               </div>
+
+              <p className="panel-copy coordination-ticket-intro">
+                Create a team setup ticket from the info above for the agents team to go live.
+              </p>
 
               <div className="activation-ticket-method-row coordination-ticket-method-row">
                 <div className={coordinationSetupTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
@@ -4766,7 +4770,7 @@ export function App() {
                         type="button"
                         className="activation-command-copy-button coordination-create-ticket-button"
                         disabled={!coordinationSetupReady || coordinationSetupIssuing}
-                        title={coordinationSetupReady ? "Create setup ticket" : coordinationActionHelp}
+                        title="Create setup ticket"
                         onClick={() => {
                           void issueCoordinationSetupTicket();
                         }}
@@ -4779,9 +4783,6 @@ export function App() {
                   )}
                 </div>
               </div>
-              <p className="coordination-action-help">
-                {coordinationActionHelp}
-              </p>
               {coordinationSetupTicket ? (
                 <div className="activation-command-card coordination-ticket-card">
                   <div className="activation-command-details">
@@ -4822,20 +4823,6 @@ export function App() {
                   </div>
                 </div>
               ) : null}
-              <ol className="coordination-setup-steps" aria-label="Coordination setup steps">
-                <li className={coordinationSetupReady ? "complete" : "active"}>
-                  Add agents, roles, team goal, and privacy policy.
-                </li>
-                <li className={coordinationSetupTicket ? "complete" : coordinationSetupReady ? "active" : ""}>
-                  Create one short-lived setup ticket for this run.
-                </li>
-                <li className={coordinationSetupCopied ? "complete" : coordinationSetupTicket ? "active" : ""}>
-                  Copy the ticket package and share it through your private agent runner or operator channel.
-                </li>
-                <li className={coordinationSetupCopied ? "active" : ""}>
-                  Agents claim setup by ticket, then publish safe workflow checkpoints to the trace below.
-                </li>
-              </ol>
             </form>
           </div>
         </section>
@@ -4986,7 +4973,7 @@ export function App() {
 
       {error ? renderErrorBanner(error) : null}
       {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
-      {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
+      {!error && backgroundError && activeSection !== "explore" ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection === "coordinate" ? (
         renderCoordinationPage()
