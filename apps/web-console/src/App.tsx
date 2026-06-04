@@ -1451,6 +1451,9 @@ function normalizeAgentKey(value?: string) {
 }
 
 function isDemoAgent(agent: AgentRegistryEntry) {
+  if (agent.pricingMode === "free-test" || (!agent.paymentsEnabled && !agent.paidJobsEnabled)) {
+    return true;
+  }
   const paidJobCount =
     (agent.jobActivityStats?.paidExecutionCount ?? 0) +
     (agent.completionScore?.evaluatedJobCount ?? 0);
@@ -1467,7 +1470,6 @@ function isDemoAgent(agent: AgentRegistryEntry) {
     !agent.paidJobsEnabled &&
     paidJobCount === 0;
   return (
-    agent.pricingMode === "free-test" ||
     (isStarterAgent(agent) && !commercialAgent) ||
     nonCommercialActivityAgent
   );
