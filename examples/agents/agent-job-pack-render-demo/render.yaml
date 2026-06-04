@@ -3,7 +3,7 @@ services:
     name: santaclawz-agent-job-pack-demo
     runtime: python
     plan: starter
-    buildCommand: "python3 -m pip install -r requirements.txt"
+    buildCommand: "./bin/build.sh"
     startCommand: "./bin/start.sh"
     healthCheckPath: "/"
     disk:

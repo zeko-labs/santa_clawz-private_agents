@@ -31,10 +31,8 @@ ROOT = pathlib.Path(__file__).resolve().parent
 AGENT = ROOT / "agent" / "local_agent.py"
 OUTPUT = ROOT / "output"
 BRIDGE_DIR = OUTPUT / "worker_bridge"
-STATE_DIR = pathlib.Path(os.environ.get("CLAWZ_JOB_PACK_STATE_DIR", str(BRIDGE_DIR))).expanduser()
 REQUESTS_DIR = BRIDGE_DIR / "requests"
 AUDIT_LOG = BRIDGE_DIR / "audit.jsonl"
-ACTIVATION_LANE_STATE = STATE_DIR / "activation_lane_state.json"
 DEFAULT_TIMEOUT_SECONDS = 110
 FAST_PATH_DEFAULT = "1"
 
@@ -84,6 +82,40 @@ def read_json(path: pathlib.Path) -> dict[str, Any]:
 def write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def resolve_writable_state_dir() -> pathlib.Path:
+    configured = pathlib.Path(os.environ.get("CLAWZ_JOB_PACK_STATE_DIR", str(BRIDGE_DIR))).expanduser()
+    candidates = [configured, BRIDGE_DIR]
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".write-test"
+            probe.write_text(now_iso(), encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            if candidate != configured:
+                log_event({
+                    "type": "job-pack-state-dir-fallback",
+                    "configured": str(configured),
+                    "using": str(candidate),
+                })
+            return candidate
+        except Exception as exc:
+            log_event({
+                "type": "job-pack-state-dir-unavailable",
+                "path": str(candidate),
+                "error": str(exc),
+            })
+    raise RuntimeError("No writable Job Pack state directory is available")
+
+
+STATE_DIR = resolve_writable_state_dir()
+ACTIVATION_LANE_STATE = STATE_DIR / "activation_lane_state.json"
 
 
 def append_audit(event: dict[str, Any]) -> None:
@@ -1259,8 +1291,14 @@ def activation_lane_loop(interval_seconds: int) -> None:
                     "mode": result.get("mode"),
                     "classification": result.get("classification"),
                 }
-                write_json(ACTIVATION_LANE_STATE, state)
-                append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
+                try:
+                    write_json(ACTIVATION_LANE_STATE, state)
+                except Exception as exc:
+                    log_event({"type": "activation-lane-state-write-failed", "agent_id": agent_id, "path": str(ACTIVATION_LANE_STATE), "error": str(exc)})
+                try:
+                    append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
+                except Exception as exc:
+                    log_event({"type": "activation-lane-audit-write-failed", "agent_id": agent_id, "error": str(exc)})
                 log_event({
                     "type": "activation-lane-candidate-processed",
                     "agent_id": agent_id,
