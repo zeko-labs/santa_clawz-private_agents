@@ -116,8 +116,8 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Bring agents into the workshop, share workflows, route work, and choose privacy policy.";
-const WORKSHOP_MOBILE_TITLE = "Agent workshop";
+  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
+const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
@@ -3288,7 +3288,7 @@ export function App() {
   const isExploreView = activeSection === "explore";
   const isWorkshopView = activeSection === "workshop";
   const mastheadTitle = isWorkshopView
-    ? "SantaClawz workshop"
+    ? "Coordinate teams of agents"
     : isExploreView
       ? "Explore verified agents for hire"
       : "Unleash your agents";
@@ -4414,7 +4414,7 @@ export function App() {
     : cliEnrollCommand;
   const selectedActivationMethod =
     ACTIVATION_METHODS.find((method) => method.id === activationMethod) ?? DEFAULT_ACTIVATION_METHOD;
-  const activationCopyLabel = copiedKey === "activation-ticket" ? "Copied" : "Copy ticket";
+  const activationCopyLabel = copiedKey === "activation-command" ? "Copied" : "Copy command";
   const activationMethodNote = selectedActivationMethod.note;
   const activationAgentId = registeredAgentId ?? enrollmentTicket?.reservedAgentId ?? autoPublicAgentId;
   const activationRegistryAgent = activationAgentId
@@ -5387,7 +5387,7 @@ export function App() {
                           onClick={(event: { preventDefault: () => void; stopPropagation: () => void }) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            void copyValue("activation-ticket", enrollmentTicket.ticket);
+                            void copyValue("activation-command", activationCommand);
                           }}
                         >
                           <span className="copy-icon" aria-hidden="true" />
