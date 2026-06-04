@@ -2649,11 +2649,13 @@ function lastHireStatusForSession(
   return latest?.status ?? "none";
 }
 
-function paidExecutionTerminalOutcome(request: HireRequestRecord, nowMs = Date.now()): "completed" | "failed" | "pending" {
+export function paidExecutionTerminalOutcome(request: HireRequestRecord, nowMs = Date.now()): "completed" | "failed" | "pending" {
   if (request.requestType !== "paid_execution") {
     return "pending";
   }
   if (request.status === "completed" && request.protocolReturn?.status === "completed") {
+    // Seller reputation is based on the seller's verified return contract.
+    // Buyer delivery/readability is exposed separately as buyerComplete/buyerDeliveryStatus.
     return request.protocolReturn.execution?.completionClassification === "agent_completed_verified"
       ? "completed"
       : "failed";
