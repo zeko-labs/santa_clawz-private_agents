@@ -448,6 +448,34 @@ function normalizeVerificationManifest(value, fallbackInputDigest, deliverables)
   };
 }
 
+function optionalString(value, maxLength) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maxLength)
+    : undefined;
+}
+
+function normalizeBuyerVisibleOutputs(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    .slice(0, 10)
+    .map((entry, index) => {
+      const name = optionalString(entry.name, 240) || `output-${index + 1}`;
+      const contentType = optionalString(entry.content_type, 120);
+      const text = optionalString(entry.text, 8000);
+      const sha256 = normalizeSha256(entry.sha256, "");
+      return {
+        name,
+        ...(contentType ? { content_type: contentType } : {}),
+        ...(text ? { text } : {}),
+        ...(sha256 ? { sha256 } : {})
+      };
+    })
+    .filter((entry) => entry.text || entry.sha256);
+}
+
 function normalizeSantaClawzReturnPackage(parsed, requestBody) {
   if (!parsed || typeof parsed !== "object" || parsed.schema_version !== "santaclawz-return/1.0") {
     return null;
@@ -498,6 +526,10 @@ function normalizeSantaClawzReturnPackage(parsed, requestBody) {
       inputDigest,
       deliverables
     );
+    const buyerVisibleOutputs = normalizeBuyerVisibleOutputs(verifiedOutput.buyer_visible_outputs);
+    const artifactManifestUrl = optionalString(verifiedOutput.artifact_manifest_url, 2048);
+    const artifactBundleDigestSha256 = normalizeSha256(verifiedOutput.artifact_bundle_digest_sha256, "");
+    const verificationManifestDigestSha256 = normalizeSha256(verifiedOutput.verification_manifest_digest_sha256, "");
     return {
       ...base,
       status: "completed",
@@ -512,7 +544,11 @@ function normalizeSantaClawzReturnPackage(parsed, requestBody) {
         package_hash: packageHash,
         hash_algorithm: "sha256",
         verification_manifest: verificationManifest,
-        deliverables
+        deliverables,
+        ...(buyerVisibleOutputs.length > 0 ? { buyer_visible_outputs: buyerVisibleOutputs } : {}),
+        ...(artifactManifestUrl ? { artifact_manifest_url: artifactManifestUrl } : {}),
+        ...(artifactBundleDigestSha256 ? { artifact_bundle_digest_sha256: artifactBundleDigestSha256 } : {}),
+        ...(verificationManifestDigestSha256 ? { verification_manifest_digest_sha256: verificationManifestDigestSha256 } : {})
       }
     };
   }

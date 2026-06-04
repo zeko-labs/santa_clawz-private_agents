@@ -713,6 +713,80 @@ async function requestJson(url, init = {}) {
   return { ok: response.ok, status: response.status, payload };
 }
 
+function firstRecord(...values) {
+  return values.find((value) => isRecord(value)) ?? {};
+}
+
+function arrayValue(source, key) {
+  return isRecord(source) && Array.isArray(source[key]) ? source[key] : [];
+}
+
+function stringValue(source, key) {
+  return isRecord(source) && typeof source[key] === "string" ? source[key] : "";
+}
+
+function buyerDeliveryProjection(payload) {
+  const response = isRecord(payload?.response) ? payload.response : payload;
+  const protocolReturn = firstRecord(response?.protocolReturn, payload?.protocolReturn);
+  const verifiedOutput = firstRecord(
+    protocolReturn.verifiedOutput,
+    protocolReturn.verified_output,
+    response?.verifiedOutput,
+    response?.verified_output,
+    response?.delivery?.protocolVerifiedOutput,
+    payload?.verifiedOutput,
+    payload?.verified_output
+  );
+  const delivery = firstRecord(response?.delivery, payload?.delivery);
+  const lifecycle = firstRecord(response?.lifecycle, payload?.lifecycle);
+  const lifecycleChecks = firstRecord(response?.lifecycleChecks, payload?.lifecycleChecks);
+  const workspace = firstRecord(response?.workspace, payload?.workspace);
+  const artifactReceipts = arrayValue(delivery, "artifactReceipts");
+  const buyerVisibleOutputs = [
+    ...arrayValue(verifiedOutput, "buyerVisibleOutputs"),
+    ...arrayValue(verifiedOutput, "buyer_visible_outputs")
+  ].filter((entry) => isRecord(entry));
+  const inlineOutputCount = buyerVisibleOutputs.filter((entry) =>
+    typeof entry.text === "string" && entry.text.trim().length > 0
+  ).length;
+  const artifactManifestUrl =
+    stringValue(verifiedOutput, "artifactManifestUrl") ||
+    stringValue(verifiedOutput, "artifact_manifest_url");
+  const artifactBundleDigestSha256 =
+    stringValue(verifiedOutput, "artifactBundleDigestSha256") ||
+    stringValue(verifiedOutput, "artifact_bundle_digest_sha256");
+  const artifactReceiptCount = artifactReceipts.length;
+  const workspaceMessageCount = typeof workspace.messageCount === "number" ? workspace.messageCount : 0;
+  const artifactAvailable = Boolean(artifactManifestUrl || artifactBundleDigestSha256 || artifactReceiptCount > 0);
+  const inlineAvailable = inlineOutputCount > 0;
+  const workspaceAvailable = workspaceMessageCount > 0 && (
+    stringValue(lifecycle, "buyerAcceptanceStatus") === "accepted" ||
+    stringValue(response, "currentPhase") === "buyer_accepted"
+  );
+  const buyerDeliveryStatus = inlineAvailable
+    ? "inline_available"
+    : artifactAvailable
+      ? "artifact_available"
+      : workspaceAvailable
+        ? "workspace_available"
+        : lifecycleChecks.failed === true
+          ? "failed"
+          : "missing";
+  return {
+    buyerDeliveryStatus,
+    buyerDeliveryAvailable: inlineAvailable || artifactAvailable || workspaceAvailable,
+    buyerVisibleOutputCount: buyerVisibleOutputs.length,
+    inlineOutputCount,
+    artifactDeliveryAvailable: artifactAvailable,
+    artifactDeliveryStatus:
+      stringValue(lifecycle, "artifactDeliveryStatus") ||
+      (artifactAvailable ? "delivered" : "not_delivered"),
+    artifactReceiptCount,
+    buyerVerificationStatus: stringValue(lifecycle, "buyerVerificationStatus") || "not_verified",
+    buyerAcceptanceStatus: stringValue(lifecycle, "buyerAcceptanceStatus") || "pending"
+  };
+}
+
 function paidExecutionSummary(responseOk, payload) {
   const operational = isRecord(payload?.operationalStatus) ? payload.operationalStatus : {};
   const payment = isRecord(payload?.payment) ? payload.payment : {};
@@ -728,17 +802,27 @@ function paidExecutionSummary(responseOk, payload) {
     paymentAccepted &&
     ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
     agentExecutionStatus === "completed";
-  const jobCompleted =
+  const sellerExecutionCompleted =
     workCompleted &&
     (settlementStatus === "settled" || settlementStatus === "authorized" || settlementStatus === "not_required");
+  const buyerDelivery = buyerDeliveryProjection(payload);
+  const buyerComplete = sellerExecutionCompleted && buyerDelivery.buyerDeliveryAvailable;
   const acceptedPendingResult =
     responseOk &&
     relayDeliveryStatus === "acknowledged" &&
     agentExecutionStatus === "running_or_unknown";
+  const sellerFault =
+    agentExecutionStatus === "failed" ||
+    relayDeliveryStatus === "return_rejected" ||
+    stringFrom(payload, "returnValidationError") ||
+    stringFrom(payload, "returnValidationCode");
+  const outputUnavailable = sellerExecutionCompleted && !buyerDelivery.buyerDeliveryAvailable;
   return {
-    ok: jobCompleted,
-    code: jobCompleted
-      ? "paid_execution_completed"
+    ok: buyerComplete,
+    code: buyerComplete
+      ? "paid_execution_buyer_complete"
+      : outputUnavailable
+        ? "paid_execution_output_unavailable"
       : acceptedPendingResult
         ? "job_running_or_return_timeout"
         : "paid_execution_not_completed",
@@ -746,9 +830,27 @@ function paidExecutionSummary(responseOk, payload) {
     settlementStatus,
     relayDeliveryStatus,
     agentExecutionStatus,
-    completionMode: jobCompleted ? (settlementStatus === "settled" ? "inline_settled" : "inline_return_verified") : "none",
+    sellerExecutionCompleted,
+    buyerComplete,
+    ...buyerDelivery,
+    sellerReputationImpact: sellerFault
+      ? "seller_failure"
+      : outputUnavailable
+        ? "none_until_delivery_fault_attributed"
+        : "none",
+    completionMode: buyerComplete
+      ? (settlementStatus === "settled" ? "buyer_delivery_settled" : "buyer_delivery_return_verified")
+      : sellerExecutionCompleted
+        ? "seller_return_verified_buyer_delivery_missing"
+        : "none",
     retryable: paymentAccepted && agentExecutionStatus !== "completed",
-    nextAction: jobCompleted ? "none" : acceptedPendingResult ? "poll_state_or_resume_same_payment" : "inspect_payment_or_execution_state",
+    nextAction: buyerComplete
+      ? "none"
+      : outputUnavailable
+        ? "inspect_buyer_delivery_or_artifact_state"
+        : acceptedPendingResult
+          ? "poll_state_or_resume_same_payment"
+          : "inspect_payment_or_execution_state",
     ...(acceptedPendingResult
       ? {
           safeToRetrySamePayload: true,
@@ -786,22 +888,28 @@ function recoveredCompletionFromState(payload) {
   const relayDeliveryStatus = typeof lifecycle.relayDeliveryStatus === "string" ? lifecycle.relayDeliveryStatus : "";
   const agentExecutionStatus = typeof lifecycle.agentExecutionStatus === "string" ? lifecycle.agentExecutionStatus : "";
   const proofStatus = typeof lifecycle.proofStatus === "string" ? lifecycle.proofStatus : "";
+  const buyerDelivery = buyerDeliveryProjection(payload);
+  const sellerExecutionCompleted =
+    agentExecutionStatus === "completed" &&
+    ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
+    (proofStatus === "return_validated" || proofStatus === "anchored_or_attested");
   const failed = checks.failed === true;
-  const completed =
+  const returnVerified =
     !failed &&
     (
-      currentPhase === "return_verified" ||
       currentPhase === "artifact_delivered" ||
       currentPhase === "buyer_verified" ||
       currentPhase === "buyer_accepted" ||
-      (
-        agentExecutionStatus === "completed" &&
-        ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
-        (proofStatus === "return_validated" || proofStatus === "anchored_or_attested")
-      )
+      currentPhase === "return_verified" ||
+      sellerExecutionCompleted
     );
+  const completed = returnVerified && buyerDelivery.buyerDeliveryAvailable;
+  const outputUnavailable = returnVerified && !buyerDelivery.buyerDeliveryAvailable;
   return {
     completed,
+    sellerExecutionCompleted: returnVerified,
+    buyerComplete: completed,
+    outputUnavailable,
     failed,
     currentPhase,
     paymentStatus: typeof lifecycle.paymentStatus === "string" ? lifecycle.paymentStatus : "unknown",
@@ -809,7 +917,7 @@ function recoveredCompletionFromState(payload) {
     relayDeliveryStatus: relayDeliveryStatus || "unknown",
     agentExecutionStatus: agentExecutionStatus || "unknown",
     proofStatus: proofStatus || "unknown",
-    artifactDeliveryStatus: typeof lifecycle.artifactDeliveryStatus === "string" ? lifecycle.artifactDeliveryStatus : "unknown"
+    ...buyerDelivery
   };
 }
 
@@ -847,6 +955,16 @@ async function pollRecoverableExecutionState(stateUrl, maxMs = DEFAULT_RECOVERY_
           recovered: false,
           terminal: true,
           elapsedMs: Date.now() - startedAt,
+          state: state.payload,
+          completion
+        };
+      }
+      if (completion.outputUnavailable) {
+        return {
+          recovered: false,
+          terminal: true,
+          elapsedMs: Date.now() - startedAt,
+          reason: "paid_execution_output_unavailable",
           state: state.payload,
           completion
         };
@@ -1196,8 +1314,8 @@ const recoveryPoll = summary.code === "job_running_or_return_timeout"
 const recoveredSummary = recoveryPoll?.recovered
   ? {
       ok: true,
-      code: "paid_execution_recovered",
-      completionMode: "recovered_return_verified",
+      code: "paid_execution_buyer_complete",
+      completionMode: "recovered_buyer_delivery_available",
       retryable: false,
       nextAction: "none",
       paymentStatus: recoveryPoll.completion.paymentStatus,
@@ -1205,8 +1323,40 @@ const recoveredSummary = recoveryPoll?.recovered
       relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
       agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
       proofStatus: recoveryPoll.completion.proofStatus,
-      artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus
+      sellerExecutionCompleted: recoveryPoll.completion.sellerExecutionCompleted,
+      buyerComplete: recoveryPoll.completion.buyerComplete,
+      buyerDeliveryStatus: recoveryPoll.completion.buyerDeliveryStatus,
+      buyerDeliveryAvailable: recoveryPoll.completion.buyerDeliveryAvailable,
+      buyerVisibleOutputCount: recoveryPoll.completion.buyerVisibleOutputCount,
+      artifactDeliveryAvailable: recoveryPoll.completion.artifactDeliveryAvailable,
+      artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
+      buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
+      buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
+      sellerReputationImpact: "none"
     }
+  : recoveryPoll?.completion?.outputUnavailable
+    ? {
+        ok: false,
+        code: "paid_execution_output_unavailable",
+        completionMode: "seller_return_verified_buyer_delivery_missing",
+        retryable: false,
+        nextAction: "inspect_buyer_delivery_or_artifact_state",
+        paymentStatus: recoveryPoll.completion.paymentStatus,
+        settlementStatus: recoveryPoll.completion.settlementStatus,
+        relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
+        agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
+        proofStatus: recoveryPoll.completion.proofStatus,
+        sellerExecutionCompleted: recoveryPoll.completion.sellerExecutionCompleted,
+        buyerComplete: false,
+        buyerDeliveryStatus: recoveryPoll.completion.buyerDeliveryStatus,
+        buyerDeliveryAvailable: false,
+        buyerVisibleOutputCount: recoveryPoll.completion.buyerVisibleOutputCount,
+        artifactDeliveryAvailable: recoveryPoll.completion.artifactDeliveryAvailable,
+        artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
+        buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
+        buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
+        sellerReputationImpact: "none_until_delivery_fault_attributed"
+      }
   : null;
 const output = {
   ...(recoveredSummary ?? summary),

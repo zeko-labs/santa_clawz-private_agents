@@ -123,6 +123,16 @@ const PUBLIC_READ_RATE_LIMIT_MAX_COST = Math.max(
   60,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST ?? "2400"))
 );
+const PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST = Math.max(
+  PUBLIC_READ_RATE_LIMIT_MAX_COST,
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST ?? "12000"))
+);
+const PUBLIC_READ_FIRST_PARTY_ORIGINS = new Set(
+  (process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_ORIGINS ?? "https://www.santaclawz.ai,https://santaclawz.ai")
+    .split(",")
+    .map((value) => value.trim().replace(/\/+$/, ""))
+    .filter(Boolean)
+);
 const USD_MICRO_SCALE = 1_000_000n;
 const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
 const ACTIVATION_LANE_DEFAULT_EPSILON_USD = "0.000001";
@@ -284,28 +294,28 @@ function publicReadRouteCost(pathname: string, method: string): number {
     return 0;
   }
   if (pathname === "/api/public/marketplace-snapshot") {
-    return 2;
+    return 1;
   }
   if (pathname === "/api/payments") {
-    return 12;
-  }
-  if (pathname === "/api/console/state") {
-    return 8;
-  }
-  if (pathname === "/api/agents" || pathname === "/api/agent-messages" || pathname === "/api/social/anchors/public") {
-    return 6;
-  }
-  if (pathname === "/api/agents/search") {
     return 4;
   }
-  if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
+  if (pathname === "/api/console/state") {
+    return 3;
+  }
+  if (pathname === "/api/agents" || pathname === "/api/agent-messages" || pathname === "/api/social/anchors/public") {
     return 2;
+  }
+  if (pathname === "/api/agents/search") {
+    return 2;
+  }
+  if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
+    return 1;
   }
   if (/^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
     return 1;
   }
   if (/^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
-    return 8;
+    return 3;
   }
   return 0;
 }
@@ -323,6 +333,27 @@ function publicReadClientKey(request: Pick<IndexerRequest, "header" | "ip">): st
   const forwardedFor = request.header("x-forwarded-for")?.split(",")[0]?.trim();
   const realIp = request.header("x-real-ip")?.trim();
   return forwardedFor || realIp || request.ip || "unknown";
+}
+
+function originFromHeader(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+  try {
+    return new URL(value).origin.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function isFirstPartyBrowserRead(request: Pick<IndexerRequest, "header">): boolean {
+  const userAgent = request.header("user-agent") ?? "";
+  if (!/mozilla|chrome|safari|firefox|edg/i.test(userAgent) || /bot|crawler|spider|urllib|curl|python|node/i.test(userAgent)) {
+    return false;
+  }
+  const origin = originFromHeader(request.header("origin"));
+  const refererOrigin = originFromHeader(request.header("referer"));
+  return PUBLIC_READ_FIRST_PARTY_ORIGINS.has(origin) || PUBLIC_READ_FIRST_PARTY_ORIGINS.has(refererOrigin);
 }
 
 function prunePublicReadRateLimitBuckets(nowMs = Date.now()) {
@@ -362,7 +393,10 @@ function publicReadRateLimitMiddleware(request: unknown, response: unknown, next
     : { resetAtMs: nowMs + PUBLIC_READ_RATE_LIMIT_WINDOW_MS, cost: 0 };
   bucket.cost += cost;
   publicReadRateLimitBuckets.set(key, bucket);
-  if (bucket.cost <= PUBLIC_READ_RATE_LIMIT_MAX_COST) {
+  const maxCost = isFirstPartyBrowserRead(typedRequest)
+    ? PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST
+    : PUBLIC_READ_RATE_LIMIT_MAX_COST;
+  if (bucket.cost <= maxCost) {
     next();
     return;
   }
@@ -370,6 +404,7 @@ function publicReadRateLimitMiddleware(request: unknown, response: unknown, next
   const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAtMs - nowMs) / 1000));
   typedResponse.set?.("Retry-After", String(retryAfterSeconds));
   typedResponse.set?.("X-SantaClawz-RateLimit-Cost", String(cost));
+  typedResponse.set?.("X-SantaClawz-RateLimit-Limit", String(maxCost));
   typedResponse.set?.("X-SantaClawz-RateLimit-Remaining", "0");
   typedResponse.status(429).json({
     ok: false,
@@ -3927,6 +3962,14 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactManifestUrl) ||
       Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256) ||
       artifactReceipts.length > 0;
+    const buyerVisibleOutputCount = hireRequest.protocolReturn?.verifiedOutput?.buyerVisibleOutputs?.length ?? 0;
+    const inlineOutputAvailable = buyerVisibleOutputCount > 0;
+    const buyerDeliveryAvailable = inlineOutputAvailable || artifactDelivered;
+    const buyerDeliveryStatus = inlineOutputAvailable
+      ? "inline_available"
+      : artifactDelivered
+        ? "artifact_available"
+        : "missing";
     const buyerVerified = latestReceipt?.digestVerified === true || latestReceipt?.buyerScanStatus === "passed";
     const buyerAccepted =
       latestReceipt?.buyerAcceptanceStatus === "accepted" ||
@@ -3973,6 +4016,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const agentCompleted = agentExecutionStatus === "completed" || agentExecutionStatus === "worker_completed_return_rejected";
     const proofVerified = proofStatus === "return_validated" || proofStatus === "anchored_or_attested";
     const returnVerified = agentCompleted && proofVerified && latestLedger?.returnStatus !== "rejected";
+    const buyerComplete = returnVerified && buyerDeliveryAvailable;
     const staleDeliveryFailureAfterReturn =
       returnVerified &&
       !hireRequest.returnValidationError &&
@@ -4011,6 +4055,9 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       artifactDelivery: artifactDelivered
         ? "delivered_or_receipt_recorded"
         : "not_delivered",
+      buyerDelivery: buyerDeliveryAvailable
+        ? buyerDeliveryStatus
+        : "missing",
       buyerAcceptance: buyerAccepted
         ? "accepted"
         : latestReceipt?.buyerAcceptanceStatus === "rejected"
@@ -4022,10 +4069,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         ? "Execution completed, artifact delivery is recorded, and buyer accepted the work."
         : buyerVerified
           ? "Execution completed, artifact delivery is recorded, and buyer verification passed; buyer acceptance is still pending."
-          : artifactDelivered
-            ? "Execution completed and artifact delivery is recorded; buyer verification and acceptance are still pending."
+          : buyerDeliveryAvailable
+            ? "Execution completed and buyer delivery is available; buyer verification and acceptance may still be pending."
             : agentCompleted && !hasFailure
-              ? "Execution completed and proof/return state is recorded; no artifact delivery receipt has been recorded yet."
+              ? "Seller execution completed and proof/return state is recorded; no buyer-readable output or artifact delivery has been recorded yet."
               : acceptedPendingResult
                 ? "Execution was acknowledged by the worker and is pending result reconciliation; buyers should poll state or resume with the same payment payload."
               : hasFailure
@@ -4068,9 +4115,21 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         relayDeliveryStatus,
         agentExecutionStatus,
         proofStatus,
+        sellerExecutionCompleted: returnVerified,
+        buyerComplete,
+        buyerDeliveryStatus,
+        buyerDeliveryAvailable,
+        buyerVisibleOutputCount,
         artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
+        artifactDeliveryAvailable: artifactDelivered,
         buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
         buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending",
+        sellerReputationImpact:
+          hasFailure && !staleDeliveryFailureAfterReturn
+            ? "seller_failure"
+            : returnVerified && !buyerDeliveryAvailable
+              ? "none_until_delivery_fault_attributed"
+              : "none",
         narrative: lifecycleNarrative
       },
       relayTrace: hireRequest.relayTrace ?? [],
@@ -4081,6 +4140,9 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         agentStarted,
         agentCompleted,
         proofVerified,
+        sellerExecutionCompleted: returnVerified,
+        buyerComplete,
+        buyerDeliveryAvailable,
         artifactDelivered,
         buyerVerified,
         buyerAccepted,
