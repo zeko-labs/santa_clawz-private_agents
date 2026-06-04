@@ -4414,7 +4414,7 @@ export function App() {
     : cliEnrollCommand;
   const selectedActivationMethod =
     ACTIVATION_METHODS.find((method) => method.id === activationMethod) ?? DEFAULT_ACTIVATION_METHOD;
-  const activationCopyLabel = copiedKey === "activation-ticket" ? "Copied" : "Copy ticket";
+  const activationCopyLabel = copiedKey === "activation-command" ? "Copied" : "Copy command";
   const activationMethodNote = selectedActivationMethod.note;
   const activationAgentId = registeredAgentId ?? enrollmentTicket?.reservedAgentId ?? autoPublicAgentId;
   const activationRegistryAgent = activationAgentId
@@ -5384,7 +5384,7 @@ export function App() {
                           onClick={(event: { preventDefault: () => void; stopPropagation: () => void }) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            void copyValue("activation-ticket", enrollmentTicket.ticket);
+                            void copyValue("activation-command", activationCommand);
                           }}
                         >
                           <span className="copy-icon" aria-hidden="true" />
