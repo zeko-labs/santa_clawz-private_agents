@@ -4970,7 +4970,7 @@ export function App() {
 
       {error ? renderErrorBanner(error) : null}
       {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
-      {!error && backgroundError ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
+      {!error && backgroundError && activeSection !== "explore" ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
       {activeSection === "coordinate" ? (
         renderCoordinationPage()

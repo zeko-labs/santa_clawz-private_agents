@@ -18,6 +18,8 @@ const TRANSIENT_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const MAX_REQUEST_ATTEMPTS = 10;
 const BASE_RETRY_DELAY_MS = 500;
 const MAX_RETRY_DELAY_MS = 5_000;
+const MANIFEST_LIST_CACHE_TTL_MS = boundedIntegerEnv("CLAWZ_BLOB_MANIFEST_LIST_CACHE_TTL_MS", 15_000, 0, 60_000);
+const MANIFEST_LIST_GET_CONCURRENCY = boundedIntegerEnv("CLAWZ_BLOB_MANIFEST_LIST_GET_CONCURRENCY", 8, 1, 32);
 
 function normalizeEndpoint(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -33,6 +35,35 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function boundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(min, Math.min(parsed, max));
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await worker(items[index] as T, index);
+      }
+    })
+  );
+  return results;
+}
+
 function objectKeyFromUri(uri: string): string {
   if (!uri.startsWith("object://")) {
     throw new Error(`Unsupported object URI: ${uri}`);
@@ -43,6 +74,7 @@ function objectKeyFromUri(uri: string): string {
 
 export class HttpSealedBlobStore implements SealedBlobStore {
   private readonly endpoint: string;
+  private manifestListCache: { expiresAtMs: number; manifests: SealedBlobManifest[] } | undefined;
 
   constructor(
     endpoint: string,
@@ -161,6 +193,22 @@ export class HttpSealedBlobStore implements SealedBlobStore {
     return Array.isArray(payload.keys) ? payload.keys : [];
   }
 
+  private cachedManifests(sessionId?: string): SealedBlobManifest[] | undefined {
+    if (!this.manifestListCache || this.manifestListCache.expiresAtMs <= Date.now()) {
+      return undefined;
+    }
+
+    return this.filterManifests(this.manifestListCache.manifests, sessionId);
+  }
+
+  private filterManifests(manifests: SealedBlobManifest[], sessionId?: string): SealedBlobManifest[] {
+    return sessionId ? manifests.filter((manifest) => manifest.sessionId === sessionId) : [...manifests];
+  }
+
+  private invalidateManifestListCache(): void {
+    this.manifestListCache = undefined;
+  }
+
   private manifestKey(manifestId: string): string {
     return `manifests/${manifestId}.json`;
   }
@@ -182,6 +230,7 @@ export class HttpSealedBlobStore implements SealedBlobStore {
 
     const manifest = createManifest(input, objectUri(cipherKey), wrappedKey.keyId, payloadDigest, plainText.byteLength);
     await this.putObject(this.manifestKey(manifest.manifestId), manifest);
+    this.invalidateManifestListCache();
     return manifest;
   }
 
@@ -206,14 +255,28 @@ export class HttpSealedBlobStore implements SealedBlobStore {
   }
 
   async listManifests(sessionId?: string): Promise<SealedBlobManifest[]> {
+    const cached = this.cachedManifests(sessionId);
+    if (cached) {
+      return cached;
+    }
+
     const keys = await this.listObjects("manifests/");
     const manifests = (
-      await Promise.all(keys.map((key) => this.getObject<SealedBlobManifest>(key)))
+      await mapWithConcurrency(keys, MANIFEST_LIST_GET_CONCURRENCY, (key) =>
+        this.getObject<SealedBlobManifest>(key)
+      )
     )
       .filter((manifest): manifest is SealedBlobManifest => Boolean(manifest))
       .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso));
 
-    return sessionId ? manifests.filter((manifest) => manifest.sessionId === sessionId) : manifests;
+    if (MANIFEST_LIST_CACHE_TTL_MS > 0) {
+      this.manifestListCache = {
+        expiresAtMs: Date.now() + MANIFEST_LIST_CACHE_TTL_MS,
+        manifests
+      };
+    }
+
+    return this.filterManifests(manifests, sessionId);
   }
 
   getManifest(manifestId: string): Promise<SealedBlobManifest | undefined> {
@@ -236,6 +299,7 @@ export class HttpSealedBlobStore implements SealedBlobStore {
 
     await this.deleteObject(objectKeyFromUri(manifest.cipherPath));
     await this.deleteObject(this.manifestKey(manifestId));
+    this.invalidateManifestListCache();
 
     const deletionRecord: DeletionRecord = {
       deletionId: `deletion_${manifest.manifestId}`,
