@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -8,6 +9,23 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const sdkEntry = fileURLToPath(new URL("../dist/agent-sdk/src/index.js", import.meta.url));
 const serverEntry = fileURLToPath(new URL("../../../apps/indexer/dist/apps/indexer/src/server.js", import.meta.url));
+
+function stableJsonStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort((left, right) => left.localeCompare(right))
+      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function canonicalSha256(value) {
+  return createHash("sha256").update(stableJsonStringify(value)).digest("hex");
+}
 
 function startServer(workspaceDir, port) {
   const stdout = [];
@@ -543,6 +561,8 @@ async function main() {
     assert.equal(feeSplitPayload.feeAuthorization.typedData.message.value, "420");
     assert.match(feeSplitPayload.paymentContextDigest, /^[a-f0-9]{64}$/);
     assert.match(feeSplitPayload.authorizationDigest, /^[a-f0-9]{64}$/);
+    const { authorizationDigest: _authorizationDigest, x402Version: _x402Version, ...feeSplitDigestPayload } = feeSplitPayload;
+    assert.equal(feeSplitPayload.authorizationDigest, canonicalSha256(feeSplitDigestPayload));
 
     const directArtifactDigest = "d".repeat(64);
     const buyerInboxEnvelope = buildSantaClawzBuyerInboxEnvelope({
