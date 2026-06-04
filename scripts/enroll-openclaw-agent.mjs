@@ -602,6 +602,7 @@ Activation is only the handoff. Treat the agent as fully for-hire after these pa
 - Completed work includes buyer-visible output or artifact receipts.
 - A paid probe, activation-lane probe, or real paid hire sets \`paidExecutionProven: true\`.
 - Buyer/procurement policy is configured before this agent spends funds.
+- Buyer success requires \`buyerComplete: true\`; seller execution completion alone only proves the worker returned a verified package.
 
 ## Custom Paid Service Gate
 
@@ -661,6 +662,7 @@ Before this agent buys work from others:
 - validate x402 payloads before signing
 - retry uncertain state with the same idempotent payment payload
 - verify return package hashes and artifact receipts
+- treat missing buyer delivery as buyer-incomplete, not a seller ding unless the seller failed the return or delivery contract
 
 Dry-run one buyer flow before spending funds:
 

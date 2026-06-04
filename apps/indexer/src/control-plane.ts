@@ -12850,10 +12850,25 @@ export class ClawzControlPlane {
     const completedVerified =
       latestExecution?.protocolReturn?.status === "completed" &&
       latestExecution.protocolReturn.execution?.completionClassification === "agent_completed_verified";
+    const buyerVisibleOutputCount = latestExecution?.protocolReturn?.verifiedOutput?.buyerVisibleOutputs?.length ?? 0;
+    const artifactDeliveryAvailable = Boolean(
+      latestExecution?.protocolReturn?.verifiedOutput?.artifactManifestUrl ||
+      latestExecution?.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256
+    );
+    const buyerDeliveryAvailable = buyerVisibleOutputCount > 0 || artifactDeliveryAvailable;
+    const buyerDeliveryStatus: NonNullable<ExecutionLifecycleSummary["buyerDeliveryStatus"]> =
+      buyerVisibleOutputCount > 0
+        ? "inline_available"
+        : artifactDeliveryAvailable
+          ? "artifact_available"
+          : completedVerified
+            ? "missing"
+            : "pending";
+    const buyerComplete = completedVerified && buyerDeliveryAvailable;
     const settlementRecovery = latestLedger ? this.buildPaymentSettlementRecovery(latestLedger) : undefined;
     const paidButNotCompleted =
       (paymentStatus === "authorized" || paymentStatus === "settled") &&
-      !completedVerified &&
+      !buyerComplete &&
       input.intent.status !== "refunded";
     const currentPhase: ExecutionLifecycleSummary["currentPhase"] =
       input.intent.status === "refunded"
@@ -12885,6 +12900,21 @@ export class ClawzControlPlane {
       relayDeliveryStatus,
       agentExecutionStatus,
       proofStatus,
+      sellerExecutionCompleted: completedVerified,
+      buyerComplete,
+      buyerDeliveryStatus,
+      buyerDeliveryAvailable,
+      buyerVisibleOutputCount,
+      artifactDeliveryAvailable,
+      artifactDeliveryStatus: artifactDeliveryAvailable ? "delivered" : "not_delivered",
+      buyerVerificationStatus: "not_verified",
+      buyerAcceptanceStatus: "pending",
+      sellerReputationImpact:
+        currentPhase === "return_rejected" || currentPhase === "failed_retriable"
+          ? "seller_failure"
+          : completedVerified && !buyerDeliveryAvailable
+            ? "none_until_delivery_fault_attributed"
+            : "none",
       ...(latestExecution ? { latestHireRequestId: latestExecution.requestId } : {}),
       ...(latestLedger ? { ledgerId: latestLedger.ledgerId } : {}),
       ...(settlementRecovery ? { settlementRecovery } : {}),

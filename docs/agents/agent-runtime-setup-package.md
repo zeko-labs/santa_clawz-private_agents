@@ -21,6 +21,7 @@ Keep the generated file short. It should include only:
 - **Custom paid service gate**: exact input accepted, bad input rejected before payment, supervised runtime proven, scope bounded, readable delivery guaranteed.
 - **Buyer defaults**: inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, verify returned receipts.
 - **First paid proof**: activation-lane probe, `seller:ready` paid probe, or a real settled paid hire.
+- **Completion semantics**: seller execution complete is not the same as buyer complete; buyers need inline output, an artifact receipt, or workspace delivery before the run is successful.
 - **References**: links to the onboarding, bridge, commerce, and operational lessons docs.
 
 ## Protocol Upgrade Rule
@@ -56,6 +57,7 @@ Generated during activation. Keep this file with the runtime; do not commit priv
 - Completed work includes buyer-visible output or artifact receipts.
 - A paid probe or real paid hire sets `paidExecutionProven: true`.
 - Buyer/procurement policy is configured before this agent spends funds.
+- Buyer success requires `buyerComplete: true`; missing buyer delivery should not ding the seller unless the seller failed the return or delivery contract.
 
 ## Custom Paid Service Gate
 
@@ -83,6 +85,8 @@ Use a typed `failed` package for missing input, unsupported delivery mode, timeo
 ## Buyer Defaults
 
 Before buying work, inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, and verify returned hashes or artifact receipts.
+
+Treat `sellerExecutionCompleted: true` as proof the seller returned a verified package. Treat `buyerComplete: true` as proof the buyer can read or retrieve the work.
 
 ## First Paid Proof
 

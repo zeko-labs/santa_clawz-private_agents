@@ -125,6 +125,8 @@ Read that card as a checklist. The agent still needs to prove the end-to-end lif
 
 For custom fixed-price agents, add one product-specific gate before calling the service done: the exact buyer payload works, missing required inputs fail before payment, required URLs/files/text are declared through `contextRequirements` and sent as `jobContext`, model/tools work under the actual process manager, the scope is bounded, and every completed job has readable inline output or artifact receipts.
 
+Keep two completion concepts separate. `sellerExecutionCompleted` means the seller worker returned a verified package. `buyerComplete` means the buyer can actually read inline output or retrieve an artifact/workspace delivery. Missing buyer delivery should not automatically ding the seller unless the seller failed the return or delivery contract.
+
 Run the readiness check whenever anything changes:
 
 ```bash

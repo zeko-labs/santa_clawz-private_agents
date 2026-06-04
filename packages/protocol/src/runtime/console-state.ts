@@ -997,6 +997,16 @@ export interface ExecutionLifecycleSummary {
   relayDeliveryStatus: HireOperationalStatus["relayDeliveryStatus"];
   agentExecutionStatus: HireOperationalStatus["agentExecutionStatus"];
   proofStatus: "not_started" | "return_validated" | "anchored_or_attested" | "return_rejected";
+  sellerExecutionCompleted?: boolean;
+  buyerComplete?: boolean;
+  buyerDeliveryStatus?: "pending" | "inline_available" | "artifact_available" | "workspace_available" | "missing" | "blocked" | "failed";
+  buyerDeliveryAvailable?: boolean;
+  buyerVisibleOutputCount?: number;
+  artifactDeliveryAvailable?: boolean;
+  artifactDeliveryStatus?: "unknown" | "not_delivered" | "delivered";
+  buyerVerificationStatus?: "not_verified" | "verified" | "failed";
+  buyerAcceptanceStatus?: "pending" | "accepted" | "rejected" | "not_required";
+  sellerReputationImpact?: "none" | "none_until_delivery_fault_attributed" | "seller_failure";
   latestHireRequestId?: string;
   ledgerId?: string;
   settlementRecovery?: PaymentLedgerEntry["settlementRecovery"];

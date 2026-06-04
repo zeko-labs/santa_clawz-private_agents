@@ -3927,6 +3927,14 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactManifestUrl) ||
       Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256) ||
       artifactReceipts.length > 0;
+    const buyerVisibleOutputCount = hireRequest.protocolReturn?.verifiedOutput?.buyerVisibleOutputs?.length ?? 0;
+    const inlineOutputAvailable = buyerVisibleOutputCount > 0;
+    const buyerDeliveryAvailable = inlineOutputAvailable || artifactDelivered;
+    const buyerDeliveryStatus = inlineOutputAvailable
+      ? "inline_available"
+      : artifactDelivered
+        ? "artifact_available"
+        : "missing";
     const buyerVerified = latestReceipt?.digestVerified === true || latestReceipt?.buyerScanStatus === "passed";
     const buyerAccepted =
       latestReceipt?.buyerAcceptanceStatus === "accepted" ||
@@ -3973,6 +3981,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const agentCompleted = agentExecutionStatus === "completed" || agentExecutionStatus === "worker_completed_return_rejected";
     const proofVerified = proofStatus === "return_validated" || proofStatus === "anchored_or_attested";
     const returnVerified = agentCompleted && proofVerified && latestLedger?.returnStatus !== "rejected";
+    const buyerComplete = returnVerified && buyerDeliveryAvailable;
     const staleDeliveryFailureAfterReturn =
       returnVerified &&
       !hireRequest.returnValidationError &&
@@ -4011,6 +4020,9 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       artifactDelivery: artifactDelivered
         ? "delivered_or_receipt_recorded"
         : "not_delivered",
+      buyerDelivery: buyerDeliveryAvailable
+        ? buyerDeliveryStatus
+        : "missing",
       buyerAcceptance: buyerAccepted
         ? "accepted"
         : latestReceipt?.buyerAcceptanceStatus === "rejected"
@@ -4022,10 +4034,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         ? "Execution completed, artifact delivery is recorded, and buyer accepted the work."
         : buyerVerified
           ? "Execution completed, artifact delivery is recorded, and buyer verification passed; buyer acceptance is still pending."
-          : artifactDelivered
-            ? "Execution completed and artifact delivery is recorded; buyer verification and acceptance are still pending."
+          : buyerDeliveryAvailable
+            ? "Execution completed and buyer delivery is available; buyer verification and acceptance may still be pending."
             : agentCompleted && !hasFailure
-              ? "Execution completed and proof/return state is recorded; no artifact delivery receipt has been recorded yet."
+              ? "Seller execution completed and proof/return state is recorded; no buyer-readable output or artifact delivery has been recorded yet."
               : acceptedPendingResult
                 ? "Execution was acknowledged by the worker and is pending result reconciliation; buyers should poll state or resume with the same payment payload."
               : hasFailure
@@ -4068,9 +4080,21 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         relayDeliveryStatus,
         agentExecutionStatus,
         proofStatus,
+        sellerExecutionCompleted: returnVerified,
+        buyerComplete,
+        buyerDeliveryStatus,
+        buyerDeliveryAvailable,
+        buyerVisibleOutputCount,
         artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
+        artifactDeliveryAvailable: artifactDelivered,
         buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
         buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending",
+        sellerReputationImpact:
+          hasFailure && !staleDeliveryFailureAfterReturn
+            ? "seller_failure"
+            : returnVerified && !buyerDeliveryAvailable
+              ? "none_until_delivery_fault_attributed"
+              : "none",
         narrative: lifecycleNarrative
       },
       relayTrace: hireRequest.relayTrace ?? [],
@@ -4081,6 +4105,9 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         agentStarted,
         agentCompleted,
         proofVerified,
+        sellerExecutionCompleted: returnVerified,
+        buyerComplete,
+        buyerDeliveryAvailable,
         artifactDelivered,
         buyerVerified,
         buyerAccepted,
