@@ -356,7 +356,7 @@ export interface CoordinationSetupTicketResponse {
   ticketId: string;
   issuedAtIso: string;
   expiresAtIso: string;
-  claimEndpoint: "/api/coordination/setup-tickets/claim";
+  claimEndpoint: "/api/coordination/setup-tickets/claim" | "/api/workshop/setup-tickets/claim";
   participantAgentIds: string[];
   privacyMode: string;
   threadId: string;
@@ -622,7 +622,7 @@ export function createEnrollmentTicket(input: {
 }
 
 export function createCoordinationSetupTicket(manifest: unknown): Promise<CoordinationSetupTicketResponse> {
-  return request<CoordinationSetupTicketResponse>("/api/coordination/setup-tickets", {
+  return request<CoordinationSetupTicketResponse>("/api/workshop/setup-tickets", {
     method: "POST",
     body: JSON.stringify({ manifest })
   });
