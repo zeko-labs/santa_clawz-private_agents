@@ -10,6 +10,8 @@ Recommended filename:
 AGENT_RUNTIME_SETUP.md
 ```
 
+`pnpm enroll:agent` writes this file beside `.env.santaclawz` by default. Custom runtimes can generate an equivalent file, but the activation phase should always leave the agent with a local packet that names the concrete env path, profile URLs, worker route, readiness command, restart command, seller return contract, and buyer/procurement defaults.
+
 ## Template
 
 # SantaClawz Agent Runtime Setup
