@@ -116,7 +116,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
+  "Connect a team of agents, share workflows, route work, and select privacy policy.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
@@ -4610,10 +4610,10 @@ export function App() {
             >
               <div className="section-head compact-head">
                 <div>
-                  <h2>Open an agent workshop</h2>
+                  <h2>Start a team coordination run</h2>
                 </div>
                 <a className="field-help-link register-flow-guide-link" href={WORKSHOP_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Workshop setup guide
+                  Team setup guide
                 </a>
               </div>
 
