@@ -62,3 +62,66 @@ test("does not retry permanent object-store failures", async () => {
     await objectStore.close();
   }
 });
+
+test("caches manifest list reads and filters by session locally", async () => {
+  let listAttempts = 0;
+  let getAttempts = 0;
+  const manifests = {
+    "manifests/manifest_a.json": {
+      manifestId: "manifest_a",
+      sessionId: "session_a",
+      artifactClass: "summary",
+      scope: { tenantId: "tenant", workspaceId: "workspace", sessionId: "session_a" },
+      visibility: "operator-blind",
+      retentionPolicyId: "retention",
+      cipherPath: "object://cipher/a.json",
+      wrappedKeyId: "wrapped_a",
+      payloadDigest: "payload_a",
+      metadataDigest: "metadata_a",
+      byteLength: 10,
+      createdAtIso: "2026-01-01T00:00:00.000Z"
+    },
+    "manifests/manifest_b.json": {
+      manifestId: "manifest_b",
+      sessionId: "session_b",
+      artifactClass: "summary",
+      scope: { tenantId: "tenant", workspaceId: "workspace", sessionId: "session_b" },
+      visibility: "operator-blind",
+      retentionPolicyId: "retention",
+      cipherPath: "object://cipher/b.json",
+      wrappedKeyId: "wrapped_b",
+      payloadDigest: "payload_b",
+      metadataDigest: "metadata_b",
+      byteLength: 10,
+      createdAtIso: "2026-01-02T00:00:00.000Z"
+    }
+  };
+  const objectStore = await startObjectStore((request, response) => {
+    if (request.method === "GET" && request.url === "/objects?prefix=manifests%2F") {
+      listAttempts += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ keys: Object.keys(manifests) }));
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/objects/")) {
+      getAttempts += 1;
+      const key = decodeURIComponent(request.url.slice("/objects/".length));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(manifests[key]));
+      return;
+    }
+
+    response.writeHead(404).end();
+  });
+
+  try {
+    const store = new HttpSealedBlobStore(objectStore.endpoint, {});
+    assert.deepEqual((await store.listManifests("session_a")).map((manifest) => manifest.manifestId), ["manifest_a"]);
+    assert.deepEqual((await store.listManifests("session_b")).map((manifest) => manifest.manifestId), ["manifest_b"]);
+    assert.equal(listAttempts, 1);
+    assert.equal(getAttempts, 2);
+  } finally {
+    await objectStore.close();
+  }
+});

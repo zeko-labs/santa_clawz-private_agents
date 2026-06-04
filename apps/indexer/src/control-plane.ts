@@ -102,6 +102,7 @@ const DEFAULT_TENANT_ID = "tenant_acme";
 const DEFAULT_WORKSPACE_ID = "workspace_blue";
 const DEFAULT_SESSION_ID = "session_demo_enterprise";
 const DEFAULT_TURN_ID = "turn_0011";
+const SEED_SAMPLE_ARTIFACTS = process.env.CLAWZ_SEED_SAMPLE_ARTIFACTS === "true";
 const PUBLICCLAWZ_OWNERSHIP_CHALLENGE_PATH = "/.well-known/santaclawz-agent-challenge.json";
 const OWNERSHIP_CHALLENGE_TTL_MS = 15 * 60 * 1000;
 const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
@@ -7097,8 +7098,12 @@ export class ClawzControlPlane {
       await this.saveEvents(sampleEvents);
     }
 
-    const manifests = await this.blobStore.listManifests(state.currentSessionId);
-    if (manifests.length === 0) {
+    if (existingEvents.length === 0 || SEED_SAMPLE_ARTIFACTS) {
+      const manifests = await this.blobStore.listManifests(state.currentSessionId);
+      if (manifests.length > 0) {
+        return;
+      }
+
       const manifest = await this.blobStore.sealJson({
         scope: {
           tenantId: DEFAULT_TENANT_ID,
