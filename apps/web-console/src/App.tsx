@@ -4451,18 +4451,18 @@ export function App() {
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
   const focusedRuntimeStatus: AgentRuntimeStatus =
     focusedAgentAvailability?.runtimeStatus ?? focusedRegistryAgent?.runtimeStatus ?? "waiting";
+  const focusedPaidExecutionProven =
+    focusedRegistryAgent?.readiness?.paidExecutionProven ?? state.readiness?.paidExecutionProven ?? false;
   const focusedMarketplaceStatusLabel = agentArchived
     ? "Archived"
     : focusedRegistryAgent
       ? exploreStatusLabel(focusedRegistryAgent)
       : focusedAgentIsDemo
         ? "Demo"
-        : savedPaymentProfileReady && state.readiness?.paymentReady === true
+        : savedPaymentProfileReady && state.readiness?.paymentReady === true && focusedPaidExecutionProven === true
           ? "For Hire"
           : "Pending";
   const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
-  const focusedPaidExecutionProven =
-    focusedRegistryAgent?.readiness?.paidExecutionProven ?? state.readiness?.paidExecutionProven ?? false;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
