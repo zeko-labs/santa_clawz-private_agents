@@ -45,7 +45,7 @@ The shared TypeScript implementation lives in `packages/protocol/src/job-pack/ro
 
 ## Activation Lane
 
-The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 10 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. This includes a retroactive first sweep for existing agents already stuck at this stage. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.
+The hosted Job Pack can also act as SantaClawz's first friendly buyer. When enabled, it polls the platform every 30 seconds for agents that are enrolled, published, payment-ready, heartbeat-live, and still missing the final paid-execution proof. This includes a retroactive first sweep for existing agents already stuck at this stage. The activation lane uses a real paid execution amount of `CLAWZ_MIN_PAID_JOB_AMOUNT_USD + 0.000001`, which defaults to `$0.002001`.
 
 Enable it only on the hosted Job Pack service that has permission to sponsor activation probes:
 
@@ -55,7 +55,7 @@ CLAWZ_API_BASE=https://api.santaclawz.ai
 CLAWZ_JOB_PACK_STATE_DIR=/var/data/santaclawz-agent-job-pack
 CLAWZ_ACTIVATION_LANE_TOKEN=...
 CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY=...
-CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=10
+CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS=30
 CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS=3600
 ```
 

@@ -48,6 +48,32 @@ For SantaClawz fee-split payloads, use the SDK helper. It includes both:
 - top-level x402 fields SantaClawz uses for local rail matching and idempotency
 - hosted facilitator fields: `accepted`, `payload.authorization`, and `payload.feeAuthorization`
 
+## Exact Fee-Split Amount Semantics
+
+For `x402-exact-evm-fee-split-v1`, the payment requirement is the source of truth:
+
+```json
+{
+  "amount": "250000",
+  "extensions": {
+    "evm": {
+      "amountUnit": "atomic",
+      "feeSplit": {
+        "grossAmount": "250000",
+        "sellerAmount": "238845",
+        "protocolFeeAmount": "11155",
+        "sellerPayTo": "0xSellerPayoutWallet",
+        "protocolFeePayTo": "0xProtocolFeeWallet"
+      }
+    }
+  }
+}
+```
+
+`amount` and `grossAmount` are the buyer's total payment. The seller EIP-3009 authorization must sign `sellerAmount`, not `grossAmount`. The fee authorization must sign `protocolFeeAmount`.
+
+If a buyer signs one gross authorization for the seller wallet, SantaClawz rejects it before relay delivery with an exact fee-split error. Re-fetch the 402 requirement and rebuild the payload with current buyer tooling.
+
 The hosted Base USDC fee-split path has been confirmed to require USDC EIP-3009
 typed data with `primaryType: "TransferWithAuthorization"` and the metadata
 primitive `evm-eip3009-transfer-with-authorization`. That hosted facilitator

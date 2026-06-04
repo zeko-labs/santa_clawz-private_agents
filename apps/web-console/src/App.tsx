@@ -115,9 +115,9 @@ const MASTHEAD_STEPS = "Steps: 1) Activate agent, 2) Get paid";
 const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating paid work with verifiable results.";
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
-const COORDINATE_COPY =
+const WORKSHOP_COPY =
   "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
-const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
+const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
@@ -255,7 +255,7 @@ const PUBLIC_RUNTIME_URL_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/platform/public-hire-url-pattern.md";
 const BUYER_AGENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/buyer-only-agent.md";
-const COORDINATION_SETUP_GUIDE_URL =
+const WORKSHOP_SETUP_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/team-org-coordination-bridge.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
@@ -270,7 +270,7 @@ const AGENT_PROFILE_AVAILABILITY_POLL_MS = 10_000;
 const AGENT_PROFILE_PAYMENT_POLL_MS = 4_000;
 const ZEKO_HEALTH_POLL_MS = 60_000;
 const EXPLORE_AGENTS_PAGE_SIZE = 12;
-type NavSectionKey = "activate" | "coordinate" | "explore";
+type NavSectionKey = "activate" | "workshop" | "explore";
 
 interface AppRouteState {
   agentId: string | null;
@@ -472,8 +472,8 @@ function mergeAvailabilityIntoRegistry(
 }
 
 function sectionFromHash(hash: string): NavSectionKey {
-  if (hash === "#coordinate" || hash === "#team") {
-    return "coordinate";
+  if (hash === "#workshop" || hash === "#coordinate" || hash === "#team") {
+    return "workshop";
   }
   return hash === "#explore" || hash === "#explore-agents" ? "explore" : "activate";
 }
@@ -511,12 +511,12 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       staticPage: null
     };
   }
-  if (normalizedPath === "/coordinate") {
+  if (normalizedPath === "/workshop" || normalizedPath === "/coordinate") {
     return {
       agentId: null,
       agentFocus: "profile",
       hiddenPage: null,
-      section: "coordinate",
+      section: "workshop",
       sessionId: null,
       staticPage: null
     };
@@ -606,8 +606,8 @@ function buildSectionPath(section: NavSectionKey, agentId?: string | null, focus
     }
     return "/explore";
   }
-  if (section === "coordinate") {
-    return "/coordinate";
+  if (section === "workshop") {
+    return "/workshop";
   }
   return "/";
 }
@@ -629,7 +629,7 @@ function consoleStateRequestFor(section: NavSectionKey, selectedSessionId: strin
   if (sharedAgentId) {
     return { sessionId: undefined, agentId: sharedAgentId };
   }
-  if (section === "activate" || section === "coordinate" || section === "explore") {
+  if (section === "activate" || section === "workshop" || section === "explore") {
     return { sessionId: ONBOARDING_SESSION_ID, agentId: undefined };
   }
   return { sessionId: undefined, agentId: undefined };
@@ -1868,15 +1868,15 @@ function marketplaceTagsForDisplay(tags?: AgentProfileState["marketplaceTags"], 
 
 function defaultCoordinationDraft(): CoordinationDraft {
   return {
-    orgName: "Local coordination",
+    orgName: "Local workshop",
     workspaceDomain: "local.santaclawz",
     identityProvider: "email-code",
-    projectName: "Team coordination",
+    projectName: "Agent workshop",
     goal: "",
     threadId: "eventlog_team_launch_review",
     swarmId: "workflow_team_launch_review",
     budgetUsd: "",
-    requesterContact: "coordination@santaclawz.local",
+    requesterContact: "workshop@santaclawz.local",
     privacyMode: "digest-only",
     requiredCapabilities: "",
     toolTouchpoints: ""
@@ -1898,7 +1898,7 @@ function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
 
 function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
   if (mode === "public-summary") {
-    return "Agents can coordinate publicly with safe summaries and aggregate proof.";
+    return "Agents can work publicly with safe summaries and aggregate proof.";
   }
   if (mode === "recipient-encrypted") {
     return "SantaClawz can route safe metadata while private payloads are encrypted for the named receiving agents.";
@@ -2103,17 +2103,17 @@ function buildCoordinationSetupTicketHandoff(input: {
   ));
 
   return [
-    "SantaClawz team coordination setup ticket",
+    "SantaClawz workshop setup ticket",
     `Ticket: ${input.ticket.ticket}`,
     `Expires: ${input.ticket.expiresAtIso}`,
     `API: ${input.apiBase}`,
-    `Guide: ${COORDINATION_SETUP_GUIDE_URL}`,
+    `Guide: ${WORKSHOP_SETUP_GUIDE_URL}`,
     "",
-    "Give this ticket to the participating agent runtimes or their operators. Each agent claims only its own setup:",
+    "Give this ticket to the participating agent runtimes or their operators. Each agent claims only its own workshop setup:",
     ...agentEnvSteps,
     "",
     "API claim shape:",
-    `POST ${input.apiBase}/api/coordination/setup-tickets/claim`,
+    `POST ${input.apiBase}/api/workshop/setup-tickets/claim`,
     `{ \"ticket\": \"${input.ticket.ticket}\", \"agentId\": \"<agent_id>\" }`,
     "",
     "Keep agent admin keys and connector credentials in each agent's local wrapper or secret manager.",
@@ -2372,7 +2372,7 @@ export function App() {
     initialized: false
   });
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
-  const exploreAvailabilityAgentIds = (activeSection === "explore" || activeSection === "coordinate") && !sharedAgentId
+  const exploreAvailabilityAgentIds = (activeSection === "explore" || activeSection === "workshop") && !sharedAgentId
     ? registry
       .filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery))
       .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
@@ -2440,7 +2440,7 @@ export function App() {
       })
       .catch((nextError: Error) => {
         if (!cancelled) {
-          if ((activeSection === "coordinate" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
+          if ((activeSection === "workshop" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
             setError(null);
             clearBackgroundError();
             return;
@@ -2517,7 +2517,7 @@ export function App() {
         })
         .catch((nextError: Error) => {
           if (!cancelled) {
-            if ((activeSection === "coordinate" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
+            if ((activeSection === "workshop" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
               clearBackgroundError();
               return;
             }
@@ -2632,7 +2632,7 @@ export function App() {
   }, [activeSection, sharedAgentId, state?.session.sessionId]);
 
   useEffect(() => {
-    if ((activeSection !== "explore" && activeSection !== "coordinate") || sharedAgentId) {
+    if ((activeSection !== "explore" && activeSection !== "workshop") || sharedAgentId) {
       return;
     }
 
@@ -2749,7 +2749,7 @@ export function App() {
   }, [activeSection, sharedAgentId]);
 
   useEffect(() => {
-    if ((activeSection !== "explore" && activeSection !== "coordinate") || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
+    if ((activeSection !== "explore" && activeSection !== "workshop") || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
       return;
     }
 
@@ -3233,7 +3233,7 @@ export function App() {
         setSelectedSessionId(nextState.session.sessionId);
       }
     } catch (nextError) {
-      if ((activeSection === "coordinate" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
+      if ((activeSection === "workshop" || (activeSection === "explore" && !sharedAgentId)) && isRegisteredAgentAdminAccessError(nextError)) {
         setError(null);
         clearBackgroundError();
         return;
@@ -3286,16 +3286,16 @@ export function App() {
 
   const apiBase = getApiBase();
   const isExploreView = activeSection === "explore";
-  const isCoordinateView = activeSection === "coordinate";
-  const mastheadTitle = isCoordinateView
+  const isWorkshopView = activeSection === "workshop";
+  const mastheadTitle = isWorkshopView
     ? "Coordinate teams of agents"
     : isExploreView
       ? "Explore verified agents for hire"
       : "Unleash your agents";
-  const mastheadCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
-  const mastheadMobileTitle = isCoordinateView ? COORDINATE_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
-  const mastheadMobileCopy = isCoordinateView ? COORDINATE_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
-  const mastheadSteps = isCoordinateView ? "" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
+  const mastheadCopy = isWorkshopView ? WORKSHOP_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_COPY;
+  const mastheadMobileTitle = isWorkshopView ? WORKSHOP_MOBILE_TITLE : isExploreView ? EXPLORE_MOBILE_TITLE : "Unleash your agents";
+  const mastheadMobileCopy = isWorkshopView ? WORKSHOP_COPY : isExploreView ? EXPLORE_COPY : MASTHEAD_MOBILE_COPY;
+  const mastheadSteps = isWorkshopView ? "" : isExploreView ? EXPLORE_STEPS : MASTHEAD_STEPS;
   const zekoHealthWarning = zekoHealthWarningCopy();
 
   function renderHeader() {
@@ -3869,7 +3869,7 @@ export function App() {
       <main className="app-shell onboarding-shell">
         {renderHeader()}
 
-        <section className={isCoordinateView ? "masthead coordinate-masthead" : "masthead"}>
+        <section className={isWorkshopView ? "masthead coordinate-masthead" : "masthead"}>
           <div className="masthead-inner">
             <div className="masthead-content">
               <div className="masthead-copy">
@@ -3895,7 +3895,7 @@ export function App() {
         {error ? renderErrorBanner(error) : null}
         {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
 
-        {error && activeSection !== "explore" && activeSection !== "coordinate" ? (
+        {error && activeSection !== "explore" && activeSection !== "workshop" ? (
           <section className="step-stack">
             <section className="panel step-card">
               <div className="step-head">
@@ -3952,12 +3952,12 @@ export function App() {
               </div>
             </section>
           </section>
-        ) : activeSection === "coordinate" ? (
-          <section id="coordinate" className="panel coordination-panel">
+        ) : activeSection === "workshop" ? (
+          <section id="workshop" className="panel coordination-panel">
             <div className="section-head">
               <div>
-                <p className="eyebrow">Team bridge</p>
-                <h2>Loading coordination state</h2>
+                <p className="eyebrow">Agent workshop</p>
+                <h2>Loading workshop state</h2>
                 <p>SantaClawz is loading the agent directory, workflow logs, payment signals, and proof activity.</p>
               </div>
               <span className="subtle-pill">Checking</span>
@@ -4451,13 +4451,15 @@ export function App() {
     sharedAgentId && agentAvailability?.agentId === sharedAgentId ? agentAvailability : null;
   const focusedRuntimeStatus: AgentRuntimeStatus =
     focusedAgentAvailability?.runtimeStatus ?? focusedRegistryAgent?.runtimeStatus ?? "waiting";
+  const focusedPaidExecutionProven =
+    focusedRegistryAgent?.readiness?.paidExecutionProven ?? state.readiness?.paidExecutionProven ?? false;
   const focusedMarketplaceStatusLabel = agentArchived
     ? "Archived"
     : focusedRegistryAgent
       ? exploreStatusLabel(focusedRegistryAgent)
       : focusedAgentIsDemo
         ? "Demo"
-        : savedPaymentProfileReady && state.readiness?.paymentReady === true
+        : savedPaymentProfileReady && state.readiness?.paymentReady === true && focusedPaidExecutionProven === true
           ? "For Hire"
           : "Pending";
   const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
@@ -4485,7 +4487,8 @@ export function App() {
     { label: "Verified", complete: state.ownership.status === "verified" },
     { label: "Anchored", complete: currentSocialAnchorQueue.anchoredCount > 0 },
     { label: "Proof root", complete: Boolean(latestSocialAnchorBatch?.confirmedAtIso || latestSocialAnchorBatch?.settledAtIso) },
-    { label: "Payments", complete: savedPaymentProfileReady },
+    { label: "Payment setup", complete: savedPaymentProfileReady },
+    { label: "Execution proof", complete: focusedPaidExecutionProven === true },
     { label: "Online", complete: focusedRuntimeStatus === "live" }
   ];
   const agentTrustScore = Math.round(
@@ -4595,7 +4598,7 @@ export function App() {
 
   function renderCoordinationPage() {
     return (
-      <section id="coordinate" className="coordination-layout">
+      <section id="workshop" className="coordination-layout">
         <section className="panel coordination-control-panel">
           <div className="coordination-setup-grid">
             <form
@@ -4607,10 +4610,10 @@ export function App() {
             >
               <div className="section-head compact-head">
                 <div>
-                  <h2>Start a team coordination run</h2>
+                  <h2>Open an agent workshop</h2>
                 </div>
-                <a className="field-help-link register-flow-guide-link" href={COORDINATION_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Coordination setup guide
+                <a className="field-help-link register-flow-guide-link" href={WORKSHOP_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
+                  Workshop setup guide
                 </a>
               </div>
 
@@ -4692,14 +4695,14 @@ export function App() {
               </div>
 
               <label className="field">
-                <span>Team goal</span>
+                <span>Workshop goal</span>
                 <textarea
                   className="text-area coordination-goal-area"
                   value={coordinationDraft.goal}
                   onChange={(event: ValueInputEvent) => {
                     updateCoordinationDraft({ goal: event.target.value });
                   }}
-                  placeholder="(e.g. coordinate agent workflows across organization, decentralized intelligence swarm, agent training, etc..)"
+                  placeholder="(e.g. run an agent workflow workshop, decentralized intelligence swarm, agent training, etc.)"
                 />
               </label>
 
@@ -4729,7 +4732,7 @@ export function App() {
               </div>
 
               <p className="panel-copy coordination-ticket-intro">
-                Create a team setup ticket from the info above for the agents team to go live.
+                Create a workshop setup ticket from the info above so the agent team can start.
               </p>
 
               <div className="activation-ticket-method-row coordination-ticket-method-row">
@@ -4773,7 +4776,7 @@ export function App() {
                         }}
                       >
                         <span className="copy-icon" aria-hidden="true" />
-                        {coordinationSetupIssuing ? "Creating ticket" : "Create setup ticket"}
+                        {coordinationSetupIssuing ? "Creating ticket" : "Create workshop ticket"}
                       </button>
                       <span className="subtle-pill activation-pending-pill">Pending</span>
                     </>
@@ -4796,14 +4799,14 @@ export function App() {
                         {copiedKey === "coordination-setup-ticket" && coordinationSetupCopied ? "Copied" : "Copy"}
                       </button>
                       <span className="activation-command-summary-copy">
-                        <strong>{coordinationSetupTicketExpired ? "Ticket expired" : "Copy setup ticket"}</strong>
+                        <strong>{coordinationSetupTicketExpired ? "Ticket expired" : "Copy workshop ticket"}</strong>
                         <code>{coordinationSetupTicketExpired ? "Reissue a fresh ticket before sharing" : "Ticket + per-agent claim commands"}</code>
                       </span>
                     </div>
                     <div className="coordination-ticket-next-steps">
                       <div>
                         <strong>Preferred path</strong>
-                        <span>Put the ticket in your team agent runner, deployment script, local wrapper, or secret manager. Each enrolled agent claims only its own setup with its agent id.</span>
+                        <span>Put the ticket in your workshop runner, deployment script, local wrapper, or secret manager. Each enrolled agent claims only its own setup with its agent id.</span>
                       </div>
                       <div>
                         <strong>Manual fallback</strong>
@@ -4811,7 +4814,7 @@ export function App() {
                       </div>
                       <div>
                         <strong>SantaClawz role</strong>
-                        <span>SantaClawz stores the run setup and claim endpoint; V1 does not automatically message external agent owners because the ticket is a bearer setup credential.</span>
+                        <span>SantaClawz stores the workshop setup and claim endpoint; V1 does not automatically message external agent owners because the ticket is a bearer setup credential.</span>
                       </div>
                     </div>
                     <div className="command-strip compact-command-strip activation-command-strip coordination-ticket-command-strip">
@@ -4828,7 +4831,7 @@ export function App() {
           <section className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
-                <h2>Public workflow trace</h2>
+                <h2>Public workshop trace</h2>
               </div>
               <button
                 type="button"
@@ -4844,8 +4847,8 @@ export function App() {
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>No workflow events yet</strong>
-                  <p className="panel-copy">Agents can claim jobs and sync checkpoints here while keeping private work in envelopes or local systems.</p>
+                  <strong>No workshop events yet</strong>
+                  <p className="panel-copy">Agents can claim jobs and sync workshop checkpoints here while keeping private work in envelopes or local systems.</p>
                 </article>
               ) : (
                 coordinationThreads.slice(0, 6).map((thread) => (
@@ -4945,7 +4948,7 @@ export function App() {
     <main id="top" className="app-shell onboarding-shell">
       {renderHeader()}
 
-      <section className={isCoordinateView ? "masthead coordinate-masthead" : "masthead"}>
+      <section className={isWorkshopView ? "masthead coordinate-masthead" : "masthead"}>
         <div className="masthead-inner">
           <div className="masthead-content">
               <div className="masthead-copy">
@@ -4972,7 +4975,7 @@ export function App() {
       {!error && zekoHealthWarning ? <p className="status-banner status-banner-zeko">{zekoHealthWarning}</p> : null}
       {!error && backgroundError && activeSection !== "explore" ? <p className="status-banner subtle-status-banner">{backgroundError}</p> : null}
 
-      {activeSection === "coordinate" ? (
+      {activeSection === "workshop" ? (
         renderCoordinationPage()
       ) : activeSection !== "explore" && profileSessionId !== state.session.sessionId ? (
         <section id="activate" className="step-stack configure-stack">
@@ -5290,6 +5293,28 @@ export function App() {
 
             <div className="register-cli-stack">
                 <div className="activation-ticket-method-row">
+                  {enrollmentTicket ? (
+                    <div className="activation-method-inline">
+                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
+                        {ACTIVATION_METHODS.map((method) => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            className={activationMethod === method.id ? "active" : ""}
+                            aria-selected={activationMethod === method.id}
+                            role="tab"
+                            onClick={() => {
+                              setActivationMethod(method.id);
+                            }}
+                          >
+                            <strong>{method.label}</strong>
+                            <small>{method.badge}</small>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className={enrollmentTicket ? "ticket-action-row activation-ticket-issued-row" : "ticket-action-row activation-ticket-pending-row"}>
                     {enrollmentTicket ? (
                       <>
@@ -5329,28 +5354,6 @@ export function App() {
                       </>
                     )}
                   </div>
-
-                  {enrollmentTicket ? (
-                    <div className="activation-method-inline">
-                      <div className="activation-tab-group" role="tablist" aria-label="Activation method">
-                        {ACTIVATION_METHODS.map((method) => (
-                          <button
-                            key={method.id}
-                            type="button"
-                            className={activationMethod === method.id ? "active" : ""}
-                            aria-selected={activationMethod === method.id}
-                            role="tab"
-                            onClick={() => {
-                              setActivationMethod(method.id);
-                            }}
-                          >
-                            <strong>{method.label}</strong>
-                            <small>{method.badge}</small>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
 
                 </div>
                 {duplicateClaimTarget ? (

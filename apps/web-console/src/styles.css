@@ -4930,14 +4930,14 @@ pre,
 
 .activation-method-inline {
   display: inline-flex;
-  flex: 0 0 100%;
+  flex: 0 0 auto;
   margin-left: 0;
   min-width: 0;
   max-width: 100%;
 }
 
 .activation-method-inline .activation-tab-group {
-  width: min(100%, 258px);
+  width: min(100%, 252px);
   min-width: 0;
   max-width: 100%;
 }
@@ -4948,7 +4948,7 @@ pre,
 }
 
 .activation-ticket-issued-row {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -5138,11 +5138,17 @@ pre,
   align-items: center;
   display: inline-flex;
   gap: 6px;
+  max-width: min(100%, 34rem);
+  min-width: 0;
 }
 
 .activation-ticket-id {
   font-family: "IBM Plex Mono", monospace;
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activation-reissue-button {

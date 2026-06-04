@@ -31,10 +31,8 @@ ROOT = pathlib.Path(__file__).resolve().parent
 AGENT = ROOT / "agent" / "local_agent.py"
 OUTPUT = ROOT / "output"
 BRIDGE_DIR = OUTPUT / "worker_bridge"
-STATE_DIR = pathlib.Path(os.environ.get("CLAWZ_JOB_PACK_STATE_DIR", str(BRIDGE_DIR))).expanduser()
 REQUESTS_DIR = BRIDGE_DIR / "requests"
 AUDIT_LOG = BRIDGE_DIR / "audit.jsonl"
-ACTIVATION_LANE_STATE = STATE_DIR / "activation_lane_state.json"
 DEFAULT_TIMEOUT_SECONDS = 110
 FAST_PATH_DEFAULT = "1"
 
@@ -67,7 +65,7 @@ def stable_json_dumps(value: Any) -> str:
         if isinstance(nested, list):
             return [normalize(item) for item in nested]
         if isinstance(nested, dict):
-            return {key: normalize(nested[key]) for key in sorted(nested.keys()) if nested[key] is not None}
+            return {key: normalize(nested[key]) for key in sorted(nested.keys())}
         return nested
 
     return json.dumps(normalize(value), separators=(",", ":"))
@@ -84,6 +82,40 @@ def read_json(path: pathlib.Path) -> dict[str, Any]:
 def write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def resolve_writable_state_dir() -> pathlib.Path:
+    configured = pathlib.Path(os.environ.get("CLAWZ_JOB_PACK_STATE_DIR", str(BRIDGE_DIR))).expanduser()
+    candidates = [configured, BRIDGE_DIR]
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".write-test"
+            probe.write_text(now_iso(), encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            if candidate != configured:
+                log_event({
+                    "type": "job-pack-state-dir-fallback",
+                    "configured": str(configured),
+                    "using": str(candidate),
+                })
+            return candidate
+        except Exception as exc:
+            log_event({
+                "type": "job-pack-state-dir-unavailable",
+                "path": str(candidate),
+                "error": str(exc),
+            })
+    raise RuntimeError("No writable Job Pack state directory is available")
+
+
+STATE_DIR = resolve_writable_state_dir()
+ACTIVATION_LANE_STATE = STATE_DIR / "activation_lane_state.json"
 
 
 def append_audit(event: dict[str, Any]) -> None:
@@ -111,6 +143,22 @@ def as_dict(value: Any) -> dict[str, Any]:
 
 def env_truthy(name: str, default: str = "") -> bool:
     return str(os.environ.get(name, default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int, minimum: int | None = None) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, value) if minimum is not None else value
+
+
+def module_available(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
 
 
 def normalize_service(payload: dict[str, Any]) -> str:
@@ -611,6 +659,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
+        activation_lane_enabled = env_truthy("CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED")
+        activation_lane_token = (
+            os.environ.get("CLAWZ_ACTIVATION_LANE_TOKEN")
+            or os.environ.get("CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN")
+            or ""
+        ).strip()
         self.write_response(
             200,
             {
@@ -619,6 +673,18 @@ class Handler(BaseHTTPRequestHandler):
                 "hireEndpoint": "/hire",
                 "agent": "agent/local_agent.py --mode santaclawz-run",
                 "qualityGate": "deliverables + verification manifest + zeko attestation required",
+                "activationLane": {
+                    "enabled": activation_lane_enabled,
+                    "apiBase": os.environ.get("CLAWZ_API_BASE", "https://api.santaclawz.ai").rstrip("/"),
+                    "hasToken": bool(activation_lane_token),
+                    "hasBuyerPrivateKey": bool(os.environ.get("CLAWZ_ACTIVATION_LANE_BUYER_PRIVATE_KEY", "").strip()),
+                    "hasProbeCommand": bool(os.environ.get("CLAWZ_ACTIVATION_LANE_PROBE_COMMAND", "").strip()),
+                    "ethAccountAvailable": module_available("eth_account"),
+                    "intervalSeconds": env_int("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", 30, 5),
+                    "cooldownSeconds": env_int("CLAWZ_ACTIVATION_LANE_COOLDOWN_SECONDS", 3600, 60),
+                    "statePath": str(ACTIVATION_LANE_STATE),
+                    "statePersisted": ACTIVATION_LANE_STATE.exists(),
+                },
             },
         )
 
@@ -713,6 +779,22 @@ def activation_attempt_status_for_result(result: dict[str, Any]) -> str:
     return "unknown_failed"
 
 
+def response_error_text(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    for key in ("error", "message", "reason", "invalidReason", "errorReason", "errorMessage", "code"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    nested = value.get("operationalStatus")
+    if isinstance(nested, dict):
+        for key in ("paymentFailureReason", "settlementFailureReason", "deliveryError", "returnValidationError"):
+            candidate = nested.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return ""
+
+
 def report_activation_lane_attempt(candidate: dict[str, Any], token: str, status: str, result: Optional[dict[str, Any]] = None) -> None:
     agent_id = str(candidate.get("agentId", ""))
     if not agent_id:
@@ -731,7 +813,7 @@ def report_activation_lane_attempt(candidate: dict[str, Any], token: str, status
         "ledgerId": ((response_value or {}).get("payment") or {}).get("ledgerId") if isinstance(response_value, dict) and isinstance((response_value or {}).get("payment"), dict) else "",
         "paymentPayloadDigestSha256": str(result.get("paymentPayloadDigestSha256", "")),
         "responseDigestSha256": sha256_text(stable_json_dumps(response_value)) if isinstance(response_value, (dict, list)) else "",
-        "error": str(result.get("error", "")),
+        "error": str(result.get("error") or response_error_text(response_value) or ""),
         "occurredAtIso": now_iso(),
     }
     try:
@@ -1061,7 +1143,7 @@ def classify_activation_probe_result(result: dict[str, Any]) -> str:
     if (
         status >= 500
         or operational.get("relayDeliveryStatus") == "failed"
-        or any(term in text for term in ("relay", "timeout", "temporarily unavailable", "502", "503", "504", "platform"))
+        or any(term in text for term in ("relay", "timeout", "temporarily unavailable", "502", "503", "504", "platform", "eth-account", "dependency", "requirements.txt"))
     ):
         return "platform"
     return "unknown"
@@ -1094,18 +1176,41 @@ def run_builtin_activation_lane_probe(candidate: dict[str, Any], token: str) -> 
         "response": payment_requirement,
         "classification": "unknown",
     })
-    payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
+    try:
+        payment_payload = build_activation_fee_split_payment_payload(payment_requirement, candidate, private_key)
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "mode": "builtin_x402_build",
+            "status": challenge_status,
+            "error": str(exc),
+            "response": payment_requirement,
+        }
+        final_result = {**result, "classification": classify_activation_probe_result(result)}
+        report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+        return final_result
     report_activation_lane_attempt(candidate, token, "paid_probe_started", {
         "ok": True,
         "mode": "builtin_x402",
         "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
     })
-    paid_status, paid_payload = activation_lane_http_json(
-        "POST",
-        f"{endpoint}?activationLane=true",
-        token,
-        {**request_body, "paymentPayload": payment_payload},
-    )
+    try:
+        paid_status, paid_payload = activation_lane_http_json(
+            "POST",
+            f"{endpoint}?activationLane=true",
+            token,
+            {**request_body, "paymentPayload": payment_payload},
+        )
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "mode": "builtin_x402_submit",
+            "paymentPayloadDigestSha256": sha256_text(stable_json_dumps(payment_payload)),
+            "error": str(exc),
+        }
+        final_result = {**result, "classification": classify_activation_probe_result(result)}
+        report_activation_lane_attempt(candidate, token, activation_attempt_status_for_result(final_result), final_result)
+        return final_result
     result = {
         "ok": activation_paid_execution_ok(paid_status, paid_payload if isinstance(paid_payload, dict) else {}),
         "mode": "builtin_x402",
@@ -1202,8 +1307,14 @@ def activation_lane_loop(interval_seconds: int) -> None:
                     "mode": result.get("mode"),
                     "classification": result.get("classification"),
                 }
-                write_json(ACTIVATION_LANE_STATE, state)
-                append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
+                try:
+                    write_json(ACTIVATION_LANE_STATE, state)
+                except Exception as exc:
+                    log_event({"type": "activation-lane-state-write-failed", "agent_id": agent_id, "path": str(ACTIVATION_LANE_STATE), "error": str(exc)})
+                try:
+                    append_audit({"type": "activation-lane-candidate-processed", "agent_id": agent_id, "result": result})
+                except Exception as exc:
+                    log_event({"type": "activation-lane-audit-write-failed", "agent_id": agent_id, "error": str(exc)})
                 log_event({
                     "type": "activation-lane-candidate-processed",
                     "agent_id": agent_id,
@@ -1218,8 +1329,9 @@ def activation_lane_loop(interval_seconds: int) -> None:
 
 def maybe_start_activation_lane_poller() -> None:
     if not env_truthy("CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED"):
+        log_event({"type": "activation-lane-disabled", "reason": "CLAWZ_AGENT_JOB_PACK_ACTIVATION_LANE_ENABLED is not enabled"})
         return
-    interval_seconds = max(5, int(os.environ.get("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", "10")))
+    interval_seconds = max(5, int(os.environ.get("CLAWZ_ACTIVATION_LANE_INTERVAL_SECONDS", "30")))
     thread = threading.Thread(target=activation_lane_loop, args=(interval_seconds,), name="activation-lane-poller", daemon=True)
     thread.start()
 

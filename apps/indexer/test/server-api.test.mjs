@@ -2438,6 +2438,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(activationCandidates.status, 200);
     assert.equal(activationCandidates.payload.lane, "activation_lane");
     assert.equal(activationCandidates.payload.amountUsd, "0.002001");
+    assert.equal(activationCandidates.payload.intervalSeconds, 30);
     assert.equal(
       activationCandidates.payload.candidates.some((candidate) => candidate.agentId === agentId),
       true
@@ -2504,8 +2505,24 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         authorization: "Bearer test_activation_lane_token"
       }
     });
-    const attemptedCandidate = activationCandidatesAfterAttempt.payload.candidates.find((candidate) => candidate.agentId === agentId);
-    assert.equal(attemptedCandidate.activationLaneStatus.lastAttemptStatus, "preview_only");
+    assert.equal(
+      activationCandidatesAfterAttempt.payload.candidates.some((candidate) => candidate.agentId === agentId),
+      false
+    );
+
+    const activationCooldownDiagnostics = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&includeDiagnostics=true`,
+      {
+        headers: {
+          "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(activationCooldownDiagnostics.status, 200);
+    assert.deepEqual(
+      activationCooldownDiagnostics.payload.diagnostics.excludedAgents[0]?.exclusionReasons,
+      ["activation-lane-cooldown"]
+    );
 
     const unprovenPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -2539,6 +2556,23 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(provenPaidAgentHeartbeat.status, 200);
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.provenBy, "heartbeat_probe");
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.lastProvenBuild, "server-api-test-build");
+
+    const activationDiagnostics = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&includeDiagnostics=true`,
+      {
+        headers: {
+          "x-santaclawz-activation-lane-key": "test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(activationDiagnostics.status, 200);
+    assert.equal(activationDiagnostics.payload.total, 0);
+    assert.equal(activationDiagnostics.payload.diagnostics.totalRegisteredMatching, 1);
+    assert.equal(activationDiagnostics.payload.diagnostics.totalEligible, 0);
+    assert.equal(
+      activationDiagnostics.payload.diagnostics.excludedAgents[0]?.exclusionReasons.includes("paid-execution-already-proven"),
+      true
+    );
 
     const forcedActivationCandidates = await requestJson(
       `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&force=true`,
@@ -4668,6 +4702,80 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
   }
 }
 
+async function testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts() {
+  const { buildAgentX402RuntimeContext } = await import("../dist/apps/indexer/src/x402-adapter.js");
+  const runtime = buildAgentX402RuntimeContext({
+    baseUrl: "https://api.santaclawz.ai",
+    serviceNetworkId: "zeko:test",
+    plan: {
+      agentId: "code-audit-agent--session_agent_test",
+      sessionId: "session_agent_test",
+      serviceId: "santaclawz-agent:code-audit-agent--session_agent_test",
+      pricingMode: "fixed-exact",
+      settlementTrigger: "upfront",
+      proofBundleUrl: "https://api.santaclawz.ai/api/x402/proof?sessionId=session_agent_test",
+      verifyProofUrl: "https://api.santaclawz.ai/api/x402/proof?sessionId=session_agent_test",
+      rails: [
+        {
+          rail: "base-usdc",
+          settlementRail: "evm",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          assetDecimals: 6,
+          assetStandard: "erc20",
+          assetAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          payTo: "0x1FC80745F8c0acfeEb8C4128bC20A622d1D6ef22",
+          amountUsd: "0.25",
+          settlementModel: "x402-exact-evm-fee-split-v1",
+          executionMode: "settle-first",
+          facilitatorMode: "hosted",
+          facilitatorUrl: "https://x402-zeko.example",
+          ready: true,
+          missing: [],
+          notes: []
+        }
+      ],
+      feePreviewByRail: [
+        {
+          rail: "base-usdc",
+          grossAmountUsd: "0.25",
+          sellerNetAmountUsd: "0.238845",
+          protocolFeeAmountUsd: "0.011155",
+          nominalProtocolFeeAmountUsd: "0.000025",
+          networkFacilitationFeeAmountUsd: "0.011155",
+          feeBasis: "network-facilitation-minimum",
+          sellerPayTo: "0x1FC80745F8c0acfeEb8C4128bC20A622d1D6ef22",
+          protocolFeeRecipient: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
+          feeBps: 10
+        }
+      ],
+      protocolOwnerFeePolicy: {
+        enabled: true,
+        feeBps: 10,
+        settlementModel: "fee-on-reserve-v1",
+        appliesTo: ["santaclawz-marketplace"],
+        recipientByRail: {
+          "base-usdc": "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2"
+        }
+      }
+    }
+  });
+
+  assert.ok(runtime, "runtime should be available for a ready hosted exact fee-split rail");
+  const accept = runtime.paymentRequired.accepts[0];
+  const feeSplit = accept.extensions.evm.feeSplit;
+  assert.equal(accept.amount, "250000");
+  assert.equal(accept.extensions.evm.amountUnit, "atomic");
+  assert.equal(accept.settlementModel, "x402-exact-evm-fee-split-v1");
+  assert.equal(feeSplit.grossAmount, "250000");
+  assert.equal(feeSplit.sellerAmount, "238845");
+  assert.equal(feeSplit.protocolFeeAmount, "11155");
+  assert.equal(feeSplit.sellerPayTo, "0x1FC80745F8c0acfeEb8C4128bC20A622d1D6ef22");
+  assert.equal(feeSplit.protocolFeePayTo, "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2");
+
+  console.log("ok - hosted exact fee-split payment requirement carries seller and protocol fee amounts");
+}
+
 async function main() {
   await testPersistenceFlow();
   await testMalformedEventFlow();
@@ -4690,6 +4798,7 @@ async function main() {
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
+  await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
 }
 
 try {

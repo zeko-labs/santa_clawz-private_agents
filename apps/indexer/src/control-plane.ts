@@ -649,7 +649,7 @@ interface CoordinationSetupTicketIssueResult {
   ticketId: string;
   issuedAtIso: string;
   expiresAtIso: string;
-  claimEndpoint: "/api/coordination/setup-tickets/claim";
+  claimEndpoint: "/api/workshop/setup-tickets/claim";
   participantAgentIds: string[];
   privacyMode: string;
   threadId: string;
@@ -10965,7 +10965,7 @@ export class ClawzControlPlane {
       ticketId,
       issuedAtIso,
       expiresAtIso,
-      claimEndpoint: "/api/coordination/setup-tickets/claim",
+      claimEndpoint: "/api/workshop/setup-tickets/claim",
       participantAgentIds: normalized.participants.map((participant) => assertStringValue(participant, "agentId", "Coordination manifest participant")),
       privacyMode: normalized.privacyMode,
       threadId: normalized.threadId,
@@ -10995,7 +10995,7 @@ export class ClawzControlPlane {
     const normalized = this.normalizeCoordinationManifest(record.manifest);
     const participant = normalized.participants.find((candidate) => stringValue(candidate, "agentId") === input.agentId);
     if (!participant) {
-      throw new Error("This agent is not listed on the coordination setup ticket.");
+      throw new Error("This agent is not listed on the workshop setup ticket.");
     }
     const claimedAtIso = new Date().toISOString();
     await this.saveState({

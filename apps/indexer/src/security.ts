@@ -153,7 +153,15 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
-  if (method === "POST" && (pathname === "/api/coordination/setup-tickets" || pathname === "/api/coordination/setup-tickets/claim")) {
+  if (
+    method === "POST" &&
+    (
+      pathname === "/api/workshop/setup-tickets" ||
+      pathname === "/api/workshop/setup-tickets/claim" ||
+      pathname === "/api/coordination/setup-tickets" ||
+      pathname === "/api/coordination/setup-tickets/claim"
+    )
+  ) {
     return true;
   }
 
@@ -214,6 +222,8 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
       (pathname === "/api/console/register" ||
         pathname === "/api/enrollment/tickets" ||
         pathname === "/api/enrollment/redeem" ||
+        pathname === "/api/workshop/setup-tickets" ||
+        pathname === "/api/workshop/setup-tickets/claim" ||
         pathname === "/api/coordination/setup-tickets" ||
         pathname === "/api/coordination/setup-tickets/claim" ||
         pathname === "/api/ownership/challenge" ||
