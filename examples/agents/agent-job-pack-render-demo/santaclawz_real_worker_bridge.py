@@ -61,11 +61,15 @@ def sha256_bytes(value: bytes) -> str:
 
 
 def stable_json_dumps(value: Any) -> str:
+    def js_locale_key(key: str) -> tuple[str, tuple[int, ...], str]:
+        # Match the JS protocol canonicalizer's key ordering for ASCII/camelCase fields.
+        return (key.lower(), tuple(1 if ch.isupper() else 0 for ch in key), key)
+
     def normalize(nested: Any) -> Any:
         if isinstance(nested, list):
             return [normalize(item) for item in nested]
         if isinstance(nested, dict):
-            return {key: normalize(nested[key]) for key in sorted(nested.keys())}
+            return {key: normalize(nested[key]) for key in sorted(nested.keys(), key=js_locale_key)}
         return nested
 
     return json.dumps(normalize(value), separators=(",", ":"))

@@ -65,6 +65,9 @@ Options:
   --agent-id <agent-id>              Alias for --agent.
   --prompt "Buyer task"              Buyer task prompt.
   --task "Buyer task"                Alias for --prompt.
+  --url https://example.com/input    Structured buyer context URL. Repeat or comma-separate.
+  --job-context-json '{"urls":["https://..."]}'
+  --job-context-file ./job-context.json
   --requester-contact buyer-agent:local
   --max-usd 1.00                     Required local budget guard.
   --wallet-env ./buyer.env           Env file containing BUYER_PRIVATE_KEY, BUYER_BASE_PRIVATE_KEY, or X402_BUYER_PRIVATE_KEY.
@@ -96,7 +99,11 @@ function parseArgs(argv) {
     if (!value || value.startsWith("--")) {
       throw new Error(`Missing value for --${key}`);
     }
-    args[key] = value;
+    if (key === "url" && args[key] !== undefined) {
+      args[key] = Array.isArray(args[key]) ? [...args[key], value] : [args[key], value];
+    } else {
+      args[key] = value;
+    }
     index += 1;
   }
   return args;
@@ -112,6 +119,98 @@ function readJsonFile(filePath, label) {
   } catch (error) {
     throw new Error(`Unable to read ${label} at ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function stringListFromArg(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => stringListFromArg(item));
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function sanitizeJobContext(value) {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const urls = Array.isArray(value.urls)
+    ? value.urls.map((item) => String(item).trim()).filter(Boolean).slice(0, 20)
+    : [];
+  const attachments = Array.isArray(value.attachments)
+    ? value.attachments.filter(isRecord).slice(0, 20).map((item) => ({
+        kind: ["document", "image", "file", "structured_data"].includes(String(item.kind))
+          ? String(item.kind)
+          : "file",
+        ...(typeof item.name === "string" && item.name.trim() ? { name: item.name.trim().slice(0, 160) } : {}),
+        ...(typeof item.url === "string" && item.url.trim() ? { url: item.url.trim().slice(0, 2048) } : {}),
+        ...(typeof item.uploadId === "string" && item.uploadId.trim() ? { uploadId: item.uploadId.trim().slice(0, 160) } : {}),
+        ...(typeof item.digestSha256 === "string" && /^[a-f0-9]{64}$/i.test(item.digestSha256.trim())
+          ? { digestSha256: item.digestSha256.trim().toLowerCase() }
+          : {}),
+        ...(typeof item.contentType === "string" && item.contentType.trim() ? { contentType: item.contentType.trim().slice(0, 120) } : {}),
+        ...(Number.isFinite(item.sizeBytes) ? { sizeBytes: Number(item.sizeBytes) } : {})
+      }))
+    : [];
+  const context = {
+    ...(urls.length ? { urls } : {}),
+    ...(typeof value.text === "string" && value.text.trim() ? { text: value.text.trim().slice(0, 12000) } : {}),
+    ...(attachments.length ? { attachments } : {}),
+    ...(value.structuredData !== undefined ? { structuredData: value.structuredData } : {}),
+    ...(typeof value.note === "string" && value.note.trim() ? { note: value.note.trim().slice(0, 1000) } : {})
+  };
+  return Object.keys(context).length ? context : {};
+}
+
+function buildJobContext(args) {
+  const fromFile = args["job-context-file"]
+    ? readJsonFile(String(args["job-context-file"]), "job context")
+    : {};
+  const fromJson = args["job-context-json"]
+    ? JSON.parse(String(args["job-context-json"]))
+    : {};
+  const urls = [
+    ...stringListFromArg(args.url),
+    ...stringListFromArg(args.urls)
+  ];
+  const context = {
+    ...sanitizeJobContext(fromFile),
+    ...sanitizeJobContext(fromJson)
+  };
+  if (urls.length) {
+    context.urls = [...(Array.isArray(context.urls) ? context.urls : []), ...urls].slice(0, 20);
+  }
+  return Object.keys(context).length ? context : undefined;
+}
+
+function jobContextHasField(context, field) {
+  if (!context) return false;
+  if (field === "url") return Boolean(context.urls?.length) || Boolean(context.attachments?.some((item) => item?.url));
+  if (field === "text") return typeof context.text === "string" && context.text.trim().length > 0;
+  if (field === "file") return Boolean(context.attachments?.length);
+  if (field === "document" || field === "image") return Boolean(context.attachments?.some((item) => item?.kind === field));
+  if (field === "structured_data") return context.structuredData !== undefined || Boolean(context.attachments?.some((item) => item?.kind === "structured_data"));
+  return false;
+}
+
+function missingContextRequirements(requirements, context) {
+  if (!isRecord(requirements) || !Array.isArray(requirements.hardRequirements)) {
+    return [];
+  }
+  return requirements.hardRequirements
+    .filter(isRecord)
+    .map((requirement) => {
+      const anyOf = Array.isArray(requirement.anyOf) ? requirement.anyOf.map(String) : [];
+      const allOf = Array.isArray(requirement.allOf) ? requirement.allOf.map(String) : [];
+      const anySatisfied = anyOf.length === 0 || anyOf.some((field) => jobContextHasField(context, field));
+      const allSatisfied = allOf.every((field) => jobContextHasField(context, field));
+      return anySatisfied && allSatisfied ? null : requirement;
+    })
+    .filter(Boolean);
 }
 
 function readEnvFile(filePath) {
@@ -805,6 +904,9 @@ function nextCommandBase(args, agentId, taskPrompt) {
     "pnpm buyer:buy-once --",
     `--agent ${JSON.stringify(agentId)}`,
     `--prompt ${JSON.stringify(taskPrompt)}`,
+    ...stringListFromArg(args.url).map((url) => `--url ${JSON.stringify(url)}`),
+    ...(args["job-context-file"] ? [`--job-context-file ${JSON.stringify(String(args["job-context-file"]))}`] : []),
+    ...(args["job-context-json"] ? [`--job-context-json ${JSON.stringify(String(args["job-context-json"]))}`] : []),
     `--max-usd ${JSON.stringify(String(args["max-usd"]))}`
   ].join(" ");
 }
@@ -819,6 +921,7 @@ const apiBase = normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_AP
 const agentId = parseAgentId(args.agent ?? args["agent-id"] ?? args["hire-url"]);
 const taskPrompt = String(args.prompt ?? args.task ?? "").trim();
 const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local").trim();
+const jobContext = buildJobContext(args);
 const maxUsd = decimalStringToNumber(args["max-usd"]);
 const outputDir = String(args["output-dir"] ?? DEFAULT_OUTPUT_DIR).trim();
 const dryRun = Boolean(args["dry-run"]) || !args["allow-real-money"];
@@ -851,10 +954,38 @@ if (!planResponse.ok) {
   process.exit(1);
 }
 
+const missingContext = missingContextRequirements(planResponse.payload?.contextRequirements, jobContext);
+if (missingContext.length > 0) {
+  const output = {
+    ok: false,
+    code: "missing_required_input",
+    message: "Seller requires structured buyer context before payment. Add --url, --job-context-json, or --job-context-file and retry.",
+    agentId,
+    hireUrl,
+    planUrl,
+    requesterContact,
+    prompt: taskPrompt,
+    maxUsd,
+    manifestDir: runDir,
+    contextRequirements: planResponse.payload.contextRequirements,
+    missingRequirements: missingContext,
+    jobContextShape: {
+      urls: ["https://example.com/source-or-reference"],
+      text: "Plain text input that does not fit in taskPrompt.",
+      attachments: [{ kind: "document", url: "https://example.com/input.pdf", digestSha256: "optional sha256 digest" }],
+      structuredData: { key: "value" }
+    }
+  };
+  writeJson(path.join(runDir, "buyer-run.json"), output);
+  console.log(JSON.stringify(output, null, 2));
+  process.exit(1);
+}
+
 async function preflightHire() {
   const body = {
     taskPrompt,
-    requesterContact
+    requesterContact,
+    ...(jobContext ? { jobContext } : {})
   };
   const requestBodyBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
   if (requestBodyBytes > HIRE_REQUEST_BODY_MAX_BYTES) {
@@ -885,6 +1016,7 @@ const baseOutput = {
   planUrl,
   requesterContact,
   prompt: taskPrompt,
+  ...(jobContext ? { jobContext } : {}),
   maxUsd,
   priceUsd: priceUsd === null ? null : formatUsd(priceUsd),
   pricingMode: planResponse.payload?.pricingMode ?? planResponse.payload?.paymentProfile?.pricingMode ?? "unknown",
@@ -1010,6 +1142,7 @@ if (!validation.ok) {
 const submitBody = {
   taskPrompt,
   requesterContact,
+  ...(jobContext ? { jobContext } : {}),
   paymentPayload
 };
 const submit = await requestJson(hireUrl, {

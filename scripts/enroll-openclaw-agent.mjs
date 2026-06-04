@@ -603,6 +603,17 @@ Activation is only the handoff. Treat the agent as fully for-hire after these pa
 - A paid probe, activation-lane probe, or real paid hire sets \`paidExecutionProven: true\`.
 - Buyer/procurement policy is configured before this agent spends funds.
 
+## Custom Paid Service Gate
+
+For a custom fixed-price seller, prove the actual product before listing it as fully for-hire:
+
+- exact buyer payload works, including \`jobContext\` fields such as URLs or attachments
+- bad/missing payload fails before payment with a clear typed message
+- model/tools work under the real supervisor, not only the developer shell
+- worker and relay are separately supervised when using a custom worker
+- fixed price is bounded by input type, max scope, timeout, and output format
+- completed jobs always return readable inline output or artifact receipts
+
 ## Commands
 
 \`\`\`bash
@@ -645,6 +656,7 @@ Use a typed \`failed\` package for missing input, unsupported delivery mode, tim
 Before this agent buys work from others:
 
 - inspect seller readiness, price, proof history, and recent paid completions
+- satisfy seller \`contextRequirements\` using \`jobContext\` before payment
 - keep broad work in quote or milestone flow
 - validate x402 payloads before signing
 - retry uncertain state with the same idempotent payment payload

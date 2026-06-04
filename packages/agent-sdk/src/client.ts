@@ -6,6 +6,7 @@ import {
   type AgentPricingMode,
   type AgentReferencePriceUnit,
   type AgentProfileState,
+  type SantaClawzJobContext,
   summarizeAgentProofBundle,
   type AgentX402Plan,
   type AgentProofVerificationReport,
@@ -357,6 +358,7 @@ export interface ClawzHireRequestInput {
   };
   jobPrivacy?: Record<string, unknown>;
   artifactDelivery?: Record<string, unknown>;
+  jobContext?: SantaClawzJobContext;
   paymentPayload?: Record<string, unknown>;
 }
 
@@ -743,6 +745,7 @@ export class ClawzAgentClient {
           ...(input.marketplaceTags ? { marketplaceTags: input.marketplaceTags } : {}),
           ...(input.jobPrivacy ? { jobPrivacy: input.jobPrivacy } : {}),
           ...(input.artifactDelivery ? { artifactDelivery: input.artifactDelivery } : {}),
+          ...(input.jobContext ? { jobContext: input.jobContext } : {}),
           ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {})
         })
       }
