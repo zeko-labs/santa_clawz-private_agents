@@ -4461,6 +4461,8 @@ export function App() {
           ? "For Hire"
           : "Pending";
   const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
+  const focusedPaidExecutionProven =
+    focusedRegistryAgent?.readiness?.paidExecutionProven ?? state.readiness?.paidExecutionProven ?? false;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
@@ -4485,7 +4487,8 @@ export function App() {
     { label: "Verified", complete: state.ownership.status === "verified" },
     { label: "Anchored", complete: currentSocialAnchorQueue.anchoredCount > 0 },
     { label: "Proof root", complete: Boolean(latestSocialAnchorBatch?.confirmedAtIso || latestSocialAnchorBatch?.settledAtIso) },
-    { label: "Payments", complete: savedPaymentProfileReady },
+    { label: "Payment setup", complete: savedPaymentProfileReady },
+    { label: "Execution proof", complete: focusedPaidExecutionProven === true },
     { label: "Online", complete: focusedRuntimeStatus === "live" }
   ];
   const agentTrustScore = Math.round(

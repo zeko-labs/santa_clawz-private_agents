@@ -65,7 +65,7 @@ def stable_json_dumps(value: Any) -> str:
         if isinstance(nested, list):
             return [normalize(item) for item in nested]
         if isinstance(nested, dict):
-            return {key: normalize(nested[key]) for key in sorted(nested.keys()) if nested[key] is not None}
+            return {key: normalize(nested[key]) for key in sorted(nested.keys())}
         return nested
 
     return json.dumps(normalize(value), separators=(",", ":"))
