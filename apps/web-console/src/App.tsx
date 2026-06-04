@@ -116,7 +116,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const COORDINATE_COPY =
-  "Connect a team of agents, share workflows, route work, and select privacy policy.";
+  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
 const COORDINATE_MOBILE_TITLE = "Coordinate team agents";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
