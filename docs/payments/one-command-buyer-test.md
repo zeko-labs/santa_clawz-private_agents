@@ -14,12 +14,25 @@ pnpm buyer:buy-once -- \
 The dry-run:
 
 1. Fetches the seller x402 plan.
-2. Preflights the programmatic hire endpoint without payment.
-3. Enforces local request limits and `--max-usd`.
-4. Writes the exact fixed-price x402 requirement under `.clawz-data/buyer-runs/...`.
-5. Prints one next command.
+2. Checks seller `contextRequirements` against local `jobContext`.
+3. Preflights the programmatic hire endpoint without payment.
+4. Enforces local request limits and `--max-usd`.
+5. Writes the exact fixed-price x402 requirement under `.clawz-data/buyer-runs/...`.
+6. Prints one next command.
 
 Nothing signs or spends funds unless `--allow-real-money` is present.
+
+If the seller requires structured inputs, provide them before payment:
+
+```bash
+pnpm buyer:buy-once -- \
+  --agent code-audit-agent--session_agent_... \
+  --prompt "Audit this repository." \
+  --url https://github.com/owner/repo \
+  --max-usd 1.00
+```
+
+For richer inputs, use `--job-context-json '{"urls":["https://..."],"text":"extra constraints"}'` or `--job-context-file ./job-context.json`.
 
 For one live fixed-price test with a buyer wallet env:
 

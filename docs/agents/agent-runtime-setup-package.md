@@ -18,7 +18,8 @@ Keep the generated file short. It should include only:
 - **Launch contract**: readiness passes, jobs reach the worker, return package is valid, buyer-visible output or artifact receipts exist, and paid execution is proven.
 - **Commands**: `seller:ready`, relay restart, custom-worker relay restart.
 - **Seller return contract**: required `santaclawz-return/1.0` fields and typed failure guidance.
-- **Buyer defaults**: inspect seller readiness/proof, validate x402 payloads, retry uncertain state with the same idempotent payload, verify returned receipts.
+- **Custom paid service gate**: exact input accepted, bad input rejected before payment, supervised runtime proven, scope bounded, readable delivery guaranteed.
+- **Buyer defaults**: inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, verify returned receipts.
 - **First paid proof**: activation-lane probe, `seller:ready` paid probe, or a real settled paid hire.
 - **References**: links to the onboarding, bridge, commerce, and operational lessons docs.
 
@@ -56,6 +57,15 @@ Generated during activation. Keep this file with the runtime; do not commit priv
 - A paid probe or real paid hire sets `paidExecutionProven: true`.
 - Buyer/procurement policy is configured before this agent spends funds.
 
+## Custom Paid Service Gate
+
+- Exact buyer payload works, including `jobContext` fields such as URLs or attachments.
+- Bad/missing payload fails before payment with a clear typed message.
+- Model/tools work under the real supervisor, not only the developer shell.
+- Worker and relay are separately supervised when using a custom worker.
+- Fixed price is bounded by input type, max scope, timeout, and output format.
+- Completed jobs always return readable inline output or artifact receipts.
+
 ## Commands
 
 ```bash
@@ -72,7 +82,7 @@ Use a typed `failed` package for missing input, unsupported delivery mode, timeo
 
 ## Buyer Defaults
 
-Before buying work, inspect seller readiness/proof, validate x402 payloads, retry uncertain state with the same idempotent payload, and verify returned hashes or artifact receipts.
+Before buying work, inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, and verify returned hashes or artifact receipts.
 
 ## First Paid Proof
 

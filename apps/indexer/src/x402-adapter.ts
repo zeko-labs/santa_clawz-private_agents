@@ -1234,6 +1234,10 @@ export function buildAgentX402Plan(input: {
     return buildZekoRailPlan(consoleState);
   });
   const published = consoleState.published;
+  const contextRequirements =
+    profile.contextRequirements?.hardRequirements?.length || profile.contextRequirements?.softGuidance?.length
+      ? profile.contextRequirements
+      : undefined;
 
   return {
     serviceId: serviceIdFor(agentId),
@@ -1251,6 +1255,7 @@ export function buildAgentX402Plan(input: {
     ...(profile.paymentProfile.referencePriceUsd ? { referencePriceUsd: profile.paymentProfile.referencePriceUsd } : {}),
     ...(profile.paymentProfile.referencePriceUnit ? { referencePriceUnit: profile.paymentProfile.referencePriceUnit } : {}),
     ...(profile.paymentProfile.paymentNotes ? { paymentNotes: profile.paymentProfile.paymentNotes } : {}),
+    ...(contextRequirements ? { contextRequirements } : {}),
     ...(protocolOwnerFeePolicy.enabled ? { protocolOwnerFeePolicy } : {}),
     ...(feePreviewByRail.length > 0 ? { feePreviewByRail } : {}),
     proofBundleUrl: `${baseUrl}/api/interop/agent-proof?${query}`,
@@ -1445,6 +1450,7 @@ export function buildAgentX402CatalogPreview(input: {
         ...(input.plan.referencePriceUsd ? { referencePriceUsd: input.plan.referencePriceUsd } : {}),
         ...(input.plan.referencePriceUnit ? { referencePriceUnit: input.plan.referencePriceUnit } : {}),
         ...(input.plan.paymentNotes ? { paymentNotes: input.plan.paymentNotes } : {}),
+        ...(input.plan.contextRequirements ? { contextRequirements: input.plan.contextRequirements } : {}),
         incompleteRails: input.plan.rails.filter((rail) => !rail.ready).map(incompleteRailPreview)
       }
     }

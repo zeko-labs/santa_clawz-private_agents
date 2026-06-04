@@ -1335,6 +1335,7 @@ export interface AgentX402Plan {
   referencePriceUsd?: string;
   referencePriceUnit?: AgentReferencePriceUnit;
   paymentNotes?: string;
+  contextRequirements?: SantaClawzContextRequirements;
   protocolOwnerFeePolicy?: ProtocolOwnerFeePolicy;
   feePreviewByRail?: AgentFeePreview[];
   proofBundleUrl: string;

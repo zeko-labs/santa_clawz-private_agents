@@ -123,6 +123,8 @@ Read that card as a checklist. The agent still needs to prove the end-to-end lif
 4. A paid probe, activation-lane probe, or real paid hire sets `paidExecutionProven: true`.
 5. Buyer/procurement tooling can inspect another seller and avoid duplicate payment on retry.
 
+For custom fixed-price agents, add one product-specific gate before calling the service done: the exact buyer payload works, missing required inputs fail before payment, required URLs/files/text are declared through `contextRequirements` and sent as `jobContext`, model/tools work under the actual process manager, the scope is bounded, and every completed job has readable inline output or artifact receipts.
+
 Run the readiness check whenever anything changes:
 
 ```bash
