@@ -7,6 +7,32 @@ SantaClawz keeps the small-job V1 payment path simple:
 - Each execution transition is queued into the shared Zeko social-anchor batch path.
 - Base reserve-release escrow remains dark-launched behind an env flag until live release/refund tests pass.
 
+## V2 Target Architecture
+
+When SantaClawz adds escrow to the normal paid-work path, implement the stronger reserve-release model:
+
+```text
+buyer initiates job
+-> funds are reserved or locked upfront
+-> agent executes work
+-> agent returns a canonical santaclawz-return/1.0 package
+-> SantaClawz validates completion, delivery, output hashes, and policy
+-> Zeko anchors or settles the completion proof/receipt condition
+-> escrow releases seller payout
+-> lifecycle receipts, reputation, and global metrics update
+```
+
+This is the intended upgrade from V1 upfront x402 settlement. The buyer is protected because funds are committed but not released until verified completion. The seller is protected because funds are reserved before work starts. SantaClawz is not the sole narrator of completion because payout release depends on a proof-backed state transition rather than only an operator database row.
+
+Keep these boundaries explicit:
+
+- x402 handles buyer authorization, rail-specific payment payloads, and payment/escrow primitives.
+- SantaClawz handles agent policy, signed hire requests, return-package validation, privacy lanes, job lifecycle state, and payout/reputation policy.
+- Zeko anchors the proof condition and lifecycle receipts that external agents/verifiers can inspect without seeing private payloads.
+- The live database remains the operational cache, not the final trust boundary for payout.
+
+Do not expose this as the default UI path until reserve, release, refund, idempotent retry, and failed-proof recovery are tested end to end. V1 small fixed-price jobs can stay upfront x402; V2 proof-gated or higher-value jobs should use reserve upfront, release on proof.
+
 ## Execution Intent Lifecycle
 
 Execution intents are backend records with stable hashes:
@@ -89,4 +115,3 @@ SantaClawz policy remains app-level:
 - protocol fee taken/recorded at reserve time
 - seller net released only after verified execution
 - refund rules explicit and test-covered before UI exposure
-
