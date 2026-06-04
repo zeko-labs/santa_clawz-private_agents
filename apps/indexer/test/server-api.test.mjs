@@ -1133,6 +1133,30 @@ async function testProtectedApiAuth() {
     assert.equal(publicProcurement.status, 200);
     assert.match(publicProcurement.payload.intent.intentId, /^proc_/);
 
+    const publicWorkshopTicket = await requestJson(`${baseUrl}/api/workshop/setup-tickets`, {
+      method: "POST",
+      body: JSON.stringify({
+        manifest: {
+          schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+          threadId: "eventlog_public_workshop_auth_smoke",
+          swarmId: "workflow_public_workshop_auth_smoke",
+          apiBase: baseUrl,
+          coordinationPolicy: {
+            privacyMode: "digest-only"
+          },
+          participants: [
+            {
+              agentId: "agent_public_workshop_auth_smoke",
+              role: "admin"
+            }
+          ]
+        }
+      })
+    });
+    assert.equal(publicWorkshopTicket.status, 200);
+    assert.match(publicWorkshopTicket.payload.ticket, /^scz_coord_/);
+    assert.equal(publicWorkshopTicket.payload.threadId, "eventlog_public_workshop_auth_smoke");
+
     const tokenStateAccess = await requestJson(`${baseUrl}/api/executions/hire_missing/state?token=fake`, {
       method: "GET"
     });

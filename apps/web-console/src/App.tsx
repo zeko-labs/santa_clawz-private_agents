@@ -78,6 +78,12 @@ type CoordinationDraft = {
   requiredCapabilities: string;
   toolTouchpoints: string;
 };
+type StoredCoordinationDraft = {
+  draft: CoordinationDraft;
+  agentIds: string[];
+  agentRoles: Record<string, CoordinationAgentRole>;
+  agentUrl: string;
+};
 type SdkWidgetDraft = {
   agentName: string;
   headline: string;
@@ -116,8 +122,9 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Connect a team of agents, watch shared workflows, route work, and choose what stays public, encrypted, or local.";
+  "Connect a team of agents, share workflows, route work, and select privacy policy.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
+const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
@@ -1451,6 +1458,9 @@ function normalizeAgentKey(value?: string) {
 }
 
 function isDemoAgent(agent: AgentRegistryEntry) {
+  if (agent.pricingMode === "free-test" || (!agent.paymentsEnabled && !agent.paidJobsEnabled)) {
+    return true;
+  }
   const paidJobCount =
     (agent.jobActivityStats?.paidExecutionCount ?? 0) +
     (agent.completionScore?.evaluatedJobCount ?? 0);
@@ -1467,7 +1477,6 @@ function isDemoAgent(agent: AgentRegistryEntry) {
     !agent.paidJobsEnabled &&
     paidJobCount === 0;
   return (
-    agent.pricingMode === "free-test" ||
     (isStarterAgent(agent) && !commercialAgent) ||
     nonCommercialActivityAgent
   );
@@ -1881,6 +1890,74 @@ function defaultCoordinationDraft(): CoordinationDraft {
     requiredCapabilities: "",
     toolTouchpoints: ""
   };
+}
+
+function isCoordinationPrivacyMode(value: unknown): value is CoordinationPrivacyMode {
+  return value === "public-summary" || value === "digest-only" || value === "recipient-encrypted" || value === "local-private";
+}
+
+function isCoordinationAgentRole(value: unknown): value is CoordinationAgentRole {
+  return value === "admin" || value === "member";
+}
+
+function restoreCoordinationDraft(value: unknown): CoordinationDraft {
+  const defaults = defaultCoordinationDraft();
+  if (!value || typeof value !== "object") {
+    return defaults;
+  }
+  const input = value as Partial<CoordinationDraft>;
+  return {
+    ...defaults,
+    ...Object.fromEntries(
+      Object.entries(input).filter(([_key, item]) => typeof item === "string")
+    ),
+    identityProvider:
+      input.identityProvider === "google" || input.identityProvider === "operator-managed" || input.identityProvider === "email-code"
+        ? input.identityProvider
+        : defaults.identityProvider,
+    privacyMode: isCoordinationPrivacyMode(input.privacyMode) ? input.privacyMode : defaults.privacyMode
+  };
+}
+
+function readStoredCoordinationDraft(): StoredCoordinationDraft | null {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(WORKSHOP_DRAFT_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const input = parsed as Partial<StoredCoordinationDraft>;
+    const agentIds = Array.isArray(input.agentIds)
+      ? input.agentIds.filter((agentId): agentId is string => typeof agentId === "string" && agentId.trim().length > 0).slice(0, 8)
+      : [];
+    const agentRoles = Object.fromEntries(
+      Object.entries(input.agentRoles ?? {}).filter(
+        (entry): entry is [string, CoordinationAgentRole] => agentIds.includes(entry[0]) && isCoordinationAgentRole(entry[1])
+      )
+    );
+    return {
+      draft: restoreCoordinationDraft(input.draft),
+      agentIds,
+      agentRoles,
+      agentUrl: typeof input.agentUrl === "string" ? input.agentUrl : ""
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function writeStoredCoordinationDraft(value: StoredCoordinationDraft) {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(WORKSHOP_DRAFT_STORAGE_KEY, JSON.stringify(value));
+  } catch (_error) {
+    // Ignore storage quota and privacy-mode failures; the live form state still works.
+  }
 }
 
 function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
@@ -2327,10 +2404,15 @@ export function App() {
   const [exploreAgentSort, setExploreAgentSort] = useState<ExploreAgentSortKey>("online");
   const [exploreAgentPage, setExploreAgentPage] = useState(1);
   const [expandedBoardMessageIds, setExpandedBoardMessageIds] = useState<Set<string>>(new Set<string>());
-  const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(defaultCoordinationDraft());
-  const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>([]);
-  const [coordinationAgentRoles, setCoordinationAgentRoles] = useState<Record<string, CoordinationAgentRole>>({});
-  const [coordinationAgentUrl, setCoordinationAgentUrl] = useState("");
+  const storedCoordinationDraft = readStoredCoordinationDraft();
+  const [coordinationDraft, setCoordinationDraft] = useState<CoordinationDraft>(
+    storedCoordinationDraft?.draft ?? defaultCoordinationDraft()
+  );
+  const [coordinationAgentIds, setCoordinationAgentIds] = useState<string[]>(storedCoordinationDraft?.agentIds ?? []);
+  const [coordinationAgentRoles, setCoordinationAgentRoles] = useState<Record<string, CoordinationAgentRole>>(
+    storedCoordinationDraft?.agentRoles ?? {}
+  );
+  const [coordinationAgentUrl, setCoordinationAgentUrl] = useState(storedCoordinationDraft?.agentUrl ?? "");
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [coordinationSetupIssuing, setCoordinationSetupIssuing] = useState(false);
@@ -2889,6 +2971,15 @@ export function App() {
       window.clearInterval(intervalId);
     };
   }, [coordinationSetupTicket]);
+
+  useEffect(() => {
+    writeStoredCoordinationDraft({
+      draft: coordinationDraft,
+      agentIds: coordinationAgentIds,
+      agentRoles: coordinationAgentRoles,
+      agentUrl: coordinationAgentUrl
+    });
+  }, [coordinationDraft, coordinationAgentIds, coordinationAgentRoles, coordinationAgentUrl]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -4610,10 +4701,10 @@ export function App() {
             >
               <div className="section-head compact-head">
                 <div>
-                  <h2>Open an agent workshop</h2>
+                  <h2>Start a team coordination run</h2>
                 </div>
                 <a className="field-help-link register-flow-guide-link" href={WORKSHOP_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Workshop setup guide
+                  Team setup guide
                 </a>
               </div>
 
