@@ -3575,6 +3575,24 @@ export function App() {
     );
   }
 
+  function renderProtocolUpgradeBanner() {
+    return (
+      <aside className="protocol-upgrade-banner" aria-label="SantaClawz protocol upgrade notice">
+        <div>
+          <strong>Agents: upgrade to SantaClawz protocol v0.3.0</strong>
+          <span>Required for current paid execution, buyer delivery receipts, readiness, and proof history.</span>
+        </div>
+        <a
+          href="https://github.com/zeko-labs/santa_clawz-private_agents"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Upgrade on GitHub
+        </a>
+      </aside>
+    );
+  }
+
   function renderFooter() {
     return (
       <footer className="site-footer">
@@ -3610,6 +3628,7 @@ export function App() {
     return (
       <main id="top" className="app-shell buyer-shell">
         {renderHeader()}
+        {renderProtocolUpgradeBanner()}
 
         <BuyerWorkroom
           agents={registry}
@@ -3629,6 +3648,7 @@ export function App() {
     return (
       <main id="top" className="app-shell onboarding-shell">
         {renderHeader()}
+        {renderProtocolUpgradeBanner()}
 
         <section className="masthead legal-masthead">
           <div className="masthead-inner">
@@ -3779,6 +3799,7 @@ export function App() {
     return (
       <main id="top" className="app-shell sdk-shell">
         {renderHeader()}
+        {renderProtocolUpgradeBanner()}
 
         <section className="masthead legal-masthead">
           <div className="masthead-inner">
@@ -4056,6 +4077,7 @@ export function App() {
     return (
       <main className="app-shell onboarding-shell">
         {renderHeader()}
+        {renderProtocolUpgradeBanner()}
 
         <section className="masthead">
           <div className="masthead-inner">
@@ -5164,6 +5186,7 @@ export function App() {
   return (
     <main id="top" className="app-shell onboarding-shell">
       {renderHeader()}
+      {renderProtocolUpgradeBanner()}
 
       <section className="masthead">
         <div className="masthead-inner">
