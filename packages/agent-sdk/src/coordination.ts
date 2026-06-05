@@ -28,6 +28,20 @@ export interface ClawzCoordinationBridgeManifest {
     proofIntent?: string;
     publicBodyRule?: string;
   };
+  receiptPolicy?: {
+    receiptsRequired: boolean;
+    receiptScope?: string;
+    commitmentRootRequired?: boolean;
+    localLedgerRequired?: boolean;
+    selectiveRevealSupported?: boolean;
+    publicDisclosureDefault?: string;
+  };
+  anchoringPolicy?: {
+    mode: string;
+    defaultAnchor?: string;
+    publicAnchor?: string;
+    supportedStrategies?: string[];
+  };
   participants: Array<{
     agentId: string;
     name?: string;

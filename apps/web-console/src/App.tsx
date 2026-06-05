@@ -125,7 +125,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Connect a team of agents, share workflows, route work, and select privacy policy.";
+  "Run a private agent workspace with mandatory receipts and policy-controlled proof commitments.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
@@ -2049,9 +2049,9 @@ function buildBridgeManifest(input: {
             "coordination run shell",
             "agent ids",
             "workflow ids and event-log ids",
-            "privacy policy lane",
-            "public summaries when allowed",
-            "digests and encrypted envelope references",
+            "private/digest coordination lane",
+            "receipt and commitment metadata",
+            "digests and safe checkpoint references",
             "aggregate counts",
             "proof events"
           ],
@@ -2086,8 +2086,8 @@ function buildBridgeManifest(input: {
         privateDataRule:
           "Local wrappers and customer agents pull real org data; SantaClawz stores only shell metadata, refs, digests, encrypted envelope refs, and aggregate counts.",
         publishAllowed: [
-          "public summaries when policy allows",
-          "digest-only coordination events",
+          "policy-controlled public commitment roots",
+          "digest-only receipt checkpoints",
           "recipient-encrypted envelope references",
           "aggregate coordination participation totals"
         ],
@@ -2112,6 +2112,26 @@ function buildBridgeManifest(input: {
         proofIntent: "digest_or_envelope",
         publicBodyRule: "Workshop coordination is private by default. Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
       },
+      receiptPolicy: {
+        receiptsRequired: true,
+        receiptScope: "every-workspace-event",
+        commitmentRootRequired: true,
+        localLedgerRequired: true,
+        selectiveRevealSupported: true,
+        publicDisclosureDefault: "none"
+      },
+      anchoringPolicy: {
+        mode: "policy-controlled",
+        defaultAnchor: "local-ledger",
+        publicAnchor: "controlled-disclosure",
+        supportedStrategies: [
+          "local-only",
+          "delayed-public-root",
+          "periodic-public-root",
+          "milestone-public-root",
+          "payment-or-reputation-triggered-root"
+        ]
+      },
       participants: input.agents.map((agent) => ({
         agentId: agent.agentId,
         name: agent.agentName,
@@ -2122,6 +2142,7 @@ function buildBridgeManifest(input: {
         publicHireUrl: buildProgrammaticAgentHireUrl(agent.agentId)
       })),
       read: {
+        receiptLedger: `${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
         publicThreadMessages: `${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
         publicDirectory: `${input.apiBase}/api/agents`
       },
@@ -2179,7 +2200,7 @@ function buildCoordinationSetupTicketHandoff(input: {
     `{ \"ticket\": \"${input.ticket.ticket}\", \"agentId\": \"<agent_id>\" }`,
     "",
     "Keep agent admin keys and connector credentials in each agent's local wrapper or secret manager.",
-    `Public-safe trace: ${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.ticket.threadId)}&limit=100`
+    `Receipt ledger: ${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.ticket.threadId)}&limit=100`
   ].join("\n");
 }
 
@@ -3428,6 +3449,16 @@ export function App() {
             }}
           >
             Activate
+          </button>
+          <button
+            type="button"
+            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "workshop" ? " active" : ""}`}
+            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "workshop" ? "page" : undefined}
+            onClick={() => {
+              showSection("workshop");
+            }}
+          >
+            Workshop
           </button>
           <button
             type="button"
@@ -4978,11 +5009,11 @@ export function App() {
           <section className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
-                <h2>Public workshop trace</h2>
-                <p className="panel-copy">{filteredCoordinationMessages.length} of {coordinationMessages.length} visible workshop events</p>
+                <h2>Workshop receipt ledger</h2>
+                <p className="panel-copy">{filteredCoordinationMessages.length} of {coordinationMessages.length} visible receipt events</p>
               </div>
               <div className="coordination-trace-actions">
-                <label className="sr-only" htmlFor="coordination-trace-search">Search workshop trace</label>
+                <label className="sr-only" htmlFor="coordination-trace-search">Search workshop receipts</label>
                 <input
                   id="coordination-trace-search"
                   className="text-input coordination-trace-search"
@@ -4990,7 +5021,7 @@ export function App() {
                   onChange={(event: ValueInputEvent) => {
                     setCoordinationTraceQuery(event.target.value);
                   }}
-                  placeholder="Search trace"
+                  placeholder="Search receipts"
                 />
                 <button
                   type="button"
@@ -4999,7 +5030,7 @@ export function App() {
                     void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
                   }}
                 >
-                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
+                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
                 </button>
               </div>
             </div>
@@ -5007,11 +5038,11 @@ export function App() {
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>{coordinationMessages.length > 0 ? "No matching workshop events" : "No workshop events yet"}</strong>
+                  <strong>{coordinationMessages.length > 0 ? "No matching receipts" : "No workshop receipts yet"}</strong>
                   <p className="panel-copy">
                     {coordinationMessages.length > 0
                       ? "Try a different agent, role, message, digest, or checkpoint search."
-                      : "Agents can claim jobs and sync workshop checkpoints here while keeping private work in envelopes or local systems."}
+                      : "Agents can sync receipt checkpoints here while private work stays in local wrappers, sealed stores, or customer systems."}
                   </p>
                 </article>
               ) : (
@@ -5022,7 +5053,7 @@ export function App() {
                         <strong>{thread.threadId || thread.swarmId || thread.key}</strong>
                         <span>{thread.messages.length} events • latest {formatRelativeTime(thread.latestAtIso)}</span>
                       </div>
-                      <span className="board-proof-pill confirmed">public trace</span>
+                      <span className="board-proof-pill confirmed">receipt</span>
                     </div>
                     <div className="coordination-message-stack">
                       {thread.messages.slice(0, 12).map((message) => (

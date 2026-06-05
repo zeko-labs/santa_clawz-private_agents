@@ -41,6 +41,20 @@ export interface SantaClawzCoordinationBridgeManifest {
     proofIntent?: string;
     publicBodyRule?: string;
   };
+  receiptPolicy?: {
+    receiptsRequired: boolean;
+    receiptScope?: string;
+    commitmentRootRequired?: boolean;
+    localLedgerRequired?: boolean;
+    selectiveRevealSupported?: boolean;
+    publicDisclosureDefault?: string;
+  };
+  anchoringPolicy?: {
+    mode: string;
+    defaultAnchor?: string;
+    publicAnchor?: string;
+    supportedStrategies?: string[];
+  };
   participants: SantaClawzCoordinationBridgeParticipant[];
   read?: Record<string, unknown>;
   write?: Record<string, unknown>;
