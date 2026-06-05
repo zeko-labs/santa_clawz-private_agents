@@ -2539,19 +2539,19 @@ pre,
 
 .coordination-thread-panel {
   display: grid;
-  gap: 16px;
-  padding-top: 28px;
+  gap: 12px;
+  padding-top: 20px;
 }
 
 .coordination-thread-panel .compact-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  align-items: center;
   gap: 10px 18px;
 }
 
 .coordination-thread-panel .compact-head > div {
-  grid-column: 1 / -1;
+  grid-column: 1;
   display: grid;
   gap: 4px;
   align-items: start;
@@ -2643,13 +2643,8 @@ pre,
 
 .coordination-thread-card {
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  border-radius: 18px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(247, 255, 252, 0.7)),
-    rgba(255, 255, 255, 0.62);
-  box-shadow: 0 16px 34px rgba(18, 35, 54, 0.06);
+  gap: 12px;
+  padding: 14px;
 }
 
 .coordination-thread-head,
@@ -2673,12 +2668,11 @@ pre,
 
 .coordination-message-row {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(18, 35, 54, 0.05);
-  border-radius: 18px;
-  background: rgba(18, 35, 54, 0.035);
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(18, 35, 54, 0.04);
 }
 
 .coordination-message-row div {
@@ -2692,30 +2686,8 @@ pre,
   margin: 0;
   overflow: hidden;
   color: var(--ink);
-  font-weight: 600;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.coordination-message-title-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.coordination-message-title-line span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: rgba(18, 35, 54, 0.07);
-  color: rgba(74, 91, 112, 0.9);
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .coordination-field-grid {
