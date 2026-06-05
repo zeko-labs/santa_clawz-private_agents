@@ -1254,6 +1254,7 @@ if (dryRun) {
 }
 
 let paymentPayload = null;
+let paymentPayloadPath = args["payment-payload-file"] ? String(args["payment-payload-file"]) : null;
 if (args["payment-payload-file"]) {
   paymentPayload = normalizePaymentPayloadFromFile(readJsonFile(String(args["payment-payload-file"]), "payment payload"), {
     service: typeof args.service === "string" ? args.service : ""
@@ -1267,7 +1268,7 @@ if (args["payment-payload-file"]) {
     payer: account.address,
     account
   });
-  writeJson(path.join(runDir, "payment-payload.json"), paymentPayload);
+  paymentPayloadPath = writeJson(path.join(runDir, "payment-payload.json"), paymentPayload);
 } else {
   const output = {
     ok: false,
@@ -1333,7 +1334,7 @@ const executionIds = {
 };
 if (!submit.ok && submit.payload?.retryable === true) {
   const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
-    code: "post_payment_state_unavailable_retryable",
+    code: submit.status === 0 ? "paid_submit_timeout_state_unknown" : "post_payment_state_unavailable_retryable",
     paymentStatus: "authorized",
     settlementStatus: "unknown",
     relayDeliveryStatus: "not_confirmed",
@@ -1352,6 +1353,9 @@ if (!submit.ok && submit.payload?.retryable === true) {
     ids: executionIds,
     priceUsd: baseOutput.priceUsd,
     manifestDir: runDir,
+    ...(paymentPayloadPath ? { paymentPayloadPath } : {}),
+    safeNextAction: "poll_payment_state",
+    safeToCreateNewPayment: false,
     response: submit.payload
   };
   writeJson(path.join(runDir, "buyer-run.json"), output);

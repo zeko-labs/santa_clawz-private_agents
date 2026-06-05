@@ -44,5 +44,5 @@ export function isRetryablePlatformTransportError(error) {
     code,
     causeCode
   ].join(" ").toLowerCase();
-  return /fetch failed|networkerror|enotfound|eai_again|econnreset|econnrefused|etimedout|socket hang up|temporarily unavailable|dns/.test(text);
+  return /abort|aborted|timeout|timed out|fetch failed|networkerror|enotfound|eai_again|econnreset|econnrefused|etimedout|socket hang up|temporarily unavailable|dns/.test(text);
 }

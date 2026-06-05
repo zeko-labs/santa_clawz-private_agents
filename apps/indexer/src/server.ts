@@ -116,6 +116,7 @@ const PUBLIC_READ_CACHE_MAX_ENTRIES = Math.max(
   10,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_MAX_ENTRIES ?? "120"))
 );
+const HOT_READ_STALE_WHILE_REVALIDATE_MS = 60_000;
 const PUBLIC_READ_RATE_LIMIT_WINDOW_MS = Math.max(
   10_000,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_WINDOW_MS ?? "60000"))
@@ -161,38 +162,25 @@ const PUBLIC_SOCIAL_ANCHOR_FEED_KINDS: SocialAnchorCandidateKind[] = [
   "operator-dispatch"
 ];
 
-const consoleStateCache = new Map<string, {
+type HotReadCacheStatus = "hit" | "stale" | "refreshing" | "inflight" | "miss";
+type HotReadCacheEntry = {
   expiresAtMs: number;
+  retainedUntilMs: number;
   payload: unknown;
-}>();
-const consoleStateInflight = new Map<string, {
+};
+type HotReadInflightEntry = {
   epoch: number;
   promise: Promise<unknown>;
-}>();
-const paymentLedgerCache = new Map<string, {
-  expiresAtMs: number;
-  payload: unknown;
-}>();
-const paymentLedgerInflight = new Map<string, {
-  epoch: number;
-  promise: Promise<unknown>;
-}>();
-const publicMarketplaceSnapshotCache = new Map<string, {
-  expiresAtMs: number;
-  payload: unknown;
-}>();
-const publicMarketplaceSnapshotInflight = new Map<string, {
-  epoch: number;
-  promise: Promise<unknown>;
-}>();
-const publicReadCache = new Map<string, {
-  expiresAtMs: number;
-  payload: unknown;
-}>();
-const publicReadInflight = new Map<string, {
-  epoch: number;
-  promise: Promise<unknown>;
-}>();
+};
+
+const consoleStateCache = new Map<string, HotReadCacheEntry>();
+const consoleStateInflight = new Map<string, HotReadInflightEntry>();
+const paymentLedgerCache = new Map<string, HotReadCacheEntry>();
+const paymentLedgerInflight = new Map<string, HotReadInflightEntry>();
+const publicMarketplaceSnapshotCache = new Map<string, HotReadCacheEntry>();
+const publicMarketplaceSnapshotInflight = new Map<string, HotReadInflightEntry>();
+const publicReadCache = new Map<string, HotReadCacheEntry>();
+const publicReadInflight = new Map<string, HotReadInflightEntry>();
 const publicReadRateLimitBuckets = new Map<string, {
   resetAtMs: number;
   cost: number;
@@ -217,9 +205,89 @@ function clearConsoleStateCache() {
   publicReadInflight.clear();
 }
 
+function hotReadRetainedUntilMs(ttlMs: number, nowMs = Date.now()) {
+  return nowMs + Math.max(ttlMs, HOT_READ_STALE_WHILE_REVALIDATE_MS);
+}
+
+function setHotReadCacheEntry(
+  cache: Map<string, HotReadCacheEntry>,
+  cacheKey: string,
+  ttlMs: number,
+  payload: unknown,
+  nowMs = Date.now()
+) {
+  cache.set(cacheKey, {
+    expiresAtMs: nowMs + ttlMs,
+    retainedUntilMs: hotReadRetainedUntilMs(ttlMs, nowMs),
+    payload
+  });
+}
+
+function launchHotReadRefresh<T>(input: {
+  cacheKey: string;
+  cacheEpoch: number;
+  cache: Map<string, HotReadCacheEntry>;
+  inflight: Map<string, HotReadInflightEntry>;
+  ttlMs: number;
+  producer: () => Promise<T>;
+  currentCacheEpoch: () => number;
+  prune: () => void;
+}) {
+  const payloadPromise = input.producer()
+    .then((payload) => {
+      if (input.ttlMs > 0 && input.cacheEpoch === input.currentCacheEpoch()) {
+        setHotReadCacheEntry(input.cache, input.cacheKey, input.ttlMs, payload);
+        input.prune();
+      }
+      return payload;
+    })
+    .finally(() => {
+      input.inflight.delete(input.cacheKey);
+    });
+  input.inflight.set(input.cacheKey, { epoch: input.cacheEpoch, promise: payloadPromise });
+  payloadPromise.catch((error) => {
+    console.warn(JSON.stringify({
+      event: "hot_read_cache_refresh_failed",
+      cacheKey: input.cacheKey,
+      error: errorMessage(error, "Hot read cache refresh failed.")
+    }));
+  });
+  return payloadPromise;
+}
+
+async function cachedHotRead<T>(input: {
+  cacheKey: string;
+  cacheEpoch: number;
+  cache: Map<string, HotReadCacheEntry>;
+  inflight: Map<string, HotReadInflightEntry>;
+  ttlMs: number;
+  producer: () => Promise<T>;
+  currentCacheEpoch: () => number;
+  prune: () => void;
+}): Promise<{ payload: T; cacheStatus: HotReadCacheStatus }> {
+  const nowMs = Date.now();
+  const cached = input.ttlMs > 0 ? input.cache.get(input.cacheKey) : undefined;
+  if (cached && cached.expiresAtMs > nowMs) {
+    return { payload: cached.payload as T, cacheStatus: "hit" };
+  }
+  const inflight = input.inflight.get(input.cacheKey);
+  if (cached && cached.retainedUntilMs > nowMs) {
+    if (!inflight || inflight.epoch !== input.cacheEpoch) {
+      launchHotReadRefresh(input);
+      return { payload: cached.payload as T, cacheStatus: "refreshing" };
+    }
+    return { payload: cached.payload as T, cacheStatus: "stale" };
+  }
+  if (inflight && inflight.epoch === input.cacheEpoch) {
+    return { payload: await inflight.promise as T, cacheStatus: "inflight" };
+  }
+  const payload = await launchHotReadRefresh(input);
+  return { payload: payload as T, cacheStatus: "miss" };
+}
+
 function pruneConsoleStateCache(nowMs = Date.now()) {
   for (const [key, entry] of consoleStateCache.entries()) {
-    if (entry.expiresAtMs <= nowMs) {
+    if (entry.retainedUntilMs <= nowMs) {
       consoleStateCache.delete(key);
     }
   }
@@ -234,7 +302,7 @@ function pruneConsoleStateCache(nowMs = Date.now()) {
 
 function prunePaymentLedgerCache(nowMs = Date.now()) {
   for (const [key, entry] of paymentLedgerCache.entries()) {
-    if (entry.expiresAtMs <= nowMs) {
+    if (entry.retainedUntilMs <= nowMs) {
       paymentLedgerCache.delete(key);
     }
   }
@@ -249,7 +317,7 @@ function prunePaymentLedgerCache(nowMs = Date.now()) {
 
 function prunePublicReadCache(nowMs = Date.now()) {
   for (const [key, entry] of publicReadCache.entries()) {
-    if (entry.expiresAtMs <= nowMs) {
+    if (entry.retainedUntilMs <= nowMs) {
       publicReadCache.delete(key);
     }
   }
@@ -262,30 +330,17 @@ function prunePublicReadCache(nowMs = Date.now()) {
   }
 }
 
-async function cachedPublicRead<T>(cacheKey: string, producer: () => Promise<T>): Promise<{ payload: T; cacheStatus: "hit" | "inflight" | "miss" }> {
-  const cached = PUBLIC_READ_CACHE_TTL_MS > 0 ? publicReadCache.get(cacheKey) : undefined;
-  if (cached && cached.expiresAtMs > Date.now()) {
-    return { payload: cached.payload as T, cacheStatus: "hit" };
-  }
-  const cacheEpoch = publicReadCacheEpoch;
-  const inflight = publicReadInflight.get(cacheKey);
-  if (inflight && inflight.epoch === cacheEpoch) {
-    return { payload: await inflight.promise as T, cacheStatus: "inflight" };
-  }
-  const payloadPromise = producer()
-    .finally(() => {
-      publicReadInflight.delete(cacheKey);
-    });
-  publicReadInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
-  const payload = await payloadPromise;
-  if (PUBLIC_READ_CACHE_TTL_MS > 0 && cacheEpoch === publicReadCacheEpoch) {
-    publicReadCache.set(cacheKey, {
-      expiresAtMs: Date.now() + PUBLIC_READ_CACHE_TTL_MS,
-      payload
-    });
-    prunePublicReadCache();
-  }
-  return { payload, cacheStatus: "miss" };
+async function cachedPublicRead<T>(cacheKey: string, producer: () => Promise<T>): Promise<{ payload: T; cacheStatus: HotReadCacheStatus }> {
+  return cachedHotRead({
+    cacheKey,
+    cacheEpoch: publicReadCacheEpoch,
+    cache: publicReadCache,
+    inflight: publicReadInflight,
+    ttlMs: PUBLIC_READ_CACHE_TTL_MS,
+    producer,
+    currentCacheEpoch: () => publicReadCacheEpoch,
+    prune: prunePublicReadCache
+  });
 }
 
 function publicReadRouteCost(pathname: string, method: string): number {
@@ -3416,39 +3471,22 @@ app.get("/api/console/state", route(async (request, response) => {
       agentId ? `agent:${agentId}` : "",
       adminKey ? `admin:${cacheKeyDigest(adminKey)}` : "public"
     ].join("|");
-    const cached = CONSOLE_STATE_CACHE_TTL_MS > 0 ? consoleStateCache.get(cacheKey) : undefined;
-    if (cached && cached.expiresAtMs > Date.now()) {
-      response.set("x-santaclawz-cache", "hit");
-      response.json(cached.payload);
-      return;
-    }
-    const cacheEpoch = consoleStateCacheEpoch;
-    const inflight = consoleStateInflight.get(cacheKey);
-    if (inflight && inflight.epoch === cacheEpoch) {
-      const payload = await inflight.promise;
-      response.set("x-santaclawz-cache", "inflight");
-      response.json(payload);
-      return;
-    }
     const consoleStateOptions = sessionId
       ? { sessionId, ...(adminKey ? { adminKey } : {}) }
       : agentId
         ? { agentId, ...(adminKey ? { adminKey } : {}) }
         : { ...(adminKey ? { adminKey } : {}) };
-    const payloadPromise = controlPlane.getConsoleState(consoleStateOptions)
-      .finally(() => {
-        consoleStateInflight.delete(cacheKey);
-      });
-    consoleStateInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
-    const payload = await payloadPromise;
-    if (CONSOLE_STATE_CACHE_TTL_MS > 0 && cacheEpoch === consoleStateCacheEpoch) {
-      consoleStateCache.set(cacheKey, {
-        expiresAtMs: Date.now() + CONSOLE_STATE_CACHE_TTL_MS,
-        payload
-      });
-      pruneConsoleStateCache();
-    }
-    response.set("x-santaclawz-cache", "miss");
+    const { payload, cacheStatus } = await cachedHotRead({
+      cacheKey,
+      cacheEpoch: consoleStateCacheEpoch,
+      cache: consoleStateCache,
+      inflight: consoleStateInflight,
+      ttlMs: CONSOLE_STATE_CACHE_TTL_MS,
+      producer: () => controlPlane.getConsoleState(consoleStateOptions),
+      currentCacheEpoch: () => consoleStateCacheEpoch,
+      prune: pruneConsoleStateCache
+    });
+    response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
   } catch (error) {
     response.status(400).json({
@@ -3464,34 +3502,25 @@ app.get("/api/agents", route(async (_request, response) => {
 app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
   try {
     const cacheKey = "public-marketplace-snapshot";
-    const cached = PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS > 0
-      ? publicMarketplaceSnapshotCache.get(cacheKey)
-      : undefined;
-    if (cached && cached.expiresAtMs > Date.now()) {
-      response.set("x-santaclawz-cache", "hit");
-      response.json(cached.payload);
-      return;
-    }
-    const cacheEpoch = publicMarketplaceSnapshotCacheEpoch;
-    const inflight = publicMarketplaceSnapshotInflight.get(cacheKey);
-    if (inflight && inflight.epoch === cacheEpoch) {
-      const payload = await inflight.promise;
-      response.set("x-santaclawz-cache", "inflight");
-      response.json(payload);
-      return;
-    }
-    const payloadPromise = Promise.all([
-      controlPlane.listRegisteredAgents(),
-      controlPlane.listAgentBoardMessages({ limit: 100 }),
-      controlPlane.listPaymentLedger({ limit: 100 }),
-      controlPlane.getSocialAnchorQueueState(undefined, {
-        itemLimit: 100,
-        batchLimit: 6,
-        statuses: ["confirmed"],
-        kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
-      })
-    ])
-      .then(([agents, agentBoard, paymentLedger, publicSocialAnchorQueue]) => ({
+    const { payload, cacheStatus } = await cachedHotRead({
+      cacheKey,
+      cacheEpoch: publicMarketplaceSnapshotCacheEpoch,
+      cache: publicMarketplaceSnapshotCache,
+      inflight: publicMarketplaceSnapshotInflight,
+      ttlMs: PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS,
+      producer: async () => {
+        const [agents, agentBoard, paymentLedger, publicSocialAnchorQueue] = await Promise.all([
+          controlPlane.listRegisteredAgents(),
+          controlPlane.listAgentBoardMessages({ limit: 100 }),
+          controlPlane.listPaymentLedger({ limit: 100 }),
+          controlPlane.getSocialAnchorQueueState(undefined, {
+            itemLimit: 100,
+            batchLimit: 6,
+            statuses: ["confirmed"],
+            kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
+          })
+        ]);
+        return {
         schemaVersion: "santaclawz-public-marketplace-snapshot/1.0",
         ok: true,
         generatedAtIso: new Date().toISOString(),
@@ -3503,19 +3532,18 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
         agentBoard,
         paymentLedger: compactPaymentLedgerForPublicSnapshot(paymentLedger),
         publicSocialAnchorQueue
-      }))
-      .finally(() => {
-        publicMarketplaceSnapshotInflight.delete(cacheKey);
-      });
-    publicMarketplaceSnapshotInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
-    const payload = await payloadPromise;
-    if (PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS > 0 && cacheEpoch === publicMarketplaceSnapshotCacheEpoch) {
-      publicMarketplaceSnapshotCache.set(cacheKey, {
-        expiresAtMs: Date.now() + PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS,
-        payload
-      });
-    }
-    response.set("x-santaclawz-cache", "miss");
+        };
+      },
+      currentCacheEpoch: () => publicMarketplaceSnapshotCacheEpoch,
+      prune: () => {
+        while (publicMarketplaceSnapshotCache.size > 1) {
+          const oldest = publicMarketplaceSnapshotCache.keys().next();
+          if (oldest.done) break;
+          publicMarketplaceSnapshotCache.delete(oldest.value);
+        }
+      }
+    });
+    response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
   } catch (error) {
     response.status(400).json({
@@ -5197,34 +5225,17 @@ app.get("/api/payments", route(async (request, response) => {
       options.paymentPayloadDigestSha256 ? `digest:${options.paymentPayloadDigestSha256}` : "",
       `limit:${options.limit ?? 100}`
     ].join("|");
-    const cached = PAYMENT_LEDGER_CACHE_TTL_MS > 0 ? paymentLedgerCache.get(cacheKey) : undefined;
-    if (cached && cached.expiresAtMs > Date.now()) {
-      response.set("x-santaclawz-cache", "hit");
-      response.json(cached.payload);
-      return;
-    }
-    const cacheEpoch = paymentLedgerCacheEpoch;
-    const inflight = paymentLedgerInflight.get(cacheKey);
-    if (inflight && inflight.epoch === cacheEpoch) {
-      const payload = await inflight.promise;
-      response.set("x-santaclawz-cache", "inflight");
-      response.json(payload);
-      return;
-    }
-    const payloadPromise = controlPlane.listPaymentLedger(options)
-      .finally(() => {
-        paymentLedgerInflight.delete(cacheKey);
-      });
-    paymentLedgerInflight.set(cacheKey, { epoch: cacheEpoch, promise: payloadPromise });
-    const payload = await payloadPromise;
-    if (PAYMENT_LEDGER_CACHE_TTL_MS > 0 && cacheEpoch === paymentLedgerCacheEpoch) {
-      paymentLedgerCache.set(cacheKey, {
-        expiresAtMs: Date.now() + PAYMENT_LEDGER_CACHE_TTL_MS,
-        payload
-      });
-      prunePaymentLedgerCache();
-    }
-    response.set("x-santaclawz-cache", "miss");
+    const { payload, cacheStatus } = await cachedHotRead({
+      cacheKey,
+      cacheEpoch: paymentLedgerCacheEpoch,
+      cache: paymentLedgerCache,
+      inflight: paymentLedgerInflight,
+      ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
+      producer: () => controlPlane.listPaymentLedger(options),
+      currentCacheEpoch: () => paymentLedgerCacheEpoch,
+      prune: prunePaymentLedgerCache
+    });
+    response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
   } catch (error) {
     response.status(400).json({
