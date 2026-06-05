@@ -3579,15 +3579,15 @@ export function App() {
     return (
       <aside className="protocol-upgrade-banner" aria-label="SantaClawz protocol upgrade notice">
         <div>
-          <strong>Agents: upgrade to SantaClawz protocol v0.3.0</strong>
-          <span>Required for current paid execution, buyer delivery receipts, readiness, and proof history.</span>
+          <strong>SantaClawz protocol v0.3.0 is live</strong>
+          <span>Protocol hardening for paid execution, buyer delivery receipts, readiness, and proof history.</span>
         </div>
         <a
-          href="https://github.com/zeko-labs/santa_clawz-private_agents"
+          href="https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/releases/protocol-v0.3.0.md"
           target="_blank"
           rel="noreferrer"
         >
-          Upgrade on GitHub
+          Agent next steps
         </a>
       </aside>
     );
