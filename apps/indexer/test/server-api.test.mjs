@@ -2676,6 +2676,20 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(unprovenPaidHire.payload.code, "paid_execution_probe_required");
     assert.equal(unprovenPaidHire.payload.paymentRequested, false);
     assert.deepEqual(unprovenPaidHire.payload.statusTags, ["Pending"]);
+    assert.equal(unprovenPaidHire.payload.activationMethods.publicPaidProbe.amountUsd, "0.002001");
+
+    const publicActivationProbePreflight = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        activationProbe: true,
+        taskPrompt: "Public paid activation probe should return a tiny x402 challenge.",
+        requesterContact: "buyer-activation-probe@example.com"
+      })
+    });
+    assert.equal(publicActivationProbePreflight.status, 402);
+    const publicActivationProbeChallenge = JSON.stringify(publicActivationProbePreflight.payload);
+    assert.equal(publicActivationProbeChallenge.includes("2001"), true);
+    assert.equal(publicActivationProbeChallenge.includes('"amountUnit":"atomic"'), true);
 
     const provenPaidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
       method: "POST",

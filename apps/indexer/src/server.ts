@@ -615,6 +615,8 @@ type HireRequestBody = {
   paymentPayload?: unknown;
   activationLane?: unknown;
   activation_lane?: unknown;
+  activationProbe?: unknown;
+  activation_probe?: unknown;
 };
 type ArtifactReceiptBody = {
   deliveryMode?: unknown;
@@ -1725,7 +1727,9 @@ function parseHireRequest(body: unknown): HireRequestBody {
         artifactDelivery: body.artifactDelivery,
         paymentPayload: body.paymentPayload,
         activationLane: body.activationLane,
-        activation_lane: body.activation_lane
+        activation_lane: body.activation_lane,
+        activationProbe: body.activationProbe,
+        activation_probe: body.activation_probe
       }
     : {};
 }
@@ -2291,6 +2295,7 @@ function paidExecutionProbeRequiredBody(input: {
   intent?: unknown;
   plan?: unknown;
 }) {
+  const publicProbeAmountUsd = activationLaneAmountUsd();
   return {
     ok: false,
     code: "paid_execution_probe_required",
@@ -2300,9 +2305,28 @@ function paidExecutionProbeRequiredBody(input: {
     ...(input.intent ? { intent: input.intent } : {}),
     ...(input.plan ? { plan: input.plan } : {}),
     error:
-      "This agent has payments configured, but paid execution is not proven yet. Use the activation lane or run seller:ready with the paid-execution probe before buyers pay.",
+      "This agent has payments configured, but paid execution is not proven yet. Run a bounded paid activation probe, use the hosted Job Pack helper, or run seller:ready before normal buyers pay.",
     statusTags: ["Pending"],
-    nextAction: "prove_paid_execution_or_wait_for_activation_lane",
+    nextAction: "run_paid_activation_probe_or_seller_ready",
+    activationMethods: {
+      publicPaidProbe: {
+        available: true,
+        query: "activationProbe=true",
+        body: { activationProbe: true },
+        amountUsd: publicProbeAmountUsd,
+        purpose:
+          "Any funded buyer/operator can run this tiny paid proving job. It is marked as an activation probe, not normal marketplace work."
+      },
+      hostedJobPack: {
+        available: true,
+        purpose:
+          "The hosted agent_job_pack can run the same tiny paid proving job as a helper for agents that do not have a funded buyer wallet yet."
+      },
+      sellerReady: {
+        command: "pnpm seller:ready -- --env-file .env.santaclawz --json",
+        purpose: "Seller operators can prove their own runtime locally, then rerun readiness."
+      }
+    },
     operationalStatus: {
       paymentStatus: "not_attempted",
       settlementStatus: "not_attempted",
@@ -6445,21 +6469,28 @@ const handleAgentHireRequest = route(async (request, response) => {
       queryBoolean(request.query, "activationLane") === true ||
       bodyRecord.activationLane === true ||
       bodyRecord.activation_lane === true;
+    const publicActivationProbeRequested =
+      queryBoolean(request.query, "activationProbe") === true ||
+      bodyRecord.activationProbe === true ||
+      bodyRecord.activation_probe === true;
+    const activationProbeRequested = activationLaneRequested || publicActivationProbeRequested;
     if (activationLaneRequested && !requireActivationLaneAccess(request, response)) {
       return;
     }
-    const activationAmountUsd = activationLaneRequested ? activationLaneAmountUsd() : undefined;
+    const activationAmountUsd = activationProbeRequested ? activationLaneAmountUsd() : undefined;
     const taskPrompt =
       typeof body.taskPrompt === "string" && body.taskPrompt.trim().length > 0
         ? body.taskPrompt.trim()
-        : activationLaneRequested
-          ? "SantaClawz activation lane paid execution probe. Return a compact verified package proving this agent can receive paid work, complete it, and return artifacts."
+        : activationProbeRequested
+          ? "SantaClawz paid activation probe. Return a compact buyer-visible package proving this agent can receive paid work, complete it, and return delivery."
           : "";
     const requesterContact =
       typeof body.requesterContact === "string" && body.requesterContact.trim().length > 0
         ? body.requesterContact.trim()
         : activationLaneRequested
           ? "agent_job_pack@santaclawz.ai"
+          : publicActivationProbeRequested
+            ? "buyer_activation_probe@santaclawz.ai"
           : "";
     const jobPrivacy = parseJobPrivacyPreference(body.jobPrivacy ?? body.activityPrivacy);
     const artifactDelivery = parseArtifactDeliveryPreference(body.artifactDelivery);
@@ -6521,7 +6552,24 @@ const handleAgentHireRequest = route(async (request, response) => {
     const quoteRequestMode =
       consoleState.paymentsEnabled &&
       consoleState.profile.paymentProfile.pricingMode === "quote-required" &&
-      !activationLaneRequested;
+      !activationProbeRequested;
+    if (activationProbeRequested && !consoleState.paymentsEnabled) {
+      response.status(400).json({
+        ok: false,
+        code: "activation_probe_requires_payments",
+        retryable: false,
+        paymentRequested: false,
+        error: "Paid activation probes require the agent to configure payments first.",
+        nextAction: "configure_payments_then_retry_activation_probe",
+        operationalStatus: {
+          paymentStatus: "not_configured",
+          settlementStatus: "not_attempted",
+          relayDeliveryStatus: "not_attempted",
+          agentExecutionStatus: "not_started"
+        }
+      });
+      return;
+    }
     if (quoteRequestMode) {
       const quotePaymentIntentId =
         queryString(request.query, "intentId") ||
@@ -6553,7 +6601,7 @@ const handleAgentHireRequest = route(async (request, response) => {
         return;
       }
     }
-    if (!activationLaneRequested) {
+    if (!activationProbeRequested) {
       const contextCheck = evaluateContextRequirements(consoleState.profile.contextRequirements, jobContext);
       if (!contextCheck.ok) {
         const firstMissing = contextCheck.missing[0];
@@ -6590,8 +6638,8 @@ const handleAgentHireRequest = route(async (request, response) => {
       }
     }
 
-    if (consoleState.paymentsEnabled && (!quoteRequestMode || activationLaneRequested)) {
-      const runtime = activationLaneRequested
+    if (consoleState.paymentsEnabled && (!quoteRequestMode || activationProbeRequested)) {
+      const runtime = activationProbeRequested
         ? await buildActivationLaneX402RuntimeContext({
             baseUrl: getBaseUrl(request),
             consoleState,
@@ -6604,7 +6652,7 @@ const handleAgentHireRequest = route(async (request, response) => {
             plan,
             serviceNetworkId: consoleState.deployment.networkId
           });
-      if ((!activationLaneRequested && !consoleState.paidJobsEnabled) || !runtime) {
+      if ((!activationProbeRequested && !consoleState.paidJobsEnabled) || !runtime) {
         response.status(402).json({
           ok: false,
           paymentRequested: false,
@@ -6616,7 +6664,7 @@ const handleAgentHireRequest = route(async (request, response) => {
       if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
         return;
       }
-      if (!activationLaneRequested && !paidExecutionProvenFromReadiness(consoleState.readiness)) {
+      if (!activationProbeRequested && !paidExecutionProvenFromReadiness(consoleState.readiness)) {
         response.status(409).json(paidExecutionProbeRequiredBody({ agentId, plan }));
         return;
       }
@@ -6657,7 +6705,7 @@ const handleAgentHireRequest = route(async (request, response) => {
       const paymentLedgerEntry = await recordX402PaymentLedgerAuthorization({
         agentId,
         sessionId: consoleState.session.sessionId,
-        pricingMode: activationLaneRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
+        pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
         railPlan: verification.rail,
         verification,
         paymentPayload,
@@ -6683,7 +6731,7 @@ const handleAgentHireRequest = route(async (request, response) => {
             const settledLedger = await recordX402PaymentLedgerSettlement({
               agentId,
               sessionId: consoleState.session.sessionId,
-              pricingMode: activationLaneRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
+              pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
               railPlan: settlement.rail,
               settlement,
               paymentPayload,
@@ -6748,7 +6796,8 @@ const handleAgentHireRequest = route(async (request, response) => {
       }
       paymentAuthorization = {
         status: "authorized",
-        ...(activationLaneRequested ? { activationLane: true } : {}),
+        ...(activationProbeRequested ? { activationLane: true } : {}),
+        ...(publicActivationProbeRequested ? { publicActivationProbe: true } : {}),
         rail: verification.rail.rail,
         ...(verification.rail.amountUsd ? { amountUsd: verification.rail.amountUsd } : {}),
         authorizationId: paymentPayloadDigestSha256,
@@ -6789,7 +6838,7 @@ const handleAgentHireRequest = route(async (request, response) => {
           settledLedger = await recordX402PaymentLedgerSettlement({
             agentId,
             sessionId: consoleState.session.sessionId,
-            pricingMode: activationLaneRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
+            pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
             railPlan: settlement.rail,
             settlement,
             paymentPayload: paymentPayloadForDeferredSettlement,
