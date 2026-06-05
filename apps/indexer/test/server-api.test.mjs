@@ -4118,6 +4118,27 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
       /paymentPayloadDigestSha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd$/
     );
 
+    const redactedPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${"d".repeat(64)}`
+    );
+    assert.equal(redactedPaymentState.status, 200);
+    assert.equal(redactedPaymentState.payload.redacted, true);
+    assert.match(
+      redactedPaymentState.payload.retryResume.stateEndpoint,
+      /\/api\/executions\/[^/]+\/state\?paymentPayloadDigestSha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd$/
+    );
+    const digestExecutionState = await requestJson(redactedPaymentState.payload.retryResume.stateEndpoint);
+    assert.equal(digestExecutionState.status, 200);
+    assert.equal(digestExecutionState.payload.stateAccess.mode, "payment_digest_recovery");
+    assert.equal(digestExecutionState.payload.stateAccess.redacted, true);
+    assert.equal(digestExecutionState.payload.payment.ledgerEntries, undefined);
+    assert.equal(digestExecutionState.payload.payment.ledgerEntryCount, 1);
+    assert.equal(digestExecutionState.payload.workspace.access, "redacted_payment_digest_recovery");
+    assert.equal(digestExecutionState.payload.workspace.stageCount, 0);
+    assert.equal(digestExecutionState.payload.workspace.messageCount, 0);
+    assert.equal(digestExecutionState.payload.safeToRetrySamePayload, true);
+    assert.equal(digestExecutionState.payload.safeToCreateNewPayment, false);
+
     const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
     const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
     legacyHireRequests.requests = legacyHireRequests.requests.map((request) =>
