@@ -1,5 +1,5 @@
 import express from "express";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import path from "node:path";
@@ -2536,6 +2536,31 @@ function setHeaders(response: IndexerResponse, headers: Record<string, string>) 
   }
 }
 
+function platformApiKeyHeader(request: IndexerRequest) {
+  const explicit = request.header("x-api-key");
+  if (typeof explicit === "string" && explicit.trim().length > 0) {
+    return explicit.trim();
+  }
+  const authorization = request.header("authorization");
+  if (typeof authorization === "string" && authorization.toLowerCase().startsWith("bearer ")) {
+    return authorization.slice("bearer ".length).trim();
+  }
+  return undefined;
+}
+
+function isPlatformApiKeyAuthorized(request: IndexerRequest) {
+  const apiKey = platformApiKeyHeader(request);
+  if (!apiKey || securityConfig.apiKeyHashes.length === 0) {
+    return false;
+  }
+  const presented = Buffer.from(createHash("sha256").update(apiKey).digest("hex"), "hex");
+  return securityConfig.apiKeyHashes.some((expectedHash) => {
+    if (!/^[a-f0-9]{64}$/i.test(expectedHash)) return false;
+    const expected = Buffer.from(expectedHash, "hex");
+    return expected.length === presented.length && timingSafeEqual(presented, expected);
+  });
+}
+
 async function buildQuoteIntentRuntime(baseUrl: string, intentId: string) {
   const context = await controlPlane.quotePaymentContextForIntent(intentId);
   const runtime = await buildQuoteIntentX402RuntimeContext({
@@ -2731,11 +2756,11 @@ async function buildX402PaymentStateResponse(input: {
     ...(hireRequest ? { execution: hireRequest } : {}),
     retryResume: {
       safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256 && !terminal),
+      safeToCreateNewPayment: false,
       ...(postAckPending
         ? {
             retryMode: "same_payment_payload_only",
             safeToRetrySamePaymentPayload: Boolean(paymentPayloadDigestSha256),
-            safeToCreateNewPayment: false,
             workerAcknowledged: true,
             lateCompletionSupported: true,
             resultMayStillArrive: true
@@ -2752,6 +2777,82 @@ async function buildX402PaymentStateResponse(input: {
           ? "Retry or resume with the exact same signed x402 payment payload. Do not ask the buyer to sign a new payment until this state says it failed or expired."
           : "No signed payment payload digest was found yet. Submit the signed x402 payload once, then use this endpoint to resume safely."
     }
+  };
+}
+
+type X402PaymentStateResponse = Awaited<ReturnType<typeof buildX402PaymentStateResponse>>;
+
+function redactLatestPaymentLedger(entry: unknown) {
+  if (!isRecord(entry)) return undefined;
+  const lifecycleStatus = isRecord(entry.lifecycleStatus) ? entry.lifecycleStatus : undefined;
+  return {
+    ...(typeof entry.ledgerId === "string" ? { ledgerId: entry.ledgerId } : {}),
+    ...(typeof entry.agentId === "string" ? { agentId: entry.agentId } : {}),
+    ...(typeof entry.sessionId === "string" ? { sessionId: entry.sessionId } : {}),
+    ...(typeof entry.hireRequestId === "string" ? { hireRequestId: entry.hireRequestId } : {}),
+    ...(typeof entry.quoteIntentId === "string" ? { quoteIntentId: entry.quoteIntentId } : {}),
+    ...(typeof entry.x402RequestId === "string" ? { x402RequestId: entry.x402RequestId } : {}),
+    ...(typeof entry.paymentPayloadDigestSha256 === "string" ? { paymentPayloadDigestSha256: entry.paymentPayloadDigestSha256 } : {}),
+    ...(typeof entry.paymentRequirementDigestSha256 === "string" ? { paymentRequirementDigestSha256: entry.paymentRequirementDigestSha256 } : {}),
+    ...(typeof entry.rail === "string" ? { rail: entry.rail } : {}),
+    ...(typeof entry.networkId === "string" ? { networkId: entry.networkId } : {}),
+    ...(typeof entry.assetSymbol === "string" ? { assetSymbol: entry.assetSymbol } : {}),
+    ...(typeof entry.amountUsd === "string" ? { amountUsd: entry.amountUsd } : {}),
+    ...(typeof entry.paymentStatus === "string" ? { paymentStatus: entry.paymentStatus } : {}),
+    ...(typeof entry.executionStatus === "string" ? { executionStatus: entry.executionStatus } : {}),
+    ...(typeof entry.returnStatus === "string" ? { returnStatus: entry.returnStatus } : {}),
+    ...(typeof entry.settlementStatus === "string" ? { settlementStatus: entry.settlementStatus } : {}),
+    ...(lifecycleStatus
+      ? {
+          lifecycleStatus: {
+            ...(typeof lifecycleStatus.paymentStatus === "string" ? { paymentStatus: lifecycleStatus.paymentStatus } : {}),
+            ...(typeof lifecycleStatus.settlementStatus === "string" ? { settlementStatus: lifecycleStatus.settlementStatus } : {}),
+            ...(typeof lifecycleStatus.relayDeliveryStatus === "string" ? { relayDeliveryStatus: lifecycleStatus.relayDeliveryStatus } : {}),
+            ...(typeof lifecycleStatus.agentExecutionStatus === "string" ? { agentExecutionStatus: lifecycleStatus.agentExecutionStatus } : {}),
+            ...(typeof lifecycleStatus.completionStatus === "string" ? { completionStatus: lifecycleStatus.completionStatus } : {}),
+            ...(typeof lifecycleStatus.needsAttention === "boolean" ? { needsAttention: lifecycleStatus.needsAttention } : {})
+          }
+        }
+      : {})
+  };
+}
+
+function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
+  const payment = isRecord(payload.payment) ? payload.payment : undefined;
+  const latestLedger = redactLatestPaymentLedger(payment?.latestLedger);
+  const execution = isRecord(payload.execution) ? payload.execution : undefined;
+  const operationalStatus = isRecord(execution?.operationalStatus) ? execution.operationalStatus : undefined;
+  return {
+    schemaVersion: payload.schemaVersion,
+    ok: payload.ok,
+    generatedAtIso: payload.generatedAtIso,
+    lookup: payload.lookup,
+    redacted: true,
+    payment: {
+      ledgerEntryCount: typeof payment?.ledgerEntryCount === "number" ? payment.ledgerEntryCount : 0,
+      ...(latestLedger ? { latestLedger } : {})
+    },
+    ...(execution
+      ? {
+          execution: {
+            ...(typeof execution.requestId === "string" ? { requestId: execution.requestId } : {}),
+            ...(typeof execution.agentId === "string" ? { agentId: execution.agentId } : {}),
+            ...(typeof execution.sessionId === "string" ? { sessionId: execution.sessionId } : {}),
+            ...(typeof execution.status === "string" ? { status: execution.status } : {}),
+            ...(operationalStatus
+              ? {
+                  operationalStatus: {
+                    ...(typeof operationalStatus.paymentStatus === "string" ? { paymentStatus: operationalStatus.paymentStatus } : {}),
+                    ...(typeof operationalStatus.settlementStatus === "string" ? { settlementStatus: operationalStatus.settlementStatus } : {}),
+                    ...(typeof operationalStatus.relayDeliveryStatus === "string" ? { relayDeliveryStatus: operationalStatus.relayDeliveryStatus } : {}),
+                    ...(typeof operationalStatus.agentExecutionStatus === "string" ? { agentExecutionStatus: operationalStatus.agentExecutionStatus } : {})
+                  }
+                }
+              : {})
+          }
+        }
+      : {}),
+    retryResume: payload.retryResume
   };
 }
 
@@ -4041,9 +4142,17 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const token = tokenQuery(request);
     const adminKey = adminKeyHeader(request);
     const directHireRequest = await optionalHireRequest(requestedRequestId);
-    const aliasPaymentLedger = directHireRequest
+    const hireIdAliasPaymentLedger = directHireRequest
       ? undefined
       : await controlPlane.listPaymentLedger({ hireRequestId: requestedRequestId, limit: 5 });
+    const x402IdAliasPaymentLedger =
+      directHireRequest || (hireIdAliasPaymentLedger?.entries.length ?? 0) > 0
+        ? undefined
+        : await controlPlane.listPaymentLedger({ x402RequestId: requestedRequestId, limit: 5 });
+    const aliasPaymentLedger =
+      hireIdAliasPaymentLedger && hireIdAliasPaymentLedger.entries.length > 0
+        ? hireIdAliasPaymentLedger
+        : x402IdAliasPaymentLedger ?? hireIdAliasPaymentLedger;
     const aliasHireRequestId = aliasPaymentLedger?.entries.find((entry) => entry.hireRequestId)?.hireRequestId;
     const hireRequest = directHireRequest ?? (aliasHireRequestId ? await optionalHireRequest(aliasHireRequestId) : undefined);
     const apiBase = getBaseUrl(request);
@@ -5216,13 +5325,14 @@ app.get("/api/x402/payment-state", route(async (request, response) => {
       });
       return;
     }
-    response.json(await buildX402PaymentStateResponse({
+    const payload = await buildX402PaymentStateResponse({
       apiBase: getBaseUrl(request),
       ...(ledgerId ? { ledgerId } : {}),
       ...(intentId ? { intentId } : {}),
       ...(requestId ? { requestId } : {}),
       ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
-    }));
+    });
+    response.json(isPlatformApiKeyAuthorized(request) ? payload : redactX402PaymentStateResponse(payload));
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load x402 payment state."

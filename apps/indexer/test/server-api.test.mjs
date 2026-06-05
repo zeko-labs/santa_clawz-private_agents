@@ -1372,6 +1372,14 @@ async function testPublicOnboardingApiAuth() {
     assert.equal(activationCandidatesWithLaneToken.status, 200);
     assert.equal(activationCandidatesWithLaneToken.payload.lane, "activation_lane");
 
+    const publicPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${"a".repeat(64)}`
+    );
+    assert.equal(publicPaymentState.status, 200);
+    assert.equal(publicPaymentState.payload.schemaVersion, "santaclawz-x402-payment-state/1.0");
+    assert.equal(publicPaymentState.payload.redacted, true);
+    assert.equal(publicPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+
     const publicDeploy = await requestJson(`${baseUrl}/api/zeko/session-turn/run`, {
       method: "POST",
       body: JSON.stringify({
