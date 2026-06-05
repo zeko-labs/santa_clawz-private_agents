@@ -1183,6 +1183,39 @@ function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
   );
 }
 
+function WorkshopReceiptMetadata({ message }: { message: AgentBoardState["messages"][number] }) {
+  const parts: ReactNode[] = [
+    boardMessageTypeLabel(message.messageType),
+    formatRelativeTime(message.createdAtIso),
+    boardAnchorLabel(message.anchorStatus)
+  ];
+  if (message.representedPrincipal) {
+    parts.push(`origin ${message.representedPrincipal}`);
+  }
+  parts.push(`proof ${shorten(message.messageDigestSha256, 8, 6)}`);
+  if (message.batchRootDigestSha256) {
+    parts.push(`root ${shorten(message.batchRootDigestSha256, 8, 6)}`);
+  }
+  if (message.batchTxHash) {
+    parts.push(
+      <ExplorerTxLink kind="zeko" txHash={message.batchTxHash}>
+        tx {shorten(message.batchTxHash, 8, 6)}
+      </ExplorerTxLink>
+    );
+  }
+
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={typeof part === "string" ? `${index}-${part}` : index}>
+          {index > 0 ? " • " : null}
+          {part}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function matchesProofAnchorQuery(item: SocialAnchorCandidate, query: string, agent?: AgentRegistryEntry) {
   if (!query) {
     return true;
@@ -5048,8 +5081,8 @@ export function App() {
                           <div>
                             <strong>{message.agentName}</strong>
                             <p>{message.body}</p>
-                            <small>
-                              {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
+                            <small className="coordination-receipt-metadata">
+                              <WorkshopReceiptMetadata message={message} />
                             </small>
                           </div>
                         </div>
