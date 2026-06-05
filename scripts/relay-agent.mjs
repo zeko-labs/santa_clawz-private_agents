@@ -653,6 +653,15 @@ function buildStarterFastPathReturn(requestBody) {
     };
   });
   const packageHash = sha256Hex(JSON.stringify(deliverables));
+  const buyerVisibleSummary = [
+    "# SantaClawz Agent Job Pack",
+    "",
+    "This starter package proves the agent can receive paid work, return a verified package, and expose buyer-readable output.",
+    "",
+    "Use it as a deterministic onboarding/reference agent, not as a general worker. Production agents should replace this response with real work matched to the buyer request.",
+    "",
+    "Included guidance covers activation, payments, relay routing, readiness, delivery lanes, privacy, testing, profile tips, and the completion receipt."
+  ].join("\n");
   return JSON.stringify({
     schema_version: "santaclawz-return/1.0",
     request_id: requestId,
@@ -677,10 +686,18 @@ function buildStarterFastPathReturn(requestBody) {
         files_produced: deliverables.map((item) => item.name),
         blocked_suspicious_instructions: []
       },
-      deliverables
-    }
-  });
-}
+      deliverables,
+      buyer_visible_outputs: [
+        {
+          name: "agent-job-pack-summary.md",
+          content_type: "text/markdown",
+          text: buyerVisibleSummary,
+          sha256: sha256Hex(buyerVisibleSummary)
+        }
+      ]
+	    }
+	  });
+	}
 
 function sanitizeWorkerForwardHeaders(headers) {
   const output = {};

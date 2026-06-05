@@ -229,13 +229,28 @@ function hasVerifiedPaidReturnPackage(value) {
   }
   const manifest = verifiedOutput.verification_manifest ?? verifiedOutput.verificationManifest;
   const deliverables = Array.isArray(verifiedOutput.deliverables) ? verifiedOutput.deliverables : [];
+  const buyerVisibleOutputs = Array.isArray(verifiedOutput.buyer_visible_outputs)
+    ? verifiedOutput.buyer_visible_outputs
+    : Array.isArray(verifiedOutput.buyerVisibleOutputs)
+      ? verifiedOutput.buyerVisibleOutputs
+      : [];
+  const buyerReadableOutput = buyerVisibleOutputs.some(
+    (entry) => entry && typeof entry === "object" && typeof entry.text === "string" && entry.text.trim().length > 0
+  );
+  const artifactManifestUrl =
+    typeof verifiedOutput.artifact_manifest_url === "string"
+      ? verifiedOutput.artifact_manifest_url
+      : typeof verifiedOutput.artifactManifestUrl === "string"
+        ? verifiedOutput.artifactManifestUrl
+        : "";
   return Boolean(
     value.status === "completed" &&
       (value.schema_version === "santaclawz-return/1.0" || value.schemaVersion === "santaclawz-return/1.0") &&
       (typeof verifiedOutput.package_hash === "string" || typeof verifiedOutput.packageHash === "string") &&
       manifest &&
       typeof manifest === "object" &&
-      deliverables.length > 0
+      deliverables.length > 0 &&
+      (buyerReadableOutput || artifactManifestUrl.trim().length > 0)
   );
 }
 
@@ -305,7 +320,7 @@ export async function runPaidExecutionProbe(config, plan) {
       client_request:
         "Return a tiny paid_execution readiness package with a buyer-visible deliverable, verification manifest, and package hash.",
       requested_deliverables: [
-        "A santaclawz-return/1.0 completed package with verified_output, verification_manifest, and at least one deliverable."
+        "A santaclawz-return/1.0 completed package with verified_output, verification_manifest, at least one deliverable, and buyer_visible_outputs or artifact_manifest_url."
       ]
     }
   };
@@ -341,6 +356,7 @@ export async function runPaidExecutionProbe(config, plan) {
   }
 
   const packageVerified = hasVerifiedPaidReturnPackage(responseBody);
+  const buyerDeliveryVerified = packageVerified;
   return {
     attempted: true,
     ok: response.ok && packageVerified,
@@ -348,11 +364,12 @@ export async function runPaidExecutionProbe(config, plan) {
     localHireUrl,
     requestId,
     packageVerified,
+    buyerDeliveryVerified,
     returnStatus: responseBody && typeof responseBody === "object" ? responseBody.status : undefined,
     reason: response.ok
       ? packageVerified
-        ? "Paid execution returned a verified package."
-        : "Paid execution response did not include a completed verified_output package with manifest and deliverables."
+        ? "Paid execution returned a verified package with buyer-visible delivery."
+        : "Paid execution response did not include a completed verified_output package with manifest, deliverables, and buyer-visible delivery."
       : `Local paid execution probe returned HTTP ${response.status}.`,
     response: responseBody
   };
@@ -426,7 +443,9 @@ function buildReadinessSummary(input) {
   const paymentReady = freeTestMode ? false : quoteMode ? paymentProfileReady : fixedMode ? railReady : paymentProfileReady;
   const freeTestPolicyReady = freeTestMode && !paymentsEnabled;
   const paidExecutionProbeRequired = Boolean(input.paidExecutionProbeRequired && !freeTestMode && (quoteMode || fixedMode));
-  const paidExecutionProbeOk = !paidExecutionProbeRequired || input.paidExecutionProbe?.ok === true;
+  const paidExecutionProbeOk =
+    !paidExecutionProbeRequired ||
+    (input.paidExecutionProbe?.ok === true && input.paidExecutionProbe?.buyerDeliveryVerified === true);
   const blockers = [];
 
   if (!ownershipVerified) {
@@ -454,7 +473,7 @@ function buildReadinessSummary(input) {
   if (!runtimeReachable) {
     blockers.push({ stage: "runtime", message: availability.reason ?? "Public agent ingress is not reachable." });
   }
-  if (paidExecutionProbeRequired && input.paidExecutionProbe?.ok !== true) {
+  if (paidExecutionProbeRequired && !paidExecutionProbeOk) {
     blockers.push({
       stage: "paid_execution_probe",
       message: input.paidExecutionProbe?.reason ?? "Local paid_execution probe did not return a verified package."
@@ -565,6 +584,7 @@ function buildReadinessSummary(input) {
           localHireUrl: input.paidExecutionProbe.localHireUrl,
           requestId: input.paidExecutionProbe.requestId,
           packageVerified: input.paidExecutionProbe.packageVerified,
+          buyerDeliveryVerified: input.paidExecutionProbe.buyerDeliveryVerified,
           returnStatus: input.paidExecutionProbe.returnStatus,
           reason: input.paidExecutionProbe.reason
         }
@@ -612,7 +632,7 @@ function buildAgentStatusCoaching(input) {
   if (stage === "paid_execution_probe") {
     return {
       headline: "You can be discovered, but paid execution is not proven yet.",
-      message: "Your local worker needs to return a completed santaclawz-return/1.0 package with verified output, manifest, and deliverables before paid work should count.",
+      message: "Your local worker needs to return a completed santaclawz-return/1.0 package with verified output, manifest, deliverables, and buyer-visible delivery before paid work should count.",
       nextAction: "Run test:hire with --request-type paid_execution --allow-paid-execution-dry-run and fix the worker return package.",
       stage
     };
@@ -692,6 +712,7 @@ export async function runSellerReadiness(config) {
         localHireUrl: paidExecutionProbe.localHireUrl,
         requestId: paidExecutionProbe.requestId,
         packageVerified: paidExecutionProbe.packageVerified === true,
+        buyerDeliveryVerified: paidExecutionProbe.buyerDeliveryVerified === true,
         returnStatus: paidExecutionProbe.returnStatus,
         reason: paidExecutionProbe.reason
       }

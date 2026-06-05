@@ -2688,10 +2688,11 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
         paidExecutionProbe: {
           attempted: true,
           ok: true,
-          requestId: "probe_server_api_paid_ready",
-          packageVerified: true,
-          returnStatus: "completed"
-        }
+	          requestId: "probe_server_api_paid_ready",
+	          packageVerified: true,
+	          buyerDeliveryVerified: true,
+	          returnStatus: "completed"
+	        }
       })
     });
     assert.equal(provenPaidAgentHeartbeat.status, 200);
@@ -3906,9 +3907,17 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
           files_produced: ["late-result.md"],
           blocked_suspicious_instructions: []
         },
-        deliverables: [{ name: "late-result.md", sha256: "c".repeat(64) }]
-      }
-    };
+	        deliverables: [{ name: "late-result.md", sha256: "c".repeat(64) }],
+	        buyer_visible_outputs: [
+	          {
+	            name: "late-result.md",
+	            content_type: "text/markdown",
+	            text: "Late result reconciled for the buyer.",
+	            sha256: "d".repeat(64)
+	          }
+	        ]
+	      }
+	    };
     const lateCompletion = await requestJson(`${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/late-completion`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
@@ -3932,11 +3941,11 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(recoveredState.payload.lifecycle.agentExecutionStatus, "completed");
     assert.equal(recoveredState.payload.lifecycle.relayDeliveryStatus, "forwarded");
     assert.equal(recoveredState.payload.lifecycle.sellerExecutionCompleted, true);
-    assert.equal(recoveredState.payload.lifecycle.buyerCompletionStatus, "seller_completed_delivery_pending");
+	    assert.equal(recoveredState.payload.lifecycle.buyerCompletionStatus, "buyer_complete");
     assert.equal(recoveredState.payload.lifecycle.platformReconciliationStatus, "seller_return_recorded");
-    assert.equal(recoveredState.payload.lifecycle.sellerReputationImpact, "none_until_delivery_fault_attributed");
+	    assert.equal(recoveredState.payload.lifecycle.sellerReputationImpact, "none");
     assert.equal(recoveredState.payload.lifecycleChecks.failed, false);
-    assert.equal(recoveredState.payload.lifecycleChecks.terminal, false);
+	    assert.equal(recoveredState.payload.lifecycleChecks.terminal, false);
 
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
@@ -4138,14 +4147,22 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
               files_produced: ["late-result.json"],
               blocked_suspicious_instructions: []
             },
-            deliverables: [
-              {
-                name: "late-result.json",
-                sha256: "b".repeat(64)
-              }
-            ]
-          }
-        })
+	            deliverables: [
+	              {
+	                name: "late-result.json",
+	                sha256: "b".repeat(64)
+	              }
+	            ],
+	            buyer_visible_outputs: [
+	              {
+	                name: "late-result.json",
+	                content_type: "application/json",
+	                text: "{\"ok\":true}",
+	                sha256: "c".repeat(64)
+	              }
+	            ]
+	          }
+	        })
       }
     );
     assert.equal(reconciled.status, 200);
@@ -4161,11 +4178,11 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(reconciledState.payload.lifecycle.relayDeliveryStatus, "reconciled_completed");
     assert.equal(reconciledState.payload.lifecycle.agentExecutionStatus, "completed");
     assert.equal(reconciledState.payload.lifecycle.sellerExecutionCompleted, true);
-    assert.equal(reconciledState.payload.lifecycle.buyerCompletionStatus, "seller_completed_delivery_pending");
-    assert.equal(reconciledState.payload.lifecycle.sellerReputationImpact, "none_until_delivery_fault_attributed");
+	    assert.equal(reconciledState.payload.lifecycle.buyerCompletionStatus, "buyer_complete");
+	    assert.equal(reconciledState.payload.lifecycle.sellerReputationImpact, "none");
     assert.equal(reconciledState.payload.lifecycleChecks.agentCompleted, true);
     assert.equal(reconciledState.payload.lifecycleChecks.failed, false);
-    assert.equal(reconciledState.payload.lifecycleChecks.terminal, false);
+	    assert.equal(reconciledState.payload.lifecycleChecks.terminal, false);
     assert.equal(reconciledState.payload.relayTrace.some((entry) => entry.detail === "late worker return reconciled through authenticated endpoint"), true);
 
     console.log("ok - relay post-ack timeout remains pending, retry-safe, and reconcilable");
@@ -4250,9 +4267,17 @@ async function testRelayPreparedResponseResolvesInlineCompletion() {
           files_produced: ["prepared-response.md"],
           blocked_suspicious_instructions: []
         },
-        deliverables: [{ name: "prepared-response.md", sha256: "3".repeat(64) }]
-      }
-    };
+	        deliverables: [{ name: "prepared-response.md", sha256: "3".repeat(64) }],
+	        buyer_visible_outputs: [
+	          {
+	            name: "prepared-response.md",
+	            content_type: "text/markdown",
+	            text: "Prepared response is available inline.",
+	            sha256: "4".repeat(64)
+	          }
+	        ]
+	      }
+	    };
     const preparedBody = JSON.stringify(preparedReturn);
     sendRelayJson(relaySocket, {
       type: "hire_ack",
@@ -4415,9 +4440,17 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
           files_produced: deliverables.map((deliverable) => deliverable.name),
           blocked_suspicious_instructions: []
         },
-        deliverables
-      }
-    }));
+	        deliverables,
+	        buyer_visible_outputs: [
+	          {
+	            name: "compacted-summary.md",
+	            content_type: "text/markdown",
+	            text: "Large relay return compacted with buyer-readable summary.",
+	            sha256: "f".repeat(64)
+	          }
+	        ]
+	      }
+	    }));
 
     const hire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
@@ -4970,9 +5003,9 @@ async function testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts() {
   console.log("ok - hosted exact fee-split payment requirement carries seller and protocol fee amounts");
 }
 
-async function testSellerReputationIgnoresBuyerDeliveryGaps() {
+async function testSellerReputationRequiresBuyerDeliveryContract() {
   const { paidExecutionTerminalOutcome } = await import("../dist/apps/indexer/src/control-plane.js");
-  const verifiedSellerReturnWithoutBuyerDelivery = {
+  const verifiedSellerReturnWithBuyerDelivery = {
     requestType: "paid_execution",
     status: "completed",
     submittedAtIso: new Date().toISOString(),
@@ -4990,24 +5023,43 @@ async function testSellerReputationIgnoresBuyerDeliveryGaps() {
         deliverableCount: 1,
         filesProducedCount: 1,
         checksPerformedCount: 1,
-        zekoAttestationIncluded: false
+        zekoAttestationIncluded: false,
+        buyerVisibleOutputs: [
+          {
+            name: "answer.md",
+            contentType: "text/markdown",
+            text: "Buyer-readable result.",
+            sha256: "b".repeat(64)
+          }
+        ]
+      }
+    }
+  };
+  const verifiedSellerReturnWithoutBuyerDelivery = {
+    ...verifiedSellerReturnWithBuyerDelivery,
+    protocolReturn: {
+      ...verifiedSellerReturnWithBuyerDelivery.protocolReturn,
+      verifiedOutput: {
+        ...verifiedSellerReturnWithBuyerDelivery.protocolReturn.verifiedOutput,
+        buyerVisibleOutputs: []
       }
     }
   };
   const emptySellerReturn = {
-    ...verifiedSellerReturnWithoutBuyerDelivery,
+    ...verifiedSellerReturnWithBuyerDelivery,
     protocolReturn: {
-      ...verifiedSellerReturnWithoutBuyerDelivery.protocolReturn,
+      ...verifiedSellerReturnWithBuyerDelivery.protocolReturn,
       execution: {
         completionClassification: "agent_completed_empty"
       }
     }
   };
 
-  assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithoutBuyerDelivery), "completed");
+  assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithBuyerDelivery), "completed");
+  assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithoutBuyerDelivery), "failed");
   assert.equal(paidExecutionTerminalOutcome(emptySellerReturn), "failed");
 
-  console.log("ok - seller reputation ignores buyer-delivery gaps after verified return");
+  console.log("ok - seller reputation requires verified buyer delivery contract");
 }
 
 async function main() {
@@ -5033,7 +5085,7 @@ async function main() {
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
-  await testSellerReputationIgnoresBuyerDeliveryGaps();
+  await testSellerReputationRequiresBuyerDeliveryContract();
 }
 
 try {
