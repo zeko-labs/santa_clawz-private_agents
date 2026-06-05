@@ -2761,14 +2761,6 @@ export function paidExecutionTerminalOutcome(request: HireRequestRecord, nowMs =
   return "pending";
 }
 
-function hasVerifiedPaidExecutionForSession(
-  hireRequests: HireRequestFile,
-  sessionId: string,
-  options: { includePrivate?: boolean } = {}
-) {
-  return paidExecutionProofForSession(hireRequests, sessionId, options).proven;
-}
-
 function buyerVisibleOutputsContainReadableText(outputs?: Array<{ text?: string }>) {
   return Boolean(outputs?.some((entry) => typeof entry.text === "string" && entry.text.trim().length > 0));
 }
@@ -2800,10 +2792,62 @@ interface PaidExecutionProofState {
   requestId?: string;
 }
 
+function confirmedSocialAnchorProof(item: SocialAnchorCandidate) {
+  return item.status === "confirmed" || item.status === "aggregate_anchored";
+}
+
+function paidExecutionCompletionAnchorsForSession(
+  socialAnchorQueueFile: SocialAnchorQueueFile | undefined,
+  sessionId: string
+) {
+  return (socialAnchorQueueFile?.items ?? [])
+    .filter(
+      (item) =>
+        item.sessionId === sessionId &&
+        item.kind === "paid-execution-completed" &&
+        confirmedSocialAnchorProof(item)
+    )
+    .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso));
+}
+
+function requestCanUseHistoricalPaidCompletionAnchor(request: HireRequestRecord) {
+  return (
+    request.requestType === "paid_execution" &&
+    request.status === "completed" &&
+    request.protocolReturn?.status === "completed" &&
+    (request.protocolReturn.execution?.completionClassification === "agent_completed_verified" ||
+      !request.protocolReturn.execution?.completionClassification)
+  );
+}
+
+function paidExecutionTerminalOutcomeWithHistoricalAnchors(
+  request: HireRequestRecord,
+  anchorBudget: { remaining: number },
+  nowMs = Date.now()
+): "completed" | "failed" | "pending" {
+  const outcome = paidExecutionTerminalOutcome(request, nowMs);
+  if (
+    outcome === "completed" &&
+    anchorBudget.remaining > 0 &&
+    requestCanUseHistoricalPaidCompletionAnchor(request)
+  ) {
+    anchorBudget.remaining -= 1;
+  }
+  if (
+    outcome === "failed" &&
+    anchorBudget.remaining > 0 &&
+    requestCanUseHistoricalPaidCompletionAnchor(request)
+  ) {
+    anchorBudget.remaining -= 1;
+    return "completed";
+  }
+  return outcome;
+}
+
 function paidExecutionProofForSession(
   hireRequests: HireRequestFile,
   sessionId: string,
-  options: { includePrivate?: boolean } = {}
+  options: { includePrivate?: boolean; socialAnchorQueueFile?: SocialAnchorQueueFile } = {}
 ): PaidExecutionProofState {
   const latestCompleted = hireRequests.requests
     .filter(
@@ -2814,15 +2858,26 @@ function paidExecutionProofForSession(
         paidExecutionTerminalOutcome(request) === "completed"
     )
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))[0];
-  if (!latestCompleted) {
-    return { proven: false };
+  if (latestCompleted) {
+    return {
+      proven: true,
+      provenAtIso: latestCompleted.submittedAtIso,
+      provenBy: isActivationLaneHireRequest(latestCompleted) ? "activation_lane" : "paid_job_history",
+      requestId: latestCompleted.requestId
+    };
   }
-  return {
-    proven: true,
-    provenAtIso: latestCompleted.submittedAtIso,
-    provenBy: isActivationLaneHireRequest(latestCompleted) ? "activation_lane" : "paid_job_history",
-    requestId: latestCompleted.requestId
-  };
+  const latestAnchoredCompletion = paidExecutionCompletionAnchorsForSession(options.socialAnchorQueueFile, sessionId)[0];
+  if (latestAnchoredCompletion) {
+    return {
+      proven: true,
+      provenAtIso:
+        latestAnchoredCompletion.confirmedAtIso ??
+        latestAnchoredCompletion.anchoredAtIso ??
+        latestAnchoredCompletion.occurredAtIso,
+      provenBy: "paid_job_history"
+    };
+  }
+  return { proven: false };
 }
 
 function classifyActivationProbeRequest(request: HireRequestRecord): AgentActivationProbeClassification {
@@ -3066,8 +3121,12 @@ function retainHireRequests(requests: HireRequestRecord[]) {
 function buildAgentCompletionScore(
   hireRequests: HireRequestFile,
   sessionId: string,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  options: { socialAnchorQueueFile?: SocialAnchorQueueFile } = {}
 ): AgentCompletionScore {
+  const anchorBudget = {
+    remaining: paidExecutionCompletionAnchorsForSession(options.socialAnchorQueueFile, sessionId).length
+  };
   const evaluated = hireRequests.requests
     .filter(
       (request) =>
@@ -3078,7 +3137,7 @@ function buildAgentCompletionScore(
     .sort((left, right) => right.submittedAtIso.localeCompare(left.submittedAtIso))
     .map((request) => ({
       request,
-      outcome: paidExecutionTerminalOutcome(request, nowMs)
+      outcome: paidExecutionTerminalOutcomeWithHistoricalAnchors(request, anchorBudget, nowMs)
     }))
     .filter((entry) => entry.outcome !== "pending")
     .slice(0, JOB_COMPLETION_SCORE_WINDOW_SIZE);
@@ -3178,12 +3237,16 @@ function incrementAgentJobActivityStats(
 function buildAgentJobActivityStats(
   hireRequests: HireRequestFile,
   sessionId: string,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  options: { socialAnchorQueueFile?: SocialAnchorQueueFile } = {}
 ): AgentJobActivityStats {
   const persisted = hireRequests.jobActivityStatsBySessionId?.[sessionId];
-  if (persisted) {
+  if (persisted && !options.socialAnchorQueueFile) {
     return persisted;
   }
+  const anchorBudget = {
+    remaining: paidExecutionCompletionAnchorsForSession(options.socialAnchorQueueFile, sessionId).length
+  };
 
   const requests = hireRequests.requests
     .filter((request) => request.sessionId === sessionId && !isActivationLaneHireRequest(request))
@@ -3192,7 +3255,7 @@ function buildAgentJobActivityStats(
   const paidRequests = requests.filter((request) => request.requestType === "paid_execution");
   const paidRequestOutcomes = paidRequests.map((request) => ({
     request,
-    outcome: paidExecutionTerminalOutcome(request, nowMs)
+    outcome: paidExecutionTerminalOutcomeWithHistoricalAnchors(request, anchorBudget, nowMs)
   }));
   const completedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "completed");
   const failedPaidRequests = paidRequestOutcomes.filter((entry) => entry.outcome === "failed");
@@ -4750,12 +4813,13 @@ export class ClawzControlPlane {
     candidates: ActivationLaneCandidateView[];
     diagnostics?: ActivationLaneCandidateDiagnostics;
   }> {
-    const [state, heartbeatFile, hireRequestFile, attemptFile, paymentLedgerFile] = await Promise.all([
+    const [state, heartbeatFile, hireRequestFile, attemptFile, paymentLedgerFile, socialAnchorQueueFile] = await Promise.all([
       this.loadState(),
       this.loadRuntimeHeartbeatFile(),
       this.loadHireRequestFile(),
       this.loadActivationLaneAttemptFile(),
-      this.loadPaymentLedgerFile()
+      this.loadPaymentLedgerFile(),
+      this.loadSocialAnchorQueueFile()
     ]);
     const force = options.force === true;
     const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
@@ -4773,7 +4837,8 @@ export class ClawzControlPlane {
         const agentId = this.agentIdForSession(state, heartbeat.sessionId);
         const heartbeatLive = this.activationLaneHeartbeatLive(heartbeat, nowMs);
         const paidExecutionProofByHistory = paidExecutionProofForSession(hireRequestFile, heartbeat.sessionId, {
-          includePrivate: true
+          includePrivate: true,
+          socialAnchorQueueFile
         });
         const heartbeatProbeProven =
           heartbeat?.paidExecutionProbe?.ok === true && heartbeat?.paidExecutionProbe?.buyerDeliveryVerified === true;
@@ -9795,7 +9860,8 @@ export class ClawzControlPlane {
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
       paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, focus.sessionId, {
-        includePrivate: !publicProfileView
+        includePrivate: !publicProfileView,
+        socialAnchorQueueFile
       }),
       activationProbes,
       activationLaneStatus,
@@ -9804,8 +9870,12 @@ export class ClawzControlPlane {
         includeActivationLane: false
       })
     });
-    const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId);
-    const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId);
+    const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId, Date.now(), {
+      socialAnchorQueueFile
+    });
+    const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId, Date.now(), {
+      socialAnchorQueueFile
+    });
     const protocolOwnerFeePolicy = buildProtocolOwnerFeePolicyFromEnv();
     const ingressAccess = this.buildIngressAccessState(
       state,
@@ -9945,7 +10015,10 @@ export class ClawzControlPlane {
       runtimeReachable: relayProfile ? relayConnected : reachability.reachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
-      paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, { includePrivate: true }),
+      paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, {
+        includePrivate: true,
+        socialAnchorQueueFile
+      }),
       activationProbes,
       activationLaneStatus,
       lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, {
@@ -10230,7 +10303,10 @@ export class ClawzControlPlane {
           runtimeReachable: relayProfile ? relayConnected : runtimeHeartbeat.status === "live",
           heartbeat: runtimeHeartbeat,
           paymentReady,
-          paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, { includePrivate: true }),
+          paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, {
+            includePrivate: true,
+            socialAnchorQueueFile
+          }),
           activationProbes,
           activationLaneStatus,
           lastJobStatus: lastHireStatusForSession(hireRequestFile, sessionId, {
@@ -10247,8 +10323,12 @@ export class ClawzControlPlane {
               paidJobsEnabled &&
               readiness.paidExecutionProven === true &&
               readiness.hireable;
-        const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId);
-        const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId);
+        const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId, Date.now(), {
+          socialAnchorQueueFile
+        });
+        const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId, Date.now(), {
+          socialAnchorQueueFile
+        });
         const marketplaceTagStats = buildAgentMarketplaceTagStats(hireRequestFile, sessionId);
         return {
           agentId,
@@ -12138,7 +12218,10 @@ export class ClawzControlPlane {
       }
       const paidExecutionProven =
         (heartbeat.paidExecutionProbe?.ok === true && heartbeat.paidExecutionProbe?.buyerDeliveryVerified === true) ||
-        hasVerifiedPaidExecutionForSession(hireRequests, sessionId, { includePrivate: true });
+        paidExecutionProofForSession(hireRequests, sessionId, {
+          includePrivate: true,
+          socialAnchorQueueFile
+        }).proven;
       if (!paidExecutionProven && paymentAuthorization.activationLane !== true) {
         throw new Error(
           [
