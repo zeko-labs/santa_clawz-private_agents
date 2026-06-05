@@ -125,7 +125,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Run a private agent workspace with mandatory receipts and policy-controlled proof commitments.";
+  "Give your agents a private workshop to coordinate and deliver work with full accountability.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
@@ -1994,6 +1994,28 @@ function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
 }
 
+function coordinationLedgerTitle(threadId?: string, swarmId?: string, fallback = "Workshop receipts") {
+  const raw = (threadId || swarmId || fallback)
+    .replace(/^(eventlog|workflow|thread|swarm)[_-]/i, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  if (!raw) {
+    return fallback;
+  }
+  return raw.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function coordinationReceiptBody(body: string) {
+  const normalized = body.trim().toLowerCase();
+  if (normalized === "complete" || normalized === "completed") {
+    return "Completed checkpoint";
+  }
+  if (normalized === "advance" || normalized === "advanced") {
+    return "Advanced workflow";
+  }
+  return body;
+}
+
 function extractAgentIdFromCoordinationInput(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -2441,7 +2463,6 @@ export function App() {
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
   const [coordinationSetupTicketStatus, setCoordinationSetupTicketStatus] = useState<CoordinationSetupTicketStatusResponse | null>(null);
   const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
-  const [coordinationTraceQuery, setCoordinationTraceQuery] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -4391,12 +4412,8 @@ export function App() {
     )
     .sort((left, right) => timestampValue(right.createdAtIso) - timestampValue(left.createdAtIso))
     .slice(0, 80);
-  const normalizedCoordinationTraceQuery = coordinationTraceQuery.trim().toLowerCase();
-  const filteredCoordinationMessages = coordinationMessages.filter((message) =>
-    matchesBoardMessageQuery(message, normalizedCoordinationTraceQuery, registryByAgentId.get(message.agentId))
-  );
   const coordinationThreads = Array.from(
-    filteredCoordinationMessages
+    coordinationMessages
       .reduce((groups, message) => {
         const key = coordinationThreadKey(message);
         const existing = groups.get(key) ?? {
@@ -4906,7 +4923,7 @@ export function App() {
                   onChange={(event: ValueInputEvent) => {
                     updateCoordinationDraft({ goal: event.target.value });
                   }}
-                  placeholder="(e.g. run an agent workflow workshop, decentralized intelligence swarm, agent training, etc.)"
+                  placeholder="(e.g. run an agent workflow, decentralized intelligence swarm, agent training, etc.)"
                 />
               </label>
 
@@ -5022,39 +5039,25 @@ export function App() {
             <div className="section-head compact-head">
               <div>
                 <h2>Workshop receipt ledger</h2>
-                <p className="panel-copy">{filteredCoordinationMessages.length} of {coordinationMessages.length} visible receipt events</p>
+                <p className="panel-copy">{coordinationMessages.length} visible receipt events</p>
               </div>
-              <div className="coordination-trace-actions">
-                <label className="sr-only" htmlFor="coordination-trace-search">Search workshop receipts</label>
-                <input
-                  id="coordination-trace-search"
-                  className="text-input coordination-trace-search"
-                  value={coordinationTraceQuery}
-                  onChange={(event: ValueInputEvent) => {
-                    setCoordinationTraceQuery(event.target.value);
-                  }}
-                  placeholder="Search receipts"
-                />
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
-                  }}
-                >
-                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
-                </button>
-              </div>
+              <button
+                type="button"
+                className="secondary-button coordination-ledger-copy-button"
+                onClick={() => {
+                  void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                }}
+              >
+                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
+              </button>
             </div>
 
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>{coordinationMessages.length > 0 ? "No matching receipts" : "No workshop receipts yet"}</strong>
+                  <strong>No workshop receipts yet</strong>
                   <p className="panel-copy">
-                    {coordinationMessages.length > 0
-                      ? "Try a different agent, role, message, digest, or checkpoint search."
-                      : "Agents can sync receipt checkpoints here while private work stays in local wrappers, sealed stores, or customer systems."}
+                    Agents can sync receipt checkpoints here while private work stays in local wrappers, sealed stores, or customer systems.
                   </p>
                 </article>
               ) : (
@@ -5062,8 +5065,8 @@ export function App() {
                   <article key={thread.key} className="coordination-thread-card">
                     <div className="coordination-thread-head">
                       <div>
-                        <strong>{thread.threadId || thread.swarmId || thread.key}</strong>
-                        <span>{thread.messages.length} events • latest {formatRelativeTime(thread.latestAtIso)}</span>
+                        <strong>{coordinationLedgerTitle(thread.threadId, thread.swarmId, thread.key)}</strong>
+                        <span>{thread.messages.length} receipts • latest {formatRelativeTime(thread.latestAtIso)}</span>
                       </div>
                       <span className="board-proof-pill confirmed">receipt</span>
                     </div>
@@ -5072,10 +5075,13 @@ export function App() {
                         <div key={message.messageId} className="coordination-message-row">
                           <span className="explore-card-avatar subtle">{agentInitials(message.agentName)}</span>
                           <div>
-                            <strong>{message.agentName}</strong>
-                            <p>{message.body}</p>
+                            <div className="coordination-message-title-line">
+                              <strong>{message.agentName}</strong>
+                              <span>{boardMessageTypeLabel(message.messageType)}</span>
+                            </div>
+                            <p>{coordinationReceiptBody(message.body)}</p>
                             <small>
-                              {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
+                              {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
                             </small>
                           </div>
                         </div>
