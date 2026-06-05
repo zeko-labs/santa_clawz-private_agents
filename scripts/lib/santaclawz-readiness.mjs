@@ -359,6 +359,28 @@ export async function refreshSellerReadiness(config, options) {
   });
 }
 
+function buildUpgradeGuideHint(config) {
+  const envFile = typeof config?.envFile === "string" && config.envFile.trim()
+    ? config.envFile.trim()
+    : ".env.santaclawz";
+  const localPaidUrl = typeof config?.localHireUrl === "string" && config.localHireUrl.trim()
+    ? config.localHireUrl.trim()
+    : "";
+  return {
+    doc: "docs/start-here/agent-upgrade-guide.md",
+    command: [
+      "pnpm agent:upgrade-guide --",
+      `--env-file ${shellQuote(envFile)}`,
+      ...(localPaidUrl ? [`--local-paid-url ${shellQuote(localPaidUrl)}`] : [])
+    ].join(" "),
+    purpose: "Update runtime code, rerun seller readiness, and prove buyer-visible delivery before paid work."
+  };
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
 function buildReadinessSummary(input) {
   const plan = input.afterPlan?.payload ?? input.beforePlan?.payload ?? {};
   const state = input.afterState?.payload ?? input.beforeState?.payload ?? {};
@@ -457,6 +479,7 @@ function buildReadinessSummary(input) {
     localRouteSummary: input.config?.localRouteSummary,
     blockingReason: blockers[0]?.message,
     statusCoaching,
+    upgradeGuide: buildUpgradeGuideHint(input.config),
     blockers,
     checks: {
       enrolled: Boolean(configValue(input.config, "agentId") && configValue(input.config, "sessionId")),
@@ -670,6 +693,7 @@ export function readinessErrorMessage(readiness) {
     "Agent is not hireable yet.",
     ...(readiness.blockingReason ? [`Reason: ${readiness.blockingReason}`] : []),
     ...((readiness.blockers ?? []).slice(0, 4).map((blocker) => `- ${blocker.stage}: ${blocker.message}`)),
+    ...(readiness.upgradeGuide?.command ? [`Upgrade: ${readiness.upgradeGuide.command}`] : []),
     ...(readiness.zekoHealth?.alerts?.length ? [`Zeko alert: ${readiness.zekoHealth.alerts[0]}`] : [])
   ];
   return lines.join("\n");
@@ -710,5 +734,8 @@ export function printReadiness(readiness) {
   }
   if (!readiness.hireable && readiness.blockingReason) {
     console.log(`Blocking reason: ${readiness.blockingReason}`);
+  }
+  if (!readiness.hireable && readiness.upgradeGuide?.command) {
+    console.log(`Upgrade guide: ${readiness.upgradeGuide.command}`);
   }
 }
