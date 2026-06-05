@@ -838,6 +838,7 @@ export interface HireRequestReceipt {
       checksPerformedCount?: number;
       artifactManifestUrl?: string;
       artifactBundleDigestSha256?: string;
+      deliverableReferenceCount?: number;
       verificationManifestDigestSha256?: string;
       zekoAttestationIncluded: boolean;
       buyerVisibleOutputs?: Array<{
@@ -860,6 +861,7 @@ export interface HireRequestReceipt {
       zekoAttestationIncluded: boolean;
       completionClassification:
         | "agent_completed_verified"
+        | "agent_completed_delivery_missing"
         | "agent_completed_unverified"
         | "agent_completed_empty"
         | "demo_completion";
@@ -1206,6 +1208,7 @@ export interface AgentRuntimeHeartbeatState {
     requestId?: string;
     localHireUrl?: string;
     packageVerified?: boolean;
+    buyerDeliveryVerified?: boolean;
     returnStatus?: string;
     reason?: string;
     classification?: AgentActivationProbeClassification;

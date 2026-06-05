@@ -178,6 +178,7 @@ type SocialAnchorQueueStateOptions = {
 };
 type HireCompletionClassification =
   | "agent_completed_verified"
+  | "agent_completed_delivery_missing"
   | "agent_completed_unverified"
   | "agent_completed_empty"
   | "demo_completion";
@@ -818,6 +819,7 @@ interface AgentRuntimeHeartbeatRecord {
     requestId?: string;
     localHireUrl?: string;
     packageVerified?: boolean;
+    buyerDeliveryVerified?: boolean;
     returnStatus?: string;
     reason?: string;
     classification?: AgentActivationProbeClassification;
@@ -2733,9 +2735,10 @@ export function paidExecutionTerminalOutcome(request: HireRequestRecord, nowMs =
     return "pending";
   }
   if (request.status === "completed" && request.protocolReturn?.status === "completed") {
-    // Seller reputation is based on the seller's verified return contract.
-    // Buyer delivery/readability is exposed separately as buyerComplete/buyerDeliveryStatus.
-    return request.protocolReturn.execution?.completionClassification === "agent_completed_verified"
+    // Seller reputation is based on the seller's completed delivery contract.
+    // Platform/buyer reconciliation after a valid delivery is tracked separately.
+    return request.protocolReturn.execution?.completionClassification === "agent_completed_verified" &&
+      protocolReturnHasBuyerDelivery(request.protocolReturn)
       ? "completed"
       : "failed";
   }
@@ -2764,6 +2767,30 @@ function hasVerifiedPaidExecutionForSession(
   options: { includePrivate?: boolean } = {}
 ) {
   return paidExecutionProofForSession(hireRequests, sessionId, options).proven;
+}
+
+function buyerVisibleOutputsContainReadableText(outputs?: Array<{ text?: string }>) {
+  return Boolean(outputs?.some((entry) => typeof entry.text === "string" && entry.text.trim().length > 0));
+}
+
+function verifiedOutputHasBuyerDelivery(verifiedOutput: {
+  artifactManifestUrl?: string;
+  deliverableReferenceCount?: number;
+  buyerVisibleOutputs?: Array<{ text?: string }>;
+}) {
+  return Boolean(
+    buyerVisibleOutputsContainReadableText(verifiedOutput.buyerVisibleOutputs) ||
+      (typeof verifiedOutput.deliverableReferenceCount === "number" && verifiedOutput.deliverableReferenceCount > 0) ||
+      (typeof verifiedOutput.artifactManifestUrl === "string" && verifiedOutput.artifactManifestUrl.trim().length > 0)
+  );
+}
+
+function protocolReturnHasBuyerDelivery(protocolReturn?: HireRequestRecord["protocolReturn"]) {
+  return Boolean(
+    protocolReturn?.status === "completed" &&
+      protocolReturn.verifiedOutput &&
+      verifiedOutputHasBuyerDelivery(protocolReturn.verifiedOutput)
+  );
 }
 
 interface PaidExecutionProofState {
@@ -3309,7 +3336,9 @@ function buildAgentReadinessState(input: {
   if (relayPaidWorkerUnverified) {
     blockers.push("worker-readiness-unverified");
   }
-  const heartbeatProbeOk = input.heartbeat.paidExecutionProbe?.ok === true;
+  const heartbeatProbeOk =
+    input.heartbeat.paidExecutionProbe?.ok === true &&
+    input.heartbeat.paidExecutionProbe?.buyerDeliveryVerified === true;
   const paidExecutionProven = paidMode
     ? heartbeatProbeOk || input.paidExecutionProofByHistory?.proven === true
     : undefined;
@@ -4746,7 +4775,8 @@ export class ClawzControlPlane {
         const paidExecutionProofByHistory = paidExecutionProofForSession(hireRequestFile, heartbeat.sessionId, {
           includePrivate: true
         });
-        const heartbeatProbeProven = heartbeat?.paidExecutionProbe?.ok === true;
+        const heartbeatProbeProven =
+          heartbeat?.paidExecutionProbe?.ok === true && heartbeat?.paidExecutionProbe?.buyerDeliveryVerified === true;
         const paidExecutionProven = paidExecutionProofByHistory.proven || heartbeatProbeProven;
         const paidExecutionProvenAt =
           paidExecutionProofByHistory.provenAtIso ??
@@ -6134,6 +6164,7 @@ export class ClawzControlPlane {
       const checksPerformedCount = checksPerformed.length;
       const filesProducedCount = filesProduced.length;
       const deliverableCount = deliverables.length;
+      let deliverableReferenceCount = 0;
       for (const [index, deliverable] of deliverables.entries()) {
         if (!isRecord(deliverable)) {
           reject(`SantaClawz verified_output deliverable ${index} must be an object.`);
@@ -6144,6 +6175,9 @@ export class ClawzControlPlane {
           assertStringValue(deliverableRecord, "sha256", `SantaClawz verified_output deliverable ${index}`),
           `SantaClawz verified_output deliverable ${index} sha256`
         );
+        if (typeof deliverableRecord.uri === "string" && deliverableRecord.uri.trim().length > 0) {
+          deliverableReferenceCount += 1;
+        }
       }
       const executionMode =
         typeof parsed.execution_mode === "string" && parsed.execution_mode.trim().length > 0
@@ -6187,6 +6221,11 @@ export class ClawzControlPlane {
                 : {})
             }))
         : undefined;
+      const buyerDeliveryPresent = verifiedOutputHasBuyerDelivery({
+        ...(artifactManifestUrl ? { artifactManifestUrl } : {}),
+        ...(deliverableReferenceCount > 0 ? { deliverableReferenceCount } : {}),
+        ...(buyerVisibleOutputs ? { buyerVisibleOutputs } : {})
+      });
       const completionClassification: HireCompletionClassification =
         executionMode === "demo-complete" ||
         manifestMode === "demo" ||
@@ -6197,7 +6236,9 @@ export class ClawzControlPlane {
             ? "agent_completed_empty"
             : checksPerformedCount === 0 || filesProducedCount === 0
               ? "agent_completed_unverified"
-              : "agent_completed_verified";
+              : buyerDeliveryPresent
+                ? "agent_completed_verified"
+                : "agent_completed_delivery_missing";
       return {
         schemaVersion: HIRE_RETURN_SCHEMA_VERSION,
         status,
@@ -6209,6 +6250,7 @@ export class ClawzControlPlane {
           checksPerformedCount,
           ...(artifactManifestUrl ? { artifactManifestUrl } : {}),
           ...(artifactBundleDigestSha256 ? { artifactBundleDigestSha256 } : {}),
+          ...(deliverableReferenceCount > 0 ? { deliverableReferenceCount } : {}),
           verificationManifestDigestSha256: canonicalDigest(verificationManifestRecord).sha256Hex,
           zekoAttestationIncluded,
           ...(buyerVisibleOutputs && buyerVisibleOutputs.length > 0 ? { buyerVisibleOutputs } : {})
@@ -10030,6 +10072,9 @@ export class ClawzControlPlane {
         ...(typeof options.paidExecutionProbe.packageVerified === "boolean"
           ? { packageVerified: options.paidExecutionProbe.packageVerified }
           : {}),
+        ...(typeof options.paidExecutionProbe.buyerDeliveryVerified === "boolean"
+          ? { buyerDeliveryVerified: options.paidExecutionProbe.buyerDeliveryVerified }
+          : {}),
         ...(typeof options.paidExecutionProbe.returnStatus === "string"
           ? { returnStatus: options.paidExecutionProbe.returnStatus.trim().slice(0, 80) }
           : {}),
@@ -12092,7 +12137,7 @@ export class ClawzControlPlane {
         );
       }
       const paidExecutionProven =
-        heartbeat.paidExecutionProbe?.ok === true ||
+        (heartbeat.paidExecutionProbe?.ok === true && heartbeat.paidExecutionProbe?.buyerDeliveryVerified === true) ||
         hasVerifiedPaidExecutionForSession(hireRequests, sessionId, { includePrivate: true });
       if (!paidExecutionProven && paymentAuthorization.activationLane !== true) {
         throw new Error(
@@ -12180,19 +12225,22 @@ export class ClawzControlPlane {
       ingressProtocolReturn?.status === "completed" &&
       ingressProtocolReturn.execution?.completionClassification !== "agent_completed_verified"
     ) {
+      const buyerDeliveryMissing =
+        ingressProtocolReturn.execution?.completionClassification === "agent_completed_delivery_missing";
+      const paidDeliveryErrorCode = buyerDeliveryMissing ? "buyer_delivery_required" : "verified_output_required";
+      const paidDeliveryErrorMessage = buyerDeliveryMissing
+        ? "Paid execution completed with proof metadata but no buyer-visible delivery. Include verified_output.buyer_visible_outputs[] for readable text or verified_output.artifact_manifest_url for artifact delivery."
+        : "Paid execution completed without a verified buyer delivery package. Production paid jobs require buyer-visible output or an artifact manifest, files produced, checks performed, and a verification manifest.";
       await this.updatePaymentLedgerExecution({
         ...(paymentAuthorization.ledgerId ? { ledgerId: paymentAuthorization.ledgerId } : {}),
         hireRequestId: requestId,
         executionStatus: "failed",
         returnStatus: "rejected",
         ...(deliveryReceipt ? { deliveryReceipt } : {}),
-        errorCode: "verified_output_required",
-        errorMessage:
-          "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
+        errorCode: paidDeliveryErrorCode,
+        errorMessage: paidDeliveryErrorMessage
       });
-      throw new Error(
-        "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
-      );
+      throw new Error(paidDeliveryErrorMessage);
     }
     const settledAmountUsd = requestType === "paid_execution" ? paymentAuthorization.amountUsd : undefined;
     const hireStatus: HireRequestReceipt["status"] = returnRejected ? "failed" : ingressProtocolReturn?.status ?? "submitted";
@@ -12354,7 +12402,9 @@ export class ClawzControlPlane {
                 ? `${profile.agentName} returned a demo completion that is not buyer-verified work.`
                 : completionClassification === "agent_completed_empty"
                   ? `${profile.agentName} returned a completed response with no buyer-visible deliverables.`
-                  : `${profile.agentName} returned completed output that still needs verification.`
+                  : completionClassification === "agent_completed_delivery_missing"
+                    ? `${profile.agentName} returned proof metadata without buyer-visible delivery.`
+                    : `${profile.agentName} returned completed output that still needs verification.`
             : `${profile.agentName} returned a failed hire result through SantaClawz.`;
       await this.enqueueSocialAnchorCandidate({
         sessionId,
@@ -12803,8 +12853,11 @@ export class ClawzControlPlane {
       protocolReturn.status === "completed" &&
       protocolReturn.execution?.completionClassification !== "agent_completed_verified"
     ) {
+      const buyerDeliveryMissing = protocolReturn.execution?.completionClassification === "agent_completed_delivery_missing";
       throw new Error(
-        "Paid execution reconciliation requires a verified worker output package with buyer-visible deliverables and a verification manifest."
+        buyerDeliveryMissing
+          ? "Paid execution reconciliation requires buyer-visible delivery. Include verified_output.buyer_visible_outputs[] or verified_output.artifact_manifest_url."
+          : "Paid execution reconciliation requires a verified worker output package with buyer-visible deliverables and a verification manifest."
       );
     }
     const completed = protocolReturn.status === "completed";
@@ -13015,8 +13068,11 @@ export class ClawzControlPlane {
       protocolReturn.status === "completed" &&
       protocolReturn.execution?.completionClassification !== "agent_completed_verified"
     ) {
+      const buyerDeliveryMissing = protocolReturn.execution?.completionClassification === "agent_completed_delivery_missing";
       throw new Error(
-        "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
+        buyerDeliveryMissing
+          ? "Paid execution completed with proof metadata but no buyer-visible delivery. Include verified_output.buyer_visible_outputs[] or verified_output.artifact_manifest_url."
+          : "Paid execution completed without a verified worker output package. Production paid jobs require buyer-visible deliverables, files produced, checks performed, and a verification manifest."
       );
     }
 
@@ -13237,11 +13293,16 @@ export class ClawzControlPlane {
           : "not_started";
     const completedVerified =
       latestExecution?.protocolReturn?.status === "completed" &&
-      latestExecution.protocolReturn.execution?.completionClassification === "agent_completed_verified";
-    const buyerVisibleOutputCount = latestExecution?.protocolReturn?.verifiedOutput?.buyerVisibleOutputs?.length ?? 0;
+      latestExecution.protocolReturn.execution?.completionClassification === "agent_completed_verified" &&
+      protocolReturnHasBuyerDelivery(latestExecution.protocolReturn);
+    const buyerVisibleOutputCount =
+      latestExecution?.protocolReturn?.verifiedOutput?.buyerVisibleOutputs?.filter(
+        (entry) => typeof entry.text === "string" && entry.text.trim().length > 0
+      ).length ?? 0;
     const artifactDeliveryAvailable = Boolean(
       latestExecution?.protocolReturn?.verifiedOutput?.artifactManifestUrl ||
-      latestExecution?.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256
+      latestExecution?.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256 ||
+      latestExecution?.protocolReturn?.verifiedOutput?.deliverableReferenceCount
     );
     const buyerDeliveryAvailable = buyerVisibleOutputCount > 0 || artifactDeliveryAvailable;
     const buyerDeliveryStatus: NonNullable<ExecutionLifecycleSummary["buyerDeliveryStatus"]> =
