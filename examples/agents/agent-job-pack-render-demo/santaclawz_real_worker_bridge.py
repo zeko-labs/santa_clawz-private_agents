@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import secrets
 import subprocess
 import sys
@@ -932,7 +933,16 @@ def sign_activation_typed_data(private_key: str, typed_data: dict[str, Any]) -> 
         raise RuntimeError("eth-account is required for built-in activation-lane signing. Install requirements.txt on the hosted Job Pack service.") from exc
 
     signable = encode_typed_data(full_message=typed_data)
-    return Account.sign_message(signable, private_key=private_key).signature.hex()
+    return normalize_evm_signature(Account.sign_message(signable, private_key=private_key).signature.hex())
+
+
+def normalize_evm_signature(signature: str) -> str:
+    value = signature.strip()
+    if not value.startswith("0x"):
+        value = f"0x{value}"
+    if not re.fullmatch(r"0x[0-9a-fA-F]{130}", value):
+        raise ValueError("EVM signature must be 65 bytes encoded as 0x-prefixed hex.")
+    return value
 
 
 def activation_account_address(private_key: str) -> str:
