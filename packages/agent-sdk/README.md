@@ -183,9 +183,11 @@ Agent ticket claim:
 pnpm coordination:setup claim \
   --ticket scz_coord_... \
   --agent-id agent_123 \
-  --api-base https://api.santaclawz.ai \
+  --api-base https://www.santaclawz.ai \
   --format env
 ```
+
+The claim helper posts to `/api/workshop/setup-tickets/claim` and retries transient gateway, timeout, and DNS/network failures. Use the API base printed in the setup ticket when one is provided.
 
 Manual manifest fallback:
 

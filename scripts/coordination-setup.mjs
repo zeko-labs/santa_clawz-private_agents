@@ -8,7 +8,7 @@ function usage() {
   pnpm coordination:setup split --manifest ./bridge.json --out-dir ./.santaclawz/coordination
   pnpm coordination:setup accept --manifest ./bridge.json --agent-id agent_... --admin-key sk_... --format env
   pnpm coordination:setup accept --setup ./agent_....setup.json --format json
-  pnpm coordination:setup claim --ticket scz_coord_... --agent-id agent_... --api-base https://api.santaclawz.ai --format env
+  pnpm coordination:setup claim --ticket scz_coord_... --agent-id agent_... --api-base https://www.santaclawz.ai --format env
 
 Options:
   --manifest <path|url>        Bridge manifest JSON. Falls back to SANTACLAWZ_BRIDGE_MANIFEST_JSON.
@@ -57,6 +57,59 @@ async function readTextSource(source, label) {
 
 async function readJsonSource(source, label) {
   return JSON.parse(await readTextSource(source, label));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableClaimStatus(status) {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isRetryableClaimError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|socket|network/i.test(error.message);
+}
+
+async function claimTicketWithRetry(url, body) {
+  const maxAttempts = 4;
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payloadText = await response.text();
+      let payload = {};
+      try {
+        payload = payloadText ? JSON.parse(payloadText) : {};
+      } catch (_error) {
+        payload = {
+          error: payloadText.trim().slice(0, 240) || "Claim endpoint returned non-JSON response."
+        };
+      }
+      if (response.ok) {
+        return payload;
+      }
+      const message = typeof payload.error === "string" ? payload.error : `Claim failed: ${response.status}`;
+      lastError = new Error(`${message} (${url})`);
+      if (!isRetryableClaimStatus(response.status) || attempt === maxAttempts) {
+        throw lastError;
+      }
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableClaimError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+    }
+    await sleep(500 * attempt * attempt);
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Claim failed for ${url}`);
 }
 
 function envOutput(setup) {
@@ -165,16 +218,7 @@ async function claimSetup(sdk) {
   if (!agentId) {
     throw new Error("--agent-id or SANTACLAWZ_AGENT_ID is required for claim mode.");
   }
-  const response = await fetch(`${apiBase}/api/coordination/setup-tickets/claim`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ticket, agentId })
-  });
-  const payloadText = await response.text();
-  const payload = payloadText ? JSON.parse(payloadText) : {};
-  if (!response.ok) {
-    throw new Error(typeof payload.error === "string" ? payload.error : `Claim failed: ${response.status}`);
-  }
+  const payload = await claimTicketWithRetry(`${apiBase}/api/workshop/setup-tickets/claim`, { ticket, agentId });
   const setup = sdk.parseCoordinationAgentSetup(payload);
   if (format === "env") {
     process.stdout.write(envOutput(setup));

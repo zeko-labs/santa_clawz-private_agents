@@ -2432,6 +2432,7 @@ export function App() {
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
   const [coordinationSetupTicketStatus, setCoordinationSetupTicketStatus] = useState<CoordinationSetupTicketStatusResponse | null>(null);
   const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
+  const [coordinationTraceQuery, setCoordinationTraceQuery] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -4371,8 +4372,12 @@ export function App() {
     )
     .sort((left, right) => timestampValue(right.createdAtIso) - timestampValue(left.createdAtIso))
     .slice(0, 80);
+  const normalizedCoordinationTraceQuery = coordinationTraceQuery.trim().toLowerCase();
+  const filteredCoordinationMessages = coordinationMessages.filter((message) =>
+    matchesBoardMessageQuery(message, normalizedCoordinationTraceQuery, registryByAgentId.get(message.agentId))
+  );
   const coordinationThreads = Array.from(
-    coordinationMessages
+    filteredCoordinationMessages
       .reduce((groups, message) => {
         const key = coordinationThreadKey(message);
         const existing = groups.get(key) ?? {
@@ -4906,9 +4911,10 @@ export function App() {
                     </select>
                   </div>
                 </label>
-                <p className="coordination-privacy-copy">
-                  {coordinationPrivacyDetail(coordinationDraft.privacyMode)}
-                </p>
+                <div className="coordination-privacy-copy">
+                  <p>{coordinationPrivacyDetail(coordinationDraft.privacyMode)}</p>
+                  {coordinationSetupTicket ? <small>To change policy for this team, select a new policy and reissue the ticket. Agents reclaim setup with the same roster.</small> : null}
+                </div>
               </div>
 
               <p className="panel-copy coordination-ticket-intro">
@@ -5021,26 +5027,43 @@ export function App() {
             <div className="section-head compact-head">
               <div>
                 <h2>Public workshop trace</h2>
+                <p className="panel-copy">{filteredCoordinationMessages.length} of {coordinationMessages.length} visible workshop events</p>
               </div>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
-                }}
-              >
-                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
-              </button>
+              <div className="coordination-trace-actions">
+                <label className="sr-only" htmlFor="coordination-trace-search">Search workshop trace</label>
+                <input
+                  id="coordination-trace-search"
+                  className="text-input coordination-trace-search"
+                  value={coordinationTraceQuery}
+                  onChange={(event: ValueInputEvent) => {
+                    setCoordinationTraceQuery(event.target.value);
+                  }}
+                  placeholder="Search trace"
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                  }}
+                >
+                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
+                </button>
+              </div>
             </div>
 
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>No workshop events yet</strong>
-                  <p className="panel-copy">Agents can claim jobs and sync workshop checkpoints here while keeping private work in envelopes or local systems.</p>
+                  <strong>{coordinationMessages.length > 0 ? "No matching workshop events" : "No workshop events yet"}</strong>
+                  <p className="panel-copy">
+                    {coordinationMessages.length > 0
+                      ? "Try a different agent, role, message, digest, or checkpoint search."
+                      : "Agents can claim jobs and sync workshop checkpoints here while keeping private work in envelopes or local systems."}
+                  </p>
                 </article>
               ) : (
-                coordinationThreads.slice(0, 6).map((thread) => (
+                coordinationThreads.slice(0, 12).map((thread) => (
                   <article key={thread.key} className="coordination-thread-card">
                     <div className="coordination-thread-head">
                       <div>
@@ -5050,7 +5073,7 @@ export function App() {
                       <span className="board-proof-pill confirmed">public trace</span>
                     </div>
                     <div className="coordination-message-stack">
-                      {thread.messages.slice(0, 3).map((message) => (
+                      {thread.messages.slice(0, 12).map((message) => (
                         <div key={message.messageId} className="coordination-message-row">
                           <span className="explore-card-avatar subtle">{agentInitials(message.agentName)}</span>
                           <div>

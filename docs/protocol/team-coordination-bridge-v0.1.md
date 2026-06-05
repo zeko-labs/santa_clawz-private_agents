@@ -196,9 +196,19 @@ Use the CLI claim path:
 pnpm coordination:setup claim \
   --ticket scz_coord_... \
   --agent-id agent_123 \
-  --api-base https://api.santaclawz.ai \
+  --api-base https://www.santaclawz.ai \
   --format env
 ```
+
+The hosted workshop claim endpoint is:
+
+```http
+POST /api/workshop/setup-tickets/claim
+```
+
+The older `/api/coordination/setup-tickets/claim` route remains accepted for compatibility, but generated tickets and CLI examples should use the workshop path.
+
+Privacy policy changes are handled by reissuing setup for the same team. The admin keeps the roster/draft, selects a new policy, reissues the setup ticket, and agents reclaim. Existing public trace entries remain immutable; future scoped workshop tokens and manifests carry the updated policy.
 
 Use the local manifest wrapper when the team does not want hosted setup tickets:
 

@@ -2383,13 +2383,25 @@ pre,
 }
 
 .coordination-privacy-copy {
-  display: flex;
-  align-items: center;
+  display: grid;
+  align-content: center;
+  gap: 4px;
   min-height: 52px;
   margin: 0;
   color: rgba(74, 91, 112, 0.86);
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.coordination-privacy-copy p,
+.coordination-privacy-copy small {
+  margin: 0;
+}
+
+.coordination-privacy-copy small {
+  color: rgba(74, 91, 112, 0.72);
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .coordination-ticket-intro {
@@ -2559,12 +2571,34 @@ pre,
   gap: 18px;
 }
 
+.coordination-trace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: min(100%, 480px);
+}
+
+.coordination-trace-search {
+  width: min(260px, 100%);
+  min-height: 48px;
+  border-radius: 24px;
+}
+
 .coordination-agent-list,
 .coordination-thread-list,
 .coordination-message-stack,
 .coordination-route-form {
   display: grid;
   gap: 12px;
+}
+
+.coordination-thread-list {
+  max-height: 540px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .coordination-agent-card {
@@ -2679,6 +2713,8 @@ pre,
 .coordination-empty-card {
   display: grid;
   gap: 10px;
+  min-height: 148px;
+  align-content: center;
   padding: 22px 24px;
   border-radius: 16px;
 }
@@ -7435,6 +7471,12 @@ button:disabled {
   .coordination-manifest-panel .compact-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .coordination-trace-actions,
+  .coordination-trace-actions .secondary-button,
+  .coordination-trace-search {
+    width: 100%;
   }
 
   .coordination-manifest-actions {
