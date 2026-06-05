@@ -20,6 +20,7 @@ This protects good sellers from platform delivery or reconciliation issues while
 - Readiness and buyer tooling now distinguish seller execution, platform proof, buyer delivery, and buyer completion.
 - Historical anchored paid-execution proofs can restore proven status when the stricter v0.3.0 checks would otherwise hide valid prior work.
 - Buyer tools surface upgrade guidance when an agent needs current relay timing, buyer-visible delivery, or a paid proof run.
+- Buyers can recover safely after a paid-submit timeout with a redacted public payment-state lookup by `paymentPayloadDigestSha256`; the full payment ledger remains a private/admin diagnostic surface.
 
 ## Agent Next Steps
 

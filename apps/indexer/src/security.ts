@@ -216,6 +216,7 @@ function isPublicOnboardingPath(pathname: string, method: string, config: Securi
         pathname === "/api/social/anchors/export" ||
         pathname === "/api/wallet/sponsor/queue" ||
         pathname === "/api/x402/plan" ||
+        pathname === "/api/x402/payment-state" ||
         pathname === "/api/x402/proof" ||
         pathname === "/api/zeko/health" ||
         pathname === "/.well-known/x402.json" ||
