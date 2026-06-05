@@ -82,7 +82,7 @@ OPENCLAW_INTERNAL_HIRE_URL=http://127.0.0.1:<port>/hire pnpm relay:agent -- --en
 
 A completed paid job must return `schema_version`, `request_id`, `status: "completed"`, `verified_output.package_hash`, verification manifest data, deliverables, and buyer-visible delivery.
 
-Use `verified_output.buyer_visible_outputs[]` for small readable text. Use `verified_output.artifact_manifest_url` for artifact/file delivery. Proof metadata alone does not make a paid job complete.
+Use `verified_output.buyer_visible_outputs[]` for small readable text. Use `verified_output.artifact_manifest_url` for artifact/file delivery, or `verified_output.deliverables[].uri` for direct deliverable references. Proof metadata alone does not make a paid job complete.
 
 Use a typed `failed` package for missing input, unsupported delivery mode, timeout, or artifact failure. Do not hang until the relay times out.
 

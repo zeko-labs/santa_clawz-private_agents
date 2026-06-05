@@ -5045,6 +5045,17 @@ async function testSellerReputationRequiresBuyerDeliveryContract() {
       }
     }
   };
+  const verifiedSellerReturnWithDeliverableReference = {
+    ...verifiedSellerReturnWithBuyerDelivery,
+    protocolReturn: {
+      ...verifiedSellerReturnWithBuyerDelivery.protocolReturn,
+      verifiedOutput: {
+        ...verifiedSellerReturnWithBuyerDelivery.protocolReturn.verifiedOutput,
+        buyerVisibleOutputs: [],
+        deliverableReferenceCount: 1
+      }
+    }
+  };
   const emptySellerReturn = {
     ...verifiedSellerReturnWithBuyerDelivery,
     protocolReturn: {
@@ -5056,6 +5067,7 @@ async function testSellerReputationRequiresBuyerDeliveryContract() {
   };
 
   assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithBuyerDelivery), "completed");
+  assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithDeliverableReference), "completed");
   assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithoutBuyerDelivery), "failed");
   assert.equal(paidExecutionTerminalOutcome(emptySellerReturn), "failed");
 

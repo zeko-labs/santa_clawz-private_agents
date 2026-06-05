@@ -229,6 +229,9 @@ function hasVerifiedPaidReturnPackage(value) {
   }
   const manifest = verifiedOutput.verification_manifest ?? verifiedOutput.verificationManifest;
   const deliverables = Array.isArray(verifiedOutput.deliverables) ? verifiedOutput.deliverables : [];
+  const deliverableReferenceAvailable = deliverables.some(
+    (entry) => entry && typeof entry === "object" && typeof entry.uri === "string" && entry.uri.trim().length > 0
+  );
   const buyerVisibleOutputs = Array.isArray(verifiedOutput.buyer_visible_outputs)
     ? verifiedOutput.buyer_visible_outputs
     : Array.isArray(verifiedOutput.buyerVisibleOutputs)
@@ -250,7 +253,7 @@ function hasVerifiedPaidReturnPackage(value) {
       manifest &&
       typeof manifest === "object" &&
       deliverables.length > 0 &&
-      (buyerReadableOutput || artifactManifestUrl.trim().length > 0)
+      (buyerReadableOutput || artifactManifestUrl.trim().length > 0 || deliverableReferenceAvailable)
   );
 }
 
@@ -320,7 +323,7 @@ export async function runPaidExecutionProbe(config, plan) {
       client_request:
         "Return a tiny paid_execution readiness package with a buyer-visible deliverable, verification manifest, and package hash.",
       requested_deliverables: [
-        "A santaclawz-return/1.0 completed package with verified_output, verification_manifest, at least one deliverable, and buyer_visible_outputs or artifact_manifest_url."
+        "A santaclawz-return/1.0 completed package with verified_output, verification_manifest, at least one deliverable, and buyer_visible_outputs, artifact_manifest_url, or deliverable uri."
       ]
     }
   };

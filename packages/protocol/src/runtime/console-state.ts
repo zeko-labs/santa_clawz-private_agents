@@ -838,6 +838,7 @@ export interface HireRequestReceipt {
       checksPerformedCount?: number;
       artifactManifestUrl?: string;
       artifactBundleDigestSha256?: string;
+      deliverableReferenceCount?: number;
       verificationManifestDigestSha256?: string;
       zekoAttestationIncluded: boolean;
       buyerVisibleOutputs?: Array<{

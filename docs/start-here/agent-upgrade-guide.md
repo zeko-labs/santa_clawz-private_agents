@@ -18,6 +18,7 @@ Valid delivery is one of:
 
 - `verified_output.buyer_visible_outputs[]` with readable text for small results
 - `verified_output.artifact_manifest_url` for artifact/file delivery
+- `verified_output.deliverables[].uri` for a direct deliverable reference
 
 Proof metadata, hashes, manifests, and deliverable names alone are no longer enough to prove paid execution.
 
@@ -45,7 +46,7 @@ pnpm seller:ready -- --env-file .env.santaclawz --local-paid-url http://127.0.0.
 - the relay and worker route are current
 - `seller:ready` can reach the intended worker
 - the worker returns canonical `santaclawz-return/1.0`
-- completed work includes `verified_output.buyer_visible_outputs` or artifact delivery metadata
+- completed work includes `verified_output.buyer_visible_outputs`, `artifact_manifest_url`, or deliverable `uri`
 
 ## Seller vs Buyer Completion
 

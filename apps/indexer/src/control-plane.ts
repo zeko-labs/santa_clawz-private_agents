@@ -2775,10 +2775,12 @@ function buyerVisibleOutputsContainReadableText(outputs?: Array<{ text?: string 
 
 function verifiedOutputHasBuyerDelivery(verifiedOutput: {
   artifactManifestUrl?: string;
+  deliverableReferenceCount?: number;
   buyerVisibleOutputs?: Array<{ text?: string }>;
 }) {
   return Boolean(
     buyerVisibleOutputsContainReadableText(verifiedOutput.buyerVisibleOutputs) ||
+      (typeof verifiedOutput.deliverableReferenceCount === "number" && verifiedOutput.deliverableReferenceCount > 0) ||
       (typeof verifiedOutput.artifactManifestUrl === "string" && verifiedOutput.artifactManifestUrl.trim().length > 0)
   );
 }
@@ -6162,6 +6164,7 @@ export class ClawzControlPlane {
       const checksPerformedCount = checksPerformed.length;
       const filesProducedCount = filesProduced.length;
       const deliverableCount = deliverables.length;
+      let deliverableReferenceCount = 0;
       for (const [index, deliverable] of deliverables.entries()) {
         if (!isRecord(deliverable)) {
           reject(`SantaClawz verified_output deliverable ${index} must be an object.`);
@@ -6172,6 +6175,9 @@ export class ClawzControlPlane {
           assertStringValue(deliverableRecord, "sha256", `SantaClawz verified_output deliverable ${index}`),
           `SantaClawz verified_output deliverable ${index} sha256`
         );
+        if (typeof deliverableRecord.uri === "string" && deliverableRecord.uri.trim().length > 0) {
+          deliverableReferenceCount += 1;
+        }
       }
       const executionMode =
         typeof parsed.execution_mode === "string" && parsed.execution_mode.trim().length > 0
@@ -6217,6 +6223,7 @@ export class ClawzControlPlane {
         : undefined;
       const buyerDeliveryPresent = verifiedOutputHasBuyerDelivery({
         ...(artifactManifestUrl ? { artifactManifestUrl } : {}),
+        ...(deliverableReferenceCount > 0 ? { deliverableReferenceCount } : {}),
         ...(buyerVisibleOutputs ? { buyerVisibleOutputs } : {})
       });
       const completionClassification: HireCompletionClassification =
@@ -6243,6 +6250,7 @@ export class ClawzControlPlane {
           checksPerformedCount,
           ...(artifactManifestUrl ? { artifactManifestUrl } : {}),
           ...(artifactBundleDigestSha256 ? { artifactBundleDigestSha256 } : {}),
+          ...(deliverableReferenceCount > 0 ? { deliverableReferenceCount } : {}),
           verificationManifestDigestSha256: canonicalDigest(verificationManifestRecord).sha256Hex,
           zekoAttestationIncluded,
           ...(buyerVisibleOutputs && buyerVisibleOutputs.length > 0 ? { buyerVisibleOutputs } : {})
@@ -13293,7 +13301,8 @@ export class ClawzControlPlane {
       ).length ?? 0;
     const artifactDeliveryAvailable = Boolean(
       latestExecution?.protocolReturn?.verifiedOutput?.artifactManifestUrl ||
-      latestExecution?.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256
+      latestExecution?.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256 ||
+      latestExecution?.protocolReturn?.verifiedOutput?.deliverableReferenceCount
     );
     const buyerDeliveryAvailable = buyerVisibleOutputCount > 0 || artifactDeliveryAvailable;
     const buyerDeliveryStatus: NonNullable<ExecutionLifecycleSummary["buyerDeliveryStatus"]> =
