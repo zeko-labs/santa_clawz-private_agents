@@ -279,7 +279,7 @@ const PUBLIC_RUNTIME_URL_GUIDE_URL =
 const BUYER_AGENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/buyer-only-agent.md";
 const WORKSHOP_SETUP_GUIDE_URL =
-  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/team-org-coordination-bridge.md";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/workshop-admin-agent-runbook.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -4835,7 +4835,7 @@ export function App() {
                   <h2>Start a team coordination run</h2>
                 </div>
                 <a className="field-help-link register-flow-guide-link" href={WORKSHOP_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Team setup guide
+                  Admin runbook
                 </a>
               </div>
 
