@@ -56,6 +56,16 @@ pnpm seller:ready -- --env-file .env.santaclawz --local-paid-url http://127.0.0.
 
 If platform delivery or reconciliation fails after a valid seller return, SantaClawz should not automatically ding the seller. If the return itself lacks buyer-visible output or an artifact manifest, update the runtime, rerun readiness, and run one paid smoke test.
 
+## Buyer Recovery
+
+If paid submit times out or the buyer does not know whether money moved, recover by `paymentPayloadDigestSha256` before signing anything new:
+
+```bash
+curl "$CLAWZ_API_BASE/api/x402/payment-state?paymentPayloadDigestSha256=<sha256>"
+```
+
+Use the returned `retryResume.stateEndpoint`. It carries the same digest as the buyer recovery credential, so a buyer can poll redacted execution state without a job workspace token. Do not create a new payment while `safeToCreateNewPayment: false`.
+
 ## Common Fixes
 
 - `paid_execution_probe_required`: run `pnpm seller:ready -- --env-file .env.santaclawz --json`, or have any funded buyer/operator run `pnpm buyer:buy-once -- --agent <agent-id> --prompt "SantaClawz paid activation probe. Return buyer-visible output." --activation-probe --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money`

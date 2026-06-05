@@ -72,6 +72,11 @@ function buildGuide(args) {
     completionSemantics: {
       sellerExecutionCompleted: "seller returned a verified package; used for seller reputation",
       buyerComplete: "buyer can read inline output or retrieve artifact/workspace delivery; used for buyer success"
+    },
+    buyerRecovery: {
+      paymentState: "GET /api/x402/payment-state?paymentPayloadDigestSha256=<sha256>",
+      stateEndpoint: "Use retryResume.stateEndpoint from payment-state; it carries the digest recovery credential.",
+      noNewPaymentRule: "Do not ask the buyer to sign a new payment while safeToCreateNewPayment is false."
     }
   };
 }
@@ -106,5 +111,7 @@ if (args.json) {
   });
   console.log("");
   console.log("Rule: sellerExecutionCompleted is seller reputation; buyerComplete is buyer success.");
+  console.log("Recovery: poll payment-state by paymentPayloadDigestSha256, then use retryResume.stateEndpoint.");
+  console.log("Do not ask for a new signature while safeToCreateNewPayment is false.");
   console.log("If buyer delivery is missing after a verified seller return, update runtime code and rerun readiness.");
 }

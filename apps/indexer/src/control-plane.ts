@@ -7442,6 +7442,32 @@ export class ClawzControlPlane {
     return nextEntry;
   }
 
+  async annotatePaymentLedgerPayloadRetryFailure(input: {
+    ledgerId?: string;
+    errorMessage: string;
+    errorCode?: string;
+  }): Promise<PaymentLedgerEntry | undefined> {
+    if (!input.ledgerId) {
+      return undefined;
+    }
+    const file = await this.loadPaymentLedgerFile();
+    const index = file.entries.findIndex((entry) => entry.ledgerId === input.ledgerId);
+    if (index < 0) {
+      return undefined;
+    }
+    const existing = file.entries[index]!;
+    const nextEntry: PaymentLedgerEntry = {
+      ...existing,
+      updatedAtIso: new Date().toISOString(),
+      errorCode: input.errorCode ?? existing.errorCode ?? "payment_payload_retry_failed",
+      errorMessage: input.errorMessage
+    };
+    await this.savePaymentLedgerFile({
+      entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
+    });
+    return nextEntry;
+  }
+
   async markHireRequestPaymentSettled(input: {
     requestId: string;
     settlementReference?: string;

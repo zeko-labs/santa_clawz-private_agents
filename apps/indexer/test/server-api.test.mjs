@@ -2765,6 +2765,73 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(fixedPriceAccept.amount, "200000");
     assert.notEqual(fixedPriceAccept.amount, "0.20");
 
+    const retryPaymentPayload = {
+      protocol: "x402",
+      networkId: "eip155:8453",
+      settlementRail: "base-usdc",
+      payTo: "0x0000000000000000000000000000000000000001",
+      payload: {
+        authorization: {
+          value: "1"
+        }
+      }
+    };
+    const retryPaymentPayloadDigest = createHash("sha256").update(JSON.stringify(retryPaymentPayload)).digest("hex");
+    const retryPaymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    await writeFile(retryPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_existing_digest_retry_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          hireRequestId: "hire_existing_digest_retry_test",
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.20",
+          paymentPayloadDigestSha256: retryPaymentPayloadDigest,
+          transactionHashes: [],
+          paymentStatus: "authorization_verified",
+          executionStatus: "submitted",
+          returnStatus: "none"
+        }
+      ]
+    }, null, 2), "utf8");
+    const retryExistingDigest = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Retry an existing paid request digest without creating a fresh payment.",
+        requesterContact: "buyer@example.com",
+        paymentPayload: retryPaymentPayload
+      })
+    });
+    assert.equal(retryExistingDigest.status, 202);
+    assert.equal(retryExistingDigest.payload.code, "payment_payload_retry_failed_existing_state");
+    assert.equal(retryExistingDigest.payload.paymentPayloadDigestSha256, retryPaymentPayloadDigest);
+    assert.notEqual(retryExistingDigest.payload.operationalStatus.paymentStatus, "failed");
+    assert.notEqual(retryExistingDigest.payload.operationalStatus.relayDeliveryStatus, "not_attempted");
+    assert.equal(retryExistingDigest.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(retryExistingDigest.payload.retryResume.safeToCreateNewPayment, false);
+    assert.match(retryExistingDigest.payload.paymentStateUrl, /paymentPayloadDigestSha256=/);
+
+    const annotatedLedger = JSON.parse(await readFile(retryPaymentLedgerPath, "utf8"));
+    annotatedLedger.entries[0].errorCode = "payment_payload_expired_for_retry";
+    annotatedLedger.entries[0].errorMessage = "Payment payload is expired.";
+    await writeFile(retryPaymentLedgerPath, JSON.stringify(annotatedLedger, null, 2), "utf8");
+    const expiredPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${retryPaymentPayloadDigest}`
+    );
+    assert.equal(expiredPaymentState.status, 200);
+    assert.equal(expiredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(expiredPaymentState.payload.retryResume.safeToRetrySamePaymentPayload, false);
+    assert.equal(expiredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.equal(expiredPaymentState.payload.retryResume.paymentPayloadExpiredForRetry, true);
+    assert.equal(expiredPaymentState.payload.retryResume.nextAction, "poll_execution_state");
+
     const quoteReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },

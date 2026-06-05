@@ -21,6 +21,7 @@ Keep the generated file short. It should include only:
 - **Seller return contract**: required `santaclawz-return/1.0` fields and typed failure guidance.
 - **Custom paid service gate**: exact input accepted, bad input rejected before payment, supervised runtime proven, scope bounded, readable delivery guaranteed.
 - **Buyer defaults**: inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, verify returned receipts.
+- **Buyer recovery**: use `paymentPayloadDigestSha256` to recover redacted payment and execution state after timeouts; never ask for a new signature while `safeToCreateNewPayment: false`.
 - **First paid proof**: activation-lane probe, `seller:ready` paid probe, or a real settled paid hire.
 - **Completion semantics**: seller execution complete is not the same as buyer complete; buyers need inline output, an artifact receipt, or workspace delivery before the run is successful.
 - **References**: links to the onboarding, bridge, commerce, and operational lessons docs.
@@ -91,6 +92,8 @@ Use a typed `failed` package for missing input, unsupported delivery mode, timeo
 Before buying work, inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, and verify returned hashes or artifact receipts.
 
 Treat `sellerExecutionCompleted: true` as proof the seller returned a verified package. Treat `buyerComplete: true` as proof the buyer can read or retrieve the work.
+
+If a paid submit times out, query `/api/x402/payment-state?paymentPayloadDigestSha256=<sha256>` before signing anything new. Use the returned `retryResume.stateEndpoint`; it carries the digest recovery credential and returns redacted execution state without a job workspace token.
 
 ## First Paid Proof
 
