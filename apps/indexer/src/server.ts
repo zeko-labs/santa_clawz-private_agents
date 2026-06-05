@@ -2702,7 +2702,11 @@ async function buildX402PaymentStateResponse(input: {
     ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
   });
   const stateEndpoint = resolvedRequestId
-    ? `${input.apiBase}/api/executions/${encodeURIComponent(resolvedRequestId)}/state`
+    ? `${input.apiBase}/api/executions/${encodeURIComponent(resolvedRequestId)}/state${
+        paymentPayloadDigestSha256
+          ? `?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+          : ""
+      }`
     : intentId
       ? `${input.apiBase}/api/execution/intents/${encodeURIComponent(intentId)}`
       : paymentPayloadDigestSha256
@@ -4141,6 +4145,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     }
     const token = tokenQuery(request);
     const adminKey = adminKeyHeader(request);
+    const recoveryPaymentPayloadDigestSha256 =
+      validSha256(queryString(request.query, "paymentPayloadDigestSha256")) ??
+      validSha256(queryString(request.query, "paymentPayloadDigest")) ??
+      validSha256(queryString(request.query, "payloadDigest"));
     const directHireRequest = await optionalHireRequest(requestedRequestId);
     const hireIdAliasPaymentLedger = directHireRequest
       ? undefined
@@ -4188,16 +4196,71 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       return;
     }
     const requestId = hireRequest.requestId;
-    const [collaboration, paymentLedger, artifactReceipts] = await Promise.all([
-      controlPlane.getJobCollaboration({
-        requestId,
-        ...(token ? { token } : {}),
-        ...(adminKey ? { adminKey } : {})
-      }),
+    const [paymentLedger, artifactReceipts] = await Promise.all([
       controlPlane.listPaymentLedger({ hireRequestId: requestId, limit: 5 }),
       artifactStore.receiptsForRequest(requestId)
     ]);
     const latestLedger = paymentLedger.entries[0];
+    const paymentPayloadDigestMatches = Boolean(
+      recoveryPaymentPayloadDigestSha256 &&
+        paymentLedger.entries.some((entry) => entry.paymentPayloadDigestSha256 === recoveryPaymentPayloadDigestSha256)
+    );
+    const workspaceCredentialProvided = Boolean(token || adminKey);
+    const paymentPayloadDigestSha256 = latestLedger?.paymentPayloadDigestSha256;
+    const stateUrl = `${apiBase}/api/executions/${encodeURIComponent(requestId)}/state${
+      paymentPayloadDigestSha256
+        ? `?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+        : ""
+    }`;
+    const paymentStateUrl = paymentPayloadDigestSha256
+      ? `${apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+      : `${apiBase}/api/x402/payment-state?${new URLSearchParams({ requestId }).toString()}`;
+    if (!workspaceCredentialProvided && !paymentPayloadDigestMatches) {
+      response.status(403).json({
+        ok: false,
+        code: "execution_state_recovery_credential_required",
+        retryable: false,
+        requestedRequestId,
+        ids: {
+          requestedRequestId,
+          executionRequestId: requestId,
+          hireRequestId: requestId
+        },
+        paymentStateUrl: paymentPayloadDigestSha256 ? undefined : paymentStateUrl,
+        stateAccess: {
+          modes: ["job_access_token", "seller_admin_key", "payment_payload_digest"],
+          acceptedQuery: "paymentPayloadDigestSha256",
+          guidance: "Fetch /api/x402/payment-state with the saved payment payload digest, then poll the returned stateEndpoint."
+        },
+        safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256),
+        safeToCreateNewPayment: false,
+        error: "Execution state requires a job token, seller admin key, or matching payment payload digest."
+      });
+      return;
+    }
+    let collaboration: Awaited<ReturnType<ClawzControlPlane["getJobCollaboration"]>> = {
+      requestId,
+      agentId: hireRequest.agentId,
+      sessionId: hireRequest.sessionId,
+      currentStage: null,
+      stages: [],
+      messages: []
+    };
+    let stateAccessMode: "workspace" | "payment_digest_recovery" = paymentPayloadDigestMatches ? "payment_digest_recovery" : "workspace";
+    if (workspaceCredentialProvided) {
+      try {
+        collaboration = await controlPlane.getJobCollaboration({
+          requestId,
+          ...(token ? { token } : {}),
+          ...(adminKey ? { adminKey } : {})
+        });
+        stateAccessMode = "workspace";
+      } catch (error) {
+        if (!paymentPayloadDigestMatches) {
+          throw error;
+        }
+      }
+    }
     const latestReceipt = artifactReceipts[0];
     const operational = hireRequest.operationalStatus;
     const proofStatus =
@@ -4329,11 +4392,6 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
                 ? "Execution has a failure or rejected return that needs attention."
                 : "Execution is still in progress."
     };
-    const paymentPayloadDigestSha256 = latestLedger?.paymentPayloadDigestSha256;
-    const stateUrl = `${apiBase}/api/executions/${encodeURIComponent(requestId)}/state`;
-    const paymentStateUrl = paymentPayloadDigestSha256
-      ? `${apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
-      : `${apiBase}/api/x402/payment-state?${new URLSearchParams({ requestId }).toString()}`;
     const buyerCompletionStatus = buyerComplete
       ? "buyer_complete"
       : returnVerified && buyerDeliveryAvailable
@@ -4368,6 +4426,11 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       requestedRequestId,
       stateUrl,
       paymentStateUrl,
+      stateAccess: {
+        mode: stateAccessMode,
+        redacted: stateAccessMode === "payment_digest_recovery",
+        credential: stateAccessMode === "payment_digest_recovery" ? "paymentPayloadDigestSha256" : "workspace_token_or_admin_key"
+      },
       agentId: hireRequest.agentId,
       sessionId: hireRequest.sessionId,
       requestType: hireRequest.requestType,
@@ -4470,15 +4533,23 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       },
       payment: {
         requestPaymentStatus: hireRequest.paymentStatus,
-        ledgerEntries: paymentLedger.entries,
-        ...(latestLedger ? { latestLedger } : {})
+        ...(stateAccessMode === "payment_digest_recovery"
+          ? {
+              ledgerEntryCount: paymentLedger.entries.length,
+              ...(latestLedger ? { latestLedger: redactLatestPaymentLedger(latestLedger) } : {})
+            }
+          : {
+              ledgerEntries: paymentLedger.entries,
+              ...(latestLedger ? { latestLedger } : {})
+            })
       },
       workspace: {
+        access: stateAccessMode === "payment_digest_recovery" ? "redacted_payment_digest_recovery" : "workspace",
         currentStage: collaboration.currentStage,
         stageCount: collaboration.stages.length,
         messageCount: collaboration.messages.length,
-        stages: collaboration.stages,
-        messages: collaboration.messages
+        stages: stateAccessMode === "payment_digest_recovery" ? [] : collaboration.stages,
+        messages: stateAccessMode === "payment_digest_recovery" ? [] : collaboration.messages
       },
       knownBlockers
     });
