@@ -240,19 +240,21 @@ function launchHotReadRefresh<T>(input: {
         input.prune();
       }
       return payload;
-    })
-    .finally(() => {
-      input.inflight.delete(input.cacheKey);
     });
-  input.inflight.set(input.cacheKey, { epoch: input.cacheEpoch, promise: payloadPromise });
-  payloadPromise.catch((error) => {
+  const finalPromise = payloadPromise.finally(() => {
+    if (input.inflight.get(input.cacheKey)?.promise === finalPromise) {
+      input.inflight.delete(input.cacheKey);
+    }
+  });
+  input.inflight.set(input.cacheKey, { epoch: input.cacheEpoch, promise: finalPromise });
+  finalPromise.catch((error) => {
     console.warn(JSON.stringify({
       event: "hot_read_cache_refresh_failed",
       cacheKey: input.cacheKey,
       error: errorMessage(error, "Hot read cache refresh failed.")
     }));
   });
-  return payloadPromise;
+  return finalPromise;
 }
 
 async function cachedHotRead<T>(input: {
@@ -369,6 +371,9 @@ function publicReadRouteCost(pathname: string, method: string): number {
     return 1;
   }
   if (/^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
+    return 1;
+  }
+  if (/^\/api\/agents\/[^/]+\/x402-plan$/.test(pathname) || pathname === "/api/x402/plan") {
     return 1;
   }
   if (/^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
@@ -5114,7 +5119,14 @@ app.post("/api/mission-auth/check", route(async (request, response) => {
 
 app.get("/api/x402/plan", route(async (request, response) => {
   try {
-    const { plan } = await buildX402PlanFromQuery(request);
+    const sessionId = queryString(request.query, "sessionId") ?? "";
+    const agentId = queryString(request.query, "agentId") ?? "";
+    const cacheKey = `x402-plan:${getBaseUrl(request)}:session:${sessionId}:agent:${agentId}`;
+    const { payload: plan, cacheStatus } = await cachedPublicRead(
+      cacheKey,
+      async () => (await buildX402PlanFromQuery(request)).plan
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
   } catch (error) {
     response.status(400).json({
@@ -5131,7 +5143,12 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
       return;
     }
 
-    const { plan } = await buildX402PlanFromOptions(getBaseUrl(request), { agentId });
+    const cacheKey = `agent-x402-plan:${getBaseUrl(request)}:${agentId}`;
+    const { payload: plan, cacheStatus } = await cachedPublicRead(
+      cacheKey,
+      async () => (await buildX402PlanFromOptions(getBaseUrl(request), { agentId })).plan
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
   } catch (error) {
     response.status(400).json({
