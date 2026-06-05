@@ -3926,8 +3926,15 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
 
     const recoveredState = await requestJson(`${baseUrl}${hire.payload.jobWorkspace.statePath}`);
     assert.equal(recoveredState.status, 200);
+    assert.equal(recoveredState.payload.ids.hireRequestId, hire.payload.requestId);
+    assert.equal(recoveredState.payload.ids.executionRequestId, hire.payload.requestId);
+    assert.match(recoveredState.payload.stateUrl, new RegExp(`/api/executions/${hire.payload.requestId}/state$`));
     assert.equal(recoveredState.payload.lifecycle.agentExecutionStatus, "completed");
     assert.equal(recoveredState.payload.lifecycle.relayDeliveryStatus, "forwarded");
+    assert.equal(recoveredState.payload.lifecycle.sellerExecutionCompleted, true);
+    assert.equal(recoveredState.payload.lifecycle.buyerCompletionStatus, "seller_completed_delivery_pending");
+    assert.equal(recoveredState.payload.lifecycle.platformReconciliationStatus, "seller_return_recorded");
+    assert.equal(recoveredState.payload.lifecycle.sellerReputationImpact, "none_until_delivery_fault_attributed");
     assert.equal(recoveredState.payload.lifecycleChecks.failed, false);
     assert.equal(recoveredState.payload.lifecycleChecks.terminal, false);
 
@@ -4035,10 +4042,50 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(executionState.status, 200);
     assert.equal(executionState.payload.lifecycle.relayDeliveryStatus, "acknowledged");
     assert.equal(executionState.payload.lifecycle.agentExecutionStatus, "running_or_unknown");
+    assert.equal(executionState.payload.lifecycle.buyerCompletionStatus, "worker_acknowledged_pending_reconciliation");
+    assert.equal(executionState.payload.lifecycle.platformReconciliationStatus, "pending_worker_return_or_late_completion");
     assert.equal(executionState.payload.lifecycleChecks.failed, false);
     assert.equal(executionState.payload.lifecycleChecks.terminal, false);
     assert.equal(executionState.payload.safeToRetrySamePayload, true);
     assert.equal(executionState.payload.doNotCreateNewPayment, true);
+
+    const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    await writeFile(paymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_post_ack_alias_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_post_ack_alias_test",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "free-test",
+          rail: "free-test",
+          networkId: "local",
+          assetSymbol: "TEST",
+          amountUsd: "0",
+          paymentPayloadDigestSha256: "d".repeat(64),
+          transactionHashes: [],
+          paymentStatus: "authorized",
+          executionStatus: "submitted",
+          returnStatus: "none"
+        }
+      ]
+    }, null, 2), "utf8");
+    const aliasExecutionState = await requestJson(
+      `${baseUrl}/api/executions/req_post_ack_alias_test/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
+    );
+    assert.equal(aliasExecutionState.status, 200);
+    assert.equal(aliasExecutionState.payload.requestId, hire.payload.requestId);
+    assert.equal(aliasExecutionState.payload.requestedRequestId, "req_post_ack_alias_test");
+    assert.equal(aliasExecutionState.payload.ids.x402RequestId, "req_post_ack_alias_test");
+    assert.equal(aliasExecutionState.payload.ids.hireRequestId, hire.payload.requestId);
+    assert.match(
+      aliasExecutionState.payload.paymentStateUrl,
+      /paymentPayloadDigestSha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd$/
+    );
 
     const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
     const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
@@ -4113,6 +4160,9 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(reconciledState.status, 200);
     assert.equal(reconciledState.payload.lifecycle.relayDeliveryStatus, "reconciled_completed");
     assert.equal(reconciledState.payload.lifecycle.agentExecutionStatus, "completed");
+    assert.equal(reconciledState.payload.lifecycle.sellerExecutionCompleted, true);
+    assert.equal(reconciledState.payload.lifecycle.buyerCompletionStatus, "seller_completed_delivery_pending");
+    assert.equal(reconciledState.payload.lifecycle.sellerReputationImpact, "none_until_delivery_fault_attributed");
     assert.equal(reconciledState.payload.lifecycleChecks.agentCompleted, true);
     assert.equal(reconciledState.payload.lifecycleChecks.failed, false);
     assert.equal(reconciledState.payload.lifecycleChecks.terminal, false);

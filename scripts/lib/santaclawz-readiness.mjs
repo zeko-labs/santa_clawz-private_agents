@@ -1,7 +1,11 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { createRetryablePlatformFailure, isRetryablePlatformStatus } from "./platform-failures.mjs";
+import {
+  createRetryablePlatformFailure,
+  isRetryablePlatformStatus,
+  isRetryablePlatformTransportError
+} from "./platform-failures.mjs";
 
 export function normalizeBaseUrl(value) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -43,20 +47,43 @@ export function applyEnvFile(filePath) {
 }
 
 export async function requestJson(url, init = {}) {
-  const response = await fetch(url, {
+  const timeoutMs = Number.parseInt(process.env.CLAWZ_API_FETCH_TIMEOUT_MS ?? "10000", 10);
+  const fetchInit = {
     ...init,
     headers: {
       "content-type": "application/json",
       ...(init.headers ?? {})
+    },
+    ...(!init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? { signal: AbortSignal.timeout(timeoutMs) }
+      : {})
+  };
+  let response;
+  try {
+    response = await fetch(url, fetchInit);
+  } catch (error) {
+    if (!isRetryablePlatformTransportError(error)) {
+      throw error;
     }
-  });
+    return {
+      ok: false,
+      status: 0,
+      payload: createRetryablePlatformFailure(0, error instanceof Error ? error.message : String(error), {
+        code: "platform_unavailable_retryable",
+        operation: init.method ?? "GET"
+      })
+    };
+  }
   const text = await response.text().catch(() => "");
   let payload = null;
   try {
     payload = text ? JSON.parse(text) : null;
   } catch {
     payload = isRetryablePlatformStatus(response.status)
-      ? createRetryablePlatformFailure(response.status, text)
+      ? createRetryablePlatformFailure(response.status, text, {
+          code: "platform_unavailable_retryable",
+          operation: init.method ?? "GET"
+        })
       : {
           error: `SantaClawz API returned non-JSON response (${response.status}).`,
           responsePreview: text.slice(0, 240)

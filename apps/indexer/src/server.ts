@@ -2478,11 +2478,12 @@ function paymentLedgerListOptionsFromQuery(query: unknown) {
   const sessionId = queryString(query, "sessionId");
   const quoteIntentId = queryString(query, "quoteIntentId") ?? queryString(query, "intentId");
   const hireRequestId = queryString(query, "hireRequestId") ?? queryString(query, "requestId");
+  const x402RequestId = queryString(query, "x402RequestId");
   const paymentPayloadDigestSha256 =
     queryString(query, "paymentPayloadDigestSha256") ??
     queryString(query, "paymentPayloadDigest") ??
     queryString(query, "payloadDigest");
-  const scoped = Boolean(agentId || sessionId || quoteIntentId || hireRequestId || paymentPayloadDigestSha256);
+  const scoped = Boolean(agentId || sessionId || quoteIntentId || hireRequestId || x402RequestId || paymentPayloadDigestSha256);
   const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
   const boundedLimit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit)
     ? Math.max(1, Math.min(parsedLimit, scoped ? 500 : 100))
@@ -2492,6 +2493,7 @@ function paymentLedgerListOptionsFromQuery(query: unknown) {
     ...(sessionId ? { sessionId } : {}),
     ...(quoteIntentId ? { quoteIntentId } : {}),
     ...(hireRequestId ? { hireRequestId } : {}),
+    ...(x402RequestId ? { x402RequestId } : {}),
     ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
     ...(boundedLimit !== undefined ? { limit: boundedLimit } : {})
   };
@@ -2507,14 +2509,14 @@ function paymentStateRetryEndpoint(input: {
   if (input.intentId) {
     return `${input.apiBase}/api/x402/quote-intent?${new URLSearchParams({ intentId: input.intentId }).toString()}`;
   }
-  if (input.agentId) {
-    return `${input.apiBase}/api/agents/${encodeURIComponent(input.agentId)}/hire`;
-  }
   if (input.paymentPayloadDigestSha256) {
     return `${input.apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 }).toString()}`;
   }
   if (input.requestId) {
     return `${input.apiBase}/api/executions/${encodeURIComponent(input.requestId)}/state`;
+  }
+  if (input.agentId) {
+    return `${input.apiBase}/api/agents/${encodeURIComponent(input.agentId)}/hire`;
   }
   return undefined;
 }
@@ -3974,15 +3976,53 @@ app.post("/api/executions/:requestId/late-completion", route(async (request, res
 
 app.get("/api/executions/:requestId/state", route(async (request, response) => {
   try {
-    const requestId = request.params.requestId;
-    if (!requestId) {
+    const requestedRequestId = request.params.requestId;
+    if (!requestedRequestId) {
       response.status(400).json({ error: "requestId is required." });
       return;
     }
     const token = tokenQuery(request);
     const adminKey = adminKeyHeader(request);
-    const [hireRequest, collaboration, paymentLedger, artifactReceipts] = await Promise.all([
-      controlPlane.getHireRequest(requestId),
+    const directHireRequest = await optionalHireRequest(requestedRequestId);
+    const aliasPaymentLedger = directHireRequest
+      ? undefined
+      : await controlPlane.listPaymentLedger({ hireRequestId: requestedRequestId, limit: 5 });
+    const aliasHireRequestId = aliasPaymentLedger?.entries.find((entry) => entry.hireRequestId)?.hireRequestId;
+    const hireRequest = directHireRequest ?? (aliasHireRequestId ? await optionalHireRequest(aliasHireRequestId) : undefined);
+    const apiBase = getBaseUrl(request);
+    if (!hireRequest) {
+      const latestAliasLedger = aliasPaymentLedger?.entries[0];
+      const paymentPayloadDigestSha256 = latestAliasLedger?.paymentPayloadDigestSha256;
+      const canonicalStateUrl = aliasHireRequestId
+        ? `${apiBase}/api/executions/${encodeURIComponent(aliasHireRequestId)}/state`
+        : undefined;
+      const paymentStateUrl = paymentPayloadDigestSha256
+        ? `${apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+        : `${apiBase}/api/x402/payment-state?${new URLSearchParams({ requestId: requestedRequestId }).toString()}`;
+      response.status(latestAliasLedger ? 409 : 404).json({
+        ok: false,
+        code: latestAliasLedger ? "execution_state_pending_reconciliation" : "execution_request_unknown",
+        retryable: Boolean(latestAliasLedger),
+        requestedRequestId,
+        ids: {
+          requestedRequestId,
+          ...(aliasHireRequestId ? { hireRequestId: aliasHireRequestId, executionRequestId: aliasHireRequestId } : {}),
+          ...(latestAliasLedger?.x402RequestId ? { x402RequestId: latestAliasLedger.x402RequestId } : {}),
+          ...(latestAliasLedger?.ledgerId ? { ledgerId: latestAliasLedger.ledgerId } : {}),
+          ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+        },
+        ...(canonicalStateUrl ? { canonicalStateUrl, stateUrl: canonicalStateUrl } : {}),
+        paymentStateUrl,
+        safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256),
+        safeToCreateNewPayment: false,
+        error: latestAliasLedger
+          ? "Payment state exists, but the execution request is not fully persisted yet. Poll paymentStateUrl or canonicalStateUrl before creating a new payment."
+          : "Unknown execution request. Check the payment state endpoint with a payment payload digest or x402 request id if this followed a paid submit."
+      });
+      return;
+    }
+    const requestId = hireRequest.requestId;
+    const [collaboration, paymentLedger, artifactReceipts] = await Promise.all([
       controlPlane.getJobCollaboration({
         requestId,
         ...(token ? { token } : {}),
@@ -4123,11 +4163,45 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
                 ? "Execution has a failure or rejected return that needs attention."
                 : "Execution is still in progress."
     };
+    const paymentPayloadDigestSha256 = latestLedger?.paymentPayloadDigestSha256;
+    const stateUrl = `${apiBase}/api/executions/${encodeURIComponent(requestId)}/state`;
+    const paymentStateUrl = paymentPayloadDigestSha256
+      ? `${apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+      : `${apiBase}/api/x402/payment-state?${new URLSearchParams({ requestId }).toString()}`;
+    const buyerCompletionStatus = buyerComplete
+      ? "buyer_complete"
+      : returnVerified && buyerDeliveryAvailable
+        ? "buyer_delivery_available"
+        : returnVerified
+          ? "seller_completed_delivery_pending"
+          : acceptedPendingResult
+            ? "worker_acknowledged_pending_reconciliation"
+            : hasFailure
+              ? "failed"
+              : "in_progress";
+    const platformReconciliationStatus = returnVerified
+      ? "seller_return_recorded"
+      : acceptedPendingResult
+        ? "pending_worker_return_or_late_completion"
+        : hasFailure
+          ? "failed_or_rejected"
+          : "pending";
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
       generatedAtIso: new Date().toISOString(),
+      ids: {
+        requestedRequestId,
+        executionRequestId: requestId,
+        hireRequestId: requestId,
+        ...(latestLedger?.x402RequestId ? { x402RequestId: latestLedger.x402RequestId } : {}),
+        ...(latestLedger?.ledgerId ? { ledgerId: latestLedger.ledgerId } : {}),
+        ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+      },
       requestId,
+      requestedRequestId,
+      stateUrl,
+      paymentStateUrl,
       agentId: hireRequest.agentId,
       sessionId: hireRequest.sessionId,
       requestType: hireRequest.requestType,
@@ -4161,6 +4235,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         proofStatus,
         sellerExecutionCompleted: returnVerified,
         buyerComplete,
+        buyerCompletionStatus,
+        platformReconciliationStatus,
         buyerDeliveryStatus,
         buyerDeliveryAvailable,
         buyerVisibleOutputCount,
@@ -4241,8 +4317,13 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       knownBlockers
     });
   } catch (error) {
-    response.status(403).json({
-      error: error instanceof Error ? error.message : "Unable to load execution state."
+    const message = error instanceof Error ? error.message : "Unable to load execution state.";
+    const unknownRequest = /unknown execution request/i.test(message);
+    response.status(unknownRequest ? 404 : 403).json({
+      ok: false,
+      code: unknownRequest ? "execution_request_unknown" : "execution_state_access_rejected",
+      retryable: false,
+      error: message
     });
   }
 }));

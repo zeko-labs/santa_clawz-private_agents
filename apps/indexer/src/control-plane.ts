@@ -966,6 +966,7 @@ interface PaymentLedgerListOptions {
   sessionId?: string;
   quoteIntentId?: string;
   hireRequestId?: string;
+  x402RequestId?: string;
   paymentPayloadDigestSha256?: string;
   limit?: number;
 }
@@ -6871,7 +6872,14 @@ export class ClawzControlPlane {
         if (options.quoteIntentId && entry.quoteIntentId !== options.quoteIntentId) {
           return false;
         }
-        if (options.hireRequestId && entry.hireRequestId !== options.hireRequestId) {
+        if (
+          options.hireRequestId &&
+          entry.hireRequestId !== options.hireRequestId &&
+          entry.x402RequestId !== options.hireRequestId
+        ) {
+          return false;
+        }
+        if (options.x402RequestId && entry.x402RequestId !== options.x402RequestId) {
           return false;
         }
         if (
