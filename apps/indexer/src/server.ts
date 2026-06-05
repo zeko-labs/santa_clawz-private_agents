@@ -6808,69 +6808,6 @@ app.post("/api/activation-lane/attempts", route(async (request, response) => {
   }
 }));
 
-type ActivationLaneCandidateAgent = Awaited<ReturnType<ClawzControlPlane["listRegisteredAgents"]>>[number];
-
-function activationLaneExclusionReasons(agent: ActivationLaneCandidateAgent, options: { force: boolean; retryAfterSeconds: number }) {
-  const reasons: string[] = [];
-  if (agent.availability !== "active") {
-    reasons.push("not-active");
-  }
-  if (!agent.published) {
-    reasons.push("unpublished");
-  }
-  if (!agent.paymentsEnabled) {
-    reasons.push("payments-disabled");
-  }
-  if (!agent.paymentProfileReady) {
-    reasons.push("payment-profile-not-ready");
-  }
-  if (!options.force && agent.readiness?.paidExecutionProven === true) {
-    reasons.push("paid-execution-already-proven");
-  }
-  const lastAttemptMs = agent.activationLaneStatus?.lastAttemptAtIso
-    ? Date.parse(agent.activationLaneStatus.lastAttemptAtIso)
-    : NaN;
-  if (!options.force && Number.isFinite(lastAttemptMs) && Date.now() - lastAttemptMs < options.retryAfterSeconds * 1000) {
-    reasons.push("activation-lane-cooldown");
-  }
-  if (agent.readiness?.heartbeatLive !== true) {
-    reasons.push("heartbeat-not-live");
-  }
-  if (agent.readiness?.runtimeReachable !== true) {
-    reasons.push("runtime-not-reachable");
-  }
-  return reasons;
-}
-
-function buildActivationLaneCandidate(
-  agent: ActivationLaneCandidateAgent,
-  options: { amountUsd: string; baseUrl: string; force: boolean; retryAfterSeconds: number }
-) {
-  return {
-    agentId: agent.agentId,
-    sessionId: agent.sessionId,
-    agentName: agent.agentName,
-    pricingMode: agent.pricingMode,
-    paymentRail: agent.paymentRail,
-    amountUsd: options.amountUsd,
-    retryAfterSeconds: options.retryAfterSeconds,
-    activationLane: true,
-    activationHireEndpoint: `${options.baseUrl}/api/activation-lane/agents/${encodeURIComponent(agent.agentId)}/hire`,
-    reason: options.force ? "manual-paid-smoke-requested" : "payments-ready-runtime-live-paid-execution-unproven",
-    readiness: {
-      paidExecutionProven: agent.readiness?.paidExecutionProven === true,
-      ...(agent.readiness?.paidExecutionProvenAt ? { paidExecutionProvenAt: agent.readiness.paidExecutionProvenAt } : {}),
-      ...(agent.readiness?.paidExecutionProvenBy ? { paidExecutionProvenBy: agent.readiness.paidExecutionProvenBy } : {}),
-      heartbeatLive: agent.readiness?.heartbeatLive === true,
-      runtimeReachable: agent.readiness?.runtimeReachable === true,
-      blockers: agent.readiness?.blockers ?? []
-    },
-    ...(agent.activationProbes ? { activationProbes: agent.activationProbes } : {}),
-    ...(agent.activationLaneStatus ? { activationLaneStatus: agent.activationLaneStatus } : {}),
-    ...(agent.lastUpdatedAtIso ? { lastUpdatedAtIso: agent.lastUpdatedAtIso } : {})
-  };
-}
-
 app.get("/api/activation-lane/candidates", route(async (request, response) => {
   if (!requireActivationLaneAccess(request, response)) {
     return;
@@ -6887,23 +6824,17 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
     queryBoolean(request.query, "includeDiagnostics") === true ||
     queryBoolean(request.query, "diagnostics") === true ||
     queryBoolean(request.query, "includeIneligible") === true;
-  const activationRows = (await controlPlane.listRegisteredAgents())
-    .filter((agent) => !requestedAgentId || agent.agentId === requestedAgentId)
-    .map((agent) => ({
-      agent,
-      exclusionReasons: activationLaneExclusionReasons(agent, { force, retryAfterSeconds })
-    }));
-  const candidates = activationRows
-    .filter((row) => row.exclusionReasons.length === 0)
-    .slice(0, limit)
-    .map((row) => buildActivationLaneCandidate(row.agent, { amountUsd, baseUrl, force, retryAfterSeconds }));
-  const awaitingPaidExecutionProof = activationRows.filter(
-    (row) =>
-      row.agent.paymentsEnabled &&
-      row.agent.paymentProfileReady &&
-      row.agent.readiness?.paidExecutionProven !== true
-  );
-  const quoteRequiredAwaitingActivation = awaitingPaidExecutionProof.filter((row) => row.agent.pricingMode === "quote-required");
+  const { candidates: allCandidates, diagnostics } = await controlPlane.listActivationLaneCandidates({
+    amountUsd,
+    baseUrl,
+    force,
+    limit: requestedAgentId ? 100 : limit,
+    retryAfterSeconds,
+    includeDiagnostics
+  });
+  const candidates = requestedAgentId
+    ? allCandidates.filter((candidate) => candidate.agentId === requestedAgentId).slice(0, limit)
+    : allCandidates.slice(0, limit);
 
   response.json({
     ok: true,
@@ -6921,35 +6852,21 @@ app.get("/api/activation-lane/candidates", route(async (request, response) => {
               retryAfterSeconds,
               candidateLimit: limit
             },
-            totalRegisteredMatching: activationRows.length,
-            totalAwaitingPaidExecutionProof: awaitingPaidExecutionProof.length,
-            totalQuoteRequiredAwaitingActivation: quoteRequiredAwaitingActivation.length,
-            totalEligible: candidates.length,
-            totalExcluded: activationRows.filter((row) => row.exclusionReasons.length > 0).length,
-            excludedAgents: activationRows
-              .filter((row) => row.exclusionReasons.length > 0)
-              .map((row) => ({
-                agentId: row.agent.agentId,
-                sessionId: row.agent.sessionId,
-                agentName: row.agent.agentName,
-                pricingMode: row.agent.pricingMode,
-                paymentRail: row.agent.paymentRail,
-                paidJobsEnabled: row.agent.paidJobsEnabled,
-                paymentsEnabled: row.agent.paymentsEnabled,
-                paymentProfileReady: row.agent.paymentProfileReady,
-                published: row.agent.published,
-                availability: row.agent.availability,
-                exclusionReasons: row.exclusionReasons,
-                readiness: {
-                  paidExecutionProven: row.agent.readiness?.paidExecutionProven === true,
-                  heartbeatLive: row.agent.readiness?.heartbeatLive === true,
-                  runtimeReachable: row.agent.readiness?.runtimeReachable === true,
-                  blockers: row.agent.readiness?.blockers ?? []
-                },
-                ...(row.agent.activationProbes ? { activationProbes: row.agent.activationProbes } : {}),
-                ...(row.agent.activationLaneStatus ? { activationLaneStatus: row.agent.activationLaneStatus } : {}),
-                ...(row.agent.lastUpdatedAtIso ? { lastUpdatedAtIso: row.agent.lastUpdatedAtIso } : {})
-              }))
+            totalRegisteredMatching: diagnostics?.totalObservedHeartbeats ?? 0,
+            totalAwaitingPaidExecutionProof: diagnostics?.totalObservedHeartbeats ?? 0,
+            totalQuoteRequiredAwaitingActivation: 0,
+            ...(diagnostics
+              ? {
+                  ...diagnostics,
+                  totalQueued: diagnostics.totalObservedHeartbeats
+                }
+              : {
+                  totalObservedHeartbeats: 0,
+                  totalQueued: 0,
+                  totalEligible: candidates.length,
+                  totalExcluded: 0,
+                  excludedAgents: []
+                })
           }
         }
       : {})

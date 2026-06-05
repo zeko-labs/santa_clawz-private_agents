@@ -1124,6 +1124,46 @@ export interface RecordActivationLaneAttemptOptions {
   occurredAtIso?: string;
 }
 
+export interface ActivationLaneCandidateView {
+  agentId: string;
+  sessionId: string;
+  agentName: string;
+  activationLane: true;
+  activationHireEndpoint: string;
+  amountUsd: string;
+  reason: "runtime-live-payment-ready" | "manual-paid-smoke-requested";
+  force: boolean;
+  retryAfterSeconds: number;
+  readiness: {
+    paidExecutionProven: boolean;
+    paidExecutionProvenAt?: string;
+    paidExecutionProvenBy?: AgentReadinessState["paidExecutionProvenBy"];
+    lastProvenBuild?: string;
+    heartbeatLive: boolean;
+    runtimeReachable: boolean;
+    blockers: string[];
+  };
+  activationLaneStatus?: AgentActivationLaneStatus;
+  queuedAtIso: string;
+  updatedAtIso: string;
+  lastHeartbeatAtIso?: string;
+}
+
+export interface ActivationLaneCandidateDiagnostics {
+  totalObservedHeartbeats: number;
+  totalEligible: number;
+  totalExcluded: number;
+  excludedAgents: Array<{
+    agentId: string;
+    sessionId: string;
+    agentName: string;
+    exclusionReasons: string[];
+    observedAtIso: string;
+    lastHeartbeatAtIso?: string;
+    activationLaneStatus?: AgentActivationLaneStatus;
+  }>;
+}
+
 type JobStageStatus = "pending" | "active" | "blocked" | "completed" | "accepted" | "revision_requested";
 type JobStageKind =
   | "procurement"
@@ -4551,6 +4591,149 @@ export class ClawzControlPlane {
         .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso))
         .slice(0, ACTIVATION_LANE_ATTEMPT_RETAIN_LIMIT)
     });
+  }
+
+  private activationLaneHeartbeatLive(record: AgentRuntimeHeartbeatRecord | undefined, nowMs = Date.now()): boolean {
+    if (!record || record.status !== "live") {
+      return false;
+    }
+    const receivedAtMs = Date.parse(record.receivedAtIso);
+    if (!Number.isFinite(receivedAtMs)) {
+      return false;
+    }
+    return receivedAtMs + record.ttlSeconds * 1000 > nowMs;
+  }
+
+  private activationLanePaymentReady(profile: AgentProfileState): boolean {
+    return (
+      profile.availability === "active" &&
+      profile.paymentProfile.pricingMode !== "free-test" &&
+      hasReadyPaymentProfile(profile)
+    );
+  }
+
+  async listActivationLaneCandidates(options: {
+    amountUsd: string;
+    baseUrl: string;
+    force?: boolean;
+    limit?: number;
+    retryAfterSeconds: number;
+    includeDiagnostics?: boolean;
+  }): Promise<{
+    candidates: ActivationLaneCandidateView[];
+    diagnostics?: ActivationLaneCandidateDiagnostics;
+  }> {
+    const [state, heartbeatFile, hireRequestFile, attemptFile] = await Promise.all([
+      this.loadState(),
+      this.loadRuntimeHeartbeatFile(),
+      this.loadHireRequestFile(),
+      this.loadActivationLaneAttemptFile()
+    ]);
+    const force = options.force === true;
+    const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+      ? Math.max(1, Math.min(Math.floor(options.limit), 100))
+      : 20;
+    const nowMs = Date.now();
+    const rows = heartbeatFile.heartbeats
+      .filter(
+        (heartbeat, index, heartbeats) =>
+          heartbeat.sessionId && heartbeats.findIndex((candidate) => candidate.sessionId === heartbeat.sessionId) === index
+      )
+      .map((heartbeat) => {
+        const profile = this.profileForSession(state, heartbeat.sessionId);
+        const agentName = profile.agentName;
+        const agentId = this.agentIdForSession(state, heartbeat.sessionId);
+        const heartbeatLive = this.activationLaneHeartbeatLive(heartbeat, nowMs);
+        const paidExecutionProofByHistory = paidExecutionProofForSession(hireRequestFile, heartbeat.sessionId, {
+          includePrivate: true
+        });
+        const heartbeatProbeProven = heartbeat?.paidExecutionProbe?.ok === true;
+        const paidExecutionProven = paidExecutionProofByHistory.proven || heartbeatProbeProven;
+        const paidExecutionProvenAt =
+          paidExecutionProofByHistory.provenAtIso ??
+          (heartbeatProbeProven
+            ? heartbeat?.paidExecutionProbe?.provenAtIso ?? heartbeat?.paidExecutionProbe?.checkedAtIso
+            : undefined);
+        const paidExecutionProvenBy =
+          paidExecutionProofByHistory.provenBy ??
+          (heartbeatProbeProven ? heartbeat?.paidExecutionProbe?.provenBy ?? "heartbeat_probe" : undefined);
+        const lastProvenBuild = heartbeatProbeProven
+          ? heartbeat?.paidExecutionProbe?.lastProvenBuild ?? heartbeat?.relayAgentBuild
+          : undefined;
+        const activationProbes = buildActivationProbeStats(hireRequestFile, heartbeat.sessionId);
+        const activationLaneStatus = buildActivationLaneStatus(attemptFile, heartbeat.sessionId, activationProbes);
+        const lastAttemptMs = activationLaneStatus.lastAttemptAtIso ? Date.parse(activationLaneStatus.lastAttemptAtIso) : NaN;
+        const cooldownActive =
+          !force &&
+          Number.isFinite(lastAttemptMs) &&
+          nowMs - lastAttemptMs < options.retryAfterSeconds * 1000 &&
+          paidExecutionProven !== true;
+        const exclusionReasons = [
+          ...(!this.activationLanePaymentReady(profile) ? ["payment-not-ready"] : []),
+          ...(!force && paidExecutionProven ? ["paid-execution-already-proven"] : []),
+          ...(!heartbeatLive ? ["heartbeat-not-live"] : []),
+          ...(cooldownActive ? ["activation-lane-cooldown"] : [])
+        ];
+        const candidate: ActivationLaneCandidateView = {
+          agentId,
+          sessionId: heartbeat.sessionId,
+          agentName,
+          activationLane: true,
+          activationHireEndpoint: `${options.baseUrl}/api/activation-lane/agents/${encodeURIComponent(agentId)}/hire`,
+          amountUsd: options.amountUsd,
+          reason: force ? "manual-paid-smoke-requested" : "runtime-live-payment-ready",
+          force,
+          retryAfterSeconds: options.retryAfterSeconds,
+          readiness: {
+            paidExecutionProven,
+            ...(paidExecutionProvenAt ? { paidExecutionProvenAt } : {}),
+            ...(paidExecutionProvenBy ? { paidExecutionProvenBy } : {}),
+            ...(lastProvenBuild ? { lastProvenBuild } : {}),
+            heartbeatLive,
+            runtimeReachable: heartbeatLive,
+            blockers: exclusionReasons
+          },
+          ...(activationLaneStatus ? { activationLaneStatus } : {}),
+          queuedAtIso: heartbeat.receivedAtIso,
+          updatedAtIso: heartbeat.receivedAtIso,
+          lastHeartbeatAtIso: heartbeat.receivedAtIso
+        };
+        return {
+          agentId,
+          sessionId: heartbeat.sessionId,
+          observedAtIso: heartbeat.receivedAtIso,
+          lastHeartbeatAtIso: heartbeat.receivedAtIso,
+          candidate,
+          exclusionReasons
+        };
+      });
+    const candidates = rows
+      .filter((row) => row.exclusionReasons.length === 0)
+      .slice(0, limit)
+      .map((row) => row.candidate);
+    return {
+      candidates,
+      ...(options.includeDiagnostics
+        ? {
+            diagnostics: {
+              totalObservedHeartbeats: rows.length,
+              totalEligible: candidates.length,
+              totalExcluded: rows.filter((row) => row.exclusionReasons.length > 0).length,
+              excludedAgents: rows
+                .filter((row) => row.exclusionReasons.length > 0)
+                .map((row) => ({
+                  agentId: row.agentId,
+                  sessionId: row.sessionId,
+                  agentName: row.candidate.agentName,
+                  exclusionReasons: row.exclusionReasons,
+                  observedAtIso: row.observedAtIso,
+                  ...(row.lastHeartbeatAtIso ? { lastHeartbeatAtIso: row.lastHeartbeatAtIso } : {}),
+                  ...(row.candidate.activationLaneStatus ? { activationLaneStatus: row.candidate.activationLaneStatus } : {})
+                }))
+            }
+          }
+        : {})
+    };
   }
 
   async recordActivationLaneAttempt(options: RecordActivationLaneAttemptOptions): Promise<ActivationLaneAttemptRecord> {
@@ -9745,7 +9928,6 @@ export class ClawzControlPlane {
     await this.saveRuntimeHeartbeatFile({
       heartbeats: [nextRecord, ...file.heartbeats.filter((record) => record.sessionId !== sessionId)].slice(0, 500)
     });
-
     return this.buildAgentRuntimeHeartbeatState({
       state,
       sessionId,
