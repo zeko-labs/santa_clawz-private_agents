@@ -150,7 +150,6 @@ const PUBLIC_SOCIAL_ANCHOR_FEED_KINDS: SocialAnchorCandidateKind[] = [
   "hire-request-submitted",
   "quote-returned",
   "quote-accepted",
-  "activation-task-completed",
   "paid-execution-completed",
   "free-test-completed",
   "hire-request-failed",
@@ -1528,6 +1527,10 @@ function isRetryableSettlementError(error: unknown): boolean {
   );
 }
 
+function isExpiredPaymentPayloadError(error: unknown): boolean {
+  return /expired|validbefore|valid before|authorization is no longer valid/i.test(errorMessage(error, String(error ?? "")));
+}
+
 function paymentSettlementFailureBody(error: unknown, extra: Record<string, unknown> = {}) {
   return {
     error: errorMessage(error, "Unable to settle x402 payment."),
@@ -2427,10 +2430,22 @@ function compactPaymentLedgerEntryForPublicSnapshot(entry: PaymentLedgerEntry): 
   };
 }
 
+function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
+  const resource = entry.resource ?? "";
+  if (resource.includes("/api/activation-lane/") || resource.includes("activationLane=true") || resource.includes("activationProbe=true")) {
+    return true;
+  }
+  return parseUsdMicros(entry.amountUsd, "0") === parseUsdMicros(activationLaneAmountUsd(), "0");
+}
+
 function compactPaymentLedgerForPublicSnapshot(ledger: PaymentLedgerState): PaymentLedgerState {
+  const entries = ledger.entries
+    .filter((entry) => !isActivationProbePaymentEntry(entry))
+    .map(compactPaymentLedgerEntryForPublicSnapshot);
   return {
     ...ledger,
-    entries: ledger.entries.map(compactPaymentLedgerEntryForPublicSnapshot)
+    entries,
+    totalLedgerEntryCount: entries.length
   };
 }
 
@@ -2730,8 +2745,19 @@ async function buildX402PaymentStateResponse(input: {
     );
   const needsAttention =
     !postAckPending && (latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed");
+  const payloadExpiredForRetry = latestLedger?.errorCode === "payment_payload_expired_for_retry";
+  const payloadRetryRejected =
+    payloadExpiredForRetry ||
+    latestLedger?.errorCode === "payment_payload_retry_failed" ||
+    latestLedger?.errorCode === "x402_payload_shape_invalid" ||
+    latestLedger?.errorCode === "x402_signature_verification_failed";
+  const safeToRetrySamePayload = Boolean(paymentPayloadDigestSha256 && !terminal && !payloadRetryRejected);
   const nextAction = terminal
     ? "result_lookup"
+    : payloadRetryRejected && resolvedRequestId
+      ? "poll_execution_state"
+      : payloadRetryRejected
+        ? "inspect_payment_state"
     : postAckPending
       ? "poll_execution_state"
     : latestLedger?.settlementRecovery?.canRetrySettlement
@@ -2759,12 +2785,12 @@ async function buildX402PaymentStateResponse(input: {
     ...(intent ? { intent } : {}),
     ...(hireRequest ? { execution: hireRequest } : {}),
     retryResume: {
-      safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256 && !terminal),
+      safeToRetrySamePayload,
       safeToCreateNewPayment: false,
       ...(postAckPending
         ? {
             retryMode: "same_payment_payload_only",
-            safeToRetrySamePaymentPayload: Boolean(paymentPayloadDigestSha256),
+            safeToRetrySamePaymentPayload: safeToRetrySamePayload,
             workerAcknowledged: true,
             lateCompletionSupported: true,
             resultMayStillArrive: true
@@ -2773,10 +2799,21 @@ async function buildX402PaymentStateResponse(input: {
       nextAction,
       terminal: Boolean(terminal),
       needsAttention,
+      ...(payloadRetryRejected
+        ? {
+            ...(payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
+            paymentPayloadRetryRejected: true,
+            retryMode: "poll_or_reconcile_existing_payment",
+            safeToRetrySamePaymentPayload: false,
+            humanOrPlatformInterventionRequired: !resolvedRequestId
+          }
+        : {}),
       ...(retryEndpoint ? { retryEndpoint } : {}),
       ...(stateEndpoint ? { stateEndpoint } : {}),
       guidance: terminal
         ? "This payment path reached a terminal state. Read the result/artifact state before creating another payment."
+        : payloadRetryRejected
+          ? "This signed x402 payload cannot be retried for verification. Do not create a new payment while canonical state is non-terminal; poll the execution/payment state or escalate reconciliation."
         : paymentPayloadDigestSha256
           ? "Retry or resume with the exact same signed x402 payment payload. Do not ask the buyer to sign a new payment until this state says it failed or expired."
           : "No signed payment payload digest was found yet. Submit the signed x402 payload once, then use this endpoint to resume safely."
@@ -6890,6 +6927,7 @@ const handleAgentHireRequest = route(async (request, response) => {
         return;
       }
 
+      const paymentPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
       let verification: Awaited<ReturnType<typeof verifyAgentX402Payment>>;
       try {
         verification = await verifyAgentX402Payment({
@@ -6901,16 +6939,65 @@ const handleAgentHireRequest = route(async (request, response) => {
         return;
       }
       if (!verification.ok) {
+        const existingPaymentState = await buildX402PaymentStateResponse({
+          apiBase: getBaseUrl(request),
+          paymentPayloadDigestSha256
+        });
+        const existingLedger = isRecord(existingPaymentState.payment) && isRecord(existingPaymentState.payment.latestLedger)
+          ? existingPaymentState.payment.latestLedger
+          : undefined;
+        if (existingLedger && typeof existingLedger.ledgerId === "string") {
+          const verificationError = new Error(verification.error ?? "x402 authorization was not valid.");
+          const retryableVerificationError = isRetryableSettlementError(verificationError);
+          await controlPlane.annotatePaymentLedgerPayloadRetryFailure({
+            ledgerId: existingLedger.ledgerId,
+            errorMessage: errorMessage(verificationError, "x402 authorization was not valid."),
+            errorCode: isExpiredPaymentPayloadError(verificationError)
+              ? "payment_payload_expired_for_retry"
+              : retryableVerificationError
+                ? verification.errorCode ?? "x402_retryable_verification_failed"
+                : "payment_payload_retry_failed"
+          });
+          const reconciledPaymentState = await buildX402PaymentStateResponse({
+            apiBase: getBaseUrl(request),
+            paymentPayloadDigestSha256
+          });
+          response.status(202).json({
+            ok: false,
+            code: isExpiredPaymentPayloadError(verificationError)
+              ? "payment_payload_expired_existing_state"
+              : retryableVerificationError
+                ? "payment_payload_retryable_existing_state"
+                : "payment_payload_retry_failed_existing_state",
+            retryable: retryableVerificationError,
+            paymentPayloadDigestSha256,
+            error: errorMessage(verificationError, "x402 authorization was not valid."),
+            nextAction: "inspect_payment_or_execution_state",
+            paymentStateUrl:
+              `${getBaseUrl(request)}/api/x402/payment-state?paymentPayloadDigestSha256=${encodeURIComponent(paymentPayloadDigestSha256)}`,
+            retryResume: reconciledPaymentState.retryResume,
+            operationalStatus: isRecord(reconciledPaymentState.execution) && isRecord(reconciledPaymentState.execution.operationalStatus)
+              ? reconciledPaymentState.execution.operationalStatus
+              : {
+                  paymentStatus: "unknown",
+                  settlementStatus: "unknown",
+                  relayDeliveryStatus: "unknown",
+                  agentExecutionStatus: "unknown"
+                },
+            paymentState: reconciledPaymentState
+          });
+          return;
+        }
         response.status(402).json(paymentSettlementFailureBody(new Error(verification.error ?? "x402 authorization was not valid."), {
           agentId,
           paymentAuthorized: false,
+          paymentPayloadDigestSha256,
           ...(verification.errorCode ? { errorCode: verification.errorCode } : {}),
           ...(verification.remoteVerification ? { facilitatorDiagnostics: verification.remoteVerification } : {})
         }));
         return;
       }
       setHeaders(response, verification.headers);
-      const paymentPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
       const paymentLedgerEntry = await recordX402PaymentLedgerAuthorization({
         agentId,
         sessionId: consoleState.session.sessionId,
