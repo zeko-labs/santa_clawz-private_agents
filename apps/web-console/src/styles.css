@@ -2314,21 +2314,8 @@ pre,
 }
 
 .coordination-create-ticket-button {
-  min-width: 190px;
-  min-height: 46px;
-  padding: 10px 16px;
+  min-width: 150px;
   justify-content: center;
-}
-
-.coordination-create-ticket-button:disabled {
-  border-color: rgba(18, 35, 54, 0.12);
-  background: rgba(255, 255, 255, 0.7);
-  color: rgba(74, 91, 112, 0.62);
-  box-shadow: none;
-}
-
-.coordination-create-ticket-button:disabled .copy-icon {
-  color: rgba(74, 91, 112, 0.5);
 }
 
 .coordination-ticket-method-row {

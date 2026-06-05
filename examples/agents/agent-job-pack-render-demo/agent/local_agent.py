@@ -1572,6 +1572,24 @@ def sha256_file(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def canonical_digest(value: Any) -> str:
+    return sha256_text(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def content_type_for_path(path: pathlib.Path) -> str:
+    if path.suffix == ".json":
+        return "application/json"
+    if path.suffix == ".md":
+        return "text/markdown"
+    if path.suffix == ".txt":
+        return "text/plain"
+    return "application/octet-stream"
+
+
 def package_hash(file_hashes: dict[str, str]) -> str:
     material = json.dumps(file_hashes, sort_keys=True).encode("utf-8")
     return hashlib.sha256(material).hexdigest()
@@ -1683,7 +1701,23 @@ def create_verification_manifest(run_request: dict[str, Any], package_dir: pathl
         "verification_required": bool(run_request.get("verification_required", True)),
         "package_dir": str(package_dir),
         "package_hash": package_hash(file_hashes),
+        "input_digest_sha256": sha256_text(json.dumps(run_request, sort_keys=True)),
+        "checks_performed": [
+            "service_playbook_selected",
+            "deliverable_package_written",
+            "deliverables_hashed",
+            "buyer_visible_output_prepared",
+        ],
+        "files_produced": [
+            {
+                "name": name,
+                "sha256": digest,
+                "content_type": content_type_for_path(package_dir / name),
+            }
+            for name, digest in file_hashes.items()
+        ],
         "file_hashes": file_hashes,
+        "blocked_suspicious_instructions": [],
         "privacy_policy": "Raw private inputs stay local unless explicitly approved for portal return.",
         "verified_output_policy": "SantaClawz can verify package_hash and file_hashes; Zeko can attest the same hash set.",
     }
@@ -1691,11 +1725,12 @@ def create_verification_manifest(run_request: dict[str, Any], package_dir: pathl
 
 def create_zeko_attestation_payload(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
-        "schema_version": "zeko-attestation/1.0",
+        "schema_version": "santaclawz-zk-attestation-preview/1.1",
         "created_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "network": "zeko",
         "request_id": manifest.get("request_id"),
         "package_hash": manifest["package_hash"],
+        "verification_manifest_digest_sha256": canonical_digest(manifest),
         "file_hashes": manifest["file_hashes"],
         "requires_signature": True,
         "requires_submission_approval": True,
@@ -1748,29 +1783,81 @@ def create_santaclawz_return_payload(
     manifest: dict[str, Any],
     package_dir: pathlib.Path,
 ) -> dict[str, Any]:
-    deliverables = {}
+    deliverables = []
     for name in PACKAGE_FILES:
         path = package_dir / name
         if path.exists():
-            deliverables[name] = {
-                "path": str(path),
+            deliverables.append({
+                "name": name,
                 "sha256": manifest["file_hashes"].get(name),
-            }
+                "content_type": content_type_for_path(path),
+                "uri": str(path),
+            })
+    summary = santaclawz_buyer_visible_summary(run_request, receipt, manifest, deliverables)
     return {
         "schema_version": "santaclawz-return/1.0",
         "request_id": run_request.get("request_id"),
         "status": receipt["status"],
         "return_channel": run_request.get("return_channel") or "santaclawz",
         "agent_private": True,
+        "execution_mode": "agent-job-pack-local-runner",
+        "real_work_executed": True,
+        "buyer_visible": True,
         "verified_output": {
             "package_hash": manifest["package_hash"],
-            "verification_manifest": receipt["verification"]["verification_manifest"],
-            "zeko_attestation_payload": receipt["verification"]["zeko_attestation_payload"],
+            "hash_algorithm": "sha256",
+            "verification_manifest": manifest,
+            "verification_manifest_digest_sha256": canonical_digest(manifest),
+            "zeko_attestation": create_zeko_attestation_payload(manifest),
             "deliverables": deliverables,
+            "buyer_visible_outputs": [
+                {
+                    "name": "job-pack-summary.md",
+                    "content_type": "text/markdown",
+                    "text": summary,
+                    "sha256": sha256_text(summary),
+                }
+            ],
         },
+        "zeko_attestation_payload": create_zeko_attestation_payload(manifest),
         "human_approval_required_for_external_actions": True,
         "receipt_path": str(pathlib.Path(receipt["run_dir"]) / "run_receipt.json"),
     }
+
+
+def santaclawz_buyer_visible_summary(
+    run_request: dict[str, Any],
+    receipt: dict[str, Any],
+    manifest: dict[str, Any],
+    deliverables: list[dict[str, Any]],
+) -> str:
+    request_input = run_request.get("input") if isinstance(run_request.get("input"), dict) else {}
+    title = str(request_input.get("title") or "SantaClawz agent job pack").strip()
+    client_request = str(request_input.get("client_request") or request_input.get("description") or "").strip()
+    recommendation = receipt.get("recommendation") if isinstance(receipt.get("recommendation"), dict) else {}
+    decision = str(recommendation.get("decision") or "review package").replace("_", " ")
+    deliverable_names = ", ".join(item["name"] for item in deliverables[:6]) or "verified package"
+    return "\n".join(
+        [
+            "# SantaClawz Job Pack",
+            "",
+            f"Request: {title}",
+            "",
+            f"Recommendation: {decision}",
+            "",
+            "## Buyer request",
+            "",
+            client_request[:1200] or "No buyer request text was provided.",
+            "",
+            "## Delivered",
+            "",
+            f"- Buyer-readable summary: this response",
+            f"- Verified files: {deliverable_names}",
+            f"- Package hash: `{manifest['package_hash']}`",
+            "",
+            "The full package includes scoped delivery guidance, risk checks, pricing notes, task queue, QA checklist, and machine-readable handoff data.",
+        ]
+    )
 
 
 def write_santaclawz_run(request_path: pathlib.Path, run_request: dict[str, Any]) -> pathlib.Path:

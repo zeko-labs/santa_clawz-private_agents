@@ -4958,15 +4958,14 @@ export function App() {
                     <>
                       <button
                         type="button"
-                        className="activation-command-copy-button coordination-create-ticket-button"
+                        className="primary-button coordination-create-ticket-button"
                         disabled={!coordinationSetupReady || coordinationSetupIssuing}
                         title="Create setup ticket"
                         onClick={() => {
                           void issueCoordinationSetupTicket();
                         }}
                       >
-                        <span className="copy-icon" aria-hidden="true" />
-                        {coordinationSetupIssuing ? "Creating ticket" : "Create workshop ticket"}
+                        {coordinationSetupIssuing ? "Issuing..." : "Workshop ticket"}
                       </button>
                       <span className="subtle-pill activation-pending-pill">Pending</span>
                     </>
