@@ -131,10 +131,22 @@ const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
-  { label: "Discord", href: "https://discord.gg/FGcu6tJDzH", icon: "discord" }
+  { label: "Discord", href: "https://discord.gg/FGcu6tJDzH", icon: "discord" },
+  { label: "GitHub", href: "https://github.com/zeko-labs/santa_clawz-private_agents", icon: "github" }
 ] as const;
 
 function SocialIcon({ icon }: { icon: (typeof SOCIAL_LINKS)[number]["icon"] }) {
+  if (icon === "github") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M12 .8a11.2 11.2 0 0 0-3.5 21.8c.6.1.8-.3.8-.6v-2.1c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1.7 2.7 3.3 2 .1-.8.4-1.4.7-1.7-2.6-.3-5.3-1.3-5.3-5.6 0-1.2.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2.9-.2 1.9-.4 2.9-.4s2 .1 2.9.4c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.1 0 4.4-2.7 5.3-5.3 5.6.4.4.8 1.1.8 2.2V22c0 .3.2.7.8.6A11.2 11.2 0 0 0 12 .8Z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+
   if (icon === "discord") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
