@@ -14,7 +14,15 @@ import {
   isRetryablePlatformTransportError
 } from "./lib/platform-failures.mjs";
 
-const BOOLEAN_FLAGS = new Set(["help", "allow-real-money", "json", "dry-run", "activate-if-needed"]);
+const BOOLEAN_FLAGS = new Set([
+  "help",
+  "allow-real-money",
+  "json",
+  "dry-run",
+  "activate-if-needed",
+  "activation-probe",
+  "paid-activation-probe"
+]);
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
@@ -76,6 +84,7 @@ Options:
   --service agent_job_pack           Service key when payload file contains multiple payloads.
   --output-dir .clawz-data/buyer-runs
   --payment-requirement-out ./requirement.json
+  --activation-probe                Run a tiny paid proving job for an unproven seller.
   --activate-if-needed               If seller env is provided, run seller readiness/probe before retrying preflight.
   --seller-env-file .env.santaclawz  Seller env for --activate-if-needed.
   --local-hire-url http://127.0.0.1:8797/hire
@@ -1047,6 +1056,7 @@ function nextCommandBase(args, agentId, taskPrompt) {
     ...stringListFromArg(args.url).map((url) => `--url ${JSON.stringify(url)}`),
     ...(args["job-context-file"] ? [`--job-context-file ${JSON.stringify(String(args["job-context-file"]))}`] : []),
     ...(args["job-context-json"] ? [`--job-context-json ${JSON.stringify(String(args["job-context-json"]))}`] : []),
+    ...(args["activation-probe"] || args["paid-activation-probe"] ? ["--activation-probe"] : []),
     `--max-usd ${JSON.stringify(String(args["max-usd"]))}`
   ].join(" ");
 }
@@ -1062,6 +1072,7 @@ const agentId = parseAgentId(args.agent ?? args["agent-id"] ?? args["hire-url"])
 const taskPrompt = String(args.prompt ?? args.task ?? "").trim();
 const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local").trim();
 const jobContext = buildJobContext(args);
+const activationProbeRequested = Boolean(args["activation-probe"] || args["paid-activation-probe"]);
 const maxUsd = decimalStringToNumber(args["max-usd"]);
 const outputDir = String(args["output-dir"] ?? DEFAULT_OUTPUT_DIR).trim();
 const dryRun = Boolean(args["dry-run"]) || !args["allow-real-money"];
@@ -1094,7 +1105,9 @@ if (!planResponse.ok) {
   process.exit(1);
 }
 
-const missingContext = missingContextRequirements(planResponse.payload?.contextRequirements, jobContext);
+const missingContext = activationProbeRequested
+  ? []
+  : missingContextRequirements(planResponse.payload?.contextRequirements, jobContext);
 if (missingContext.length > 0) {
   const output = {
     ok: false,
@@ -1125,6 +1138,7 @@ async function preflightHire() {
   const body = {
     taskPrompt,
     requesterContact,
+    ...(activationProbeRequested ? { activationProbe: true } : {}),
     ...(jobContext ? { jobContext } : {})
   };
   const requestBodyBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
@@ -1157,6 +1171,7 @@ const baseOutput = {
   requesterContact,
   prompt: taskPrompt,
   ...(jobContext ? { jobContext } : {}),
+  ...(activationProbeRequested ? { activationProbe: true } : {}),
   maxUsd,
   priceUsd: priceUsd === null ? null : formatUsd(priceUsd),
   pricingMode: planResponse.payload?.pricingMode ?? planResponse.payload?.paymentProfile?.pricingMode ?? "unknown",
@@ -1185,7 +1200,8 @@ if (preflight.status === 409 && preflight.payload?.code === "paid_execution_prob
     message: "Seller is payment-ready, but paid execution is not proven yet.",
     nextCommand: args["seller-env-file"]
       ? `${nextCommandBase(args, agentId, taskPrompt)} --activate-if-needed --seller-env-file ${JSON.stringify(String(args["seller-env-file"]))}`
-      : "Ask the seller/operator to run: pnpm seller:ready -- --env-file .env.santaclawz --json",
+      : `${nextCommandBase({ ...args, "activation-probe": true }, agentId, taskPrompt)} --wallet-env ./buyer.env --allow-real-money`,
+    sellerOperatorCommand: "pnpm seller:ready -- --env-file .env.santaclawz --json",
     ...baseOutput,
     response: preflight.payload
   };
@@ -1283,6 +1299,7 @@ if (!validation.ok) {
 const submitBody = {
   taskPrompt,
   requesterContact,
+  ...(activationProbeRequested ? { activationProbe: true } : {}),
   ...(jobContext ? { jobContext } : {}),
   paymentPayload
 };
