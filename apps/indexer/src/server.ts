@@ -25,6 +25,7 @@ import {
   type HireRelayTraceStep,
   type MarketplaceWorkTags,
   type PaymentLedgerEntry,
+  type PaymentLedgerState,
   type PrivacyApprovalRecord,
   type SantaClawzArtifactDeliveryPreference,
   type SantaClawzContextFailureCode,
@@ -2311,6 +2312,44 @@ function paidExecutionProbeRequiredBody(input: {
   };
 }
 
+function compactPaymentLedgerEntryForPublicSnapshot(entry: PaymentLedgerEntry): PaymentLedgerEntry {
+  return {
+    ledgerId: entry.ledgerId,
+    createdAtIso: entry.createdAtIso,
+    updatedAtIso: entry.updatedAtIso,
+    agentId: entry.agentId,
+    sessionId: entry.sessionId,
+    ...(entry.quoteIntentId ? { quoteIntentId: entry.quoteIntentId } : {}),
+    ...(entry.hireRequestId ? { hireRequestId: entry.hireRequestId } : {}),
+    ...(entry.resource ? { resource: entry.resource } : {}),
+    pricingMode: entry.pricingMode,
+    rail: entry.rail,
+    networkId: entry.networkId,
+    assetSymbol: entry.assetSymbol,
+    amountUsd: entry.amountUsd,
+    ...(entry.sellerNetAmountUsd ? { sellerNetAmountUsd: entry.sellerNetAmountUsd } : {}),
+    ...(entry.protocolFeeAmountUsd ? { protocolFeeAmountUsd: entry.protocolFeeAmountUsd } : {}),
+    ...(entry.settlementReference ? { settlementReference: entry.settlementReference } : {}),
+    ...(entry.sellerSettlementTxHash ? { sellerSettlementTxHash: entry.sellerSettlementTxHash } : {}),
+    ...(entry.protocolFeeTxHash ? { protocolFeeTxHash: entry.protocolFeeTxHash } : {}),
+    transactionHashes: entry.transactionHashes.slice(0, 3),
+    paymentStatus: entry.paymentStatus,
+    ...(entry.executionStatus ? { executionStatus: entry.executionStatus } : {}),
+    ...(entry.returnStatus ? { returnStatus: entry.returnStatus } : {}),
+    ...(entry.lifecycleStatus ? { lifecycleStatus: entry.lifecycleStatus } : {}),
+    ...(entry.errorCode ? { errorCode: entry.errorCode } : {}),
+    ...(entry.errorMessage ? { errorMessage: entry.errorMessage.slice(0, 240) } : {}),
+    ...(entry.settlementRecovery ? { settlementRecovery: entry.settlementRecovery } : {})
+  };
+}
+
+function compactPaymentLedgerForPublicSnapshot(ledger: PaymentLedgerState): PaymentLedgerState {
+  return {
+    ...ledger,
+    entries: ledger.entries.map(compactPaymentLedgerEntryForPublicSnapshot)
+  };
+}
+
 async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<typeof controlPlane.listRegisteredAgents>>[number]) {
   let plan: Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"] | undefined;
   try {
@@ -3421,7 +3460,7 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
       controlPlane.listPaymentLedger({ limit: 100 }),
       controlPlane.getSocialAnchorQueueState(undefined, {
         itemLimit: 100,
-        batchLimit: 20,
+        batchLimit: 6,
         statuses: ["confirmed"],
         kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
       })
@@ -3436,7 +3475,7 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
           forHireAgentCount: agents.filter((agent) => agent.readiness?.hireable === true && agent.paidExecutionReady).length
         },
         agentBoard,
-        paymentLedger,
+        paymentLedger: compactPaymentLedgerForPublicSnapshot(paymentLedger),
         publicSocialAnchorQueue
       }))
       .finally(() => {
