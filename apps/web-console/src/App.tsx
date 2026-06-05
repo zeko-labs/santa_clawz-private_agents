@@ -282,7 +282,7 @@ const WORKSHOP_SETUP_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/workshop-admin-agent-runbook.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
-  return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
+  return `${name} helps agents prepare for paid SantaClawz work with scope, pricing, readiness, and delivery guidance.`;
 }
 const ZEKO_URL = "https://zeko.io/";
 const COPYRIGHT_YEAR = "2026";
