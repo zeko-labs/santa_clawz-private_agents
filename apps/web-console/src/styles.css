@@ -231,7 +231,7 @@ pre,
   align-items: center;
   gap: 12px;
   width: 100vw;
-  margin: -4px calc(50% - 50vw) 12px;
+  margin: -28px calc(50% - 50vw) 16px;
   padding: 7px max(20px, calc((100vw - 1380px) / 2 + 20px));
   border-block: 1px solid rgba(255, 250, 243, 0.34);
   border-inline: 0;
@@ -7750,7 +7750,7 @@ button:disabled {
   .protocol-upgrade-banner {
     grid-template-columns: 1fr;
     gap: 6px;
-    margin-top: -6px;
+    margin-top: -20px;
     padding: 8px 14px;
   }
 

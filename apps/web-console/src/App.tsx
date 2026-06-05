@@ -3627,8 +3627,8 @@ export function App() {
   function renderHirePage() {
     return (
       <main id="top" className="app-shell buyer-shell">
-        {renderHeader()}
         {renderProtocolUpgradeBanner()}
+        {renderHeader()}
 
         <BuyerWorkroom
           agents={registry}
@@ -3647,8 +3647,8 @@ export function App() {
     const page = LEGAL_PAGES[pageKey];
     return (
       <main id="top" className="app-shell onboarding-shell">
-        {renderHeader()}
         {renderProtocolUpgradeBanner()}
+        {renderHeader()}
 
         <section className="masthead legal-masthead">
           <div className="masthead-inner">
@@ -3798,8 +3798,8 @@ export function App() {
 
     return (
       <main id="top" className="app-shell sdk-shell">
-        {renderHeader()}
         {renderProtocolUpgradeBanner()}
+        {renderHeader()}
 
         <section className="masthead legal-masthead">
           <div className="masthead-inner">
@@ -4076,8 +4076,8 @@ export function App() {
   if (!state) {
     return (
       <main className="app-shell onboarding-shell">
-        {renderHeader()}
         {renderProtocolUpgradeBanner()}
+        {renderHeader()}
 
         <section className="masthead">
           <div className="masthead-inner">
@@ -5185,8 +5185,8 @@ export function App() {
 
   return (
     <main id="top" className="app-shell onboarding-shell">
-      {renderHeader()}
       {renderProtocolUpgradeBanner()}
+      {renderHeader()}
 
       <section className="masthead">
         <div className="masthead-inner">
