@@ -383,6 +383,7 @@ export type SocialAnchorCandidateKind =
   | "hire-request-submitted"
   | "quote-returned"
   | "quote-accepted"
+  | "activation-task-completed"
   | "paid-execution-completed"
   | "free-test-completed"
   | "hire-request-failed"

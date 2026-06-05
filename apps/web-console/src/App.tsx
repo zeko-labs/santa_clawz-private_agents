@@ -224,6 +224,7 @@ const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
   "hire-request-submitted",
   "quote-returned",
   "quote-accepted",
+  "activation-task-completed",
   "paid-execution-completed",
   "free-test-completed",
   "hire-request-failed",
@@ -1155,6 +1156,9 @@ function proofActivityBadge(item: SocialAnchorCandidate) {
   }
   if (item.kind === "paid-execution-completed") {
     return "Execution";
+  }
+  if (item.kind === "activation-task-completed") {
+    return "Activated";
   }
   if (item.kind === "quote-returned" || item.kind === "quote-accepted") {
     return "Quote";

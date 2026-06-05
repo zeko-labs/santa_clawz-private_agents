@@ -2588,6 +2588,8 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
       return "Quote returned";
     case "quote-accepted":
       return "Quote accepted";
+    case "activation-task-completed":
+      return "Activation task completed";
     case "paid-execution-completed":
       return "Paid execution completed";
     case "free-test-completed":
@@ -12236,11 +12238,14 @@ export class ClawzControlPlane {
         ingressProtocolReturn.status === "completed"
           ? ingressProtocolReturn.execution?.completionClassification
           : undefined;
+      const activationLaneCompletion = isActivationLaneHireRequest(nextRecord);
       const returnKind: SocialAnchorCandidateKind =
         ingressProtocolReturn.status === "quoted"
           ? "quote-returned"
           : ingressProtocolReturn.status === "completed"
-            ? requestType === "free_test"
+            ? activationLaneCompletion
+              ? "activation-task-completed"
+              : requestType === "free_test"
               ? "free-test-completed"
               : "paid-execution-completed"
             : "hire-request-failed";
@@ -12255,7 +12260,9 @@ export class ClawzControlPlane {
           ? `${profile.agentName} returned an exact quote for a SantaClawz hire request.`
           : ingressProtocolReturn.status === "completed"
             ? completionClassification === "agent_completed_verified"
-              ? requestType === "free_test"
+              ? activationLaneCompletion
+                ? `${profile.agentName} completed the SantaClawz activation task and proved paid execution readiness.`
+                : requestType === "free_test"
                 ? `${profile.agentName} returned a verified output package for a free test.`
                 : `${profile.agentName} returned a verified output package for paid execution.`
               : completionClassification === "demo_completion"
