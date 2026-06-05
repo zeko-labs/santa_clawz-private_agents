@@ -66,6 +66,7 @@ type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationAgentRole = "admin" | "member";
+const WORKSHOP_PRIVATE_PRIVACY_MODE: CoordinationPrivacyMode = "digest-only";
 type CoordinationDraft = {
   orgName: string;
   workspaceDomain: string;
@@ -1973,32 +1974,6 @@ function clearStoredCoordinationDraft() {
   }
 }
 
-function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
-  if (mode === "public-summary") {
-    return "Public summaries";
-  }
-  if (mode === "recipient-encrypted") {
-    return "Encrypted for recipients";
-  }
-  if (mode === "local-private") {
-    return "Local private";
-  }
-  return "Digest-only trace";
-}
-
-function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
-  if (mode === "public-summary") {
-    return "Agents can work publicly with safe summaries and aggregate proof.";
-  }
-  if (mode === "recipient-encrypted") {
-    return "SantaClawz can route safe metadata while private payloads are encrypted for the named receiving agents.";
-  }
-  if (mode === "local-private") {
-    return "Use a local control plane and export only digests, aggregates, or public envelope views.";
-  }
-  return "Post only digests and safe metadata to the canonical network.";
-}
-
 function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
 }
@@ -2133,12 +2108,9 @@ function buildBridgeManifest(input: {
       threadId: input.draft.threadId,
       apiBase: input.apiBase,
       coordinationPolicy: {
-        privacyMode: input.draft.privacyMode,
-        proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "digest_or_envelope",
-        publicBodyRule:
-          input.draft.privacyMode === "public-summary"
-            ? "Public workflow events may include safe summaries."
-            : "Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
+        privacyMode: WORKSHOP_PRIVATE_PRIVACY_MODE,
+        proofIntent: "digest_or_envelope",
+        publicBodyRule: "Workshop coordination is private by default. Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
       },
       participants: input.agents.map((agent) => ({
         agentId: agent.agentId,
@@ -2161,7 +2133,7 @@ function buildBridgeManifest(input: {
           swarmId: input.draft.swarmId,
           topicTags: ["team-coordination", input.draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")],
           capabilityTags: tagCsvToList(input.draft.requiredCapabilities),
-          proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "agent_chatter"
+          proofIntent: "agent_chatter"
         },
         privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private workflow payloads."
       }
@@ -4893,29 +4865,9 @@ export function App() {
 
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
-              <div className="coordination-privacy-row">
-                <label className="field coordination-privacy-field">
-                  <span>Privacy policy</span>
-                  <div className="coordination-select-wrap">
-                    <select
-                      className="select-input"
-                      value={coordinationDraft.privacyMode}
-                      onChange={(event: ValueInputEvent) => {
-                        updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
-                      }}
-                    >
-                      <option value="digest-only">{coordinationPrivacyLabel("digest-only")}</option>
-                      <option value="public-summary">{coordinationPrivacyLabel("public-summary")}</option>
-                      <option value="recipient-encrypted">{coordinationPrivacyLabel("recipient-encrypted")}</option>
-                      <option value="local-private">{coordinationPrivacyLabel("local-private")}</option>
-                    </select>
-                  </div>
-                </label>
-                <div className="coordination-privacy-copy">
-                  <p>{coordinationPrivacyDetail(coordinationDraft.privacyMode)}</p>
-                  {coordinationSetupTicket ? <small>To change policy for this team, select a new policy and reissue the ticket. Agents reclaim setup with the same roster.</small> : null}
-                </div>
-              </div>
+              <p className="panel-copy coordination-private-note">
+                Workshop coordination is private by default. SantaClawz stores setup state, agent ids, workflow ids, digests, safe checkpoint refs, and aggregate counts.
+              </p>
 
               <p className="panel-copy coordination-ticket-intro">
                 Create a workshop setup ticket from the info above so the agent team can start.

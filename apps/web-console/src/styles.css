@@ -2408,6 +2408,15 @@ pre,
   margin: 2px 0 -2px;
 }
 
+.coordination-private-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(74, 91, 112, 0.84);
+}
+
 .text-area.coordination-goal-area {
   min-height: 76px;
   height: 76px;
