@@ -24,6 +24,18 @@
   box-sizing: border-box;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 html {
   color-scheme: light;
   scroll-behavior: smooth;
@@ -2413,15 +2425,6 @@ pre,
   margin: 2px 0 -2px;
 }
 
-.coordination-private-note {
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.5);
-  color: rgba(74, 91, 112, 0.84);
-}
-
 .text-area.coordination-goal-area {
   min-height: 76px;
   height: 76px;
@@ -2582,21 +2585,51 @@ pre,
 
 .coordination-thread-panel {
   display: grid;
+  gap: 14px;
+  padding-top: 28px;
+}
+
+.coordination-thread-panel .compact-head {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.7fr) minmax(360px, 1fr);
+  align-items: center;
   gap: 18px;
 }
 
+.coordination-thread-panel .compact-head > div {
+  display: grid;
+  gap: 4px;
+  align-items: start;
+}
+
+.coordination-thread-panel h2 {
+  font-size: clamp(1.75rem, 3.1vw, 2.4rem);
+  line-height: 1.02;
+}
+
+.coordination-thread-panel .panel-copy {
+  margin: 0;
+}
+
 .coordination-trace-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: center;
+  justify-self: end;
   gap: 10px;
-  min-width: min(100%, 480px);
+  width: min(100%, 660px);
+  min-width: 0;
 }
 
 .coordination-trace-search {
-  width: min(260px, 100%);
-  min-height: 48px;
+  width: 100%;
+  min-height: 46px;
   border-radius: 24px;
+}
+
+.coordination-trace-actions .secondary-button {
+  min-height: 46px;
+  white-space: nowrap;
 }
 
 .coordination-agent-list,
@@ -7483,6 +7516,7 @@ button:disabled {
   .coordination-roster-panel .compact-head,
   .coordination-thread-panel .compact-head,
   .coordination-manifest-panel .compact-head {
+    grid-template-columns: 1fr;
     align-items: flex-start;
     flex-direction: column;
   }
@@ -7491,6 +7525,10 @@ button:disabled {
   .coordination-trace-actions .secondary-button,
   .coordination-trace-search {
     width: 100%;
+  }
+
+  .coordination-trace-actions {
+    grid-template-columns: 1fr;
   }
 
   .coordination-manifest-actions {
