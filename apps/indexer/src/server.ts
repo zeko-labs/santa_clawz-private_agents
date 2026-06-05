@@ -2745,13 +2745,12 @@ async function buildX402PaymentStateResponse(input: {
     );
   const needsAttention =
     !postAckPending && (latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed");
-  const payloadExpiredForRetry = latestLedger?.errorCode === "payment_payload_expired_for_retry";
-  const payloadRetryRejected =
-    payloadExpiredForRetry ||
-    latestLedger?.errorCode === "payment_payload_retry_failed" ||
-    latestLedger?.errorCode === "x402_payload_shape_invalid" ||
-    latestLedger?.errorCode === "x402_signature_verification_failed";
-  const safeToRetrySamePayload = Boolean(paymentPayloadDigestSha256 && !terminal && !payloadRetryRejected);
+  const paymentRetrySafety = paymentPayloadRetrySafety({
+    paymentPayloadDigestSha256,
+    terminal,
+    latestLedger
+  });
+  const { payloadExpiredForRetry, payloadRetryRejected, safeToRetrySamePayload } = paymentRetrySafety;
   const nextAction = terminal
     ? "result_lookup"
     : payloadRetryRejected && resolvedRequestId
@@ -2822,6 +2821,24 @@ async function buildX402PaymentStateResponse(input: {
 }
 
 type X402PaymentStateResponse = Awaited<ReturnType<typeof buildX402PaymentStateResponse>>;
+
+function paymentPayloadRetrySafety(input: {
+  paymentPayloadDigestSha256?: string | undefined;
+  terminal?: boolean | undefined;
+  latestLedger?: Pick<PaymentLedgerEntry, "errorCode"> | undefined;
+}) {
+  const payloadExpiredForRetry = input.latestLedger?.errorCode === "payment_payload_expired_for_retry";
+  const payloadRetryRejected =
+    payloadExpiredForRetry ||
+    input.latestLedger?.errorCode === "payment_payload_retry_failed" ||
+    input.latestLedger?.errorCode === "x402_payload_shape_invalid" ||
+    input.latestLedger?.errorCode === "x402_signature_verification_failed";
+  return {
+    payloadExpiredForRetry,
+    payloadRetryRejected,
+    safeToRetrySamePayload: Boolean(input.paymentPayloadDigestSha256 && !input.terminal && !payloadRetryRejected)
+  };
+}
 
 function redactLatestPaymentLedger(entry: unknown) {
   if (!isRecord(entry)) return undefined;
@@ -4204,6 +4221,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     if (!hireRequest) {
       const latestAliasLedger = aliasPaymentLedger?.entries[0];
       const paymentPayloadDigestSha256 = latestAliasLedger?.paymentPayloadDigestSha256;
+      const aliasRetrySafety = paymentPayloadRetrySafety({
+        paymentPayloadDigestSha256,
+        latestLedger: latestAliasLedger
+      });
       const canonicalStateUrl = aliasHireRequestId
         ? `${apiBase}/api/executions/${encodeURIComponent(aliasHireRequestId)}/state`
         : undefined;
@@ -4224,7 +4245,15 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         },
         ...(canonicalStateUrl ? { canonicalStateUrl, stateUrl: canonicalStateUrl } : {}),
         paymentStateUrl,
-        safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256),
+        safeToRetrySamePayload: aliasRetrySafety.safeToRetrySamePayload,
+        ...(aliasRetrySafety.payloadRetryRejected
+          ? {
+              ...(aliasRetrySafety.payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
+              paymentPayloadRetryRejected: true,
+              retryMode: "poll_or_reconcile_existing_payment",
+              doNotCreateNewPayment: true
+            }
+          : {}),
         safeToCreateNewPayment: false,
         error: latestAliasLedger
           ? "Payment state exists, but the execution request is not fully persisted yet. Poll paymentStateUrl or canonicalStateUrl before creating a new payment."
@@ -4252,6 +4281,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const paymentStateUrl = paymentPayloadDigestSha256
       ? `${apiBase}/api/x402/payment-state?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
       : `${apiBase}/api/x402/payment-state?${new URLSearchParams({ requestId }).toString()}`;
+    const recoveryRetrySafety = paymentPayloadRetrySafety({
+      paymentPayloadDigestSha256,
+      latestLedger
+    });
     if (!workspaceCredentialProvided && !paymentPayloadDigestMatches) {
       response.status(403).json({
         ok: false,
@@ -4269,7 +4302,15 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
           acceptedQuery: "paymentPayloadDigestSha256",
           guidance: "Fetch /api/x402/payment-state with the saved payment payload digest, then poll the returned stateEndpoint."
         },
-        safeToRetrySamePayload: Boolean(paymentPayloadDigestSha256),
+        safeToRetrySamePayload: recoveryRetrySafety.safeToRetrySamePayload,
+        ...(recoveryRetrySafety.payloadRetryRejected
+          ? {
+              ...(recoveryRetrySafety.payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
+              paymentPayloadRetryRejected: true,
+              retryMode: "poll_or_reconcile_existing_payment",
+              doNotCreateNewPayment: true
+            }
+          : {}),
         safeToCreateNewPayment: false,
         error: "Execution state requires a job token, seller admin key, or matching payment payload digest."
       });
@@ -4374,10 +4415,10 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       agentExecutionStatus !== "worker_completed_return_rejected";
     const staleLedgerErrorAfterReturn =
       staleDeliveryFailureAfterReturn &&
-      latestLedger?.returnStatus === "accepted" &&
-      latestLedger?.executionStatus === "completed";
+      Boolean(latestLedger?.errorMessage) &&
+      latestLedger?.returnStatus !== "rejected";
     const hasFailure =
-      settlementStatus === "failed" ||
+      (!returnVerified && settlementStatus === "failed") ||
       (!acceptedPendingResult && relayDeliveryStatus === "failed" && !staleDeliveryFailureAfterReturn) ||
       relayDeliveryStatus === "return_rejected" ||
       agentExecutionStatus === "failed" ||
@@ -4447,6 +4488,11 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         : hasFailure
           ? "failed_or_rejected"
           : "pending";
+    const executionRetrySafety = paymentPayloadRetrySafety({
+      paymentPayloadDigestSha256,
+      terminal: buyerAccepted || hasFailure,
+      latestLedger
+    });
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -4537,12 +4583,22 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       },
       ...(acceptedPendingResult
         ? {
-            agentNextAction: "poll_state_or_resume_same_payment",
-            retryMode: "same_payment_payload_only",
-            safeToRetrySamePayload: true,
-            safeToRetrySamePaymentPayload: true,
+            agentNextAction: executionRetrySafety.payloadRetryRejected
+              ? "poll_state_or_escalate_payment_recovery"
+              : "poll_state_or_resume_same_payment",
+            retryMode: executionRetrySafety.payloadRetryRejected
+              ? "poll_or_reconcile_existing_payment"
+              : "same_payment_payload_only",
+            safeToRetrySamePayload: executionRetrySafety.safeToRetrySamePayload,
+            safeToRetrySamePaymentPayload: executionRetrySafety.safeToRetrySamePayload,
             safeToCreateNewPayment: false,
             doNotCreateNewPayment: true,
+            ...(executionRetrySafety.payloadRetryRejected
+              ? {
+                  ...(executionRetrySafety.payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
+                  paymentPayloadRetryRejected: true
+                }
+              : {}),
             workerAcknowledged: true,
             lateCompletionSupported: true,
             resultMayStillArrive: true,
