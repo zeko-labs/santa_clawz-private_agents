@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -2544,6 +2544,46 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       activationCandidates.payload.candidates.some((candidate) => candidate.agentId === agentId),
       true
     );
+    const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    await mkdir(path.dirname(paymentLedgerPath), { recursive: true });
+    await writeFile(paymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_activation_pending_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          resource: `${baseUrl}/api/activation-lane/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "testnet",
+          assetSymbol: "USDC",
+          amountUsd: "0.002001",
+          transactionHashes: [],
+          paymentStatus: "authorization_verified",
+          executionStatus: "submitted",
+          returnStatus: "none"
+        }
+      ]
+    }, null, 2));
+    const activationCandidatesWithPendingPayment = await requestJson(
+      `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&includeDiagnostics=true`,
+      {
+        headers: {
+          authorization: "Bearer test_activation_lane_token"
+        }
+      }
+    );
+    assert.equal(activationCandidatesWithPendingPayment.status, 200);
+    assert.equal(activationCandidatesWithPendingPayment.payload.total, 0);
+    assert.equal(
+      activationCandidatesWithPendingPayment.payload.diagnostics.excludedAgents[0]?.exclusionReasons.includes(
+        "activation-lane-payment-pending"
+      ),
+      true
+    );
+    await writeFile(paymentLedgerPath, JSON.stringify({ entries: [] }, null, 2));
     const activationCandidatesViaWorkerHeader = await requestJson(`${baseUrl}/api/activation-lane/candidates`, {
       headers: {
         "x-santaclawz-activation-lane-key": "test_activation_lane_token"
