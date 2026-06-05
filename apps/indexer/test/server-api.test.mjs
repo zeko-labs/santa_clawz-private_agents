@@ -4144,7 +4144,8 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(executionState.payload.lifecycle.platformReconciliationStatus, "pending_worker_return_or_late_completion");
     assert.equal(executionState.payload.lifecycleChecks.failed, false);
     assert.equal(executionState.payload.lifecycleChecks.terminal, false);
-    assert.equal(executionState.payload.safeToRetrySamePayload, true);
+    assert.equal(executionState.payload.safeToRetrySamePayload, false);
+    assert.equal(executionState.payload.safeToRetrySamePaymentPayload, false);
     assert.equal(executionState.payload.doNotCreateNewPayment, true);
 
     const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
@@ -4206,6 +4207,33 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(digestExecutionState.payload.safeToRetrySamePayload, true);
     assert.equal(digestExecutionState.payload.safeToCreateNewPayment, false);
 
+    const expiredLedger = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
+    expiredLedger.entries = expiredLedger.entries.map((entry) =>
+      entry.paymentPayloadDigestSha256 === "d".repeat(64)
+        ? {
+            ...entry,
+            errorCode: "payment_payload_expired_for_retry",
+            errorMessage: "Payment payload is expired."
+          }
+        : entry
+    );
+    await writeFile(paymentLedgerPath, JSON.stringify(expiredLedger, null, 2), "utf8");
+    const expiredRedactedPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${"d".repeat(64)}`
+    );
+    assert.equal(expiredRedactedPaymentState.status, 200);
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToRetrySamePaymentPayload, false);
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.paymentPayloadExpiredForRetry, true);
+    const expiredDigestExecutionState = await requestJson(expiredRedactedPaymentState.payload.retryResume.stateEndpoint);
+    assert.equal(expiredDigestExecutionState.status, 200);
+    assert.equal(expiredDigestExecutionState.payload.safeToRetrySamePayload, false);
+    assert.equal(expiredDigestExecutionState.payload.safeToRetrySamePaymentPayload, false);
+    assert.equal(expiredDigestExecutionState.payload.safeToCreateNewPayment, false);
+    assert.equal(expiredDigestExecutionState.payload.doNotCreateNewPayment, true);
+    assert.equal(expiredDigestExecutionState.payload.paymentPayloadExpiredForRetry, true);
+    assert.equal(expiredDigestExecutionState.payload.paymentPayloadRetryRejected, true);
+
     const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
     const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
     legacyHireRequests.requests = legacyHireRequests.requests.map((request) =>
@@ -4233,7 +4261,10 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(legacyExecutionState.payload.lifecycle.agentExecutionStatus, "submitted");
     assert.equal(legacyExecutionState.payload.lifecycleChecks.failed, false);
     assert.equal(legacyExecutionState.payload.lifecycleChecks.terminal, false);
-    assert.equal(legacyExecutionState.payload.retryMode, "same_payment_payload_only");
+    assert.equal(legacyExecutionState.payload.retryMode, "poll_or_reconcile_existing_payment");
+    assert.equal(legacyExecutionState.payload.safeToRetrySamePayload, false);
+    assert.equal(legacyExecutionState.payload.safeToRetrySamePaymentPayload, false);
+    assert.equal(legacyExecutionState.payload.paymentPayloadExpiredForRetry, true);
     assert.equal(legacyExecutionState.payload.safeToCreateNewPayment, false);
 
     const reconciled = await requestJson(
