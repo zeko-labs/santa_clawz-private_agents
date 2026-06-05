@@ -698,9 +698,16 @@ function formatUsd(value) {
 }
 
 async function requestJson(url, init = {}) {
+  const timeoutMs = Number.parseInt(process.env.CLAWZ_API_FETCH_TIMEOUT_MS ?? "10000", 10);
+  const fetchInit = {
+    ...init,
+    ...(!init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? { signal: AbortSignal.timeout(timeoutMs) }
+      : {})
+  };
   let response;
   try {
-    response = await fetch(url, init);
+    response = await fetch(url, fetchInit);
   } catch (error) {
     if (!isRetryablePlatformTransportError(error)) throw error;
     return {
@@ -1291,11 +1298,22 @@ const submittedRequestId =
   paymentPayload.requestId ??
   paymentRequirement.requestId ??
   null;
+const x402RequestId = paymentRequirement.requestId ?? paymentPayload.requestId ?? null;
+const submittedHireRequestId =
+  submit.payload?.paidExecution?.requestId ??
+  submit.payload?.hireRequestId ??
+  (typeof submittedRequestId === "string" && submittedRequestId.startsWith("hire_") ? submittedRequestId : null);
 const paymentStateUrl = `${apiBase}/api/x402/payment-state?paymentPayloadDigestSha256=${paymentPayloadDigestSha256}`;
 const fallbackResultStateUrl = submittedRequestId
   ? `${apiBase}/api/executions/${encodeURIComponent(submittedRequestId)}/state`
   : null;
 const resultStateUrl = stateUrlFromSubmitPayload(submit.payload, fallbackResultStateUrl);
+const executionIds = {
+  ...(x402RequestId ? { x402RequestId } : {}),
+  ...(submittedHireRequestId ? { hireRequestId: submittedHireRequestId, executionRequestId: submittedHireRequestId } : {}),
+  ...(submittedRequestId ? { submittedRequestId } : {}),
+  paymentPayloadDigestSha256
+};
 if (!submit.ok && submit.payload?.retryable === true) {
   const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
     code: "post_payment_state_unavailable_retryable",
@@ -1314,6 +1332,7 @@ if (!submit.ok && submit.payload?.retryable === true) {
     paid: true,
     status: submit.status,
     agentId,
+    ids: executionIds,
     priceUsd: baseOutput.priceUsd,
     manifestDir: runDir,
     response: submit.payload
@@ -1383,6 +1402,7 @@ const output = {
   priceUsd: baseOutput.priceUsd,
   paymentPayloadDigestSha256,
   requestId: submittedRequestId,
+  ids: executionIds,
   stateUrl: resultStateUrl,
   paymentStateUrl,
   manifestDir: runDir,
