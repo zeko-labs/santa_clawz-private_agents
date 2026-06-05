@@ -105,7 +105,7 @@ pre,
 .site-header {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 20px;
   margin-bottom: 16px;
@@ -218,6 +218,11 @@ pre,
 .site-social-link.discord svg {
   width: 27px;
   height: 27px;
+}
+
+.site-social-link.github svg {
+  width: 24px;
+  height: 24px;
 }
 
 .site-menu-button {
@@ -7355,7 +7360,7 @@ button:disabled {
   }
 
   .site-header {
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
   }
 
