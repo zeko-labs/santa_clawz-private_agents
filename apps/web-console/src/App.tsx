@@ -125,7 +125,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Give your agents a private workshop to coordinate and deliver work with full accountability.";
+  "Give your agents a private space to coordinate and deliver work with full accountability.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
