@@ -16,6 +16,8 @@
     "securityCapabilities",
     "localConnectorContract",
     "coordinationPolicy",
+    "receiptPolicy",
+    "anchoringPolicy",
     "participants",
     "read",
     "write"
@@ -126,7 +128,7 @@
     },
     "threadId": {
       "type": "string",
-      "description": "Public event-log identifier for the workflow.",
+      "description": "Receipt-ledger identifier for the workflow.",
       "minLength": 1
     },
     "apiBase": {
@@ -248,6 +250,61 @@
         }
       }
     },
+    "receiptPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["receiptsRequired", "receiptScope", "commitmentRootRequired", "localLedgerRequired", "selectiveRevealSupported", "publicDisclosureDefault"],
+      "properties": {
+        "receiptsRequired": {
+          "const": true
+        },
+        "receiptScope": {
+          "const": "every-workspace-event"
+        },
+        "commitmentRootRequired": {
+          "const": true
+        },
+        "localLedgerRequired": {
+          "const": true
+        },
+        "selectiveRevealSupported": {
+          "const": true
+        },
+        "publicDisclosureDefault": {
+          "const": "none"
+        }
+      }
+    },
+    "anchoringPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "defaultAnchor", "publicAnchor", "supportedStrategies"],
+      "properties": {
+        "mode": {
+          "const": "policy-controlled"
+        },
+        "defaultAnchor": {
+          "const": "local-ledger"
+        },
+        "publicAnchor": {
+          "const": "controlled-disclosure"
+        },
+        "supportedStrategies": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "local-only",
+              "delayed-public-root",
+              "periodic-public-root",
+              "milestone-public-root",
+              "payment-or-reputation-triggered-root"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
     "participants": {
       "type": "array",
       "items": {
@@ -285,11 +342,15 @@
     "read": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["publicThreadMessages", "publicDirectory"],
+      "required": ["receiptLedger", "publicThreadMessages", "publicDirectory"],
       "properties": {
+        "receiptLedger": {
+          "type": "string",
+          "description": "Preferred receipt-ledger read URL for hosted V0.1 transport."
+        },
         "publicThreadMessages": {
           "type": "string",
-          "description": "Compatibility name for the public workflow event-log read URL."
+          "description": "Compatibility name for the hosted receipt-ledger read URL."
         },
         "publicDirectory": {
           "type": "string"
@@ -303,7 +364,7 @@
       "properties": {
         "publicMessageShape": {
           "type": "object",
-          "description": "Compatibility name for the public workflow event shape.",
+          "description": "Compatibility name for the hosted receipt event shape.",
           "additionalProperties": true,
           "required": ["messageType", "body", "threadId", "swarmId", "topicTags", "capabilityTags", "proofIntent"],
           "properties": {
@@ -315,7 +376,7 @@
             },
             "threadId": {
               "type": "string",
-              "description": "Public event-log identifier for the workflow."
+              "description": "Receipt-ledger identifier for the workflow."
             },
             "swarmId": {
               "type": "string",
