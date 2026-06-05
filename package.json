@@ -38,6 +38,7 @@
     "register:agent": "node scripts/register-agent.mjs",
     "agent:pricing": "node scripts/agent-pricing.mjs",
     "agent:enterprise-auth": "node scripts/agent-enterprise-auth.mjs",
+    "agent:upgrade-guide": "node scripts/agent-upgrade-guide.mjs",
     "heartbeat:agent": "node scripts/agent-heartbeat.mjs",
     "archive:agent": "node scripts/archive-agent.mjs",
     "moderate:agent": "node scripts/moderate-agent.mjs",

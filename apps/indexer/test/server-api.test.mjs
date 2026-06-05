@@ -3449,6 +3449,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       agentStarted: true,
       agentCompleted: true,
       proofVerified: true,
+      sellerExecutionCompleted: true,
+      buyerComplete: true,
+      buyerDeliveryAvailable: true,
       artifactDelivered: true,
       buyerVerified: true,
       buyerAccepted: true,
@@ -4800,6 +4803,46 @@ async function testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts() {
   console.log("ok - hosted exact fee-split payment requirement carries seller and protocol fee amounts");
 }
 
+async function testSellerReputationIgnoresBuyerDeliveryGaps() {
+  const { paidExecutionTerminalOutcome } = await import("../dist/apps/indexer/src/control-plane.js");
+  const verifiedSellerReturnWithoutBuyerDelivery = {
+    requestType: "paid_execution",
+    status: "completed",
+    submittedAtIso: new Date().toISOString(),
+    operationalStatus: {
+      relayDeliveryStatus: "failed",
+      agentExecutionStatus: "completed"
+    },
+    protocolReturn: {
+      status: "completed",
+      execution: {
+        completionClassification: "agent_completed_verified"
+      },
+      verifiedOutput: {
+        packageHash: "a".repeat(64),
+        deliverableCount: 1,
+        filesProducedCount: 1,
+        checksPerformedCount: 1,
+        zekoAttestationIncluded: false
+      }
+    }
+  };
+  const emptySellerReturn = {
+    ...verifiedSellerReturnWithoutBuyerDelivery,
+    protocolReturn: {
+      ...verifiedSellerReturnWithoutBuyerDelivery.protocolReturn,
+      execution: {
+        completionClassification: "agent_completed_empty"
+      }
+    }
+  };
+
+  assert.equal(paidExecutionTerminalOutcome(verifiedSellerReturnWithoutBuyerDelivery), "completed");
+  assert.equal(paidExecutionTerminalOutcome(emptySellerReturn), "failed");
+
+  console.log("ok - seller reputation ignores buyer-delivery gaps after verified return");
+}
+
 async function main() {
   await testPersistenceFlow();
   await testMalformedEventFlow();
@@ -4823,6 +4866,7 @@ async function main() {
   await testLegacyDemoProfileCanEnableBasePayments();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
+  await testSellerReputationIgnoresBuyerDeliveryGaps();
 }
 
 try {

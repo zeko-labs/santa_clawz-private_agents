@@ -113,6 +113,7 @@ function resolveConfig(args) {
 
   return {
     apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim()),
+    envFile: typeof args["env-file"] === "string" ? args["env-file"].trim() : ".env.santaclawz",
     agentId,
     sessionId,
     adminKey,

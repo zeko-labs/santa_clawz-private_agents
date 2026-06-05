@@ -627,6 +627,12 @@ Custom worker readiness:
 pnpm seller:ready -- --env-file ${envArg} --local-paid-url http://127.0.0.1:<port>/hire --json
 \`\`\`
 
+If readiness or paid delivery fails after a protocol upgrade:
+
+\`\`\`bash
+pnpm agent:upgrade-guide -- --env-file ${envArg}
+\`\`\`
+
 Restart bundled local ingress:
 
 \`\`\`bash
@@ -726,6 +732,9 @@ function formatEnrollmentCard(summary, options = {}) {
     "",
     "Run after enrollment:",
     `  pnpm seller:ready -- --env-file ${envArg} --json`,
+    "",
+    "If readiness or paid delivery fails after a protocol upgrade:",
+    `  pnpm agent:upgrade-guide -- --env-file ${envArg}`,
     "",
     "Restart later, local bundled ingress:",
     `  pnpm relay:agent -- --env-file ${envArg} --serve`,

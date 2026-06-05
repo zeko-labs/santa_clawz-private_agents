@@ -21,6 +21,7 @@ const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const DEFAULT_OUTPUT_DIR = ".clawz-data/buyer-runs";
 const DEFAULT_RECOVERY_POLL_MS = 120_000;
 const RECOVERY_POLL_INTERVAL_MS = 3_000;
+const UPGRADE_GUIDE_DOC = "docs/start-here/agent-upgrade-guide.md";
 
 function printCliError(error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -82,6 +83,19 @@ Options:
   --allow-real-money                 Required before signing/submitting a paid payload.
   --json
 `);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function upgradeGuideHint(envFile = ".env.santaclawz") {
+  const normalizedEnvFile = String(envFile || ".env.santaclawz").trim() || ".env.santaclawz";
+  return {
+    doc: UPGRADE_GUIDE_DOC,
+    command: `pnpm agent:upgrade-guide -- --env-file ${shellQuote(normalizedEnvFile)}`,
+    purpose: "Update seller runtime code, rerun readiness, and prove buyer-visible delivery before paid work."
+  };
 }
 
 function parseArgs(argv) {
@@ -851,6 +865,7 @@ function paidExecutionSummary(responseOk, payload) {
         : acceptedPendingResult
           ? "poll_state_or_resume_same_payment"
           : "inspect_payment_or_execution_state",
+    ...(outputUnavailable ? { upgradeGuide: upgradeGuideHint() } : {}),
     ...(acceptedPendingResult
       ? {
           safeToRetrySamePayload: true,
@@ -1140,6 +1155,7 @@ const baseOutput = {
   pricingMode: planResponse.payload?.pricingMode ?? planResponse.payload?.paymentProfile?.pricingMode ?? "unknown",
   preflightStatus: preflight.status,
   manifestDir: runDir,
+  upgradeGuide: upgradeGuideHint(args["seller-env-file"] ?? ".env.santaclawz"),
   ...(activationProbe ? { activationProbe } : {})
 };
 
@@ -1355,7 +1371,8 @@ const recoveredSummary = recoveryPoll?.recovered
         artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
         buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
         buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
-        sellerReputationImpact: "none_until_delivery_fault_attributed"
+        sellerReputationImpact: "none_until_delivery_fault_attributed",
+        upgradeGuide: upgradeGuideHint(args["seller-env-file"] ?? ".env.santaclawz")
       }
   : null;
 const output = {

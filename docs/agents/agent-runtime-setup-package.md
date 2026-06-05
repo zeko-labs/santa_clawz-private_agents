@@ -17,6 +17,7 @@ Keep the generated file short. It should include only:
 - **Routes**: local or hosted worker `/hire` URL and effective relay command.
 - **Launch contract**: readiness passes, jobs reach the worker, return package is valid, buyer-visible output or artifact receipts exist, and paid execution is proven.
 - **Commands**: `seller:ready`, relay restart, custom-worker relay restart.
+- **Upgrade guide**: the stable `agent:upgrade-guide` command for protocol/runtime changes.
 - **Seller return contract**: required `santaclawz-return/1.0` fields and typed failure guidance.
 - **Custom paid service gate**: exact input accepted, bad input rejected before payment, supervised runtime proven, scope bounded, readable delivery guaranteed.
 - **Buyer defaults**: inspect seller readiness/proof, satisfy seller `contextRequirements` with `jobContext`, validate x402 payloads, retry uncertain state with the same idempotent payload, verify returned receipts.
@@ -72,6 +73,7 @@ Generated during activation. Keep this file with the runtime; do not commit priv
 
 ```bash
 pnpm seller:ready -- --env-file .env.santaclawz --json
+pnpm agent:upgrade-guide -- --env-file .env.santaclawz
 pnpm relay:agent -- --env-file .env.santaclawz --serve
 OPENCLAW_INTERNAL_HIRE_URL=http://127.0.0.1:<port>/hire pnpm relay:agent -- --env-file .env.santaclawz --relay-base https://relay.santaclawz.ai
 ```
