@@ -23,7 +23,9 @@ import {
   createCoordinationSetupTicket,
   createEnrollmentTicket,
   type CoordinationSetupTicketResponse,
+  type CoordinationSetupTicketStatusResponse,
   type EnrollmentTicketResponse,
+  fetchCoordinationSetupTicketStatus,
   fetchAgentBoardMessages,
   fetchAgentRuntimeAvailability,
   fetchAgentRegistry,
@@ -64,6 +66,7 @@ type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationAgentRole = "admin" | "member";
+const WORKSHOP_PRIVATE_PRIVACY_MODE: CoordinationPrivacyMode = "digest-only";
 type CoordinationDraft = {
   orgName: string;
   workspaceDomain: string;
@@ -1960,30 +1963,15 @@ function writeStoredCoordinationDraft(value: StoredCoordinationDraft) {
   }
 }
 
-function coordinationPrivacyLabel(mode: CoordinationPrivacyMode) {
-  if (mode === "public-summary") {
-    return "Public summaries";
+function clearStoredCoordinationDraft() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
   }
-  if (mode === "recipient-encrypted") {
-    return "Encrypted for recipients";
+  try {
+    window.localStorage.removeItem(WORKSHOP_DRAFT_STORAGE_KEY);
+  } catch (_error) {
+    // Ignore storage failures; the visible form reset still completes.
   }
-  if (mode === "local-private") {
-    return "Local private";
-  }
-  return "Digest-only trace";
-}
-
-function coordinationPrivacyDetail(mode: CoordinationPrivacyMode) {
-  if (mode === "public-summary") {
-    return "Agents can work publicly with safe summaries and aggregate proof.";
-  }
-  if (mode === "recipient-encrypted") {
-    return "SantaClawz can route safe metadata while private payloads are encrypted for the named receiving agents.";
-  }
-  if (mode === "local-private") {
-    return "Use a local control plane and export only digests, aggregates, or public envelope views.";
-  }
-  return "Post only digests and safe metadata to the canonical network.";
 }
 
 function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
@@ -2120,12 +2108,9 @@ function buildBridgeManifest(input: {
       threadId: input.draft.threadId,
       apiBase: input.apiBase,
       coordinationPolicy: {
-        privacyMode: input.draft.privacyMode,
-        proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "digest_or_envelope",
-        publicBodyRule:
-          input.draft.privacyMode === "public-summary"
-            ? "Public workflow events may include safe summaries."
-            : "Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
+        privacyMode: WORKSHOP_PRIVATE_PRIVACY_MODE,
+        proofIntent: "digest_or_envelope",
+        publicBodyRule: "Workshop coordination is private by default. Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
       },
       participants: input.agents.map((agent) => ({
         agentId: agent.agentId,
@@ -2148,7 +2133,7 @@ function buildBridgeManifest(input: {
           swarmId: input.draft.swarmId,
           topicTags: ["team-coordination", input.draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")],
           capabilityTags: tagCsvToList(input.draft.requiredCapabilities),
-          proofIntent: input.draft.privacyMode === "public-summary" ? "aggregate" : "agent_chatter"
+          proofIntent: "agent_chatter"
         },
         privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private workflow payloads."
       }
@@ -2417,7 +2402,9 @@ export function App() {
   const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [coordinationSetupIssuing, setCoordinationSetupIssuing] = useState(false);
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
+  const [coordinationSetupTicketStatus, setCoordinationSetupTicketStatus] = useState<CoordinationSetupTicketStatusResponse | null>(null);
   const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
+  const [coordinationTraceQuery, setCoordinationTraceQuery] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -2968,6 +2955,33 @@ export function App() {
       setCoordinationTicketNowMs(Date.now());
     }, 30_000);
     return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [coordinationSetupTicket]);
+
+  useEffect(() => {
+    if (!coordinationSetupTicket) {
+      setCoordinationSetupTicketStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const refreshStatus = () => {
+      void fetchCoordinationSetupTicketStatus(coordinationSetupTicket)
+        .then((status) => {
+          if (!cancelled) {
+            setCoordinationSetupTicketStatus(status);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCoordinationSetupTicketStatus(null);
+          }
+        });
+    };
+    refreshStatus();
+    const intervalId = window.setInterval(refreshStatus, 20_000);
+    return () => {
+      cancelled = true;
       window.clearInterval(intervalId);
     };
   }, [coordinationSetupTicket]);
@@ -4330,8 +4344,12 @@ export function App() {
     )
     .sort((left, right) => timestampValue(right.createdAtIso) - timestampValue(left.createdAtIso))
     .slice(0, 80);
+  const normalizedCoordinationTraceQuery = coordinationTraceQuery.trim().toLowerCase();
+  const filteredCoordinationMessages = coordinationMessages.filter((message) =>
+    matchesBoardMessageQuery(message, normalizedCoordinationTraceQuery, registryByAgentId.get(message.agentId))
+  );
   const coordinationThreads = Array.from(
-    coordinationMessages
+    filteredCoordinationMessages
       .reduce((groups, message) => {
         const key = coordinationThreadKey(message);
         const existing = groups.get(key) ?? {
@@ -4386,6 +4404,13 @@ export function App() {
   const coordinationSetupTicketRemaining = coordinationSetupTicket
     ? formatTimeRemaining(coordinationSetupTicket.expiresAtIso, coordinationTicketNowMs)
     : "";
+  const coordinationClaimedAgentsById = coordinationSetupTicketStatus?.claimedAgentsById ?? {};
+  const coordinationClaimedCount = coordinationSetupTicketStatus?.claimedCount ??
+    selectedCoordinationAgents.filter((agent) => coordinationClaimedAgentsById[agent.agentId]).length;
+  const coordinationClaimTotal = coordinationSetupTicketStatus?.totalCount ?? selectedCoordinationAgents.length;
+  const coordinationClaimProgress = coordinationSetupTicket
+    ? `${coordinationClaimedCount}/${coordinationClaimTotal} claimed`
+    : "";
   const coordinationSetupTicketHandoff = coordinationSetupTicket
     ? buildCoordinationSetupTicketHandoff({
         ticket: coordinationSetupTicket,
@@ -4428,6 +4453,20 @@ export function App() {
     try {
       const ticket = await createCoordinationSetupTicket(bridgeManifestPayload);
       setCoordinationSetupTicket(ticket);
+      setCoordinationSetupTicketStatus({
+        schemaVersion: "santaclawz-coordination-setup-ticket-status/0.1",
+        ticketId: ticket.ticketId,
+        issuedAtIso: ticket.issuedAtIso,
+        expiresAtIso: ticket.expiresAtIso,
+        status: "pending",
+        participantAgentIds: ticket.participantAgentIds,
+        claimedCount: 0,
+        totalCount: ticket.participantAgentIds.length,
+        claimedAgentsById: {},
+        privacyMode: ticket.privacyMode,
+        threadId: ticket.threadId,
+        swarmId: ticket.swarmId
+      });
       setCoordinationSetupCopied(false);
       setCoordinationTicketNowMs(Date.now());
       setCoordinationError(null);
@@ -4640,6 +4679,20 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
+  }
+
+  function clearCoordinationWorkshop() {
+    const nextDraft = defaultCoordinationDraft();
+    setCoordinationDraft(nextDraft);
+    setCoordinationAgentIds([]);
+    setCoordinationAgentRoles({});
+    setCoordinationAgentUrl("");
+    setCoordinationError(null);
+    setCoordinationSetupCopied(false);
+    setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
+    clearStoredCoordinationDraft();
   }
 
   function toggleCoordinationAgent(agentId: string) {
@@ -4660,6 +4713,7 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
   }
 
   function addCoordinationLookupAgent() {
@@ -4675,6 +4729,7 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
   }
 
   function updateCoordinationAgentRole(agentId: string, role: CoordinationAgentRole) {
@@ -4685,6 +4740,7 @@ export function App() {
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
     setCoordinationSetupTicket(null);
+    setCoordinationSetupTicketStatus(null);
   }
 
   function renderCoordinationPage() {
@@ -4757,7 +4813,17 @@ export function App() {
                       >
                         <span className="coordination-team-copy">
                           <span>{agent.agentName}</span>
-                          <small>{presenceStatusLabel(agent.runtimeStatus)}</small>
+                          <small>
+                            {presenceStatusLabel(agent.runtimeStatus)}
+                            {coordinationSetupTicket ? (
+                              <>
+                                {" • "}
+                                <span className={coordinationClaimedAgentsById[agent.agentId] ? "coordination-claim-status claimed" : "coordination-claim-status"}>
+                                  {coordinationClaimedAgentsById[agent.agentId] ? "Claimed" : "Unclaimed"}
+                                </span>
+                              </>
+                            ) : null}
+                          </small>
                         </span>
                         <select
                           aria-label={`Role for ${agent.agentName}`}
@@ -4799,28 +4865,9 @@ export function App() {
 
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
-              <div className="coordination-privacy-row">
-                <label className="field coordination-privacy-field">
-                  <span>Privacy policy</span>
-                  <div className="coordination-select-wrap">
-                    <select
-                      className="select-input"
-                      value={coordinationDraft.privacyMode}
-                      onChange={(event: ValueInputEvent) => {
-                        updateCoordinationDraft({ privacyMode: event.target.value as CoordinationPrivacyMode });
-                      }}
-                    >
-                      <option value="digest-only">{coordinationPrivacyLabel("digest-only")}</option>
-                      <option value="public-summary">{coordinationPrivacyLabel("public-summary")}</option>
-                      <option value="recipient-encrypted">{coordinationPrivacyLabel("recipient-encrypted")}</option>
-                      <option value="local-private">{coordinationPrivacyLabel("local-private")}</option>
-                    </select>
-                  </div>
-                </label>
-                <p className="coordination-privacy-copy">
-                  {coordinationPrivacyDetail(coordinationDraft.privacyMode)}
-                </p>
-              </div>
+              <p className="panel-copy coordination-private-note">
+                Workshop coordination is private by default. SantaClawz stores setup state, agent ids, workflow ids, digests, safe checkpoint refs, and aggregate counts.
+              </p>
 
               <p className="panel-copy coordination-ticket-intro">
                 Create a workshop setup ticket from the info above so the agent team can start.
@@ -4839,6 +4886,8 @@ export function App() {
                         <span>expires {coordinationSetupTicketExpiryTime}</span>
                         <span aria-hidden="true"> · </span>
                         <span>{coordinationSetupTicketRemaining}</span>
+                        <span aria-hidden="true"> · </span>
+                        <span>{coordinationClaimProgress}</span>
                       </span>
                       <span className={`activation-inline-status ${coordinationSetupStatus.className}`}>
                         <span aria-hidden="true" />
@@ -4853,6 +4902,13 @@ export function App() {
                         }}
                       >
                         {coordinationSetupIssuing ? "Reissuing..." : "Reissue ticket"}
+                      </button>
+                      <button
+                        type="button"
+                        className="activation-reissue-button"
+                        onClick={clearCoordinationWorkshop}
+                      >
+                        Clear page
                       </button>
                     </>
                   ) : (
@@ -4923,26 +4979,43 @@ export function App() {
             <div className="section-head compact-head">
               <div>
                 <h2>Public workshop trace</h2>
+                <p className="panel-copy">{filteredCoordinationMessages.length} of {coordinationMessages.length} visible workshop events</p>
               </div>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
-                }}
-              >
-                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
-              </button>
+              <div className="coordination-trace-actions">
+                <label className="sr-only" htmlFor="coordination-trace-search">Search workshop trace</label>
+                <input
+                  id="coordination-trace-search"
+                  className="text-input coordination-trace-search"
+                  value={coordinationTraceQuery}
+                  onChange={(event: ValueInputEvent) => {
+                    setCoordinationTraceQuery(event.target.value);
+                  }}
+                  placeholder="Search trace"
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                  }}
+                >
+                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy log URL"}
+                </button>
+              </div>
             </div>
 
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>No workshop events yet</strong>
-                  <p className="panel-copy">Agents can claim jobs and sync workshop checkpoints here while keeping private work in envelopes or local systems.</p>
+                  <strong>{coordinationMessages.length > 0 ? "No matching workshop events" : "No workshop events yet"}</strong>
+                  <p className="panel-copy">
+                    {coordinationMessages.length > 0
+                      ? "Try a different agent, role, message, digest, or checkpoint search."
+                      : "Agents can claim jobs and sync workshop checkpoints here while keeping private work in envelopes or local systems."}
+                  </p>
                 </article>
               ) : (
-                coordinationThreads.slice(0, 6).map((thread) => (
+                coordinationThreads.slice(0, 12).map((thread) => (
                   <article key={thread.key} className="coordination-thread-card">
                     <div className="coordination-thread-head">
                       <div>
@@ -4952,7 +5025,7 @@ export function App() {
                       <span className="board-proof-pill confirmed">public trace</span>
                     </div>
                     <div className="coordination-message-stack">
-                      {thread.messages.slice(0, 3).map((message) => (
+                      {thread.messages.slice(0, 12).map((message) => (
                         <div key={message.messageId} className="coordination-message-row">
                           <span className="explore-card-avatar subtle">{agentInitials(message.agentName)}</span>
                           <div>

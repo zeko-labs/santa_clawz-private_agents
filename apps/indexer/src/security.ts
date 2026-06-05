@@ -149,6 +149,10 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && /^\/api\/workshop\/setup-tickets\/[^/]+\/status$/.test(pathname)) {
+    return true;
+  }
+
   if (method === "POST" && /^\/api\/artifact-receipts\/[^/]+\/acknowledge$/.test(pathname)) {
     return true;
   }
@@ -270,6 +274,13 @@ function isAgentAdminScopedPath(pathname: string, method: string): boolean {
   );
 }
 
+function isWorkshopTokenScopedPath(request: SecurityRequest, pathname: string, method: string): boolean {
+  return method === "POST" &&
+    /^\/api\/agents\/[^/]+\/messages$/.test(pathname) &&
+    typeof request.header("x-santaclawz-workshop-token") === "string" &&
+    request.header("x-santaclawz-workshop-token")!.trim().length > 0;
+}
+
 function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): boolean {
   const method = String(request.method ?? "GET").toUpperCase();
   const pathname = String(request.path ?? request.url ?? "/").split("?")[0] ?? "/";
@@ -281,6 +292,7 @@ function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): b
     isPublicReadPath(pathname, method, config) ||
     isActivationLanePath(pathname, method) ||
     isAgentAdminScopedPath(pathname, method) ||
+    isWorkshopTokenScopedPath(request, pathname, method) ||
     isPublicOnboardingPath(pathname, method, config)
   ) {
     return false;
@@ -338,7 +350,7 @@ export function applyBaseSecurityHeaders(
 
   response.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, authorization, x-api-key, x-clawz-admin-key, x-santaclawz-activation-lane-key, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
+    "content-type, authorization, x-api-key, x-clawz-admin-key, x-santaclawz-activation-lane-key, x-santaclawz-workshop-token, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
   );
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }

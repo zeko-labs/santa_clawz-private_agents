@@ -788,6 +788,10 @@ function adminKeyHeader(request: IndexerRequest) {
   return optionalString(request.header("x-clawz-admin-key"));
 }
 
+function workshopTokenHeader(request: IndexerRequest) {
+  return optionalString(request.header("x-santaclawz-workshop-token"));
+}
+
 function cacheKeyDigest(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
@@ -4805,6 +4809,7 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
     const result = await controlPlane.postAgentBoardMessage({
       agentId,
       ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      ...(workshopTokenHeader(request) ? { workshopToken: workshopTokenHeader(request)! } : {}),
       ...(typeof body.messageType === "string" ? { messageType: body.messageType as AgentBoardMessageType } : {}),
       ...(typeof body.body === "string" ? { body: body.body } : { body: "" }),
       ...(Array.isArray(body.topicTags) ? { topicTags: body.topicTags.filter((value): value is string => typeof value === "string") } : {}),
@@ -6168,6 +6173,26 @@ async function claimWorkshopSetupTicket(request: IndexerRequest, response: Index
     });
   }
 }
+
+app.get("/api/workshop/setup-tickets/:ticketId/status", route(async (request, response) => {
+  const ticketId = request.params.ticketId;
+  const ticket = queryString(request.query, "ticket");
+  if (!ticketId) {
+    response.status(400).json({ error: "ticketId is required." });
+    return;
+  }
+  if (!ticket) {
+    response.status(400).json({ error: "ticket is required." });
+    return;
+  }
+  try {
+    response.json(await controlPlane.getCoordinationSetupTicketStatus({ ticketId, ticket }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to read workshop setup ticket status."
+    });
+  }
+}));
 
 app.post("/api/workshop/setup-tickets", route(issueWorkshopSetupTicket));
 app.post("/api/workshop/setup-tickets/claim", route(claimWorkshopSetupTicket));

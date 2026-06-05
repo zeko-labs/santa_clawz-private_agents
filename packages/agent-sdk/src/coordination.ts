@@ -55,6 +55,7 @@ export interface ClawzCoordinationAgentSetup {
   privacyMode: ClawzCoordinationPrivacyMode;
   publicTraceUrl: string;
   adminKey?: string;
+  workshopAccessToken?: string;
 }
 
 export interface ClawzCoordinationAgentSetupInput {
@@ -162,6 +163,9 @@ export function parseCoordinationAgentSetup(input: string | ClawzCoordinationAge
   }
   return {
     ...expected,
+    ...(typeof setup.workshopAccessToken === "string" && setup.workshopAccessToken.trim()
+      ? { workshopAccessToken: setup.workshopAccessToken.trim() }
+      : {}),
     publicTraceUrl: setup.publicTraceUrl || expected.publicTraceUrl
   };
 }

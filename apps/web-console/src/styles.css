@@ -2383,8 +2383,9 @@ pre,
 }
 
 .coordination-privacy-copy {
-  display: flex;
-  align-items: center;
+  display: grid;
+  align-content: center;
+  gap: 4px;
   min-height: 52px;
   margin: 0;
   color: rgba(74, 91, 112, 0.86);
@@ -2392,8 +2393,28 @@ pre,
   line-height: 1.45;
 }
 
+.coordination-privacy-copy p,
+.coordination-privacy-copy small {
+  margin: 0;
+}
+
+.coordination-privacy-copy small {
+  color: rgba(74, 91, 112, 0.72);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .coordination-ticket-intro {
   margin: 2px 0 -2px;
+}
+
+.coordination-private-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(18, 35, 54, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(74, 91, 112, 0.84);
 }
 
 .text-area.coordination-goal-area {
@@ -2515,6 +2536,15 @@ pre,
   font-size: 0.86rem;
 }
 
+.coordination-claim-status {
+  color: #9a6a12;
+  font-weight: 800;
+}
+
+.coordination-claim-status.claimed {
+  color: #237b4b;
+}
+
 .coordination-team-chip select {
   min-height: 42px;
   border: 1px solid rgba(18, 35, 54, 0.12);
@@ -2550,12 +2580,34 @@ pre,
   gap: 18px;
 }
 
+.coordination-trace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: min(100%, 480px);
+}
+
+.coordination-trace-search {
+  width: min(260px, 100%);
+  min-height: 48px;
+  border-radius: 24px;
+}
+
 .coordination-agent-list,
 .coordination-thread-list,
 .coordination-message-stack,
 .coordination-route-form {
   display: grid;
   gap: 12px;
+}
+
+.coordination-thread-list {
+  max-height: 540px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .coordination-agent-card {
@@ -2670,6 +2722,8 @@ pre,
 .coordination-empty-card {
   display: grid;
   gap: 10px;
+  min-height: 148px;
+  align-content: center;
   padding: 22px 24px;
   border-radius: 16px;
 }
@@ -7426,6 +7480,12 @@ button:disabled {
   .coordination-manifest-panel .compact-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .coordination-trace-actions,
+  .coordination-trace-actions .secondary-button,
+  .coordination-trace-search {
+    width: 100%;
   }
 
   .coordination-manifest-actions {

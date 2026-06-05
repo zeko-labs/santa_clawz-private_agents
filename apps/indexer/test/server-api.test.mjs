@@ -1121,6 +1121,21 @@ async function testProtectedApiAuth() {
       assert.equal(publicAgentReady.payload.schemaVersion, "santaclawz-agent-readiness/1.0");
     }
 
+    const workshopAgent = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      headers: {
+        "x-api-key": "test_operator_key"
+      },
+      body: JSON.stringify({
+        agentName: "Workshop Token Smoke Agent",
+        headline: "Temporary workshop token smoke registration.",
+        openClawUrl: "http://127.0.0.1:49993/agent"
+      })
+    });
+    assert.equal(workshopAgent.status, 200);
+    const workshopAgentId = workshopAgent.payload.agentId;
+    assert.ok(workshopAgentId);
+
     const publicProcurement = await requestJson(`${baseUrl}/api/procurement/intents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1146,7 +1161,7 @@ async function testProtectedApiAuth() {
           },
           participants: [
             {
-              agentId: "agent_public_workshop_auth_smoke",
+              agentId: workshopAgentId,
               role: "admin"
             }
           ]
@@ -1156,6 +1171,68 @@ async function testProtectedApiAuth() {
     assert.equal(publicWorkshopTicket.status, 200);
     assert.match(publicWorkshopTicket.payload.ticket, /^scz_coord_/);
     assert.equal(publicWorkshopTicket.payload.threadId, "eventlog_public_workshop_auth_smoke");
+
+    const publicWorkshopTicketStatus = await requestJson(
+      `${baseUrl}/api/workshop/setup-tickets/${encodeURIComponent(publicWorkshopTicket.payload.ticketId)}/status?${new URLSearchParams({ ticket: publicWorkshopTicket.payload.ticket }).toString()}`,
+      { method: "GET" }
+    );
+    assert.equal(publicWorkshopTicketStatus.status, 200);
+    assert.equal(publicWorkshopTicketStatus.payload.claimedCount, 0);
+    assert.equal(publicWorkshopTicketStatus.payload.totalCount, 1);
+
+    const publicWorkshopTicketClaim = await requestJson(`${baseUrl}/api/workshop/setup-tickets/claim`, {
+      method: "POST",
+      body: JSON.stringify({
+        ticket: publicWorkshopTicket.payload.ticket,
+        agentId: workshopAgentId
+      })
+    });
+    assert.equal(publicWorkshopTicketClaim.status, 200);
+    assert.equal(publicWorkshopTicketClaim.payload.agentId, workshopAgentId);
+    assert.match(publicWorkshopTicketClaim.payload.workshopAccessToken, /^scz_workshop_/);
+
+    const publicWorkshopMessage = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(workshopAgentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-santaclawz-workshop-token": publicWorkshopTicketClaim.payload.workshopAccessToken
+      },
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "Workshop auth smoke: participant can publish a scoped coordination ping.",
+        threadId: "eventlog_public_workshop_auth_smoke",
+        swarmId: "workflow_public_workshop_auth_smoke",
+        topicTags: ["team-coordination"],
+        proofIntent: "agent_chatter"
+      })
+    });
+    assert.equal(publicWorkshopMessage.status, 200);
+    assert.equal(publicWorkshopMessage.payload.postedMessage.agentId, workshopAgentId);
+    assert.equal(publicWorkshopMessage.payload.postedMessage.threadId, "eventlog_public_workshop_auth_smoke");
+
+    const publicWorkshopWrongThread = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(workshopAgentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-santaclawz-workshop-token": publicWorkshopTicketClaim.payload.workshopAccessToken
+      },
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "This scoped workshop token should not post outside its thread.",
+        threadId: "eventlog_wrong_thread",
+        swarmId: "workflow_public_workshop_auth_smoke",
+        topicTags: ["team-coordination"],
+        proofIntent: "agent_chatter"
+      })
+    });
+    assert.equal(publicWorkshopWrongThread.status, 400);
+    assert.match(publicWorkshopWrongThread.payload.error, /workshop thread/i);
+
+    const publicWorkshopTicketClaimedStatus = await requestJson(
+      `${baseUrl}/api/workshop/setup-tickets/${encodeURIComponent(publicWorkshopTicket.payload.ticketId)}/status?${new URLSearchParams({ ticket: publicWorkshopTicket.payload.ticket }).toString()}`,
+      { method: "GET" }
+    );
+    assert.equal(publicWorkshopTicketClaimedStatus.status, 200);
+    assert.equal(publicWorkshopTicketClaimedStatus.payload.claimedCount, 1);
+    assert.ok(publicWorkshopTicketClaimedStatus.payload.claimedAgentsById[workshopAgentId]);
 
     const tokenStateAccess = await requestJson(`${baseUrl}/api/executions/hire_missing/state?token=fake`, {
       method: "GET"

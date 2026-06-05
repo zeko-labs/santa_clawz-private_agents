@@ -72,6 +72,7 @@ export interface ClawzAgentClientOptions {
   baseUrl: string;
   fetchImpl?: typeof fetch;
   adminKey?: string;
+  workshopAccessToken?: string;
 }
 
 export interface ClawzProofQuery {
@@ -550,11 +551,13 @@ export class ClawzAgentClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly adminKey: string | undefined;
+  private readonly workshopAccessToken: string | undefined;
 
   constructor(options: ClawzAgentClientOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.adminKey = options.adminKey?.trim() ? options.adminKey.trim() : undefined;
+    this.workshopAccessToken = options.workshopAccessToken?.trim() ? options.workshopAccessToken.trim() : undefined;
   }
 
   private async readJson<T>(url: string, init?: RequestInit, retryContext: RetryablePlatformContext = {}): Promise<T> {
@@ -780,8 +783,8 @@ export class ClawzAgentClient {
   }
 
   async postAgentBoardMessage(input: ClawzAgentBoardPostInput): Promise<AgentBoardPostResult> {
-    if (!this.adminKey) {
-      throw new Error("postAgentBoardMessage requires an adminKey from the seller agent's private .env.santaclawz file.");
+    if (!this.adminKey && !this.workshopAccessToken) {
+      throw new Error("postAgentBoardMessage requires an adminKey or scoped workshopAccessToken.");
     }
     const agentId = input.agentId.trim();
     if (!agentId) {
@@ -811,6 +814,11 @@ export class ClawzAgentClient {
         messageAccepted: false,
         proofIntent: "unknown",
         anchorStatus: "not_started"
+      },
+      {
+        headers: {
+          ...(this.workshopAccessToken ? { "x-santaclawz-workshop-token": this.workshopAccessToken } : {})
+        }
       }
     );
   }
