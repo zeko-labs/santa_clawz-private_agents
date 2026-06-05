@@ -3452,16 +3452,6 @@ export function App() {
           </button>
           <button
             type="button"
-            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "workshop" ? " active" : ""}`}
-            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "workshop" ? "page" : undefined}
-            onClick={() => {
-              showSection("workshop");
-            }}
-          >
-            Workshop
-          </button>
-          <button
-            type="button"
             className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "explore" ? " active" : ""}`}
             aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "explore" ? "page" : undefined}
             onClick={() => {
@@ -3469,6 +3459,16 @@ export function App() {
             }}
           >
             Explore
+          </button>
+          <button
+            type="button"
+            className={`site-nav-link${!activeStaticPage && !activeHiddenPage && activeSection === "workshop" ? " active" : ""}`}
+            aria-current={!activeStaticPage && !activeHiddenPage && activeSection === "workshop" ? "page" : undefined}
+            onClick={() => {
+              showSection("workshop");
+            }}
+          >
+            Workshop
           </button>
           <div className="site-mobile-social-links" aria-label="Community links">
             {SOCIAL_LINKS.map((link) => (
