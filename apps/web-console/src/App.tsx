@@ -4908,7 +4908,7 @@ export function App() {
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
               <p className="panel-copy coordination-ticket-intro">
-                Create a workshop setup ticket from the info above so the agent team can start. Team coordination is private by default.
+                Create a workshop ticket from the info above to setup the team. Team coordination is private by default.
               </p>
 
               <div className="activation-ticket-method-row coordination-ticket-method-row">
@@ -4961,7 +4961,7 @@ export function App() {
                         }}
                       >
                         <span className="copy-icon" aria-hidden="true" />
-                        {coordinationSetupIssuing ? "Creating ticket" : "Create workshop ticket"}
+                        {coordinationSetupIssuing ? "Creating ticket" : "Workshop ticket"}
                       </button>
                       <span className="subtle-pill activation-pending-pill">Pending</span>
                     </>
