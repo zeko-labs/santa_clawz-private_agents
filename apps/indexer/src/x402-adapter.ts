@@ -27,6 +27,7 @@ const DEFAULT_ETHEREUM_SETTLEMENT_GAS_UNITS = 110_000n;
 const BASE_ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70";
 const ETHEREUM_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 const ETH_USD_FEED_LATEST_ROUND_DATA = "0xfeaf968c";
+const NETWORK_FEE_ESTIMATE_TIMEOUT_MS = 1_800;
 
 const BASE_MAINNET = {
   networkId: "eip155:8453",
@@ -626,6 +627,24 @@ async function firstRpcResult<T>(urls: string[], request: (url: string) => Promi
   return null;
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(fallback);
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function gasUnitsForRail(rail: AgentPaymentRail): bigint {
   const configured =
     rail === "ethereum-usdc"
@@ -740,8 +759,17 @@ async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<N
   const configuredFloorAtomic = parseUsdAtomic(minNetworkFacilitationFeeUsd());
   const rpcUrls = rpcUrlsForRail(rail);
   const gasUnits = gasUnitsForRail(rail);
-  const gasPriceWei = await firstRpcResult(rpcUrls, async (url) => parseRpcHex(await jsonRpc(url, "eth_gasPrice")));
-  const ethUsd = gasPriceWei !== null ? await readEthUsdAtomicFromChainlink(rpcUrls, rail) : null;
+  const rpcEstimate = await withTimeout(
+    (async () => {
+      const gasPriceWei = await firstRpcResult(rpcUrls, async (url) => parseRpcHex(await jsonRpc(url, "eth_gasPrice")));
+      const ethUsd = gasPriceWei !== null ? await readEthUsdAtomicFromChainlink(rpcUrls, rail) : null;
+      return { gasPriceWei, ethUsd };
+    })().catch(() => null),
+    NETWORK_FEE_ESTIMATE_TIMEOUT_MS,
+    null
+  );
+  const gasPriceWei = rpcEstimate?.gasPriceWei ?? null;
+  const ethUsd = rpcEstimate?.ethUsd ?? null;
   const nativeAmountWei = gasPriceWei !== null ? gasPriceWei * gasUnits : null;
   const gasUsdAtomic =
     nativeAmountWei !== null && ethUsd !== null
