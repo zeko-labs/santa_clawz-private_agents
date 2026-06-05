@@ -2098,40 +2098,6 @@ pre,
   filter: blur(18px);
 }
 
-.coordinate-masthead {
-  padding: 18px 20px;
-  border-radius: 18px;
-}
-
-.coordinate-masthead .masthead-content {
-  gap: 0;
-  min-height: auto;
-}
-
-.coordinate-masthead .masthead-copy {
-  max-width: 100%;
-}
-
-.coordinate-masthead .masthead-copy > h1 {
-  font-size: clamp(1.55rem, 3vw, 2.15rem);
-}
-
-.coordinate-masthead .masthead-copyline {
-  max-width: 100%;
-  font-size: 0.95rem;
-  text-wrap: normal;
-}
-
-.coordinate-masthead .masthead-copyline .desktop-copy {
-  display: inline-block;
-  max-width: 100%;
-  white-space: nowrap;
-}
-
-.coordinate-masthead .masthead-footer {
-  margin-top: 12px;
-}
-
 .masthead-label-row,
 .step-head,
 .step-title,

@@ -4042,7 +4042,7 @@ export function App() {
       <main className="app-shell onboarding-shell">
         {renderHeader()}
 
-        <section className={isWorkshopView ? "masthead coordinate-masthead" : "masthead"}>
+        <section className="masthead">
           <div className="masthead-inner">
             <div className="masthead-content">
               <div className="masthead-copy">
@@ -5161,7 +5161,7 @@ export function App() {
     <main id="top" className="app-shell onboarding-shell">
       {renderHeader()}
 
-      <section className={isWorkshopView ? "masthead coordinate-masthead" : "masthead"}>
+      <section className="masthead">
         <div className="masthead-inner">
           <div className="masthead-content">
               <div className="masthead-copy">
