@@ -239,7 +239,6 @@ const PUBLIC_FEED_PROOF_KINDS = new Set<SocialAnchorCandidateKind>([
   "hire-request-submitted",
   "quote-returned",
   "quote-accepted",
-  "activation-task-completed",
   "paid-execution-completed",
   "free-test-completed",
   "hire-request-failed",
@@ -1098,7 +1097,18 @@ function isCompletedPaymentEntry(entry: PaymentLedgerEntry) {
     (entry.paymentStatus === "settled" && entry.returnStatus === "accepted");
 }
 
+function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
+  const resource = entry.resource ?? "";
+  return resource.includes("/api/activation-lane/") ||
+    resource.includes("activationLane=true") ||
+    resource.includes("activationProbe=true") ||
+    entry.amountUsd === "0.002001";
+}
+
 function isVisiblePaymentEntry(entry: PaymentLedgerEntry) {
+  if (isActivationProbePaymentEntry(entry)) {
+    return false;
+  }
   return Boolean(entry.lifecycleStatus?.paidButNotCompleted || entry.lifecycleStatus?.needsAttention) ||
     isCompletedPaymentEntry(entry) ||
     entry.paymentStatus === "authorization_verified" ||
