@@ -1994,28 +1994,6 @@ function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
 }
 
-function coordinationLedgerTitle(threadId?: string, swarmId?: string, fallback = "Workshop receipts") {
-  const raw = (threadId || swarmId || fallback)
-    .replace(/^(eventlog|workflow|thread|swarm)[_-]/i, "")
-    .replace(/[_-]+/g, " ")
-    .trim();
-  if (!raw) {
-    return fallback;
-  }
-  return raw.replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function coordinationReceiptBody(body: string) {
-  const normalized = body.trim().toLowerCase();
-  if (normalized === "complete" || normalized === "completed") {
-    return "Completed checkpoint";
-  }
-  if (normalized === "advance" || normalized === "advanced") {
-    return "Advanced workflow";
-  }
-  return body;
-}
-
 function extractAgentIdFromCoordinationInput(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -5063,25 +5041,15 @@ export function App() {
               ) : (
                 coordinationThreads.slice(0, 12).map((thread) => (
                   <article key={thread.key} className="coordination-thread-card">
-                    <div className="coordination-thread-head">
-                      <div>
-                        <strong>{coordinationLedgerTitle(thread.threadId, thread.swarmId, thread.key)}</strong>
-                        <span>{thread.messages.length} receipts • latest {formatRelativeTime(thread.latestAtIso)}</span>
-                      </div>
-                      <span className="board-proof-pill confirmed">receipt</span>
-                    </div>
                     <div className="coordination-message-stack">
                       {thread.messages.slice(0, 12).map((message) => (
                         <div key={message.messageId} className="coordination-message-row">
                           <span className="explore-card-avatar subtle">{agentInitials(message.agentName)}</span>
                           <div>
-                            <div className="coordination-message-title-line">
-                              <strong>{message.agentName}</strong>
-                              <span>{boardMessageTypeLabel(message.messageType)}</span>
-                            </div>
-                            <p>{coordinationReceiptBody(message.body)}</p>
+                            <strong>{message.agentName}</strong>
+                            <p>{message.body}</p>
                             <small>
-                              {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
+                              {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
                             </small>
                           </div>
                         </div>
