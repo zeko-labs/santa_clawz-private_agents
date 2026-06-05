@@ -142,6 +142,8 @@ const COORDINATION_SETUP_TICKET_SCHEMA_VERSION = "santaclawz-coordination-setup-
 const COORDINATION_AGENT_SETUP_SCHEMA_VERSION = "santaclawz-coordination-agent-setup/0.1";
 const JOB_COMPLETION_SCORE_WINDOW_SIZE = 100;
 const JOB_COMPLETION_STALE_MS = 30 * 60 * 1000;
+const ACTIVATION_LANE_UNRESOLVED_PAYMENT_GUARD_MS =
+  parseBoundedIntegerEnv("CLAWZ_ACTIVATION_LANE_UNRESOLVED_PAYMENT_GUARD_SECONDS", 6 * 60 * 60, 60, 24 * 60 * 60) * 1000;
 const HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT = parseBoundedIntegerEnv(
   "CLAWZ_HIRE_REQUEST_GLOBAL_RECENT_RETAIN_LIMIT",
   10_000,
@@ -2868,6 +2870,65 @@ function buildActivationProbeStats(
   };
 }
 
+function isSameUsdAmount(left: string | undefined, right: string | undefined) {
+  const leftNumber = Number.parseFloat(left ?? "");
+  const rightNumber = Number.parseFloat(right ?? "");
+  return Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && Math.abs(leftNumber - rightNumber) < 0.000000001;
+}
+
+function isActivationLanePaymentResource(resource: string | undefined) {
+  return Boolean(resource?.includes("/api/activation-lane/") || resource?.includes("activationLane=true"));
+}
+
+function isTerminalPaymentLedgerEntry(entry: PaymentLedgerEntry) {
+  return (
+    entry.executionStatus === "completed" ||
+    entry.executionStatus === "failed" ||
+    entry.returnStatus === "accepted" ||
+    entry.returnStatus === "rejected" ||
+    entry.paymentStatus === "execution_completed" ||
+    entry.paymentStatus === "execution_failed" ||
+    entry.paymentStatus === "return_rejected" ||
+    entry.paymentStatus === "settlement_failed"
+  );
+}
+
+function hasRecentUnresolvedActivationLanePayment(input: {
+  paymentLedger: PaymentLedgerFile;
+  hireRequests: HireRequestFile;
+  agentId: string;
+  sessionId: string;
+  amountUsd: string;
+  nowMs: number;
+}) {
+  const activationHireRequestIds = new Set(
+    input.hireRequests.requests
+      .filter((request) => request.sessionId === input.sessionId && isActivationLaneHireRequest(request))
+      .map((request) => request.requestId)
+  );
+  return input.paymentLedger.entries.some((entry) => {
+    if (entry.agentId !== input.agentId && entry.sessionId !== input.sessionId) {
+      return false;
+    }
+    if (isTerminalPaymentLedgerEntry(entry)) {
+      return false;
+    }
+    const updatedAtMs = Date.parse(entry.updatedAtIso);
+    const createdAtMs = Date.parse(entry.createdAtIso);
+    const lastSeenMs = Math.max(
+      Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
+      Number.isFinite(createdAtMs) ? createdAtMs : 0
+    );
+    if (!lastSeenMs || input.nowMs - lastSeenMs > ACTIVATION_LANE_UNRESOLVED_PAYMENT_GUARD_MS) {
+      return false;
+    }
+    const associatedHireRequest = Boolean(entry.hireRequestId && activationHireRequestIds.has(entry.hireRequestId));
+    const activationResource = isActivationLanePaymentResource(entry.resource);
+    const activationAmount = isSameUsdAmount(entry.amountUsd, input.amountUsd);
+    return associatedHireRequest || activationResource || activationAmount;
+  });
+}
+
 function activationLaneStatusLabel(status?: AgentActivationLaneAttemptStatus, classification?: AgentActivationProbeClassification) {
   switch (status) {
     case "candidate_seen":
@@ -4659,11 +4720,12 @@ export class ClawzControlPlane {
     candidates: ActivationLaneCandidateView[];
     diagnostics?: ActivationLaneCandidateDiagnostics;
   }> {
-    const [state, heartbeatFile, hireRequestFile, attemptFile] = await Promise.all([
+    const [state, heartbeatFile, hireRequestFile, attemptFile, paymentLedgerFile] = await Promise.all([
       this.loadState(),
       this.loadRuntimeHeartbeatFile(),
       this.loadHireRequestFile(),
-      this.loadActivationLaneAttemptFile()
+      this.loadActivationLaneAttemptFile(),
+      this.loadPaymentLedgerFile()
     ]);
     const force = options.force === true;
     const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
@@ -4698,6 +4760,19 @@ export class ClawzControlPlane {
           : undefined;
         const activationProbes = buildActivationProbeStats(hireRequestFile, heartbeat.sessionId);
         const activationLaneStatus = buildActivationLaneStatus(attemptFile, heartbeat.sessionId, activationProbes);
+        const relayProfile = isRelayDeliveryProfile(profile);
+        const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+        const runtimeReachable = relayProfile ? relayConnected : heartbeatLive;
+        const unresolvedActivationLanePayment =
+          !force &&
+          hasRecentUnresolvedActivationLanePayment({
+            paymentLedger: paymentLedgerFile,
+            hireRequests: hireRequestFile,
+            agentId,
+            sessionId: heartbeat.sessionId,
+            amountUsd: options.amountUsd,
+            nowMs
+          });
         const lastAttemptMs = activationLaneStatus.lastAttemptAtIso ? Date.parse(activationLaneStatus.lastAttemptAtIso) : NaN;
         const cooldownActive =
           !force &&
@@ -4708,6 +4783,8 @@ export class ClawzControlPlane {
           ...(!this.activationLanePaymentReady(profile) ? ["payment-not-ready"] : []),
           ...(!force && paidExecutionProven ? ["paid-execution-already-proven"] : []),
           ...(!heartbeatLive ? ["heartbeat-not-live"] : []),
+          ...(relayProfile && !relayConnected ? ["relay-disconnected"] : []),
+          ...(unresolvedActivationLanePayment ? ["activation-lane-payment-pending"] : []),
           ...(cooldownActive ? ["activation-lane-cooldown"] : [])
         ];
         const candidate: ActivationLaneCandidateView = {
@@ -4726,7 +4803,7 @@ export class ClawzControlPlane {
             ...(paidExecutionProvenBy ? { paidExecutionProvenBy } : {}),
             ...(lastProvenBuild ? { lastProvenBuild } : {}),
             heartbeatLive,
-            runtimeReachable: heartbeatLive,
+            runtimeReachable,
             blockers: exclusionReasons
           },
           ...(activationLaneStatus ? { activationLaneStatus } : {}),
