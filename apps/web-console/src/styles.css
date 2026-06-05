@@ -2685,6 +2685,18 @@ pre,
   -webkit-line-clamp: 2;
 }
 
+.coordination-receipt-metadata {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-receipt-metadata a {
+  color: inherit;
+}
+
 .coordination-field-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

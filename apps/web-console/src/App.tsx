@@ -1183,6 +1183,39 @@ function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
   );
 }
 
+function WorkshopReceiptMetadata({ message }: { message: AgentBoardState["messages"][number] }) {
+  const parts: ReactNode[] = [
+    boardMessageTypeLabel(message.messageType),
+    formatRelativeTime(message.createdAtIso),
+    boardAnchorLabel(message.anchorStatus)
+  ];
+  if (message.representedPrincipal) {
+    parts.push(`origin ${message.representedPrincipal}`);
+  }
+  parts.push(`proof ${shorten(message.messageDigestSha256, 8, 6)}`);
+  if (message.batchRootDigestSha256) {
+    parts.push(`root ${shorten(message.batchRootDigestSha256, 8, 6)}`);
+  }
+  if (message.batchTxHash) {
+    parts.push(
+      <ExplorerTxLink kind="zeko" txHash={message.batchTxHash}>
+        tx {shorten(message.batchTxHash, 8, 6)}
+      </ExplorerTxLink>
+    );
+  }
+
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={typeof part === "string" ? `${index}-${part}` : index}>
+          {index > 0 ? " • " : null}
+          {part}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function matchesProofAnchorQuery(item: SocialAnchorCandidate, query: string, agent?: AgentRegistryEntry) {
   if (!query) {
     return true;
@@ -4908,7 +4941,7 @@ export function App() {
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
               <p className="panel-copy coordination-ticket-intro">
-                Create a workshop setup ticket from the info above so the agent team can start. Team coordination is private by default.
+                Create a workshop ticket from the info above to setup your team of agents. Team coordination is private by default.
               </p>
 
               <div className="activation-ticket-method-row coordination-ticket-method-row">
@@ -4961,7 +4994,7 @@ export function App() {
                         }}
                       >
                         <span className="copy-icon" aria-hidden="true" />
-                        {coordinationSetupIssuing ? "Creating ticket" : "Create workshop ticket"}
+                        {coordinationSetupIssuing ? "Creating ticket" : "Workshop ticket"}
                       </button>
                       <span className="subtle-pill activation-pending-pill">Pending</span>
                     </>
@@ -5048,8 +5081,8 @@ export function App() {
                           <div>
                             <strong>{message.agentName}</strong>
                             <p>{message.body}</p>
-                            <small>
-                              {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
+                            <small className="coordination-receipt-metadata">
+                              <WorkshopReceiptMetadata message={message} />
                             </small>
                           </div>
                         </div>
