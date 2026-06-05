@@ -3420,7 +3420,7 @@ export function App() {
 
   function zekoHealthWarningCopy() {
     if (zekoHealthError) {
-      return "Zeko testnet status check failed. Public proof updates may be delayed.";
+      return "Zeko proof status is unavailable. Public proof updates may be delayed; jobs and payments can still complete.";
     }
 
     const anchor = zekoHealth?.socialAnchor;
@@ -3438,7 +3438,11 @@ export function App() {
     const waitingCopy = waitingCount > 0
       ? `${waitingCount} public proof milestone${waitingCount === 1 ? "" : "s"} waiting to anchor. `
       : "";
-    return `Zeko testnet proofs are delayed. ${waitingCopy}Jobs and Base payments can still complete.`;
+    const sinceCopy = anchor.lastErrorAtIso ? ` since ${formatRelativeTime(anchor.lastErrorAtIso)}` : "";
+    const detailCopy = firstAlert || anchor.lastError
+      ? ` ${String(firstAlert || anchor.lastError).slice(0, 180)}`
+      : "";
+    return `Zeko proof anchoring is delayed${sinceCopy}. ${waitingCopy}Jobs and EVM payments can still complete; proof milestones will reconcile when anchoring recovers.${detailCopy}`;
   }
 
   function renderErrorBanner(message: string) {
