@@ -281,9 +281,14 @@ def normalize_for_local_agent(payload: dict[str, Any], raw_body: str) -> dict[st
 
 def validate_return_payload(run_dir: pathlib.Path, payload: dict[str, Any]) -> dict[str, Any]:
     verified = as_dict(payload.get("verified_output"))
-    deliverables = as_dict(verified.get("deliverables"))
-    manifest_path = pathlib.Path(str(verified.get("verification_manifest", "")))
-    zeko_path = pathlib.Path(str(verified.get("zeko_attestation_payload", "")))
+    raw_deliverables = verified.get("deliverables")
+    deliverables = protocol_deliverables_from_map(as_dict(raw_deliverables)) if isinstance(raw_deliverables, dict) else [
+        entry for entry in raw_deliverables if isinstance(entry, dict)
+    ] if isinstance(raw_deliverables, list) else []
+    raw_manifest = verified.get("verification_manifest")
+    manifest_path = pathlib.Path(str(raw_manifest)) if isinstance(raw_manifest, str) else pathlib.Path("")
+    raw_zeko = verified.get("zeko_attestation_payload") or payload.get("zeko_attestation_payload")
+    zeko_path = pathlib.Path(str(raw_zeko)) if isinstance(raw_zeko, str) else pathlib.Path("")
     receipt_path = pathlib.Path(str(payload.get("receipt_path", "")))
     package_hash = verified.get("package_hash")
 
@@ -294,25 +299,34 @@ def validate_return_payload(run_dir: pathlib.Path, payload: dict[str, Any]) -> d
 
     add("status_completed", payload.get("status") == "completed", str(payload.get("status")))
     add("deliverables_present", len(deliverables) > 0, f"{len(deliverables)} deliverables")
-    add("verification_manifest_present", manifest_path.exists(), str(manifest_path))
-    add("zeko_attestation_present", zeko_path.exists(), str(zeko_path))
+    add("verification_manifest_present", isinstance(raw_manifest, dict) or manifest_path.exists(), str(manifest_path) if not isinstance(raw_manifest, dict) else "inline object")
+    add("zeko_attestation_present", isinstance(verified.get("zeko_attestation"), dict) or isinstance(raw_zeko, dict) or zeko_path.exists(), str(zeko_path) if isinstance(raw_zeko, str) else "inline object")
     add("receipt_present", receipt_path.exists(), str(receipt_path))
     add("package_hash_present", isinstance(package_hash, str) and len(package_hash) >= 32, str(package_hash))
 
     missing_files = []
-    for name, info in deliverables.items():
-        file_path = pathlib.Path(str(as_dict(info).get("path", "")))
-        if not file_path.exists():
-            missing_files.append(name)
+    for index, info in enumerate(deliverables):
+        record = as_dict(info)
+        file_path_text = first_string(record.get("path"), record.get("uri"))
+        if file_path_text and file_path_text.startswith(("http://", "https://")):
+            continue
+        if file_path_text:
+            file_path = pathlib.Path(file_path_text)
+            if not file_path.exists():
+                missing_files.append(first_string(record.get("name"), default=f"deliverable-{index + 1}"))
     add("deliverable_files_exist", not missing_files, ", ".join(missing_files))
 
-    if manifest_path.exists():
+    if isinstance(raw_manifest, dict):
+        manifest = raw_manifest
+    elif manifest_path.exists():
         manifest = read_json(manifest_path)
-        file_hashes = as_dict(manifest.get("file_hashes"))
-        add("manifest_file_hashes_present", len(file_hashes) > 0, f"{len(file_hashes)} files")
-        add("manifest_package_hash_matches_return", manifest.get("package_hash") == package_hash, str(manifest.get("package_hash")))
     else:
         manifest = {}
+    if manifest:
+        file_hashes = as_dict(manifest.get("file_hashes"))
+        files_produced = manifest.get("files_produced") if isinstance(manifest.get("files_produced"), list) else []
+        add("manifest_file_hashes_present", len(file_hashes) > 0 or len(files_produced) > 0, f"{max(len(file_hashes), len(files_produced))} files")
+        add("manifest_package_hash_matches_return", manifest.get("package_hash") == package_hash, str(manifest.get("package_hash")))
 
     failed = [check for check in checks if not check["ok"]]
     if failed:
@@ -336,6 +350,61 @@ def write_text_file(path: pathlib.Path, contents: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(contents, encoding="utf-8")
     return sha256_bytes(contents.encode("utf-8"))
+
+
+def content_type_for_name(name: str) -> str:
+    if name.endswith(".json"):
+        return "application/json"
+    if name.endswith(".md"):
+        return "text/markdown"
+    if name.endswith(".txt"):
+        return "text/plain"
+    return "application/octet-stream"
+
+
+def protocol_deliverables_from_map(deliverables: dict[str, Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for name, info in deliverables.items():
+        record = as_dict(info)
+        sha256 = first_string(record.get("sha256"))
+        if not sha256:
+            continue
+        normalized.append(
+            {
+                "name": first_string(record.get("name"), default=name),
+                "sha256": sha256,
+                "content_type": first_string(record.get("content_type"), default=content_type_for_name(name)),
+                **({"uri": first_string(record.get("path"))} if first_string(record.get("path")) else {}),
+            }
+        )
+    return normalized
+
+
+def buyer_visible_summary_text(input: dict[str, Any], package_hash: str, deliverables: list[dict[str, Any]]) -> str:
+    title = first_string(input.get("title"), default="SantaClawz starter job pack")
+    client_request = first_string(input.get("client_request"), default="No buyer request provided.")
+    deliverable_names = ", ".join(item["name"] for item in deliverables[:6]) or "verified package"
+    return "\n".join(
+        [
+            "# SantaClawz Job Pack",
+            "",
+            f"Request: {title}",
+            "",
+            "The hosted Job Pack generated a compact starter package for this paid run. It includes scoping guidance, delivery criteria, pricing notes, risk checks, and a test plan for bringing an agent to paid-work readiness.",
+            "",
+            "## Buyer request",
+            "",
+            client_request[:1200],
+            "",
+            "## Delivered",
+            "",
+            f"- Buyer-readable summary: this response",
+            f"- Verified files: {deliverable_names}",
+            f"- Package hash: `{package_hash}`",
+            "",
+            "Use the package hash and verification manifest to confirm the output bundle has not changed.",
+        ]
+    )
 
 
 def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -379,6 +448,7 @@ def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[d
             "sha256": digest,
             "content_type": "application/json" if name.endswith(".json") else "text/markdown",
         }
+    protocol_deliverables = protocol_deliverables_from_map(deliverables)
 
     manifest = {
         "schema_version": "santaclawz-verification-manifest/1.0",
@@ -391,12 +461,18 @@ def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[d
             "manifest_written",
             "santaclawz_return_payload_written",
         ],
-        "files_produced": list(file_hashes.keys()),
+        "files_produced": [
+            {"name": item["name"], "sha256": item["sha256"], "content_type": item["content_type"]}
+            for item in protocol_deliverables
+        ],
         "file_hashes": file_hashes,
         "blocked_suspicious_instructions": [],
     }
     package_hash = sha256_text(json.dumps(file_hashes, sort_keys=True))
     manifest["package_hash"] = package_hash
+    verification_manifest_digest_sha256 = canonical_digest(manifest)
+    buyer_summary_text = buyer_visible_summary_text(job_input, package_hash, protocol_deliverables)
+    buyer_summary_digest = sha256_text(buyer_summary_text)
     manifest_path = run_dir / "verification_manifest.json"
     zeko_path = run_dir / "zeko_attestation_payload.json"
     receipt_path = run_dir / "run_receipt.json"
@@ -404,9 +480,10 @@ def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[d
     write_json(
         zeko_path,
         {
-            "schema_version": "santaclawz-zk-attestation-preview/1.0",
+            "schema_version": "santaclawz-zk-attestation-preview/1.1",
             "request_id": request_id,
             "package_hash": package_hash,
+            "verification_manifest_digest_sha256": verification_manifest_digest_sha256,
             "generated_at": created_at,
         },
     )
@@ -433,10 +510,21 @@ def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[d
         "buyer_visible": True,
         "verified_output": {
             "package_hash": package_hash,
+            "hash_algorithm": "sha256",
             "verification_manifest": manifest,
-            "zeko_attestation_payload": str(zeko_path),
-            "deliverables": deliverables,
+            "verification_manifest_digest_sha256": verification_manifest_digest_sha256,
+            "zeko_attestation": read_json(zeko_path),
+            "deliverables": protocol_deliverables,
+            "buyer_visible_outputs": [
+                {
+                    "name": "job-pack-summary.md",
+                    "content_type": "text/markdown",
+                    "text": buyer_summary_text,
+                    "sha256": buyer_summary_digest,
+                }
+            ],
         },
+        "zeko_attestation_payload": read_json(zeko_path),
         "receipt_path": str(receipt_path),
     }
     write_json(run_dir / "santaclawz_return_payload.json", return_payload)
@@ -478,8 +566,12 @@ def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[d
     return return_payload, quality
 
 
-def protocol_verification_manifest(manifest_path: pathlib.Path, deliverables: dict[str, Any], raw_body: str) -> dict[str, Any]:
+def protocol_verification_manifest(manifest_path: pathlib.Path, deliverables: Any, raw_body: str) -> dict[str, Any]:
     manifest = read_json(manifest_path) if manifest_path.exists() else {}
+    deliverable_names = [
+        first_string(as_dict(item).get("name"), default=f"deliverable-{index + 1}")
+        for index, item in enumerate(deliverables if isinstance(deliverables, list) else list(as_dict(deliverables).values()))
+    ]
     raw_checks = manifest.get("checks_performed") or manifest.get("checks") or []
     checks_performed: list[str] = []
     if isinstance(raw_checks, list):
@@ -500,7 +592,7 @@ def protocol_verification_manifest(manifest_path: pathlib.Path, deliverables: di
         **manifest,
         "input_digest_sha256": manifest.get("input_digest_sha256") or sha256_text(raw_body),
         "checks_performed": checks_performed,
-        "files_produced": [str(name) for name in deliverables.keys()],
+        "files_produced": manifest.get("files_produced") if isinstance(manifest.get("files_produced"), list) else deliverable_names,
         "blocked_suspicious_instructions": manifest.get("blocked_suspicious_instructions") or [],
     }
 
@@ -581,18 +673,36 @@ def run_worker(payload: dict[str, Any], raw_body: str, timeout_seconds: int) -> 
     return_payload = read_json(return_path)
     quality = validate_return_payload(run_dir, return_payload)
     verified = as_dict(return_payload.get("verified_output"))
-    manifest_path = pathlib.Path(str(verified.get("verification_manifest", "")))
-    deliverables = as_dict(verified.get("deliverables"))
+    manifest_path = pathlib.Path(str(verified.get("verification_manifest", ""))) if isinstance(verified.get("verification_manifest"), str) else pathlib.Path("")
+    raw_deliverables = verified.get("deliverables")
+    deliverables = protocol_deliverables_from_map(as_dict(raw_deliverables)) if isinstance(raw_deliverables, dict) else [
+        entry for entry in raw_deliverables if isinstance(entry, dict)
+    ] if isinstance(raw_deliverables, list) else []
     if len(deliverables) > 4:
-        verified["deliverables"] = dict(list(deliverables.items())[:4])
-        deliverables = as_dict(verified.get("deliverables"))
+        verified["deliverables"] = deliverables[:4]
+        deliverables = verified["deliverables"]
     if manifest_path.exists():
         verified["verification_manifest"] = protocol_verification_manifest(
             manifest_path,
             deliverables,
             raw_body,
         )
-        return_payload["verified_output"] = verified
+    if verified.get("hash_algorithm") != "sha256":
+        verified["hash_algorithm"] = "sha256"
+    if not isinstance(verified.get("deliverables"), list):
+        verified["deliverables"] = deliverables
+    if not isinstance(verified.get("buyer_visible_outputs"), list) or len(verified.get("buyer_visible_outputs")) == 0:
+        package_hash = first_string(verified.get("package_hash"))
+        buyer_summary = buyer_visible_summary_text(as_dict(normalized.get("input")), package_hash, deliverables)
+        verified["buyer_visible_outputs"] = [
+            {
+                "name": "job-pack-summary.md",
+                "content_type": "text/markdown",
+                "text": buyer_summary,
+                "sha256": sha256_text(buyer_summary),
+            }
+        ]
+    return_payload["verified_output"] = verified
     return_payload["execution_bridge"] = {
         "schema_version": "santaclawz-real-worker-bridge/1.0",
         "mode": "real-local-agent",

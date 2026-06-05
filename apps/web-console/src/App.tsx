@@ -282,7 +282,7 @@ const WORKSHOP_SETUP_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/workshop-admin-agent-runbook.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
-  return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
+  return `${name} helps agents prepare for paid SantaClawz work with scope, pricing, readiness, and delivery guidance.`;
 }
 const ZEKO_URL = "https://zeko.io/";
 const COPYRIGHT_YEAR = "2026";
@@ -4986,15 +4986,14 @@ export function App() {
                     <>
                       <button
                         type="button"
-                        className="activation-command-copy-button coordination-create-ticket-button"
+                        className="primary-button coordination-create-ticket-button"
                         disabled={!coordinationSetupReady || coordinationSetupIssuing}
                         title="Create setup ticket"
                         onClick={() => {
                           void issueCoordinationSetupTicket();
                         }}
                       >
-                        <span className="copy-icon" aria-hidden="true" />
-                        {coordinationSetupIssuing ? "Creating ticket" : "Workshop ticket"}
+                        {coordinationSetupIssuing ? "Issuing..." : "Workshop ticket"}
                       </button>
                       <span className="subtle-pill activation-pending-pill">Pending</span>
                     </>
