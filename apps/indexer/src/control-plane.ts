@@ -321,7 +321,7 @@ interface CoordinationSetupTicketRecord {
   expiresAtIso: string;
   status: "pending" | "expired";
   manifest: Record<string, unknown>;
-  claimedAgentsById: Record<string, { claimedAtIso: string }>;
+  claimedAgentsById: Record<string, { claimedAtIso: string; workshopTokenHash?: string }>;
 }
 
 export class DuplicatePublicClawzUrlError extends Error {
@@ -545,6 +545,7 @@ interface AgentBoardPostOptions {
   agentId: string;
   adminKey?: string;
   authenticatedRelaySessionId?: string;
+  workshopToken?: string;
   messageType?: AgentBoardMessageType;
   body: string;
   topicTags?: string[];
@@ -676,6 +677,7 @@ interface CoordinationSetupTicketClaimResult {
   ticketId: string;
   agentId: string;
   role: string;
+  workshopAccessToken: string;
   issuedAtIso: string;
   expiresAtIso: string;
   apiBase: string;
@@ -1812,6 +1814,10 @@ function buildCoordinationSetupTicketToken(ticketId: string, secret: string) {
   return `scz_coord_${ticketId}_${secret}`;
 }
 
+function buildWorkshopAccessToken(ticketId: string, secret: string) {
+  return `scz_workshop_${ticketId}_${secret}`;
+}
+
 function parseEnrollmentTicketToken(ticket: string) {
   const normalized = ticket.trim();
   const match = /^scz_enroll_(enr_[a-f0-9]{20})_([a-f0-9]{64})$/i.exec(normalized);
@@ -1833,6 +1839,19 @@ function parseCoordinationSetupTicketToken(ticket: string) {
   }
   return {
     ticket: normalized,
+    ticketId: match[1]!,
+    secret: match[2]!
+  };
+}
+
+function parseWorkshopAccessToken(token: string) {
+  const normalized = token.trim();
+  const match = /^scz_workshop_(coord_[a-f0-9]{20})_([a-f0-9]{64})$/i.exec(normalized);
+  if (!match) {
+    throw new Error("Workshop access token is malformed.");
+  }
+  return {
+    token: normalized,
     ticketId: match[1]!,
     secret: match[2]!
   };
@@ -7715,6 +7734,36 @@ export class ClawzControlPlane {
     return this.withAgentBoardMutationLock(() => this.postAgentBoardMessageLocked(options));
   }
 
+  private assertWorkshopParticipantMessageAccess(
+    state: ConsolePersistenceState,
+    options: {
+      agentId: string;
+      workshopToken: string;
+      threadId?: string;
+      swarmId?: string;
+    }
+  ) {
+    const parsedToken = parseWorkshopAccessToken(options.workshopToken);
+    const record = state.coordinationSetupTicketsById[parsedToken.ticketId];
+    if (!record) {
+      throw new Error("Workshop access token was not found.");
+    }
+    const claim = record.claimedAgentsById[options.agentId];
+    if (!claim?.workshopTokenHash || !timingSafeEqualHex(claim.workshopTokenHash, sha256Hex(parsedToken.token))) {
+      throw new Error("Workshop access token was rejected for this agent.");
+    }
+    const normalized = this.normalizeCoordinationManifest(record.manifest);
+    if (!normalized.participants.some((participant) => stringValue(participant, "agentId") === options.agentId)) {
+      throw new Error("Workshop access token does not include this agent.");
+    }
+    if (!options.threadId || options.threadId !== normalized.threadId) {
+      throw new Error("Workshop access token can only post to its workshop thread.");
+    }
+    if (!options.swarmId || options.swarmId !== normalized.swarmId) {
+      throw new Error("Workshop access token can only post to its workshop workflow.");
+    }
+  }
+
   private async postAgentBoardMessageLocked(options: AgentBoardPostOptions): Promise<AgentBoardPostResult> {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, { agentId: options.agentId });
@@ -7722,6 +7771,13 @@ export class ClawzControlPlane {
       if (options.authenticatedRelaySessionId !== sessionId) {
         throw new Error("Relay-authenticated agent message does not match the relay session.");
       }
+    } else if (options.workshopToken) {
+      this.assertWorkshopParticipantMessageAccess(state, {
+        agentId: options.agentId,
+        workshopToken: options.workshopToken,
+        ...(options.threadId ? { threadId: options.threadId } : {}),
+        ...(options.swarmId ? { swarmId: options.swarmId } : {})
+      });
     } else {
       this.assertAdminAccess(state, sessionId, options.adminKey);
     }
@@ -11006,7 +11062,9 @@ export class ClawzControlPlane {
       assertStringValue(participant, "agentId", "Coordination manifest participant")
     );
     const claimedAgentsById = Object.fromEntries(
-      Object.entries(record.claimedAgentsById).filter(([agentId]) => participantAgentIds.includes(agentId))
+      Object.entries(record.claimedAgentsById)
+        .filter(([agentId]) => participantAgentIds.includes(agentId))
+        .map(([agentId, claim]) => [agentId, { claimedAtIso: claim.claimedAtIso }])
     );
     const expired = Date.parse(record.expiresAtIso) <= Date.now();
     return {
@@ -11050,6 +11108,7 @@ export class ClawzControlPlane {
       throw new Error("This agent is not listed on the workshop setup ticket.");
     }
     const claimedAtIso = new Date().toISOString();
+    const workshopAccessToken = buildWorkshopAccessToken(record.ticketId, buildCoordinationSetupTicketSecret());
     await this.saveState({
       ...state,
       coordinationSetupTicketsById: {
@@ -11058,7 +11117,7 @@ export class ClawzControlPlane {
           ...record,
           claimedAgentsById: {
             ...record.claimedAgentsById,
-            [input.agentId]: { claimedAtIso }
+            [input.agentId]: { claimedAtIso, workshopTokenHash: sha256Hex(workshopAccessToken) }
           }
         }
       }
@@ -11073,6 +11132,7 @@ export class ClawzControlPlane {
       ticketId: record.ticketId,
       agentId: input.agentId,
       role: assertStringValue(participant, "role", "Coordination manifest participant"),
+      workshopAccessToken,
       issuedAtIso: claimedAtIso,
       expiresAtIso: record.expiresAtIso,
       apiBase: normalized.apiBase,

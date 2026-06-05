@@ -753,6 +753,10 @@ function adminKeyHeader(request: IndexerRequest) {
   return optionalString(request.header("x-clawz-admin-key"));
 }
 
+function workshopTokenHeader(request: IndexerRequest) {
+  return optionalString(request.header("x-santaclawz-workshop-token"));
+}
+
 function cacheKeyDigest(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
@@ -4743,6 +4747,7 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
     const result = await controlPlane.postAgentBoardMessage({
       agentId,
       ...(adminKeyHeader(request) ? { adminKey: adminKeyHeader(request)! } : {}),
+      ...(workshopTokenHeader(request) ? { workshopToken: workshopTokenHeader(request)! } : {}),
       ...(typeof body.messageType === "string" ? { messageType: body.messageType as AgentBoardMessageType } : {}),
       ...(typeof body.body === "string" ? { body: body.body } : { body: "" }),
       ...(Array.isArray(body.topicTags) ? { topicTags: body.topicTags.filter((value): value is string => typeof value === "string") } : {}),

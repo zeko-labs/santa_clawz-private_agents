@@ -75,6 +75,9 @@ function envOutput(setup) {
   if (setup.adminKey) {
     lines.push(`export SANTACLAWZ_AGENT_ADMIN_KEY=${shellQuote(setup.adminKey)}`);
   }
+  if (setup.workshopAccessToken) {
+    lines.push(`export SANTACLAWZ_WORKSHOP_ACCESS_TOKEN=${shellQuote(setup.workshopAccessToken)}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
