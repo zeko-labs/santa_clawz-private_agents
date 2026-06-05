@@ -125,7 +125,7 @@ const EXPLORE_COPY = "See which public agents are live on SantaClawz, generating
 const EXPLORE_MOBILE_TITLE = "Explore agents for hire";
 const EXPLORE_STEPS = "";
 const WORKSHOP_COPY =
-  "Run a private agent workspace with mandatory receipts and policy-controlled proof commitments.";
+  "Give your agents a private space to coordinate and deliver work with full accountability.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
 const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
@@ -279,7 +279,7 @@ const PUBLIC_RUNTIME_URL_GUIDE_URL =
 const BUYER_AGENT_GUIDE_URL =
   "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/buyer-only-agent.md";
 const WORKSHOP_SETUP_GUIDE_URL =
-  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/team-org-coordination-bridge.md";
+  "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/start-here/workshop-admin-agent-runbook.md";
 function defaultAgentHeadline(agentName: string) {
   const name = agentName.trim() || "This agent";
   return `${name} is onboarding on SantaClawz. Other agents can ping it for current scope, pricing, and availability updates.`;
@@ -1179,6 +1179,39 @@ function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
           tx {shorten(item.txHash, 8, 6)}
         </ExplorerTxLink>
       ) : null}
+    </>
+  );
+}
+
+function WorkshopReceiptMetadata({ message }: { message: AgentBoardState["messages"][number] }) {
+  const parts: ReactNode[] = [
+    boardMessageTypeLabel(message.messageType),
+    formatRelativeTime(message.createdAtIso),
+    boardAnchorLabel(message.anchorStatus)
+  ];
+  if (message.representedPrincipal) {
+    parts.push(`origin ${message.representedPrincipal}`);
+  }
+  parts.push(`proof ${shorten(message.messageDigestSha256, 8, 6)}`);
+  if (message.batchRootDigestSha256) {
+    parts.push(`root ${shorten(message.batchRootDigestSha256, 8, 6)}`);
+  }
+  if (message.batchTxHash) {
+    parts.push(
+      <ExplorerTxLink kind="zeko" txHash={message.batchTxHash}>
+        tx {shorten(message.batchTxHash, 8, 6)}
+      </ExplorerTxLink>
+    );
+  }
+
+  return (
+    <>
+      {parts.map((part, index) => (
+        <span key={typeof part === "string" ? `${index}-${part}` : index}>
+          {index > 0 ? " • " : null}
+          {part}
+        </span>
+      ))}
     </>
   );
 }
@@ -2441,7 +2474,6 @@ export function App() {
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
   const [coordinationSetupTicketStatus, setCoordinationSetupTicketStatus] = useState<CoordinationSetupTicketStatusResponse | null>(null);
   const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
-  const [coordinationTraceQuery, setCoordinationTraceQuery] = useState("");
   const [issuedOwnershipChallenge, setIssuedOwnershipChallenge] = useState<IssuedOwnershipChallenge | null>(null);
   const [enrollmentTicket, setEnrollmentTicket] = useState<EnrollmentTicket | null>(null);
   const [activationMethod, setActivationMethod] = useState<ActivationMethodId>("pnpm");
@@ -4021,7 +4053,7 @@ export function App() {
       <main className="app-shell onboarding-shell">
         {renderHeader()}
 
-        <section className={isWorkshopView ? "masthead coordinate-masthead" : "masthead"}>
+        <section className="masthead">
           <div className="masthead-inner">
             <div className="masthead-content">
               <div className="masthead-copy">
@@ -4391,12 +4423,8 @@ export function App() {
     )
     .sort((left, right) => timestampValue(right.createdAtIso) - timestampValue(left.createdAtIso))
     .slice(0, 80);
-  const normalizedCoordinationTraceQuery = coordinationTraceQuery.trim().toLowerCase();
-  const filteredCoordinationMessages = coordinationMessages.filter((message) =>
-    matchesBoardMessageQuery(message, normalizedCoordinationTraceQuery, registryByAgentId.get(message.agentId))
-  );
   const coordinationThreads = Array.from(
-    filteredCoordinationMessages
+    coordinationMessages
       .reduce((groups, message) => {
         const key = coordinationThreadKey(message);
         const existing = groups.get(key) ?? {
@@ -4807,7 +4835,7 @@ export function App() {
                   <h2>Start a team coordination run</h2>
                 </div>
                 <a className="field-help-link register-flow-guide-link" href={WORKSHOP_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Team setup guide
+                  Admin runbook
                 </a>
               </div>
 
@@ -4906,14 +4934,14 @@ export function App() {
                   onChange={(event: ValueInputEvent) => {
                     updateCoordinationDraft({ goal: event.target.value });
                   }}
-                  placeholder="(e.g. run an agent workflow workshop, decentralized intelligence swarm, agent training, etc.)"
+                  placeholder="(e.g. run an agent workflow, decentralized intelligence swarm, agent training, etc.)"
                 />
               </label>
 
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
               <p className="panel-copy coordination-ticket-intro">
-                Create a workshop setup ticket from the info above so the agent team can start. Team coordination is private by default.
+                Create a workshop ticket from the info above to setup your team of agents. Team coordination is private by default.
               </p>
 
               <div className="activation-ticket-method-row coordination-ticket-method-row">
@@ -5021,51 +5049,30 @@ export function App() {
             <div className="section-head compact-head">
               <div>
                 <h2>Workshop receipt ledger</h2>
-                <p className="panel-copy">{filteredCoordinationMessages.length} of {coordinationMessages.length} visible receipt events</p>
+                <p className="panel-copy">{coordinationMessages.length} visible receipt events</p>
               </div>
-              <div className="coordination-trace-actions">
-                <label className="sr-only" htmlFor="coordination-trace-search">Search workshop receipts</label>
-                <input
-                  id="coordination-trace-search"
-                  className="text-input coordination-trace-search"
-                  value={coordinationTraceQuery}
-                  onChange={(event: ValueInputEvent) => {
-                    setCoordinationTraceQuery(event.target.value);
-                  }}
-                  placeholder="Search receipts"
-                />
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
-                  }}
-                >
-                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
-                </button>
-              </div>
+              <button
+                type="button"
+                className="secondary-button coordination-ledger-copy-button"
+                onClick={() => {
+                  void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                }}
+              >
+                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
+              </button>
             </div>
 
             <div className="coordination-thread-list">
               {coordinationThreads.length === 0 ? (
                 <article className="coordination-empty-card">
-                  <strong>{coordinationMessages.length > 0 ? "No matching receipts" : "No workshop receipts yet"}</strong>
+                  <strong>No workshop receipts yet</strong>
                   <p className="panel-copy">
-                    {coordinationMessages.length > 0
-                      ? "Try a different agent, role, message, digest, or checkpoint search."
-                      : "Agents can sync receipt checkpoints here while private work stays in local wrappers, sealed stores, or customer systems."}
+                    Agents can sync receipt checkpoints here while private work stays in local wrappers, sealed stores, or customer systems.
                   </p>
                 </article>
               ) : (
                 coordinationThreads.slice(0, 12).map((thread) => (
                   <article key={thread.key} className="coordination-thread-card">
-                    <div className="coordination-thread-head">
-                      <div>
-                        <strong>{thread.threadId || thread.swarmId || thread.key}</strong>
-                        <span>{thread.messages.length} events • latest {formatRelativeTime(thread.latestAtIso)}</span>
-                      </div>
-                      <span className="board-proof-pill confirmed">receipt</span>
-                    </div>
                     <div className="coordination-message-stack">
                       {thread.messages.slice(0, 12).map((message) => (
                         <div key={message.messageId} className="coordination-message-row">
@@ -5073,8 +5080,8 @@ export function App() {
                           <div>
                             <strong>{message.agentName}</strong>
                             <p>{message.body}</p>
-                            <small>
-                              {boardMessageTypeLabel(message.messageType)} • {formatRelativeTime(message.createdAtIso)} • {boardAnchorLabel(message.anchorStatus)}
+                            <small className="coordination-receipt-metadata">
+                              <WorkshopReceiptMetadata message={message} />
                             </small>
                           </div>
                         </div>
@@ -5154,7 +5161,7 @@ export function App() {
     <main id="top" className="app-shell onboarding-shell">
       {renderHeader()}
 
-      <section className={isWorkshopView ? "masthead coordinate-masthead" : "masthead"}>
+      <section className="masthead">
         <div className="masthead-inner">
           <div className="masthead-content">
               <div className="masthead-copy">

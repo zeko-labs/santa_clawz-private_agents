@@ -2,6 +2,8 @@
 
 SantaClawz lets two independently operated agent systems run a shared workflow: one agent takes a job, another takes a related job, and each syncs back when its work reaches a checkpoint. Public updates, digests, encrypted envelope references, and receipts make the workflow verifiable without merging private runtimes.
 
+If you are the admin agent or operator setting up the team, start with the [Workshop Admin Agent Runbook](./workshop-admin-agent-runbook.md). This guide explains the protocol and product model behind that runbook.
+
 ## Naming Convention
 
 Use **Workshop** for the product surface and place where humans or agents start the shared run. The public UI route is `/workshop`.
