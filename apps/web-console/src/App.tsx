@@ -66,6 +66,13 @@ type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationAgentRole = "admin" | "member";
+type SiteAnnouncement = {
+  enabled: boolean;
+  title: string;
+  message: string;
+  href: string;
+  actionLabel: string;
+};
 const WORKSHOP_PRIVATE_PRIVACY_MODE: CoordinationPrivacyMode = "digest-only";
 type CoordinationDraft = {
   orgName: string;
@@ -134,6 +141,14 @@ const SOCIAL_LINKS = [
   { label: "Discord", href: "https://discord.gg/FGcu6tJDzH", icon: "discord" },
   { label: "GitHub", href: "https://github.com/zeko-labs/santa_clawz-private_agents", icon: "github" }
 ] as const;
+// Reusable top-of-site announcement. Set enabled to false for the normal site chrome.
+const SITE_ANNOUNCEMENT: SiteAnnouncement = {
+  enabled: true,
+  title: "SantaClawz protocol v0.3.0 is live",
+  message: "Protocol hardening for paid execution, buyer delivery receipts, readiness, and proof history.",
+  href: "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/releases/protocol-v0.3.0.md",
+  actionLabel: "Agent next steps"
+};
 
 function SocialIcon({ icon }: { icon: (typeof SOCIAL_LINKS)[number]["icon"] }) {
   if (icon === "github") {
@@ -3575,19 +3590,22 @@ export function App() {
     );
   }
 
-  function renderProtocolUpgradeBanner() {
+  function renderSiteAnnouncement() {
+    if (!SITE_ANNOUNCEMENT.enabled) {
+      return null;
+    }
     return (
-      <aside className="protocol-upgrade-banner" aria-label="SantaClawz protocol upgrade notice">
+      <aside className="site-announcement-banner" aria-label="SantaClawz site announcement">
         <div>
-          <strong>SantaClawz protocol v0.3.0 is live</strong>
-          <span>Protocol hardening for paid execution, buyer delivery receipts, readiness, and proof history.</span>
+          <strong>{SITE_ANNOUNCEMENT.title}</strong>
+          <span>{SITE_ANNOUNCEMENT.message}</span>
         </div>
         <a
-          href="https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/releases/protocol-v0.3.0.md"
+          href={SITE_ANNOUNCEMENT.href}
           target="_blank"
           rel="noreferrer"
         >
-          Agent next steps
+          {SITE_ANNOUNCEMENT.actionLabel}
         </a>
       </aside>
     );
@@ -3627,7 +3645,7 @@ export function App() {
   function renderHirePage() {
     return (
       <main id="top" className="app-shell buyer-shell">
-        {renderProtocolUpgradeBanner()}
+        {renderSiteAnnouncement()}
         {renderHeader()}
 
         <BuyerWorkroom
@@ -3647,7 +3665,7 @@ export function App() {
     const page = LEGAL_PAGES[pageKey];
     return (
       <main id="top" className="app-shell onboarding-shell">
-        {renderProtocolUpgradeBanner()}
+        {renderSiteAnnouncement()}
         {renderHeader()}
 
         <section className="masthead legal-masthead">
@@ -3798,7 +3816,7 @@ export function App() {
 
     return (
       <main id="top" className="app-shell sdk-shell">
-        {renderProtocolUpgradeBanner()}
+        {renderSiteAnnouncement()}
         {renderHeader()}
 
         <section className="masthead legal-masthead">
@@ -4076,7 +4094,7 @@ export function App() {
   if (!state) {
     return (
       <main className="app-shell onboarding-shell">
-        {renderProtocolUpgradeBanner()}
+        {renderSiteAnnouncement()}
         {renderHeader()}
 
         <section className="masthead">
@@ -5185,7 +5203,7 @@ export function App() {
 
   return (
     <main id="top" className="app-shell onboarding-shell">
-      {renderProtocolUpgradeBanner()}
+      {renderSiteAnnouncement()}
       {renderHeader()}
 
       <section className="masthead">

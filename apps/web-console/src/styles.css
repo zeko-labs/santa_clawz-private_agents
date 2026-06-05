@@ -225,7 +225,7 @@ pre,
   height: 24px;
 }
 
-.protocol-upgrade-banner {
+.site-announcement-banner {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -250,7 +250,7 @@ pre,
     0 10px 24px rgba(4, 10, 18, 0.12);
 }
 
-.protocol-upgrade-banner > div {
+.site-announcement-banner > div {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -258,19 +258,19 @@ pre,
   min-width: 0;
 }
 
-.protocol-upgrade-banner strong {
+.site-announcement-banner strong {
   font-size: 0.88rem;
   font-weight: 800;
   letter-spacing: 0.01em;
   text-shadow: 0 1px 12px rgba(4, 10, 18, 0.22);
 }
 
-.protocol-upgrade-banner span {
+.site-announcement-banner span {
   color: rgba(255, 250, 243, 0.9);
   font-size: 0.82rem;
 }
 
-.protocol-upgrade-banner a {
+.site-announcement-banner a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -289,7 +289,7 @@ pre,
     background 180ms ease;
 }
 
-.protocol-upgrade-banner a:hover {
+.site-announcement-banner a:hover {
   background: var(--white);
   transform: translateY(-1px);
 }
@@ -7747,29 +7747,29 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
-  .protocol-upgrade-banner {
+  .site-announcement-banner {
     grid-template-columns: 1fr;
     gap: 6px;
     margin-top: -20px;
     padding: 8px 14px;
   }
 
-  .protocol-upgrade-banner > div {
+  .site-announcement-banner > div {
     display: grid;
     gap: 4px;
   }
 
-  .protocol-upgrade-banner strong {
+  .site-announcement-banner strong {
     font-size: 0.9rem;
     line-height: 1.2;
   }
 
-  .protocol-upgrade-banner span {
+  .site-announcement-banner span {
     font-size: 0.78rem;
     line-height: 1.3;
   }
 
-  .protocol-upgrade-banner a {
+  .site-announcement-banner a {
     width: fit-content;
     min-height: 30px;
     font-size: 0.82rem;
