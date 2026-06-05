@@ -4941,7 +4941,7 @@ export function App() {
               {coordinationError ? <div className="status-banner">{coordinationError}</div> : null}
 
               <p className="panel-copy coordination-ticket-intro">
-                Create a workshop ticket from the info above to setup the team. Team coordination is private by default.
+                Create a workshop ticket from the info above to setup your team of agents. Team coordination is private by default.
               </p>
 
               <div className="activation-ticket-method-row coordination-ticket-method-row">
