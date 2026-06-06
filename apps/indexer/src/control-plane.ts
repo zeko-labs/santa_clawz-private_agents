@@ -3191,49 +3191,6 @@ function emptyAgentJobActivityStats(): AgentJobActivityStats {
   return stats;
 }
 
-function incrementAgentJobActivityStats(
-  current: AgentJobActivityStats | undefined,
-  request: HireRequestRecord,
-  nowMs = Date.now()
-): AgentJobActivityStats {
-  const privateJob = isPrivateHireRequest(request);
-  const paidExecution = request.requestType === "paid_execution";
-  const activationProbe = isActivationLaneHireRequest(request);
-  const paidOutcome = paidExecution ? paidExecutionTerminalOutcome(request, nowMs) : "pending";
-  if (activationProbe) {
-    const next: AgentJobActivityStats = {
-      ...(current ?? emptyAgentJobActivityStats()),
-      activationProbeCount: (current?.activationProbeCount ?? 0) + 1,
-      activationProbeCompletedCount: (current?.activationProbeCompletedCount ?? 0) + (paidOutcome === "completed" ? 1 : 0),
-      activationProbeFailedCount: (current?.activationProbeFailedCount ?? 0) + (paidOutcome === "failed" ? 1 : 0),
-      lastActivationProbeAtIso: request.submittedAtIso,
-      label: ""
-    };
-    return {
-      ...next,
-      label: buildAgentJobActivityStatsLabel(next)
-    };
-  }
-  const next: AgentJobActivityStats = {
-    ...(current ?? emptyAgentJobActivityStats()),
-    totalJobCount: (current?.totalJobCount ?? 0) + 1,
-    publicJobCount: (current?.publicJobCount ?? 0) + (privateJob ? 0 : 1),
-    privateJobCount: (current?.privateJobCount ?? 0) + (privateJob ? 1 : 0),
-    paidExecutionCount: (current?.paidExecutionCount ?? 0) + (paidExecution ? 1 : 0),
-    privatePaidExecutionCount: (current?.privatePaidExecutionCount ?? 0) + (paidExecution && privateJob ? 1 : 0),
-    completedJobCount: (current?.completedJobCount ?? 0) + (paidOutcome === "completed" ? 1 : 0),
-    privateCompletedJobCount: (current?.privateCompletedJobCount ?? 0) + (paidOutcome === "completed" && privateJob ? 1 : 0),
-    failedJobCount: (current?.failedJobCount ?? 0) + (paidOutcome === "failed" ? 1 : 0),
-    privateFailedJobCount: (current?.privateFailedJobCount ?? 0) + (paidOutcome === "failed" && privateJob ? 1 : 0),
-    lastJobAtIso: request.submittedAtIso,
-    label: ""
-  };
-  return {
-    ...next,
-    label: buildAgentJobActivityStatsLabel(next)
-  };
-}
-
 function buildAgentJobActivityStats(
   hireRequests: HireRequestFile,
   sessionId: string,
@@ -12266,6 +12223,68 @@ export class ClawzControlPlane {
       throw new Error("Duplicate hire request id rejected.");
     }
     const ingressRecord = this.ingressSecretRecordForSession(state, sessionId);
+    const publicDeliveryTarget = publicAgentHireUrlFor(options.agentId);
+    const initialRequestType: HireRequestReceipt["requestType"] =
+      isFreeTestPricingMode(profile.paymentProfile.pricingMode)
+        ? "free_test"
+        : profile.paymentProfile.enabled &&
+            isQuotedPricingMode(profile.paymentProfile.pricingMode) &&
+            paymentAuthorization.status === "not-required"
+          ? "quote_intake"
+          : "paid_execution";
+    const initialPaymentStatus = paymentStatusForHireRequest({
+      requestType: initialRequestType,
+      paymentStatus: paymentAuthorization.status
+    });
+    const initialOperationalStatus = buildHireOperationalStatus({
+      requestType: initialRequestType,
+      paymentStatus: initialPaymentStatus,
+      deliveryStatus: "recorded",
+      hireStatus: "submitted"
+    });
+    const initialRecord: HireRequestRecord = {
+      requestId,
+      agentId: options.agentId,
+      sessionId,
+      networkId: deployment.networkId,
+      submittedAtIso,
+      requestType: initialRequestType,
+      pricingMode: profile.paymentProfile.pricingMode,
+      paymentStatus: initialPaymentStatus,
+      ...(initialRequestType === "paid_execution" && paymentAuthorization.amountUsd
+        ? { settledAmountUsd: paymentAuthorization.amountUsd }
+        : {}),
+      status: "submitted",
+      taskPrompt,
+      ...(typeof options.budgetMina === "string" && options.budgetMina.trim().length > 0
+        ? { budgetMina: options.budgetMina.trim().slice(0, 40) }
+        : {}),
+      requesterContact,
+      jobAccessTokenHashSha256: sha256Hex(jobAccessToken),
+      ...(!marketplaceWorkTagsAreEmpty(marketplaceTags) ? { marketplaceTags } : {}),
+      ...(jobContext ? { jobContext } : {}),
+      ...(options.jobPrivacy ? { jobPrivacy: options.jobPrivacy } : {}),
+      ...(options.artifactDelivery ? { artifactDelivery: options.artifactDelivery } : {}),
+      deliveryTarget: publicDeliveryTarget,
+      deliveryStatus: "recorded",
+      operationalStatus: initialOperationalStatus,
+      relayTrace: mergeHireRelayTrace({
+        submittedAtIso,
+        paymentStatus: initialPaymentStatus,
+        deliveryStatus: "recorded",
+        completed: false
+      }),
+      payment: paymentAuthorization
+    };
+    const preIngressHireRequestFile = await this.loadHireRequestFile();
+    if (preIngressHireRequestFile.requests.some((request) => request.requestId === requestId)) {
+      throw new Error("Duplicate hire request id rejected.");
+    }
+    await this.saveHireRequestFile({
+      ...preIngressHireRequestFile,
+      requests: [initialRecord, ...preIngressHireRequestFile.requests],
+      jobActivityStatsBySessionId: preIngressHireRequestFile.jobActivityStatsBySessionId ?? {}
+    });
     const ingressDelivery = await this.forwardHireRequestToIngress({
       ingressRecord,
       sessionId,
@@ -12284,7 +12303,6 @@ export class ClawzControlPlane {
         : {}),
       paymentAuthorization
     });
-    const publicDeliveryTarget = publicAgentHireUrlFor(options.agentId);
     const ingressProtocolReturn = "protocolReturn" in ingressDelivery ? ingressDelivery.protocolReturn : undefined;
     const ingressResponseStatusCode =
       "responseStatusCode" in ingressDelivery ? ingressDelivery.responseStatusCode : undefined;
@@ -12400,15 +12418,29 @@ export class ClawzControlPlane {
       payment: paymentAuthorization
     };
 
-    const nextHireRequestFile: HireRequestFile = {
-      ...hireRequests,
-      requests: [nextRecord, ...hireRequests.requests],
-      jobActivityStatsBySessionId: {
-        ...(hireRequests.jobActivityStatsBySessionId ?? {}),
-        [sessionId]: incrementAgentJobActivityStats(
-          hireRequests.jobActivityStatsBySessionId?.[sessionId] ?? buildAgentJobActivityStats(hireRequests, sessionId),
-          nextRecord
+    const latestHireRequestFile = await this.loadHireRequestFile();
+    const existingPersistedRecord = latestHireRequestFile.requests.find((request) => request.requestId === requestId);
+    let committedRecord: HireRequestRecord = nextRecord;
+    if (existingPersistedRecord?.protocolReturn?.status === "completed" && ingressProtocolReturn?.status !== "completed") {
+      committedRecord = existingPersistedRecord;
+    }
+    const committedRequests = latestHireRequestFile.requests.some((request) => request.requestId === requestId)
+      ? latestHireRequestFile.requests.map((request) =>
+          request.requestId === requestId ? committedRecord : request
         )
+      : [committedRecord, ...latestHireRequestFile.requests];
+    const nextJobActivityStatsBySessionId = { ...(latestHireRequestFile.jobActivityStatsBySessionId ?? {}) };
+    delete nextJobActivityStatsBySessionId[sessionId];
+    const statsSource: HireRequestFile = {
+      ...latestHireRequestFile,
+      requests: committedRequests,
+      jobActivityStatsBySessionId: nextJobActivityStatsBySessionId
+    };
+    const nextHireRequestFile: HireRequestFile = {
+      ...statsSource,
+      jobActivityStatsBySessionId: {
+        ...nextJobActivityStatsBySessionId,
+        [sessionId]: buildAgentJobActivityStats(statsSource, sessionId)
       }
     };
     await this.saveHireRequestFile(nextHireRequestFile);
