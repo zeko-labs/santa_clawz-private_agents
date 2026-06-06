@@ -4244,6 +4244,12 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(expiredDigestExecutionState.payload.reconciliation.status, "terminal_no_charge");
     assert.equal(expiredDigestExecutionState.payload.reconciliation.reason, "payment_payload_expired_no_charge");
 
+    const plainPlanBeforeBuyerDigest = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`
+    );
+    assert.equal(plainPlanBeforeBuyerDigest.status, 200);
+    assert.equal(plainPlanBeforeBuyerDigest.payload.buyerPaymentSafety, undefined);
+
     const blockedPlan = await requestJson(
       `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan?paymentPayloadDigestSha256=${"d".repeat(64)}`
     );
@@ -4260,6 +4266,12 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(blockedPlan.payload.buyerPaymentSafety.humanOrPlatformInterventionRequired, false);
     assert.equal(blockedPlan.payload.buyerPaymentSafety.blockingPaymentPayloadDigestSha256, "d".repeat(64));
     assert.equal(blockedPlan.payload.buyerPaymentSafety.blockerCode, undefined);
+
+    const plainPlanAfterBuyerDigest = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`
+    );
+    assert.equal(plainPlanAfterBuyerDigest.status, 200);
+    assert.equal(plainPlanAfterBuyerDigest.payload.buyerPaymentSafety, undefined);
 
     const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
     const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
