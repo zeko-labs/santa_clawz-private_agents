@@ -84,8 +84,8 @@ const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
 // Bounds only the direct HTTP route's settlement wait after valid buyer delivery
 // has already been recorded. It is not an agent work timeout.
-const DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_BUDGET_MS = parseBoundedIntegerEnv(
-  "CLAWZ_DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_BUDGET_MS",
+const DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_DEADLINE_MS = parseBoundedIntegerEnv(
+  "CLAWZ_DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_DEADLINE_MS",
   8_500,
   1_500,
   18_000
@@ -7611,7 +7611,7 @@ const handleAgentHireRequest = route(async (request, response) => {
           });
         const remainingResponseBudgetMs = Math.max(
           0,
-          DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_BUDGET_MS - (Date.now() - routeStartedAtMs)
+          DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_DEADLINE_MS - (Date.now() - routeStartedAtMs)
         );
         let settlementTimeout: ReturnType<typeof setTimeout> | undefined;
         const settlementTimeoutPromise = new Promise<{ status: "pending" }>((resolve) => {
