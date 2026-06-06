@@ -2109,6 +2109,109 @@ async function buildX402PlanFromOptions(
   };
 }
 
+function paymentStateLookupFromQuery(query: unknown) {
+  const ledgerId = queryString(query, "ledgerId");
+  const intentId = queryString(query, "intentId") ?? queryString(query, "quoteIntentId");
+  const requestId = queryString(query, "requestId") ?? queryString(query, "hireRequestId");
+  const paymentPayloadDigestSha256 =
+    validSha256(queryString(query, "paymentPayloadDigestSha256")) ??
+    validSha256(queryString(query, "paymentPayloadDigest")) ??
+    validSha256(queryString(query, "payloadDigest"));
+  if (!ledgerId && !intentId && !requestId && !paymentPayloadDigestSha256) {
+    return undefined;
+  }
+  return {
+    ...(ledgerId ? { ledgerId } : {}),
+    ...(intentId ? { intentId } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+  };
+}
+
+async function buyerPaymentSafetyForPlan(input: {
+  apiBase: string;
+  lookup?: ReturnType<typeof paymentStateLookupFromQuery>;
+}) {
+  if (!input.lookup) {
+    return undefined;
+  }
+  const paymentState = await buildX402PaymentStateResponse({
+    apiBase: input.apiBase,
+    ...input.lookup
+  });
+  const latestLedger = isRecord(paymentState.payment) && isRecord(paymentState.payment.latestLedger)
+    ? paymentState.payment.latestLedger
+    : undefined;
+  const retryResume: Record<string, unknown> = isRecord(paymentState.retryResume) ? paymentState.retryResume : {};
+  const terminal = retryResume.terminal === true;
+  const safeToRetrySamePayload = retryResume.safeToRetrySamePayload === true;
+  const paymentPayloadRetryRejected = retryResume.paymentPayloadRetryRejected === true;
+  const unresolved = !terminal;
+  const blockingPaymentPayloadDigestSha256 =
+    typeof paymentState.lookup.paymentPayloadDigestSha256 === "string"
+      ? paymentState.lookup.paymentPayloadDigestSha256
+      : typeof latestLedger?.paymentPayloadDigestSha256 === "string"
+        ? latestLedger.paymentPayloadDigestSha256
+        : undefined;
+  const blockingRequestId =
+    typeof paymentState.lookup.requestId === "string"
+      ? paymentState.lookup.requestId
+      : typeof latestLedger?.hireRequestId === "string"
+        ? latestLedger.hireRequestId
+        : undefined;
+  const safeNextAction =
+    typeof retryResume.nextAction === "string"
+      ? retryResume.nextAction
+      : unresolved
+        ? "poll_or_reconcile_existing_payment"
+        : "fresh_payment_allowed";
+  const paymentStateUrl = paymentStateRetryEndpoint({
+    apiBase: input.apiBase,
+    ...(paymentState.lookup.intentId ? { intentId: paymentState.lookup.intentId } : {}),
+    ...(blockingRequestId ? { requestId: blockingRequestId } : {}),
+    ...(typeof latestLedger?.agentId === "string" ? { agentId: latestLedger.agentId } : {}),
+    ...(blockingPaymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: blockingPaymentPayloadDigestSha256 } : {})
+  }) ?? `${input.apiBase}/api/x402/payment-state`;
+  return {
+    schemaVersion: "santaclawz-buyer-payment-safety/1.0" as const,
+    scoped: true as const,
+    freshPaymentSafeForBuyer: terminal,
+    safeToRetrySamePayload,
+    safeToCreateNewPayment: terminal,
+    safeNextAction,
+    terminal,
+    unresolved,
+    humanOrPlatformInterventionRequired: unresolved && !safeToRetrySamePayload,
+    paymentStateUrl,
+    ...(typeof retryResume.stateEndpoint === "string" ? { stateEndpoint: retryResume.stateEndpoint } : {}),
+    ...(blockingPaymentPayloadDigestSha256 ? { blockingPaymentPayloadDigestSha256 } : {}),
+    ...(blockingRequestId ? { blockingRequestId } : {}),
+    ...(typeof latestLedger?.ledgerId === "string" ? { blockingLedgerId: latestLedger.ledgerId } : {}),
+    ...(unresolved
+      ? {
+          blockerCode: paymentPayloadRetryRejected
+            ? "existing_payment_payload_not_retryable"
+            : "existing_non_terminal_payment"
+        }
+      : {}),
+    guidance: terminal
+      ? "The referenced payment path is terminal. A buyer may create a fresh payment for a new job if the agent is otherwise hireable."
+      : "This buyer has an unresolved payment path. Do not create a fresh payment until payment-state or execution-state reaches a terminal outcome."
+  };
+}
+
+async function attachBuyerPaymentSafetyToPlan(input: {
+  apiBase: string;
+  query: unknown;
+  plan: Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"];
+}) {
+  const buyerPaymentSafety = await buyerPaymentSafetyForPlan({
+    apiBase: input.apiBase,
+    lookup: paymentStateLookupFromQuery(input.query)
+  });
+  return buyerPaymentSafety ? { ...input.plan, buyerPaymentSafety } : input.plan;
+}
+
 function commaSet(value: string | undefined) {
   return new Set((value ?? "").split(",").map((item) => item.trim()).filter(Boolean));
 }
@@ -4493,6 +4596,13 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       terminal: buyerAccepted || hasFailure,
       latestLedger
     });
+    const paymentRecoveryBlocked =
+      acceptedPendingResult &&
+      executionRetrySafety.payloadRetryRejected &&
+      !executionRetrySafety.safeToRetrySamePayload;
+    const paymentRecoveryMissingBuyerDelivery =
+      paymentRecoveryBlocked &&
+      !buyerDeliveryAvailable;
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -4552,6 +4662,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         buyerDeliveryStatus,
         buyerDeliveryAvailable,
         buyerVisibleOutputCount,
+        buyerDeliveryBlocker: paymentRecoveryMissingBuyerDelivery ? "authorized_payment_missing_buyer_delivery" : undefined,
         artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
         artifactDeliveryAvailable: artifactDelivered,
         buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
@@ -4596,7 +4707,19 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
             ...(executionRetrySafety.payloadRetryRejected
               ? {
                   ...(executionRetrySafety.payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
-                  paymentPayloadRetryRejected: true
+                  paymentPayloadRetryRejected: true,
+                  humanOrPlatformInterventionRequired: true,
+                  reason: paymentRecoveryMissingBuyerDelivery
+                    ? "authorized_payment_missing_buyer_delivery"
+                    : "payment_payload_retry_rejected_non_terminal",
+                  reconciliation: {
+                    status: "operator_reconciliation_required",
+                    reason: paymentRecoveryMissingBuyerDelivery
+                      ? "authorized_payment_missing_buyer_delivery"
+                      : "payment_payload_retry_rejected_non_terminal",
+                    paymentStateUrl,
+                    stateUrl
+                  }
                 }
               : {}),
             workerAcknowledged: true,
@@ -5395,10 +5518,15 @@ app.get("/api/x402/plan", route(async (request, response) => {
     const sessionId = queryString(request.query, "sessionId") ?? "";
     const agentId = queryString(request.query, "agentId") ?? "";
     const cacheKey = `x402-plan:${getBaseUrl(request)}:session:${sessionId}:agent:${agentId}`;
-    const { payload: plan, cacheStatus } = await cachedPublicRead(
+    const { payload: basePlan, cacheStatus } = await cachedPublicRead(
       cacheKey,
       async () => (await buildX402PlanFromQuery(request)).plan
     );
+    const plan = await attachBuyerPaymentSafetyToPlan({
+      apiBase: getBaseUrl(request),
+      query: request.query,
+      plan: basePlan
+    });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
   } catch (error) {
@@ -5417,10 +5545,15 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
     }
 
     const cacheKey = `agent-x402-plan:${getBaseUrl(request)}:${agentId}`;
-    const { payload: plan, cacheStatus } = await cachedPublicRead(
+    const { payload: basePlan, cacheStatus } = await cachedPublicRead(
       cacheKey,
       async () => (await buildX402PlanFromOptions(getBaseUrl(request), { agentId })).plan
     );
+    const plan = await attachBuyerPaymentSafetyToPlan({
+      apiBase: getBaseUrl(request),
+      query: request.query,
+      plan: basePlan
+    });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
   } catch (error) {

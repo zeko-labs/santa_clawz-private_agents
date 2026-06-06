@@ -4233,6 +4233,23 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(expiredDigestExecutionState.payload.doNotCreateNewPayment, true);
     assert.equal(expiredDigestExecutionState.payload.paymentPayloadExpiredForRetry, true);
     assert.equal(expiredDigestExecutionState.payload.paymentPayloadRetryRejected, true);
+    assert.equal(expiredDigestExecutionState.payload.humanOrPlatformInterventionRequired, true);
+    assert.equal(expiredDigestExecutionState.payload.reason, "authorized_payment_missing_buyer_delivery");
+    assert.equal(expiredDigestExecutionState.payload.reconciliation.status, "operator_reconciliation_required");
+    assert.equal(expiredDigestExecutionState.payload.reconciliation.reason, "authorized_payment_missing_buyer_delivery");
+
+    const blockedPlan = await requestJson(
+      `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan?paymentPayloadDigestSha256=${"d".repeat(64)}`
+    );
+    assert.equal(blockedPlan.status, 200);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.schemaVersion, "santaclawz-buyer-payment-safety/1.0");
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.freshPaymentSafeForBuyer, false);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.safeToRetrySamePayload, false);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.safeToCreateNewPayment, false);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.unresolved, true);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.humanOrPlatformInterventionRequired, true);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.blockingPaymentPayloadDigestSha256, "d".repeat(64));
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.blockerCode, "existing_payment_payload_not_retryable");
 
     const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
     const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
@@ -4265,6 +4282,7 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(legacyExecutionState.payload.safeToRetrySamePayload, false);
     assert.equal(legacyExecutionState.payload.safeToRetrySamePaymentPayload, false);
     assert.equal(legacyExecutionState.payload.paymentPayloadExpiredForRetry, true);
+    assert.equal(legacyExecutionState.payload.reason, "authorized_payment_missing_buyer_delivery");
     assert.equal(legacyExecutionState.payload.safeToCreateNewPayment, false);
 
     const reconciled = await requestJson(
