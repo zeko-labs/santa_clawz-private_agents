@@ -776,6 +776,19 @@ function stringValue(source, key) {
   return isRecord(source) && typeof source[key] === "string" ? source[key] : "";
 }
 
+function ledgerPaymentSettled(ledger) {
+  return (
+    stringValue(ledger, "paymentStatus") === "settled" ||
+    stringValue(ledger, "paymentStatus") === "already_settled" ||
+    Boolean(
+      stringValue(ledger, "sellerSettlementTxHash") ||
+      stringValue(ledger, "protocolFeeTxHash") ||
+      stringValue(ledger, "settlementReference") ||
+      arrayValue(ledger, "transactionHashes").length > 0
+    )
+  );
+}
+
 function buyerDeliveryProjection(payload) {
   const response = isRecord(payload?.response) ? payload.response : payload;
   const protocolReturn = firstRecord(response?.protocolReturn, payload?.protocolReturn);
@@ -1164,18 +1177,30 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
     return null;
   }
   const latestLedger = isRecord(paymentStatePayload?.payment?.latestLedger) ? paymentStatePayload.payment.latestLedger : {};
+  const paymentSettled =
+    protocolState === "DELIVERED_SETTLED" ||
+    ledgerPaymentSettled(latestLedger) ||
+    stringValue(paymentStatePayload, "settlementStatus") === "settled";
   return {
     ok: true,
-    code: "paid_execution_buyer_complete",
-    completionMode: "recovered_from_payment_state",
+    code: paymentSettled
+      ? "paid_execution_buyer_complete"
+      : "paid_execution_delivery_available_settlement_pending",
+    completionMode: paymentSettled
+      ? "recovered_from_payment_state"
+      : "recovered_delivery_settlement_pending",
     retryable: false,
     nextAction: "view_delivery",
     protocolState,
     buyerAction,
     sellerOutcome: sellerOutcome || "completed",
-    operatorObligation: operatorObligation || "none",
-    paymentStatus: stringValue(latestLedger, "paymentStatus") || "execution_completed",
-    settlementStatus: "settled",
+    operatorObligation: operatorObligation || (paymentSettled ? "none" : "settle_payment"),
+    paymentStatus: paymentSettled
+      ? "settled"
+      : stringValue(latestLedger, "paymentStatus") || stringValue(paymentStatePayload, "paymentStatus") || "authorized",
+    settlementStatus: paymentSettled
+      ? "settled"
+      : stringValue(paymentStatePayload, "settlementStatus") || "authorized",
     relayDeliveryStatus: "forwarded",
     agentExecutionStatus: "completed",
     sellerExecutionCompleted: true,
@@ -1481,6 +1506,7 @@ if (!planResponse.ok) {
       ? await pollRecoverableExecutionState(resultStateUrl)
       : null;
     const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
+    const buyerOutputPath = writeBuyerOutputFile(runDir, submit.payload);
     const output = {
       ...(recoveredSummary ?? summary),
       paid: true,
@@ -1494,6 +1520,7 @@ if (!planResponse.ok) {
       paymentStateUrl: suppliedPaymentStateUrl,
       manifestDir: runDir,
       paymentPayloadPath: suppliedPaymentPayloadPath,
+      ...(buyerOutputPath ? { buyerOutputPath } : {}),
       recoveryMode: "same_payment_payload_without_plan",
       recoveryReason: "x402_plan_unavailable_existing_payload_retry_safe",
       existingPaymentState: suppliedPaymentState.payload,
@@ -1817,6 +1844,7 @@ const recoveryPoll = summary.code === "job_running_or_return_timeout"
   ? await pollRecoverableExecutionState(resultStateUrl)
   : null;
 const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
+const buyerOutputPath = writeBuyerOutputFile(runDir, submit.payload);
 const output = {
   ...(recoveredSummary ?? summary),
   paid: true,
@@ -1829,6 +1857,7 @@ const output = {
   stateUrl: resultStateUrl,
   paymentStateUrl,
   manifestDir: runDir,
+  ...(buyerOutputPath ? { buyerOutputPath } : {}),
   ...(recoveryPoll ? { recoveryPoll } : {}),
   response: submit.payload
 };

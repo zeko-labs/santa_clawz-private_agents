@@ -645,6 +645,22 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
   }
 }
 
+async function withRejectingTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function gasUnitsForRail(rail: AgentPaymentRail): bigint {
   const configured =
     rail === "ethereum-usdc"
@@ -2141,6 +2157,11 @@ function facilitatorSettleRetryDelayMs() {
   return Number.isFinite(raw) ? Math.max(0, Math.min(Math.round(raw), 10_000)) : 1500;
 }
 
+function facilitatorSettleAttemptTimeoutMs() {
+  const raw = Number(process.env.CLAWZ_X402_FACILITATOR_SETTLE_ATTEMPT_TIMEOUT_MS ?? "10000");
+  return Number.isFinite(raw) ? Math.max(2_500, Math.min(Math.round(raw), 60_000)) : 10_000;
+}
+
 function isRetryableFacilitatorSettlementError(error: unknown) {
   const text = error instanceof Error ? error.message : JSON.stringify(error);
   return /replacement transaction underpriced|nonce too low|nonce expired|already known|transaction underpriced|temporarily unavailable|timeout|rate limit|429|502|503|504/i.test(
@@ -2168,14 +2189,19 @@ async function settleWithFacilitatorRetry(input: {
 }) {
   const maxAttempts = facilitatorSettleMaxAttempts();
   const delayMs = facilitatorSettleRetryDelayMs();
+  const attemptTimeoutMs = facilitatorSettleAttemptTimeoutMs();
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return (await input.facilitator.settle({
-        paymentPayload: input.paymentPayload,
-        paymentRequirements: input.paymentRequirements
-      })) as JsonRecord;
+      return (await withRejectingTimeout(
+        input.facilitator.settle({
+          paymentPayload: input.paymentPayload,
+          paymentRequirements: input.paymentRequirements
+        }) as Promise<unknown>,
+        attemptTimeoutMs,
+        `Facilitator settlement attempt timed out after ${attemptTimeoutMs}ms.`
+      )) as JsonRecord;
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts || !isRetryableFacilitatorSettlementError(error)) {
