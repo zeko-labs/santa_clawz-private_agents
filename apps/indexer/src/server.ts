@@ -82,14 +82,6 @@ const securityConfig = resolveSecurityConfig();
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
-// Bounds only the direct HTTP route's settlement wait after valid buyer delivery
-// has already been recorded. It is not an agent work timeout.
-const DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_DEADLINE_MS = parseBoundedIntegerEnv(
-  "CLAWZ_DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_DEADLINE_MS",
-  8_500,
-  1_500,
-  18_000
-);
 const HIRE_REQUEST_LIMITS = Object.freeze({
   taskPromptMaxChars: HIRE_TASK_PROMPT_MAX_LENGTH,
   requesterContactMaxChars: HIRE_REQUESTER_CONTACT_MAX_LENGTH,
@@ -2914,8 +2906,11 @@ async function buildX402PaymentStateResponse(input: {
   const { payloadRetryRejected, safeToRetrySamePayload } = paymentRetrySafety;
   const safeToCreateNewPayment = Boolean(terminal);
   const latestLedgerRecord = isRecord(latestLedger) ? latestLedger : undefined;
-  const ledgerSettlementStatus =
-    typeof latestLedgerRecord?.settlementStatus === "string" ? latestLedgerRecord.settlementStatus : undefined;
+  const ledgerSettlementStatus = paymentSettled
+    ? "settled"
+    : typeof latestLedgerRecord?.settlementStatus === "string"
+      ? latestLedgerRecord.settlementStatus
+      : undefined;
   const paymentStateProofStatus =
     hireRequest?.returnValidationError || latestLedger?.returnStatus === "rejected"
       ? "return_rejected"
@@ -3264,6 +3259,72 @@ async function recordX402PaymentLedgerAuthorization(input: {
     },
     paymentStatus: "authorization_verified"
   });
+}
+
+async function settleCompletedAgentHirePayment(input: {
+  agentId: string;
+  sessionId: string;
+  pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
+  runtime: Parameters<typeof settleAgentX402Payment>[0]["runtime"];
+  paymentPayload: Record<string, unknown>;
+  requestId: string;
+  authorizationId?: string;
+  ledgerId?: string;
+  amountUsd?: string;
+  protocolFeeBps?: number;
+}) {
+  const settlement = await settleAgentX402Payment({
+    runtime: input.runtime,
+    paymentPayload: input.paymentPayload
+  });
+  const amountUsd = input.amountUsd ?? settlement.rail.amountUsd;
+  const settledLedger = await recordX402PaymentLedgerSettlement({
+    agentId: input.agentId,
+    sessionId: input.sessionId,
+    pricingMode: input.pricingMode,
+    railPlan: settlement.rail,
+    settlement,
+    paymentPayload: input.paymentPayload,
+    ...(input.authorizationId ? { authorizationId: input.authorizationId } : {}),
+    ...(amountUsd ? { amountUsd } : {}),
+    ...(typeof input.protocolFeeBps === "number" ? { protocolFeeBps: input.protocolFeeBps } : {})
+  });
+  await controlPlane.markHireRequestPaymentSettled({
+    requestId: input.requestId,
+    ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
+    ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
+    ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
+    transactionHashes: settledLedger.transactionHashes,
+    paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
+  });
+  return { settlement, settledLedger };
+}
+
+async function settleCompletedAgentHirePaymentOutcome(input: Parameters<typeof settleCompletedAgentHirePayment>[0]): Promise<
+  | { status: "settled"; result: Awaited<ReturnType<typeof settleCompletedAgentHirePayment>> }
+  | { status: "failed"; error: unknown }
+> {
+  try {
+    return {
+      status: "settled",
+      result: await settleCompletedAgentHirePayment(input)
+    };
+  } catch (error) {
+    await controlPlane.recordPaymentLedgerSettlementFailure({
+      ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+      errorMessage: errorMessage(error, "Unable to settle x402 payment."),
+      settlementRetryable: isRetryableSettlementError(error)
+    });
+    console.warn(JSON.stringify({
+      event: "x402_background_settlement_failed",
+      agentId: input.agentId,
+      requestId: input.requestId,
+      ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+      retryable: isRetryableSettlementError(error),
+      error: errorMessage(error, "Unable to settle x402 payment.")
+    }));
+    return { status: "failed", error };
+  }
 }
 
 async function fetchBaseRelayerTransactions(input: {
@@ -4639,7 +4700,9 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       latestReceipt?.buyerAcceptanceStatus === "accepted" ||
       (collaboration.currentStage?.stage === "review" && collaboration.currentStage.status === "accepted") ||
       collaboration.currentStage?.stage === "final";
+    const ledgerPaymentSettled = ledgerHasSettledPayment(latestLedger);
     const paymentStatus =
+      ledgerPaymentSettled ||
       operational?.paymentStatus === "settled" ||
       latestLedger?.paymentStatus === "settled" ||
       latestLedger?.paymentStatus === "already_settled"
@@ -4647,7 +4710,11 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         : operational?.paymentStatus === "authorized" || latestLedger?.paymentStatus === "authorization_verified"
           ? "authorized"
           : operational?.paymentStatus ?? "not_started";
-    const settlementStatus = operational?.settlementStatus ?? "not_attempted";
+    const settlementStatus = ledgerPaymentSettled
+      ? "settled"
+      : latestLedger?.paymentStatus === "settlement_failed"
+        ? "failed"
+        : operational?.settlementStatus ?? "not_attempted";
     const relayDeliveryStatus = operational?.relayDeliveryStatus ?? "not_attempted";
     const agentExecutionStatus = operational?.agentExecutionStatus ?? hireRequest.status;
     const postAckRelayTimeout = hireRequestHasPostAckRelayTimeout(hireRequest);
@@ -4661,7 +4728,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         (relayDeliveryStatus === "failed" && agentExecutionStatus === "submitted") ||
         (relayDeliveryStatus === "failed" && hireRequest.status === "submitted")
       );
-    const paymentSettled = paymentStatus === "settled" || ledgerHasSettledPayment(latestLedger);
+    const paymentSettled = paymentStatus === "settled";
     const paymentAuthorizedForLifecycle =
       paymentStatus === "authorized" ||
       paymentStatus === "settled" ||
@@ -7130,7 +7197,6 @@ app.post("/api/ownership/reclaim", route(async (request, response) => {
 }));
 
 const handleAgentHireRequest = route(async (request, response) => {
-  const routeStartedAtMs = Date.now();
   const agentId = request.params.agentId;
   if (!agentId) {
     response.status(400).json(hireRequestErrorBody("agent_id_required", "agentId is required."));
@@ -7452,75 +7518,80 @@ const handleAgentHireRequest = route(async (request, response) => {
       ) {
         const completedHire = await controlPlane.getHireRequest(paymentLedgerEntry.hireRequestId);
         if (completedHire.protocolReturn?.status === "completed") {
-          try {
-            const settlement = await settleAgentX402Payment({
-              runtime,
-              paymentPayload
-            });
-            const settledLedger = await recordX402PaymentLedgerSettlement({
+          const buyerDeliveryAvailable = protocolReturnHasBuyerDelivery(completedHire.protocolReturn);
+          const returnValidated = Boolean(completedHire.protocolReturn?.verifiedOutput);
+          if (buyerDeliveryAvailable) {
+            void settleCompletedAgentHirePaymentOutcome({
               agentId,
               sessionId: consoleState.session.sessionId,
               pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
-              railPlan: settlement.rail,
-              settlement,
+              runtime,
               paymentPayload,
+              requestId: completedHire.requestId,
               authorizationId: paymentPayloadDigestSha256,
-              ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+              ledgerId: paymentLedgerEntry.ledgerId,
+              ...(verification.rail.amountUsd ? { amountUsd: verification.rail.amountUsd } : {}),
               ...(consoleState.protocolOwnerFeePolicy.enabled
                 ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
                 : {})
             });
-            await controlPlane.markHireRequestPaymentSettled({
-              requestId: completedHire.requestId,
-              ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
-              ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
-              ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
-              transactionHashes: settledLedger.transactionHashes,
-              paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
-            });
-            response.json({
-              ...completedHire,
-              idempotent: true,
-              resumedFromPaymentPayload: true,
-              paymentStatus: "settled",
-              operationalStatus: completedHire.operationalStatus
-                ? {
-                    ...completedHire.operationalStatus,
-                    paymentStatus: "settled",
-                    settlementStatus: "settled"
-                  }
-                : completedHire.operationalStatus,
-              payment: {
-                ...completedHire.payment,
-                status: "settled",
-                ledgerId: settledLedger.ledgerId,
-                ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
-                ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
-                ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
-                transactionHashes: settledLedger.transactionHashes
-              }
-            });
-            return;
-          } catch (error) {
-            await controlPlane.recordPaymentLedgerSettlementFailure({
-              ledgerId: paymentLedgerEntry.ledgerId,
-              errorMessage: errorMessage(error, "Unable to settle x402 payment."),
-              settlementRetryable: isRetryableSettlementError(error)
-            });
-            response.status(202).json(paymentSettlementFailureBody(error, {
-              agentId,
-              paidExecution: completedHire,
-              paymentAuthorized: true,
-              paymentSettled: false,
-              payment: {
-                ...completedHire.payment,
-                status: "authorized",
-                ledgerId: paymentLedgerEntry.ledgerId,
-                transactionHashes: []
-              }
-            }));
-            return;
           }
+          const protocolLifecycle = reduceSantaClawzPaidLifecycle({
+            paymentStatus: "authorization_verified",
+            settlementStatus: "authorized",
+            relayDeliveryStatus: completedHire.operationalStatus?.relayDeliveryStatus,
+            agentExecutionStatus: completedHire.operationalStatus?.agentExecutionStatus,
+            proofStatus: returnValidated ? "return_validated" : "not_started",
+            sellerExecutionCompleted: returnValidated,
+            buyerDeliveryAvailable,
+            buyerComplete: false,
+            paymentAuthorized: true,
+            paymentSettled: false
+          });
+          response.status(202).json({
+            ...completedHire,
+            ok: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
+            code: protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
+              ? "paid_execution_delivery_available_settlement_pending"
+              : protocolLifecycle.protocolState === "PLATFORM_FAILED_RECONCILE"
+                ? "paid_execution_delivery_reconciliation_required"
+                : "paid_execution_state_recorded",
+            idempotent: true,
+            resumedFromPaymentPayload: true,
+            retryable: false,
+            nextAction: protocolLifecycle.buyerAction,
+            protocolLifecycle,
+            protocolState: protocolLifecycle.protocolState,
+            buyerAction: protocolLifecycle.buyerAction,
+            sellerOutcome: protocolLifecycle.sellerOutcome,
+            operatorObligation: protocolLifecycle.operatorObligation,
+            buyerDeliveryAvailable: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
+            buyerComplete: false,
+            sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,
+            safeToCreateNewPayment: protocolLifecycle.buyerAnswer.canCreateFreshPayment,
+            safeToRetrySamePayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
+            safeToRetrySamePaymentPayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
+            doNotCreateNewPayment: !protocolLifecycle.buyerAnswer.canCreateFreshPayment,
+            paymentPayloadDigestSha256,
+            stateUrl: `${getBaseUrl(request)}/api/executions/${encodeURIComponent(completedHire.requestId)}/state`,
+            paymentStateUrl:
+              `${getBaseUrl(request)}/api/x402/payment-state?paymentPayloadDigestSha256=${encodeURIComponent(paymentPayloadDigestSha256)}`,
+            paymentStatus: "authorized",
+            operationalStatus: completedHire.operationalStatus
+              ? {
+                  ...completedHire.operationalStatus,
+                  paymentStatus: "authorized",
+                  settlementStatus: "authorized"
+                }
+              : completedHire.operationalStatus,
+            payment: {
+              ...completedHire.payment,
+              status: "authorized",
+              ledgerId: paymentLedgerEntry.ledgerId,
+              transactionHashes: []
+            }
+          });
+          return;
         }
       }
       paymentAuthorization = {
@@ -7568,131 +7639,42 @@ const handleAgentHireRequest = route(async (request, response) => {
           ? `${getBaseUrl(request)}/api/x402/payment-state?paymentPayloadDigestSha256=${encodeURIComponent(paymentPayloadDigestSha256)}`
           : undefined;
         const buyerDeliveryAvailable = protocolReturnHasBuyerDelivery(hireReceipt.protocolReturn);
-        const settlementTask = async () => {
-          const settlement = await settleAgentX402Payment({
-            runtime: runtimeForDeferredSettlement,
-            paymentPayload: paymentPayloadForDeferredSettlement
-          });
-          const settledLedger = await recordX402PaymentLedgerSettlement({
+        const returnValidated = Boolean(hireReceipt.protocolReturn?.verifiedOutput);
+        if (buyerDeliveryAvailable) {
+          void settleCompletedAgentHirePaymentOutcome({
             agentId,
             sessionId: consoleState.session.sessionId,
             pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
-            railPlan: settlement.rail,
-            settlement,
+            runtime: runtimeForDeferredSettlement,
             paymentPayload: paymentPayloadForDeferredSettlement,
+            requestId: hireReceipt.requestId,
             ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),
-            ...(settlement.rail.amountUsd ? { amountUsd: settlement.rail.amountUsd } : {}),
+            ...(authorizationLedgerId ? { ledgerId: authorizationLedgerId } : {}),
+            ...(paymentAuthorization.amountUsd ? { amountUsd: paymentAuthorization.amountUsd } : {}),
             ...(consoleState.protocolOwnerFeePolicy.enabled
               ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
               : {})
           });
-          await controlPlane.markHireRequestPaymentSettled({
-            requestId: hireReceipt.requestId,
-            ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
-            ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
-            ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
-            transactionHashes: settledLedger.transactionHashes,
-            paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
-          });
-          return { settlement, settledLedger };
-        };
-        const normalizedSettlementPromise: Promise<
-          | { status: "settled"; result: Awaited<ReturnType<typeof settlementTask>> }
-          | { status: "failed"; error: unknown }
-        > = settlementTask()
-          .then((result) => ({ status: "settled" as const, result }))
-          .catch(async (error) => {
-            await controlPlane.recordPaymentLedgerSettlementFailure({
-              ...(authorizationLedgerId ? { ledgerId: authorizationLedgerId } : {}),
-              errorMessage: errorMessage(error, "Unable to settle x402 payment."),
-              settlementRetryable: isRetryableSettlementError(error)
-            });
-            return { status: "failed" as const, error };
-          });
-        const remainingResponseBudgetMs = Math.max(
-          0,
-          DIRECT_PAID_HIRE_SETTLEMENT_RESPONSE_DEADLINE_MS - (Date.now() - routeStartedAtMs)
-        );
-        let settlementTimeout: ReturnType<typeof setTimeout> | undefined;
-        const settlementTimeoutPromise = new Promise<{ status: "pending" }>((resolve) => {
-          settlementTimeout = setTimeout(() => resolve({ status: "pending" }), remainingResponseBudgetMs);
-        });
-        const settlementOutcome = await Promise.race([
-          normalizedSettlementPromise,
-          settlementTimeoutPromise
-        ]);
-        if (settlementTimeout) {
-          clearTimeout(settlementTimeout);
         }
-        if (settlementOutcome.status === "failed") {
-          const { error } = settlementOutcome;
-          response.status(202).json(paymentSettlementFailureBody(error, {
-            agentId,
-            paidExecution: hireReceipt,
-            paymentAuthorized: true,
-            paymentSettled: false,
-            protocolLifecycle: reduceSantaClawzPaidLifecycle({
-              paymentStatus: "authorization_verified",
-              settlementStatus: "failed",
-              relayDeliveryStatus: hireReceipt.operationalStatus?.relayDeliveryStatus,
-              agentExecutionStatus: hireReceipt.operationalStatus?.agentExecutionStatus,
-              proofStatus: hireReceipt.protocolReturn?.verifiedOutput ? "return_validated" : "not_started",
-              sellerExecutionCompleted: buyerDeliveryAvailable,
-              buyerDeliveryAvailable,
-              buyerComplete: false,
-              paymentAuthorized: true,
-              paymentSettled: false
-            }),
-            ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
-            stateUrl,
-            ...(paymentStateUrl ? { paymentStateUrl } : {}),
-            payment: {
-              ...hireReceipt.payment,
-              status: "authorized",
-              ledgerId: authorizationLedgerId,
-              transactionHashes: []
-            }
-          }));
-          return;
-        }
-        const settled = settlementOutcome.status === "settled";
-        const settledLedger = settled ? settlementOutcome.result.settledLedger : undefined;
         const protocolLifecycle = reduceSantaClawzPaidLifecycle({
-          paymentStatus: settled ? "settled" : "authorization_verified",
-          settlementStatus: settled ? "settled" : "authorized",
+          paymentStatus: "authorization_verified",
+          settlementStatus: "authorized",
           relayDeliveryStatus: hireReceipt.operationalStatus?.relayDeliveryStatus,
           agentExecutionStatus: hireReceipt.operationalStatus?.agentExecutionStatus,
-          proofStatus: hireReceipt.protocolReturn?.verifiedOutput ? "return_validated" : "not_started",
-          sellerExecutionCompleted: buyerDeliveryAvailable,
+          proofStatus: returnValidated ? "return_validated" : "not_started",
+          sellerExecutionCompleted: returnValidated,
           buyerDeliveryAvailable,
-          buyerComplete: settled && buyerDeliveryAvailable,
+          buyerComplete: false,
           paymentAuthorized: true,
-          paymentSettled: settled
+          paymentSettled: false
         });
-        const responsePayment = settledLedger
-          ? {
-              ...hireReceipt.payment,
-              status: "settled",
-              ledgerId: settledLedger.ledgerId,
-              ...(settledLedger.settlementReference ? { settlementReference: settledLedger.settlementReference } : {}),
-              ...(settledLedger.sellerSettlementTxHash ? { sellerSettlementTxHash: settledLedger.sellerSettlementTxHash } : {}),
-              ...(settledLedger.protocolFeeTxHash ? { protocolFeeTxHash: settledLedger.protocolFeeTxHash } : {}),
-              transactionHashes: settledLedger.transactionHashes
-            }
-          : {
-              ...hireReceipt.payment,
-              status: "authorized",
-              ledgerId: authorizationLedgerId,
-              transactionHashes: []
-            };
-        const responseStatus = protocolLifecycle.protocolState === "DELIVERED_SETTLED" ? 200 : 202;
         const code =
-          protocolLifecycle.protocolState === "DELIVERED_SETTLED"
-            ? "paid_execution_buyer_complete"
-            : protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
-              ? "paid_execution_delivery_available_settlement_pending"
+          protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
+            ? "paid_execution_delivery_available_settlement_pending"
+            : protocolLifecycle.protocolState === "PLATFORM_FAILED_RECONCILE"
+              ? "paid_execution_delivery_reconciliation_required"
               : "paid_execution_state_recorded";
-        response.status(responseStatus).json({
+        response.status(202).json({
           ...hireReceipt,
           ok: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
           code,
@@ -7713,15 +7695,20 @@ const handleAgentHireRequest = route(async (request, response) => {
           ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
           stateUrl,
           ...(paymentStateUrl ? { paymentStateUrl } : {}),
-          paymentStatus: settled ? "settled" : hireReceipt.paymentStatus,
+          paymentStatus: "authorized",
           operationalStatus: hireReceipt.operationalStatus
             ? {
                 ...hireReceipt.operationalStatus,
-                paymentStatus: settled ? "settled" : hireReceipt.operationalStatus.paymentStatus,
-                settlementStatus: settled ? "settled" : "authorized"
+                paymentStatus: "authorized",
+                settlementStatus: "authorized"
               }
             : hireReceipt.operationalStatus,
-          payment: responsePayment
+          payment: {
+            ...hireReceipt.payment,
+            status: "authorized",
+            ledgerId: authorizationLedgerId,
+            transactionHashes: []
+          }
         });
         return;
       }
