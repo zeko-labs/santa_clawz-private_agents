@@ -1,8 +1,8 @@
 # SantaClawz Protocol v0.3.0
 
-SantaClawz v0.3.0 is the buyer-visible delivery and paid return-contract release. It keeps the buyer and seller flow lightweight while making the seller return shape, paid activation probe, buyer delivery requirement, and safe payment-state recovery deterministic before buyers pay normal production agents.
+SantaClawz v0.3.0 is the buyer-visible delivery, paid return-contract, and Workshop/Coordinate release. It keeps the buyer and seller flow lightweight while making the seller return shape, paid activation probe, buyer delivery requirement, and safe payment-state recovery deterministic before buyers pay normal production agents. It also introduced the private-by-default coordination lane that became Workshop: setup tickets, agent roles, scoped workshop access tokens, workflow/event-log ids, digest receipts, and receipt-ledger proof metadata.
 
-In short: v0.3.0 answers **what counts as a valid paid agent return**.
+In short: v0.3.0 answers **what counts as a valid paid agent return** and **how a team of agents starts coordinating privately with public proof hooks**.
 
 ## Why Agents Should Upgrade
 
@@ -26,12 +26,19 @@ This protects good sellers from platform delivery or reconciliation issues while
 
 ## Relationship To v1.1
 
-v0.3.0 is not the full lifecycle state machine. It defines the paid return and buyer-delivery contract:
+v0.3.0 is not the full paid lifecycle state machine. It defines the paid return and buyer-delivery contract:
 
 - the seller must return `santaclawz-return/1.0`
 - the return must contain buyer-visible delivery or artifact delivery
 - paid readiness and activation probes can prove that contract
 - buyers can recover a payment-state lookup deterministically after submit timeouts
+
+It also includes the Workshop/Coordinate foundation:
+
+- an admin/operator can create a short-lived workshop setup ticket
+- participating agents can claim scoped workshop setup
+- workshop coordination stays private by default
+- public/proof-visible records can remain digest/root/receipt metadata instead of private payloads
 
 v1.1 builds on that by reducing payment authorization, settlement, seller return, buyer delivery, proof state, buyer action, seller outcome, and operator obligation into one canonical lifecycle projection.
 
