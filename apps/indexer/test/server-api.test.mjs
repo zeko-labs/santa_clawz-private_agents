@@ -4191,6 +4191,9 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     );
     assert.equal(redactedPaymentState.status, 200);
     assert.equal(redactedPaymentState.payload.redacted, true);
+    assert.equal(redactedPaymentState.payload.protocolState, "AUTHORIZED_WAITING_FOR_DELIVERY");
+    assert.equal(redactedPaymentState.payload.buyerAction, "retry_same_payment_payload");
+    assert.equal(redactedPaymentState.payload.sellerOutcome, "pending");
     assert.match(
       redactedPaymentState.payload.retryResume.stateEndpoint,
       /\/api\/executions\/[^/]+\/state\?paymentPayloadDigestSha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd$/
@@ -4206,6 +4209,9 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(digestExecutionState.payload.workspace.messageCount, 0);
     assert.equal(digestExecutionState.payload.safeToRetrySamePayload, true);
     assert.equal(digestExecutionState.payload.safeToCreateNewPayment, false);
+    assert.equal(digestExecutionState.payload.protocolState, "AUTHORIZED_WAITING_FOR_DELIVERY");
+    assert.equal(digestExecutionState.payload.buyerAction, "retry_same_payment_payload");
+    assert.equal(digestExecutionState.payload.operatorObligation, "reconcile_platform_state");
 
     const expiredLedger = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
     expiredLedger.entries = expiredLedger.entries.map((entry) =>
@@ -4222,6 +4228,8 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${"d".repeat(64)}`
     );
     assert.equal(expiredRedactedPaymentState.status, 200);
+    assert.equal(expiredRedactedPaymentState.payload.protocolState, "EXPIRED_NO_CHARGE");
+    assert.equal(expiredRedactedPaymentState.payload.buyerAction, "create_fresh_payment");
     assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToRetrySamePaymentPayload, false);
     assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToCreateNewPayment, true);
@@ -4231,6 +4239,9 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(expiredRedactedPaymentState.payload.retryResume.paymentPayloadExpiredForRetry, true);
     const expiredDigestExecutionState = await requestJson(expiredRedactedPaymentState.payload.retryResume.stateEndpoint);
     assert.equal(expiredDigestExecutionState.status, 200);
+    assert.equal(expiredDigestExecutionState.payload.protocolState, "EXPIRED_NO_CHARGE");
+    assert.equal(expiredDigestExecutionState.payload.buyerAction, "create_fresh_payment");
+    assert.equal(expiredDigestExecutionState.payload.sellerOutcome, "not_at_fault");
     assert.equal(expiredDigestExecutionState.payload.safeToRetrySamePayload, false);
     assert.equal(expiredDigestExecutionState.payload.safeToRetrySamePaymentPayload, false);
     assert.equal(expiredDigestExecutionState.payload.safeToCreateNewPayment, true);
@@ -4474,10 +4485,10 @@ async function testRelayPreparedResponseResolvesInlineCompletion() {
       messageId: relayHire.messageId,
       requestId,
       requestBodyDigestSha256: relayHire.request.bodyDigestSha256,
-      step: "hire_response_prepared",
+      step: "relay_response_compacted",
       status: "completed",
       occurredAtIso: new Date().toISOString(),
-      detail: "prepared response body is available before the separate hire_response frame",
+      detail: "compacted prepared response body is available before the separate hire_response frame",
       workerStatusCode: 200,
       workerResponseBytes: Buffer.byteLength(preparedBody, "utf8"),
       workerResponseDigestSha256: createHash("sha256").update(preparedBody).digest("hex"),
@@ -4495,6 +4506,7 @@ async function testRelayPreparedResponseResolvesInlineCompletion() {
     assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "forwarded");
     assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "completed");
     assert.equal(hire.payload.protocolReturn.status, "completed");
+    assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "relay_response_compacted" && entry.status === "completed"), true);
     assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "hire_response_prepared" && entry.status === "completed"), true);
     assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "completed"), true);
     assert.equal(hire.payload.relayTrace.some((entry) => entry.step === "relay_returned" && entry.status === "completed"), true);
@@ -5256,6 +5268,78 @@ async function testSellerReputationRequiresBuyerDeliveryContract() {
   console.log("ok - seller reputation requires verified buyer delivery contract");
 }
 
+async function testPaidLifecycleReducerInvariants() {
+  const { reduceSantaClawzPaidLifecycle } = await import("../../../packages/protocol/dist/hire/lifecycle.js");
+
+  const deliveredSettled = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "settled",
+    settlementStatus: "settled",
+    agentExecutionStatus: "completed",
+    proofStatus: "return_validated",
+    sellerExecutionCompleted: true,
+    buyerDeliveryAvailable: true,
+    buyerComplete: true,
+    paymentSettled: true
+  });
+  assert.equal(deliveredSettled.protocolState, "DELIVERED_SETTLED");
+  assert.equal(deliveredSettled.terminal, true);
+  assert.equal(deliveredSettled.buyerAction, "view_delivery");
+  assert.equal(deliveredSettled.sellerOutcome, "completed");
+  assert.equal(deliveredSettled.operatorObligation, "none");
+
+  const authorizedWaiting = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "authorization_verified",
+    relayDeliveryStatus: "acknowledged",
+    agentExecutionStatus: "running_or_unknown",
+    paymentAuthorized: true,
+    safeToRetrySamePayload: true,
+    platformTimedOutAfterWorkerAck: true
+  });
+  assert.equal(authorizedWaiting.protocolState, "AUTHORIZED_WAITING_FOR_DELIVERY");
+  assert.equal(authorizedWaiting.terminal, false);
+  assert.equal(authorizedWaiting.buyerAnswer.canCreateFreshPayment, false);
+  assert.equal(authorizedWaiting.buyerAnswer.canRetrySamePaymentPayload, true);
+  assert.equal(authorizedWaiting.operatorObligation, "reconcile_platform_state");
+
+  const platformFailure = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "authorization_verified",
+    relayDeliveryStatus: "failed",
+    agentExecutionStatus: "submitted",
+    paymentAuthorized: true,
+    platformFailure: true
+  });
+  assert.equal(platformFailure.protocolState, "PLATFORM_FAILED_RECONCILE");
+  assert.equal(platformFailure.sellerOutcome, "not_at_fault");
+  assert.equal(platformFailure.sellerAnswer.reputationImpact, "none");
+  assert.equal(platformFailure.buyerAnswer.canCreateFreshPayment, false);
+
+  const sellerFailed = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "authorization_verified",
+    agentExecutionStatus: "failed",
+    paymentAuthorized: true,
+    hasFailure: true
+  });
+  assert.equal(sellerFailed.protocolState, "SELLER_FAILED_NO_SETTLEMENT");
+  assert.equal(sellerFailed.terminal, true);
+  assert.equal(sellerFailed.sellerOutcome, "failed");
+  assert.equal(sellerFailed.sellerAnswer.reputationImpact, "seller_failure");
+  assert.equal(sellerFailed.buyerAnswer.canCreateFreshPayment, true);
+
+  const expiredNoCharge = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "authorization_verified",
+    paymentAuthorized: true,
+    expiredAuthorizationNoCharge: true,
+    paymentPayloadRetryRejected: true
+  });
+  assert.equal(expiredNoCharge.protocolState, "EXPIRED_NO_CHARGE");
+  assert.equal(expiredNoCharge.terminal, true);
+  assert.equal(expiredNoCharge.buyerAction, "create_fresh_payment");
+  assert.equal(expiredNoCharge.sellerOutcome, "not_at_fault");
+  assert.equal(expiredNoCharge.buyerAnswer.canCreateFreshPayment, true);
+
+  console.log("ok - paid lifecycle reducer preserves buyer/seller/operator invariants");
+}
+
 async function main() {
   await testPersistenceFlow();
   await testMalformedEventFlow();
@@ -5280,6 +5364,7 @@ async function main() {
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();
+  await testPaidLifecycleReducerInvariants();
 }
 
 try {

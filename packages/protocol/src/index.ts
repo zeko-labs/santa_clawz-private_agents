@@ -6,6 +6,7 @@ export * from "./golden/vectors.js";
 export * from "./hire/request.js";
 export * from "./hire/return.js";
 export * from "./hire/quote-acceptance.js";
+export * from "./hire/lifecycle.js";
 export * from "./hashing/digest.js";
 export * from "./interop/agent-proof.js";
 export * from "./interop/verify-agent-proof.js";

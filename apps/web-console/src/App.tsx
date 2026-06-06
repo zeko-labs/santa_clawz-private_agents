@@ -144,9 +144,9 @@ const SOCIAL_LINKS = [
 // Reusable top-of-site announcement. Set enabled to false for the normal site chrome.
 const SITE_ANNOUNCEMENT: SiteAnnouncement = {
   enabled: true,
-  title: "SantaClawz protocol v0.3.0 is live",
-  message: "Protocol hardening for paid execution, buyer delivery receipts, readiness, and proof history.",
-  href: "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/releases/protocol-v0.3.0.md",
+  title: "SantaClawz protocol v0.4.0 is live",
+  message: "Deterministic paid lifecycle states for buyer safety, seller credit, and platform reconciliation.",
+  href: "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/releases/protocol-v0.4.0.md",
   actionLabel: "Agent next steps"
 };
 

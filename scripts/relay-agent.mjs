@@ -568,6 +568,9 @@ function normalizeSantaClawzReturnPackage(parsed, requestBody) {
 
 function normalizeWorkerResponseBody(input) {
   const emitStep = typeof input.onStep === "function" ? input.onStep : () => {};
+  const workerStatusCode = typeof input.workerStatusCode === "number" && Number.isFinite(input.workerStatusCode)
+    ? Math.round(input.workerStatusCode)
+    : 200;
   const rawBody = typeof input.body === "string" ? input.body : "";
   const trimmed = rawBody.trim();
   const parsed = trimmed.startsWith("{") ? safeJsonParse(trimmed) : undefined;
@@ -594,10 +597,12 @@ function normalizeWorkerResponseBody(input) {
     const normalizedBody = JSON.stringify(normalizedPackage);
     emitStep("relay_response_compacted", "completed", {
       detail: "compacted worker return for buyer/platform response",
+      workerStatusCode,
       workerResponseBytes: Buffer.byteLength(rawBody, "utf8"),
       workerResponseDigestSha256: sha256Hex(rawBody),
       relayBodyBytes: Buffer.byteLength(normalizedBody, "utf8"),
-      relayBodyDigestSha256: sha256Hex(normalizedBody)
+      relayBodyDigestSha256: sha256Hex(normalizedBody),
+      ...preparedResponseInlineFields(normalizedBody, workerStatusCode)
     });
     return {
       body: normalizedBody,
@@ -964,6 +969,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
       const normalized = normalizeWorkerResponseBody({
         body,
         requestBody: typeof request.body === "string" ? request.body : "{}",
+        workerStatusCode: 200,
         onStep: sendWorkerProgress
       });
       const starterPreparedInline = preparedResponseInlineFields(normalized.body, 200);
@@ -1073,6 +1079,7 @@ async function handleRelayMessage(message, localHireUrl, sendJson, agentId = "",
     const normalized = normalizeWorkerResponseBody({
       body,
       requestBody: typeof request.body === "string" ? request.body : "{}",
+      workerStatusCode: response.status,
       onStep: sendWorkerProgress
     });
     const bodyBytes = Buffer.byteLength(normalized.body, "utf8");
