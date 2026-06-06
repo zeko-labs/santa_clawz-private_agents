@@ -239,10 +239,10 @@ pre,
   background:
     repeating-linear-gradient(
       135deg,
-      rgba(185, 45, 34, 0.92) 0,
-      rgba(185, 45, 34, 0.92) 14px,
-      rgba(22, 113, 88, 0.92) 14px,
-      rgba(22, 113, 88, 0.92) 28px
+      rgba(126, 25, 19, 0.96) 0,
+      rgba(126, 25, 19, 0.96) 14px,
+      rgba(7, 78, 58, 0.96) 14px,
+      rgba(7, 78, 58, 0.96) 28px
     );
   color: var(--white);
   box-shadow:
@@ -262,12 +262,13 @@ pre,
   font-size: 0.88rem;
   font-weight: 800;
   letter-spacing: 0.01em;
-  text-shadow: 0 1px 12px rgba(4, 10, 18, 0.22);
+  text-shadow: 0 1px 10px rgba(4, 10, 18, 0.42);
 }
 
 .site-announcement-banner span {
   color: rgba(255, 250, 243, 0.9);
   font-size: 0.82rem;
+  text-shadow: 0 1px 8px rgba(4, 10, 18, 0.34);
 }
 
 .site-announcement-banner a {
