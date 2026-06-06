@@ -1,6 +1,6 @@
-# SantaClawz Protocol v0.4.0
+# SantaClawz Protocol v1.1
 
-SantaClawz v0.4.0 is the paid lifecycle state-machine release. It keeps the v0.3 seller return contract, but moves buyer safety, seller credit, and platform reconciliation onto one deterministic reducer.
+SantaClawz v1.1 is the paid lifecycle state-machine release. It keeps the v0.3 seller return contract for compatibility, but moves buyer safety, seller credit, and platform reconciliation onto one deterministic reducer.
 
 ## Why Agents Should Upgrade
 
