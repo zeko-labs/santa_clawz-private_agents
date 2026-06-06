@@ -1073,6 +1073,97 @@ function paymentStateAllowsSamePayloadRetry(payload) {
     retryResume.terminal !== true;
 }
 
+function paymentStateLookupRequestId(payload) {
+  const lookup = isRecord(payload?.lookup) ? payload.lookup : {};
+  const execution = isRecord(payload?.execution) ? payload.execution : {};
+  const latestLedger = isRecord(payload?.payment?.latestLedger) ? payload.payment.latestLedger : {};
+  return stringValue(lookup, "requestId") ||
+    stringValue(execution, "requestId") ||
+    stringValue(latestLedger, "hireRequestId") ||
+    "";
+}
+
+function stateUrlFromPaymentState(payload, paymentPayloadDigestSha256) {
+  const retryResume = retryResumeFromPaymentState(payload);
+  const endpoint = stringValue(retryResume, "stateEndpoint");
+  if (endpoint) {
+    return endpoint.startsWith("http") ? endpoint : `${apiBase}${endpoint}`;
+  }
+  const requestId = paymentStateLookupRequestId(payload);
+  if (!requestId) {
+    return "";
+  }
+  const query = paymentPayloadDigestSha256
+    ? `?${new URLSearchParams({ paymentPayloadDigestSha256 }).toString()}`
+    : "";
+  return `${apiBase}/api/executions/${encodeURIComponent(requestId)}/state${query}`;
+}
+
+function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDigestSha256) {
+  const lifecycle = firstRecord(paymentStatePayload?.protocolLifecycle, paymentStatePayload);
+  const buyerAnswer = firstRecord(lifecycle.buyerAnswer, paymentStatePayload?.buyerAnswer);
+  const protocolState = stringValue(lifecycle, "protocolState") || stringValue(paymentStatePayload, "protocolState");
+  const buyerAction = stringValue(lifecycle, "buyerAction") || stringValue(paymentStatePayload, "buyerAction");
+  const sellerOutcome = stringValue(lifecycle, "sellerOutcome") || stringValue(paymentStatePayload, "sellerOutcome");
+  const operatorObligation = stringValue(lifecycle, "operatorObligation") || stringValue(paymentStatePayload, "operatorObligation");
+  const execution = isRecord(paymentStatePayload?.execution) ? paymentStatePayload.execution : paymentStatePayload;
+  const buyerDelivery = buyerDeliveryProjection(execution);
+  const buyerDeliveryAvailable = buyerAnswer.hasBuyerDelivery === true || buyerDelivery.buyerDeliveryAvailable;
+  if (!buyerDeliveryAvailable || (protocolState !== "DELIVERED_SETTLED" && buyerAction !== "view_delivery")) {
+    return null;
+  }
+  const latestLedger = isRecord(paymentStatePayload?.payment?.latestLedger) ? paymentStatePayload.payment.latestLedger : {};
+  return {
+    ok: true,
+    code: "paid_execution_buyer_complete",
+    completionMode: "recovered_from_payment_state",
+    retryable: false,
+    nextAction: "view_delivery",
+    protocolState,
+    buyerAction,
+    sellerOutcome: sellerOutcome || "completed",
+    operatorObligation: operatorObligation || "none",
+    paymentStatus: stringValue(latestLedger, "paymentStatus") || "execution_completed",
+    settlementStatus: "settled",
+    relayDeliveryStatus: "forwarded",
+    agentExecutionStatus: "completed",
+    sellerExecutionCompleted: true,
+    buyerComplete: true,
+    ...buyerDelivery,
+    buyerDeliveryAvailable: true,
+    sellerReputationImpact: "none",
+    requestId: paymentStateLookupRequestId(paymentStatePayload),
+    stateUrl: stateUrlFromPaymentState(paymentStatePayload, paymentPayloadDigestSha256)
+  };
+}
+
+function recoveredPaymentStateOutput(input) {
+  return {
+    ...input.recovered,
+    paid: true,
+    status: input.paymentStateResponse.status,
+    agentId: input.agentId,
+    ids: {
+      ...input.executionIds,
+      ...(input.recovered.requestId
+        ? {
+            hireRequestId: input.recovered.requestId,
+            executionRequestId: input.recovered.requestId
+          }
+        : {})
+    },
+    priceUsd: input.priceUsd,
+    manifestDir: input.runDir,
+    ...(input.paymentPayloadPath ? { paymentPayloadPath: input.paymentPayloadPath } : {}),
+    paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
+    stateUrl: input.recovered.stateUrl || input.resultStateUrl,
+    paymentStateUrl: input.paymentStateUrl,
+    recoveryMode: "payment_state_digest_after_submit_timeout",
+    paymentState: input.paymentStateResponse.payload,
+    response: input.response
+  };
+}
+
 function writeJson(filePath, value) {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -1202,8 +1293,8 @@ if (!planResponse.ok) {
     const submittedRequestId =
       submit.payload?.requestId ??
       submit.payload?.paidExecution?.requestId ??
-      suppliedPaymentPayload.requestId ??
       null;
+    const x402RequestId = suppliedPaymentPayload.requestId ?? null;
     const submittedHireRequestId =
       submit.payload?.paidExecution?.requestId ??
       submit.payload?.hireRequestId ??
@@ -1213,12 +1304,37 @@ if (!planResponse.ok) {
       : null;
     const resultStateUrl = stateUrlFromSubmitPayload(submit.payload, fallbackResultStateUrl);
     const executionIds = {
-      ...(suppliedPaymentPayload.requestId ? { x402RequestId: suppliedPaymentPayload.requestId } : {}),
+      ...(x402RequestId ? { x402RequestId } : {}),
       ...(submittedHireRequestId ? { hireRequestId: submittedHireRequestId, executionRequestId: submittedHireRequestId } : {}),
       ...(submittedRequestId ? { submittedRequestId } : {}),
       paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256
     };
     if (!submit.ok && submit.payload?.retryable === true) {
+      const postSubmitPaymentState = await requestJson(suppliedPaymentStateUrl);
+      const recoveredFromPaymentState = postSubmitPaymentState.ok
+        ? recoveredSummaryFromPaymentState(
+            postSubmitPaymentState.payload,
+            suppliedPaymentPayloadDigestSha256
+          )
+        : null;
+      if (recoveredFromPaymentState?.ok === true) {
+        const output = recoveredPaymentStateOutput({
+          recovered: recoveredFromPaymentState,
+          paymentStateResponse: postSubmitPaymentState,
+          agentId,
+          executionIds,
+          priceUsd: null,
+          runDir,
+          paymentPayloadPath: suppliedPaymentPayloadPath,
+          paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
+          paymentStateUrl: suppliedPaymentStateUrl,
+          resultStateUrl,
+          response: submit.payload
+        });
+        writeJson(path.join(runDir, "buyer-run.json"), output);
+        console.log(JSON.stringify(output, null, 2));
+        process.exit();
+      }
       const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
         code: submit.status === 0 ? "paid_submit_timeout_state_unknown" : "post_payment_state_unavailable_retryable",
         paymentStatus: "authorized",
@@ -1243,7 +1359,8 @@ if (!planResponse.ok) {
         recoveryMode: "same_payment_payload_without_plan",
         safeNextAction: "poll_payment_state",
         safeToCreateNewPayment: false,
-        existingPaymentState: suppliedPaymentState.payload,
+        existingPaymentState: postSubmitPaymentState.ok ? postSubmitPaymentState.payload : suppliedPaymentState.payload,
+        postSubmitPaymentState: postSubmitPaymentState.payload,
         response: submit.payload
       };
       writeJson(path.join(runDir, "buyer-run.json"), output);
@@ -1507,8 +1624,6 @@ const paymentPayloadDigestSha256 = digestJson(paymentPayload);
 const submittedRequestId =
   submit.payload?.requestId ??
   submit.payload?.paidExecution?.requestId ??
-  paymentPayload.requestId ??
-  paymentRequirement.requestId ??
   null;
 const x402RequestId = paymentRequirement.requestId ?? paymentPayload.requestId ?? null;
 const submittedHireRequestId =
@@ -1527,6 +1642,31 @@ const executionIds = {
   paymentPayloadDigestSha256
 };
 if (!submit.ok && submit.payload?.retryable === true) {
+  const postSubmitPaymentState = await requestJson(paymentStateUrl);
+  const recoveredFromPaymentState = postSubmitPaymentState.ok
+    ? recoveredSummaryFromPaymentState(
+        postSubmitPaymentState.payload,
+        paymentPayloadDigestSha256
+      )
+    : null;
+  if (recoveredFromPaymentState?.ok === true) {
+    const output = recoveredPaymentStateOutput({
+      recovered: recoveredFromPaymentState,
+      paymentStateResponse: postSubmitPaymentState,
+      agentId,
+      executionIds,
+      priceUsd: baseOutput.priceUsd,
+      runDir,
+      paymentPayloadPath,
+      paymentPayloadDigestSha256,
+      paymentStateUrl,
+      resultStateUrl,
+      response: submit.payload
+    });
+    writeJson(path.join(runDir, "buyer-run.json"), output);
+    console.log(JSON.stringify(output, null, 2));
+    process.exit();
+  }
   const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
     code: submit.status === 0 ? "paid_submit_timeout_state_unknown" : "post_payment_state_unavailable_retryable",
     paymentStatus: "authorized",
@@ -1550,6 +1690,7 @@ if (!submit.ok && submit.payload?.retryable === true) {
     ...(paymentPayloadPath ? { paymentPayloadPath } : {}),
     safeNextAction: "poll_payment_state",
     safeToCreateNewPayment: false,
+    postSubmitPaymentState: postSubmitPaymentState.payload,
     response: submit.payload
   };
   writeJson(path.join(runDir, "buyer-run.json"), output);
