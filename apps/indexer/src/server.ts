@@ -35,6 +35,7 @@ import {
   type SantaClawzJobPrivacyPreference,
   type SocialAnchorCandidateKind,
   type SantaClawzQuoteAcceptanceWalletProof,
+  reduceSantaClawzPaidLifecycle,
   type TrustModeId,
   type WitnessPlanLike,
   verifyAgentProofBundle
@@ -2800,6 +2801,28 @@ function ledgerHasSettledPayment(entry: PaymentLedgerEntry | undefined): boolean
   );
 }
 
+function protocolReturnHasBuyerDelivery(protocolReturn: unknown): boolean {
+  if (!isRecord(protocolReturn) || protocolReturn.status !== "completed") return false;
+  const verifiedOutput = isRecord(protocolReturn.verifiedOutput) ? protocolReturn.verifiedOutput : undefined;
+  if (!verifiedOutput) return false;
+  const buyerVisibleOutputs = Array.isArray(verifiedOutput.buyerVisibleOutputs)
+    ? verifiedOutput.buyerVisibleOutputs
+    : [];
+  const readableInlineOutput = buyerVisibleOutputs.some(
+    (entry) => isRecord(entry) && typeof entry.text === "string" && entry.text.trim().length > 0
+  );
+  const deliverableReferenceCount =
+    typeof verifiedOutput.deliverableReferenceCount === "number" && Number.isFinite(verifiedOutput.deliverableReferenceCount)
+      ? verifiedOutput.deliverableReferenceCount
+      : 0;
+  return Boolean(
+    readableInlineOutput ||
+      deliverableReferenceCount > 0 ||
+      (typeof verifiedOutput.artifactManifestUrl === "string" && verifiedOutput.artifactManifestUrl.trim().length > 0) ||
+      (typeof verifiedOutput.artifactBundleDigestSha256 === "string" && /^[a-f0-9]{64}$/i.test(verifiedOutput.artifactBundleDigestSha256))
+  );
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -2882,6 +2905,63 @@ async function buildX402PaymentStateResponse(input: {
   });
   const { payloadRetryRejected, safeToRetrySamePayload } = paymentRetrySafety;
   const safeToCreateNewPayment = Boolean(terminal);
+  const latestLedgerRecord = isRecord(latestLedger) ? latestLedger : undefined;
+  const ledgerSettlementStatus =
+    typeof latestLedgerRecord?.settlementStatus === "string" ? latestLedgerRecord.settlementStatus : undefined;
+  const paymentStateProofStatus =
+    hireRequest?.returnValidationError || latestLedger?.returnStatus === "rejected"
+      ? "return_rejected"
+      : hireRequest?.protocolReturn?.verifiedOutput || latestLedger?.returnStatus === "accepted"
+        ? "return_validated"
+        : "not_started";
+  const paymentStateRelayDeliveryStatus =
+    hireRequest?.operationalStatus?.relayDeliveryStatus ?? hireRequest?.deliveryStatus ?? "not_attempted";
+  const paymentStateAgentExecutionStatus =
+    hireRequest?.operationalStatus?.agentExecutionStatus ??
+    latestLedger?.executionStatus ??
+    hireRequest?.status ??
+    "not_started";
+  const paymentStateBuyerDeliveryAvailable = protocolReturnHasBuyerDelivery(hireRequest?.protocolReturn);
+  const paymentStateSellerCompleted = Boolean(
+    paymentStateBuyerDeliveryAvailable ||
+      latestLedger?.returnStatus === "accepted" ||
+      (
+        hireRequest?.status === "completed" &&
+        hireRequest.protocolReturn?.status === "completed" &&
+        paymentStateProofStatus !== "return_rejected"
+      )
+  );
+  const paymentStateSellerFailure = Boolean(
+    paymentStateProofStatus === "return_rejected" ||
+      latestLedger?.executionStatus === "failed" ||
+      paymentStateAgentExecutionStatus === "failed" ||
+      paymentStateAgentExecutionStatus === "worker_completed_return_rejected"
+  );
+  const protocolLifecycle = reduceSantaClawzPaidLifecycle({
+    paymentStatus: latestLedger?.paymentStatus,
+    settlementStatus: ledgerSettlementStatus,
+    relayDeliveryStatus: paymentStateRelayDeliveryStatus,
+    agentExecutionStatus: paymentStateAgentExecutionStatus,
+    proofStatus: paymentStateProofStatus,
+    sellerExecutionCompleted: paymentStateSellerCompleted,
+    buyerDeliveryAvailable: paymentStateBuyerDeliveryAvailable,
+    buyerComplete: paymentStateBuyerDeliveryAvailable && paymentSettled,
+    paymentAuthorized,
+    paymentSettled,
+    hasFailure: paymentStateSellerFailure,
+    returnRejected: paymentStateProofStatus === "return_rejected",
+    expiredAuthorizationNoCharge: expiredAuthorizationNoChargeTerminal,
+    safeToRetrySamePayload,
+    paymentPayloadRetryRejected: payloadRetryRejected,
+    platformTimedOutAfterWorkerAck: postAckPending,
+    platformFailure: Boolean(
+      paymentAuthorized &&
+        !postAckPending &&
+        paymentStateRelayDeliveryStatus === "failed" &&
+        !paymentStateSellerCompleted &&
+        !paymentStateSellerFailure
+    )
+  });
   const nextAction = terminal
     ? expiredAuthorizationNoChargeTerminal
       ? "create_new_payment_or_retry_job"
@@ -2914,6 +2994,11 @@ async function buildX402PaymentStateResponse(input: {
       ...(latestLedger ? { latestLedger } : {}),
       ledgerEntryCount: entries.length
     },
+    protocolLifecycle,
+    protocolState: protocolLifecycle.protocolState,
+    buyerAction: protocolLifecycle.buyerAction,
+    sellerOutcome: protocolLifecycle.sellerOutcome,
+    operatorObligation: protocolLifecycle.operatorObligation,
     ...(intent ? { intent } : {}),
     ...(hireRequest ? { execution: hireRequest } : {}),
     retryResume: {
@@ -3026,12 +3111,18 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
   const latestLedger = redactLatestPaymentLedger(payment?.latestLedger);
   const execution = isRecord(payload.execution) ? payload.execution : undefined;
   const operationalStatus = isRecord(execution?.operationalStatus) ? execution.operationalStatus : undefined;
+  const protocolLifecycle = isRecord(payload.protocolLifecycle) ? payload.protocolLifecycle : undefined;
   return {
     schemaVersion: payload.schemaVersion,
     ok: payload.ok,
     generatedAtIso: payload.generatedAtIso,
     lookup: payload.lookup,
     redacted: true,
+    ...(protocolLifecycle ? { protocolLifecycle } : {}),
+    ...(typeof payload.protocolState === "string" ? { protocolState: payload.protocolState } : {}),
+    ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
+    ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
+    ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
     payment: {
       ledgerEntryCount: typeof payment?.ledgerEntryCount === "number" ? payment.ledgerEntryCount : 0,
       ...(latestLedger ? { latestLedger } : {})
@@ -4371,6 +4462,25 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         paymentPayloadDigestSha256,
         latestLedger: latestAliasLedger
       });
+      const aliasProtocolLifecycle = latestAliasLedger
+        ? reduceSantaClawzPaidLifecycle({
+            paymentStatus: latestAliasLedger.paymentStatus,
+            agentExecutionStatus: latestAliasLedger.executionStatus ?? "not_started",
+            sellerExecutionCompleted: latestAliasLedger.returnStatus === "accepted",
+            paymentAuthorized:
+              latestAliasLedger.paymentStatus === "authorization_verified" ||
+              latestAliasLedger.paymentStatus === "payment_verified" ||
+              latestAliasLedger.paymentStatus === "settled" ||
+              latestAliasLedger.paymentStatus === "already_settled" ||
+              latestAliasLedger.paymentStatus === "execution_completed",
+            paymentSettled: ledgerHasSettledPayment(latestAliasLedger),
+            hasFailure: latestAliasLedger.executionStatus === "failed" || latestAliasLedger.returnStatus === "rejected",
+            returnRejected: latestAliasLedger.returnStatus === "rejected",
+            safeToRetrySamePayload: aliasRetrySafety.safeToRetrySamePayload,
+            paymentPayloadRetryRejected: aliasRetrySafety.payloadRetryRejected,
+            platformFailure: true
+          })
+        : undefined;
       const canonicalStateUrl = aliasHireRequestId
         ? `${apiBase}/api/executions/${encodeURIComponent(aliasHireRequestId)}/state`
         : undefined;
@@ -4391,6 +4501,15 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         },
         ...(canonicalStateUrl ? { canonicalStateUrl, stateUrl: canonicalStateUrl } : {}),
         paymentStateUrl,
+        ...(aliasProtocolLifecycle
+          ? {
+              protocolLifecycle: aliasProtocolLifecycle,
+              protocolState: aliasProtocolLifecycle.protocolState,
+              buyerAction: aliasProtocolLifecycle.buyerAction,
+              sellerOutcome: aliasProtocolLifecycle.sellerOutcome,
+              operatorObligation: aliasProtocolLifecycle.operatorObligation
+            }
+          : {}),
         safeToRetrySamePayload: aliasRetrySafety.safeToRetrySamePayload,
         ...(aliasRetrySafety.payloadRetryRejected
           ? {
@@ -4534,7 +4653,15 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         (relayDeliveryStatus === "failed" && agentExecutionStatus === "submitted") ||
         (relayDeliveryStatus === "failed" && hireRequest.status === "submitted")
       );
-    const paymentSettled = paymentStatus === "settled";
+    const paymentSettled = paymentStatus === "settled" || ledgerHasSettledPayment(latestLedger);
+    const paymentAuthorizedForLifecycle =
+      paymentStatus === "authorized" ||
+      paymentStatus === "settled" ||
+      latestLedger?.paymentStatus === "authorization_verified" ||
+      latestLedger?.paymentStatus === "payment_verified" ||
+      latestLedger?.paymentStatus === "settled" ||
+      latestLedger?.paymentStatus === "already_settled" ||
+      latestLedger?.paymentStatus === "execution_completed";
     const relayDelivered =
       relayDeliveryStatus === "forwarded" ||
       relayDeliveryStatus === "recorded" ||
@@ -4657,6 +4784,38 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const paymentRecoveryMissingBuyerDelivery =
       paymentRecoveryBlocked &&
       !buyerDeliveryAvailable;
+    const protocolSellerFailure =
+      proofStatus === "return_rejected" ||
+      agentExecutionStatus === "failed" ||
+      agentExecutionStatus === "worker_completed_return_rejected" ||
+      Boolean(hireRequest.returnValidationError);
+    const protocolLifecycle = reduceSantaClawzPaidLifecycle({
+      paymentStatus: latestLedger?.paymentStatus ?? paymentStatus,
+      settlementStatus,
+      relayDeliveryStatus,
+      agentExecutionStatus,
+      proofStatus,
+      sellerExecutionCompleted: returnVerified,
+      buyerDeliveryAvailable,
+      buyerComplete,
+      buyerAccepted,
+      paymentAuthorized: paymentAuthorizedForLifecycle,
+      paymentSettled,
+      hasFailure: protocolSellerFailure,
+      returnRejected: proofStatus === "return_rejected",
+      expiredAuthorizationNoCharge: expiredAuthorizationNoChargeTerminal,
+      safeToRetrySamePayload: executionRetrySafety.safeToRetrySamePayload,
+      paymentPayloadRetryRejected: executionRetrySafety.payloadRetryRejected,
+      platformTimedOutAfterWorkerAck: acceptedPendingResult || postAckRelayTimeout,
+      platformFailure: Boolean(
+        !acceptedPendingResult &&
+          relayDeliveryStatus === "failed" &&
+          !returnVerified &&
+          proofStatus !== "return_rejected" &&
+          agentExecutionStatus !== "failed" &&
+          agentExecutionStatus !== "worker_completed_return_rejected"
+      )
+    });
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -4678,6 +4837,11 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         redacted: stateAccessMode === "payment_digest_recovery",
         credential: stateAccessMode === "payment_digest_recovery" ? "paymentPayloadDigestSha256" : "workspace_token_or_admin_key"
       },
+      protocolLifecycle,
+      protocolState: protocolLifecycle.protocolState,
+      buyerAction: protocolLifecycle.buyerAction,
+      sellerOutcome: protocolLifecycle.sellerOutcome,
+      operatorObligation: protocolLifecycle.operatorObligation,
       agentId: hireRequest.agentId,
       sessionId: hireRequest.sessionId,
       requestType: hireRequest.requestType,
