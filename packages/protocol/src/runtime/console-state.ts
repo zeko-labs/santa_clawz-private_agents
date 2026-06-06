@@ -1359,6 +1359,24 @@ export interface AgentX402Plan {
   verifyPaymentUrl: string;
   settlePaymentUrl: string;
   rails: AgentX402RailPlan[];
+  buyerPaymentSafety?: {
+    schemaVersion: "santaclawz-buyer-payment-safety/1.0";
+    scoped: true;
+    freshPaymentSafeForBuyer: boolean;
+    safeToRetrySamePayload: boolean;
+    safeToCreateNewPayment: boolean;
+    safeNextAction: string;
+    terminal: boolean;
+    unresolved: boolean;
+    humanOrPlatformInterventionRequired: boolean;
+    paymentStateUrl: string;
+    stateEndpoint?: string;
+    blockingPaymentPayloadDigestSha256?: string;
+    blockingRequestId?: string;
+    blockingLedgerId?: string;
+    blockerCode?: string;
+    guidance: string;
+  };
 }
 
 export const TRUST_MODE_PRESETS: TrustModeCard[] = [
