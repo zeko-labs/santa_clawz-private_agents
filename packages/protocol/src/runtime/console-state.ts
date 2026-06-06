@@ -1367,6 +1367,8 @@ export interface AgentX402Plan {
     safeToCreateNewPayment: boolean;
     safeNextAction: string;
     terminal: boolean;
+    terminalReason?: string;
+    refundOrNoChargeStatus?: string;
     unresolved: boolean;
     humanOrPlatformInterventionRequired: boolean;
     paymentStateUrl: string;

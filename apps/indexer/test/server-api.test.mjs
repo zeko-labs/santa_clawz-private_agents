@@ -4224,32 +4224,42 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(expiredRedactedPaymentState.status, 200);
     assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToRetrySamePaymentPayload, false);
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.safeToCreateNewPayment, true);
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.terminal, true);
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.terminalReason, "payment_payload_expired_no_charge");
+    assert.equal(expiredRedactedPaymentState.payload.retryResume.refundOrNoChargeStatus, "no_charge_authorization_expired");
     assert.equal(expiredRedactedPaymentState.payload.retryResume.paymentPayloadExpiredForRetry, true);
     const expiredDigestExecutionState = await requestJson(expiredRedactedPaymentState.payload.retryResume.stateEndpoint);
     assert.equal(expiredDigestExecutionState.status, 200);
     assert.equal(expiredDigestExecutionState.payload.safeToRetrySamePayload, false);
     assert.equal(expiredDigestExecutionState.payload.safeToRetrySamePaymentPayload, false);
-    assert.equal(expiredDigestExecutionState.payload.safeToCreateNewPayment, false);
-    assert.equal(expiredDigestExecutionState.payload.doNotCreateNewPayment, true);
+    assert.equal(expiredDigestExecutionState.payload.safeToCreateNewPayment, true);
+    assert.equal(expiredDigestExecutionState.payload.doNotCreateNewPayment, false);
+    assert.equal(expiredDigestExecutionState.payload.terminalReason, "payment_payload_expired_no_charge");
+    assert.equal(expiredDigestExecutionState.payload.refundOrNoChargeStatus, "no_charge_authorization_expired");
     assert.equal(expiredDigestExecutionState.payload.paymentPayloadExpiredForRetry, true);
     assert.equal(expiredDigestExecutionState.payload.paymentPayloadRetryRejected, true);
-    assert.equal(expiredDigestExecutionState.payload.humanOrPlatformInterventionRequired, true);
-    assert.equal(expiredDigestExecutionState.payload.reason, "authorized_payment_missing_buyer_delivery");
-    assert.equal(expiredDigestExecutionState.payload.reconciliation.status, "operator_reconciliation_required");
-    assert.equal(expiredDigestExecutionState.payload.reconciliation.reason, "authorized_payment_missing_buyer_delivery");
+    assert.equal(expiredDigestExecutionState.payload.humanOrPlatformInterventionRequired, false);
+    assert.equal(expiredDigestExecutionState.payload.reason, "payment_payload_expired_no_charge");
+    assert.equal(expiredDigestExecutionState.payload.reconciliation.status, "terminal_no_charge");
+    assert.equal(expiredDigestExecutionState.payload.reconciliation.reason, "payment_payload_expired_no_charge");
 
     const blockedPlan = await requestJson(
       `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan?paymentPayloadDigestSha256=${"d".repeat(64)}`
     );
     assert.equal(blockedPlan.status, 200);
     assert.equal(blockedPlan.payload.buyerPaymentSafety.schemaVersion, "santaclawz-buyer-payment-safety/1.0");
-    assert.equal(blockedPlan.payload.buyerPaymentSafety.freshPaymentSafeForBuyer, false);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.freshPaymentSafeForBuyer, true);
     assert.equal(blockedPlan.payload.buyerPaymentSafety.safeToRetrySamePayload, false);
-    assert.equal(blockedPlan.payload.buyerPaymentSafety.safeToCreateNewPayment, false);
-    assert.equal(blockedPlan.payload.buyerPaymentSafety.unresolved, true);
-    assert.equal(blockedPlan.payload.buyerPaymentSafety.humanOrPlatformInterventionRequired, true);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.safeToCreateNewPayment, true);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.safeNextAction, "create_new_payment_or_retry_job");
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.terminal, true);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.terminalReason, "payment_payload_expired_no_charge");
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.refundOrNoChargeStatus, "no_charge_authorization_expired");
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.unresolved, false);
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.humanOrPlatformInterventionRequired, false);
     assert.equal(blockedPlan.payload.buyerPaymentSafety.blockingPaymentPayloadDigestSha256, "d".repeat(64));
-    assert.equal(blockedPlan.payload.buyerPaymentSafety.blockerCode, "existing_payment_payload_not_retryable");
+    assert.equal(blockedPlan.payload.buyerPaymentSafety.blockerCode, undefined);
 
     const hireRequestPath = path.join(workspaceDir, ".clawz-data", "state", "hire-requests.json");
     const legacyHireRequests = JSON.parse(await readFile(hireRequestPath, "utf8"));
@@ -4277,13 +4287,14 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(legacyExecutionState.payload.lifecycle.relayDeliveryStatus, "failed");
     assert.equal(legacyExecutionState.payload.lifecycle.agentExecutionStatus, "submitted");
     assert.equal(legacyExecutionState.payload.lifecycleChecks.failed, false);
-    assert.equal(legacyExecutionState.payload.lifecycleChecks.terminal, false);
-    assert.equal(legacyExecutionState.payload.retryMode, "poll_or_reconcile_existing_payment");
+    assert.equal(legacyExecutionState.payload.lifecycleChecks.terminal, true);
+    assert.equal(legacyExecutionState.payload.lifecycleChecks.paymentPathTerminal, true);
+    assert.equal(legacyExecutionState.payload.retryMode, "fresh_payment_allowed_after_expired_authorization");
     assert.equal(legacyExecutionState.payload.safeToRetrySamePayload, false);
     assert.equal(legacyExecutionState.payload.safeToRetrySamePaymentPayload, false);
     assert.equal(legacyExecutionState.payload.paymentPayloadExpiredForRetry, true);
-    assert.equal(legacyExecutionState.payload.reason, "authorized_payment_missing_buyer_delivery");
-    assert.equal(legacyExecutionState.payload.safeToCreateNewPayment, false);
+    assert.equal(legacyExecutionState.payload.reason, "payment_payload_expired_no_charge");
+    assert.equal(legacyExecutionState.payload.safeToCreateNewPayment, true);
 
     const reconciled = await requestJson(
       `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/reconcile-worker-return`,
