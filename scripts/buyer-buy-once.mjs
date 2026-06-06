@@ -1011,6 +1011,68 @@ async function pollRecoverableExecutionState(stateUrl, maxMs = DEFAULT_RECOVERY_
   };
 }
 
+function recoveredSummaryFromRecoveryPoll(recoveryPoll, sellerEnvFile = ".env.santaclawz") {
+  return recoveryPoll?.recovered
+    ? {
+        ok: true,
+        code: "paid_execution_buyer_complete",
+        completionMode: "recovered_buyer_delivery_available",
+        retryable: false,
+        nextAction: "none",
+        paymentStatus: recoveryPoll.completion.paymentStatus,
+        settlementStatus: recoveryPoll.completion.settlementStatus,
+        relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
+        agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
+        proofStatus: recoveryPoll.completion.proofStatus,
+        sellerExecutionCompleted: recoveryPoll.completion.sellerExecutionCompleted,
+        buyerComplete: recoveryPoll.completion.buyerComplete,
+        buyerDeliveryStatus: recoveryPoll.completion.buyerDeliveryStatus,
+        buyerDeliveryAvailable: recoveryPoll.completion.buyerDeliveryAvailable,
+        buyerVisibleOutputCount: recoveryPoll.completion.buyerVisibleOutputCount,
+        artifactDeliveryAvailable: recoveryPoll.completion.artifactDeliveryAvailable,
+        artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
+        buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
+        buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
+        sellerReputationImpact: "none"
+      }
+    : recoveryPoll?.completion?.outputUnavailable
+      ? {
+          ok: false,
+          code: "paid_execution_output_unavailable",
+          completionMode: "seller_return_verified_buyer_delivery_missing",
+          retryable: false,
+          nextAction: "inspect_buyer_delivery_or_artifact_state",
+          paymentStatus: recoveryPoll.completion.paymentStatus,
+          settlementStatus: recoveryPoll.completion.settlementStatus,
+          relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
+          agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
+          proofStatus: recoveryPoll.completion.proofStatus,
+          sellerExecutionCompleted: recoveryPoll.completion.sellerExecutionCompleted,
+          buyerComplete: false,
+          buyerDeliveryStatus: recoveryPoll.completion.buyerDeliveryStatus,
+          buyerDeliveryAvailable: false,
+          buyerVisibleOutputCount: recoveryPoll.completion.buyerVisibleOutputCount,
+          artifactDeliveryAvailable: recoveryPoll.completion.artifactDeliveryAvailable,
+          artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
+          buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
+          buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
+          sellerReputationImpact: "none_until_delivery_fault_attributed",
+          upgradeGuide: upgradeGuideHint(sellerEnvFile)
+        }
+      : null;
+}
+
+function retryResumeFromPaymentState(payload) {
+  return isRecord(payload?.retryResume) ? payload.retryResume : {};
+}
+
+function paymentStateAllowsSamePayloadRetry(payload) {
+  const retryResume = retryResumeFromPaymentState(payload);
+  return retryResume.safeToRetrySamePayload === true &&
+    retryResume.safeToCreateNewPayment !== true &&
+    retryResume.terminal !== true;
+}
+
 function writeJson(filePath, value) {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -1061,13 +1123,30 @@ function nextCommandBase(args, agentId, taskPrompt) {
   ].join(" ");
 }
 
+function normalizeBuyerApiBase(value) {
+  const normalized = normalizeBaseUrl(value);
+  try {
+    const url = new URL(normalized);
+    if (
+      url.hostname === "santaclawz.ai" ||
+      url.hostname === "www.santaclawz.ai" ||
+      url.hostname === "santaclawz-web.vercel.app"
+    ) {
+      return "https://api.santaclawz.ai";
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   printUsage();
   process.exit(0);
 }
 
-const apiBase = normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim());
+const apiBase = normalizeBuyerApiBase(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim());
 const agentId = parseAgentId(args.agent ?? args["agent-id"] ?? args["hire-url"]);
 const taskPrompt = String(args.prompt ?? args.task ?? "").trim();
 const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local").trim();
@@ -1090,14 +1169,132 @@ const runId = `${new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15)}-${
 const runDir = path.join(outputDir, runId);
 const hireUrl = `${apiBase}/api/agents/${encodeURIComponent(agentId)}/hire`;
 const planUrl = `${apiBase}/api/agents/${encodeURIComponent(agentId)}/x402-plan`;
+const suppliedPaymentPayloadPath = args["payment-payload-file"] ? String(args["payment-payload-file"]) : null;
+const suppliedPaymentPayload = suppliedPaymentPayloadPath
+  ? normalizePaymentPayloadFromFile(readJsonFile(suppliedPaymentPayloadPath, "payment payload"), {
+      service: typeof args.service === "string" ? args.service : ""
+    })
+  : null;
+const suppliedPaymentPayloadDigestSha256 = suppliedPaymentPayload ? digestJson(suppliedPaymentPayload) : "";
+const suppliedPaymentStateUrl = suppliedPaymentPayloadDigestSha256
+  ? `${apiBase}/api/x402/payment-state?paymentPayloadDigestSha256=${suppliedPaymentPayloadDigestSha256}`
+  : "";
+let suppliedPaymentState = null;
 
 const planResponse = await requestJson(planUrl);
 if (!planResponse.ok) {
+  if (suppliedPaymentPayload && !dryRun) {
+    suppliedPaymentState = await requestJson(suppliedPaymentStateUrl);
+  }
+  if (suppliedPaymentPayload && !dryRun && paymentStateAllowsSamePayloadRetry(suppliedPaymentState?.payload)) {
+    const submitBody = {
+      taskPrompt,
+      requesterContact,
+      ...(activationProbeRequested ? { activationProbe: true } : {}),
+      ...(jobContext ? { jobContext } : {}),
+      paymentPayload: suppliedPaymentPayload
+    };
+    const submit = await requestJson(hireUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(submitBody)
+    });
+    const submittedRequestId =
+      submit.payload?.requestId ??
+      submit.payload?.paidExecution?.requestId ??
+      suppliedPaymentPayload.requestId ??
+      null;
+    const submittedHireRequestId =
+      submit.payload?.paidExecution?.requestId ??
+      submit.payload?.hireRequestId ??
+      (typeof submittedRequestId === "string" && submittedRequestId.startsWith("hire_") ? submittedRequestId : null);
+    const fallbackResultStateUrl = submittedRequestId
+      ? `${apiBase}/api/executions/${encodeURIComponent(submittedRequestId)}/state`
+      : null;
+    const resultStateUrl = stateUrlFromSubmitPayload(submit.payload, fallbackResultStateUrl);
+    const executionIds = {
+      ...(suppliedPaymentPayload.requestId ? { x402RequestId: suppliedPaymentPayload.requestId } : {}),
+      ...(submittedHireRequestId ? { hireRequestId: submittedHireRequestId, executionRequestId: submittedHireRequestId } : {}),
+      ...(submittedRequestId ? { submittedRequestId } : {}),
+      paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256
+    };
+    if (!submit.ok && submit.payload?.retryable === true) {
+      const retryable = createRetryablePlatformFailure(submit.status, submit.payload.responsePreview ?? submit.payload.error ?? "", {
+        code: submit.status === 0 ? "paid_submit_timeout_state_unknown" : "post_payment_state_unavailable_retryable",
+        paymentStatus: "authorized",
+        settlementStatus: "unknown",
+        relayDeliveryStatus: "not_confirmed",
+        agentExecutionStatus: "not_confirmed",
+        paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
+        ...(submittedRequestId ? { requestId: submittedRequestId } : {}),
+        paymentStateUrl: suppliedPaymentStateUrl,
+        ...(resultStateUrl ? { resultStateUrl } : {}),
+        safeToRetrySamePayload: true
+      });
+      const output = {
+        ...retryable,
+        paid: true,
+        status: submit.status,
+        agentId,
+        ids: executionIds,
+        priceUsd: null,
+        manifestDir: runDir,
+        paymentPayloadPath: suppliedPaymentPayloadPath,
+        recoveryMode: "same_payment_payload_without_plan",
+        safeNextAction: "poll_payment_state",
+        safeToCreateNewPayment: false,
+        existingPaymentState: suppliedPaymentState.payload,
+        response: submit.payload
+      };
+      writeJson(path.join(runDir, "buyer-run.json"), output);
+      console.log(JSON.stringify(output, null, 2));
+      process.exitCode = 1;
+      process.exit();
+    }
+    const summary = paidExecutionSummary(submit.ok, submit.payload);
+    const recoveryPoll = summary.code === "job_running_or_return_timeout"
+      ? await pollRecoverableExecutionState(resultStateUrl)
+      : null;
+    const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
+    const output = {
+      ...(recoveredSummary ?? summary),
+      paid: true,
+      status: submit.status,
+      agentId,
+      priceUsd: null,
+      paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
+      requestId: submittedRequestId,
+      ids: executionIds,
+      stateUrl: resultStateUrl,
+      paymentStateUrl: suppliedPaymentStateUrl,
+      manifestDir: runDir,
+      paymentPayloadPath: suppliedPaymentPayloadPath,
+      recoveryMode: "same_payment_payload_without_plan",
+      recoveryReason: "x402_plan_unavailable_existing_payload_retry_safe",
+      existingPaymentState: suppliedPaymentState.payload,
+      ...(recoveryPoll ? { recoveryPoll } : {}),
+      response: submit.payload
+    };
+    writeJson(path.join(runDir, "buyer-run.json"), output);
+    console.log(JSON.stringify(output, null, 2));
+    if (!output.ok) {
+      process.exitCode = 1;
+    }
+    process.exit();
+  }
   const output = {
     ok: false,
     code: "x402_plan_unavailable",
     agentId,
     status: planResponse.status,
+    ...(suppliedPaymentPayloadDigestSha256
+      ? {
+          paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
+          paymentStateUrl: suppliedPaymentStateUrl,
+          existingPaymentState: suppliedPaymentState?.payload ?? null,
+          safeToRetrySamePayload: paymentStateAllowsSamePayloadRetry(suppliedPaymentState?.payload)
+        }
+      : {}),
     response: planResponse.payload
   };
   writeJson(path.join(runDir, "buyer-run.json"), output);
@@ -1253,13 +1450,9 @@ if (dryRun) {
   process.exit(0);
 }
 
-let paymentPayload = null;
-let paymentPayloadPath = args["payment-payload-file"] ? String(args["payment-payload-file"]) : null;
-if (args["payment-payload-file"]) {
-  paymentPayload = normalizePaymentPayloadFromFile(readJsonFile(String(args["payment-payload-file"]), "payment payload"), {
-    service: typeof args.service === "string" ? args.service : ""
-  });
-} else if (args["wallet-env"]) {
+let paymentPayload = suppliedPaymentPayload;
+let paymentPayloadPath = suppliedPaymentPayloadPath;
+if (!paymentPayload && args["wallet-env"]) {
   const privateKey = buyerPrivateKeyFromEnv(String(args["wallet-env"]));
   const account = privateKeyToAccount(privateKey);
   paymentPayload = await buildFeeSplitPaymentPayload({
@@ -1269,7 +1462,8 @@ if (args["payment-payload-file"]) {
     account
   });
   paymentPayloadPath = writeJson(path.join(runDir, "payment-payload.json"), paymentPayload);
-} else {
+}
+if (!paymentPayload) {
   const output = {
     ok: false,
     code: "signed_payment_payload_required",
@@ -1367,54 +1561,7 @@ const summary = paidExecutionSummary(submit.ok, submit.payload);
 const recoveryPoll = summary.code === "job_running_or_return_timeout"
   ? await pollRecoverableExecutionState(resultStateUrl)
   : null;
-const recoveredSummary = recoveryPoll?.recovered
-  ? {
-      ok: true,
-      code: "paid_execution_buyer_complete",
-      completionMode: "recovered_buyer_delivery_available",
-      retryable: false,
-      nextAction: "none",
-      paymentStatus: recoveryPoll.completion.paymentStatus,
-      settlementStatus: recoveryPoll.completion.settlementStatus,
-      relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
-      agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
-      proofStatus: recoveryPoll.completion.proofStatus,
-      sellerExecutionCompleted: recoveryPoll.completion.sellerExecutionCompleted,
-      buyerComplete: recoveryPoll.completion.buyerComplete,
-      buyerDeliveryStatus: recoveryPoll.completion.buyerDeliveryStatus,
-      buyerDeliveryAvailable: recoveryPoll.completion.buyerDeliveryAvailable,
-      buyerVisibleOutputCount: recoveryPoll.completion.buyerVisibleOutputCount,
-      artifactDeliveryAvailable: recoveryPoll.completion.artifactDeliveryAvailable,
-      artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
-      buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
-      buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
-      sellerReputationImpact: "none"
-    }
-  : recoveryPoll?.completion?.outputUnavailable
-    ? {
-        ok: false,
-        code: "paid_execution_output_unavailable",
-        completionMode: "seller_return_verified_buyer_delivery_missing",
-        retryable: false,
-        nextAction: "inspect_buyer_delivery_or_artifact_state",
-        paymentStatus: recoveryPoll.completion.paymentStatus,
-        settlementStatus: recoveryPoll.completion.settlementStatus,
-        relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
-        agentExecutionStatus: recoveryPoll.completion.agentExecutionStatus,
-        proofStatus: recoveryPoll.completion.proofStatus,
-        sellerExecutionCompleted: recoveryPoll.completion.sellerExecutionCompleted,
-        buyerComplete: false,
-        buyerDeliveryStatus: recoveryPoll.completion.buyerDeliveryStatus,
-        buyerDeliveryAvailable: false,
-        buyerVisibleOutputCount: recoveryPoll.completion.buyerVisibleOutputCount,
-        artifactDeliveryAvailable: recoveryPoll.completion.artifactDeliveryAvailable,
-        artifactDeliveryStatus: recoveryPoll.completion.artifactDeliveryStatus,
-        buyerVerificationStatus: recoveryPoll.completion.buyerVerificationStatus,
-        buyerAcceptanceStatus: recoveryPoll.completion.buyerAcceptanceStatus,
-        sellerReputationImpact: "none_until_delivery_fault_attributed",
-        upgradeGuide: upgradeGuideHint(args["seller-env-file"] ?? ".env.santaclawz")
-      }
-  : null;
+const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
 const output = {
   ...(recoveredSummary ?? summary),
   paid: true,
