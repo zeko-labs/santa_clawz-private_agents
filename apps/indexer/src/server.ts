@@ -2165,6 +2165,10 @@ async function buyerPaymentSafetyForPlan(input: {
       : unresolved
         ? "poll_or_reconcile_existing_payment"
         : "fresh_payment_allowed";
+  const terminalReason =
+    typeof retryResume.terminalReason === "string" ? retryResume.terminalReason : undefined;
+  const refundOrNoChargeStatus =
+    typeof retryResume.refundOrNoChargeStatus === "string" ? retryResume.refundOrNoChargeStatus : undefined;
   const paymentStateUrl = paymentStateRetryEndpoint({
     apiBase: input.apiBase,
     ...(paymentState.lookup.intentId ? { intentId: paymentState.lookup.intentId } : {}),
@@ -2187,6 +2191,8 @@ async function buyerPaymentSafetyForPlan(input: {
     ...(blockingPaymentPayloadDigestSha256 ? { blockingPaymentPayloadDigestSha256 } : {}),
     ...(blockingRequestId ? { blockingRequestId } : {}),
     ...(typeof latestLedger?.ledgerId === "string" ? { blockingLedgerId: latestLedger.ledgerId } : {}),
+    ...(terminalReason ? { terminalReason } : {}),
+    ...(refundOrNoChargeStatus ? { refundOrNoChargeStatus } : {}),
     ...(unresolved
       ? {
           blockerCode: paymentPayloadRetryRejected
@@ -2781,6 +2787,19 @@ function hireRequestHasPostAckRelayTimeout(hireRequest: Awaited<ReturnType<typeo
   );
 }
 
+function ledgerHasSettledPayment(entry: PaymentLedgerEntry | undefined): boolean {
+  return Boolean(
+    entry &&
+      (
+        entry.paymentStatus === "settled" ||
+        entry.paymentStatus === "already_settled" ||
+        Boolean(entry.sellerSettlementTxHash) ||
+        Boolean(entry.protocolFeeTxHash) ||
+        entry.transactionHashes.length > 0
+      )
+  );
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -2832,6 +2851,11 @@ async function buildX402PaymentStateResponse(input: {
         : undefined;
   const latestLifecycle = latestLedger?.lifecycleStatus;
   const postAckPending = hireRequestHasPostAckRelayTimeout(hireRequest);
+  const payloadExpiredForRetry = latestLedger?.errorCode === "payment_payload_expired_for_retry";
+  const paymentSettled = ledgerHasSettledPayment(latestLedger);
+  const returnAccepted = latestLedger?.returnStatus === "accepted";
+  const expiredAuthorizationNoChargeTerminal =
+    Boolean(payloadExpiredForRetry && postAckPending && latestLedger && !paymentSettled && !returnAccepted);
   const paymentAuthorized =
     latestLedger?.paymentStatus === "authorization_verified" ||
     latestLedger?.paymentStatus === "payment_verified" ||
@@ -2839,23 +2863,29 @@ async function buildX402PaymentStateResponse(input: {
     latestLedger?.paymentStatus === "already_settled" ||
     latestLedger?.paymentStatus === "execution_completed";
   const terminal =
-    !postAckPending &&
-    (
-      latestLifecycle?.completionStatus === "completed" ||
-      latestLifecycle?.completionStatus === "failed" ||
-      latestLifecycle?.completionStatus === "return_rejected" ||
-      (isRecord(intent) && isRecord(intent.intent) && (intent.intent.status === "settled" || intent.intent.status === "refunded"))
-    );
+    expiredAuthorizationNoChargeTerminal ||
+    (!postAckPending &&
+      (
+        latestLifecycle?.completionStatus === "completed" ||
+        latestLifecycle?.completionStatus === "failed" ||
+        latestLifecycle?.completionStatus === "return_rejected" ||
+        (isRecord(intent) && isRecord(intent.intent) && (intent.intent.status === "settled" || intent.intent.status === "refunded"))
+      ));
   const needsAttention =
-    !postAckPending && (latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed");
+    !expiredAuthorizationNoChargeTerminal &&
+    !postAckPending &&
+    (latestLifecycle?.needsAttention === true || latestLedger?.paymentStatus === "settlement_failed");
   const paymentRetrySafety = paymentPayloadRetrySafety({
     paymentPayloadDigestSha256,
     terminal,
     latestLedger
   });
-  const { payloadExpiredForRetry, payloadRetryRejected, safeToRetrySamePayload } = paymentRetrySafety;
+  const { payloadRetryRejected, safeToRetrySamePayload } = paymentRetrySafety;
+  const safeToCreateNewPayment = Boolean(terminal);
   const nextAction = terminal
-    ? "result_lookup"
+    ? expiredAuthorizationNoChargeTerminal
+      ? "create_new_payment_or_retry_job"
+      : "result_lookup"
     : payloadRetryRejected && resolvedRequestId
       ? "poll_execution_state"
       : payloadRetryRejected
@@ -2888,8 +2918,8 @@ async function buildX402PaymentStateResponse(input: {
     ...(hireRequest ? { execution: hireRequest } : {}),
     retryResume: {
       safeToRetrySamePayload,
-      safeToCreateNewPayment: false,
-      ...(postAckPending
+      safeToCreateNewPayment,
+      ...(postAckPending && !payloadRetryRejected
         ? {
             retryMode: "same_payment_payload_only",
             safeToRetrySamePaymentPayload: safeToRetrySamePayload,
@@ -2901,19 +2931,32 @@ async function buildX402PaymentStateResponse(input: {
       nextAction,
       terminal: Boolean(terminal),
       needsAttention,
+      ...(expiredAuthorizationNoChargeTerminal
+        ? {
+            terminalReason: "payment_payload_expired_no_charge",
+            refundOrNoChargeStatus: "no_charge_authorization_expired",
+            paymentPayloadExpiredForRetry: true,
+            paymentPayloadRetryRejected: true,
+            safeToRetrySamePaymentPayload: false
+          }
+        : {}),
       ...(payloadRetryRejected
         ? {
             ...(payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
             paymentPayloadRetryRejected: true,
-            retryMode: "poll_or_reconcile_existing_payment",
+            retryMode: expiredAuthorizationNoChargeTerminal
+              ? "fresh_payment_allowed_after_expired_authorization"
+              : "poll_or_reconcile_existing_payment",
             safeToRetrySamePaymentPayload: false,
-            humanOrPlatformInterventionRequired: !resolvedRequestId
+            humanOrPlatformInterventionRequired: expiredAuthorizationNoChargeTerminal ? false : !resolvedRequestId
           }
         : {}),
       ...(retryEndpoint ? { retryEndpoint } : {}),
       ...(stateEndpoint ? { stateEndpoint } : {}),
       guidance: terminal
-        ? "This payment path reached a terminal state. Read the result/artifact state before creating another payment."
+        ? expiredAuthorizationNoChargeTerminal
+          ? "The signed x402 authorization expired before settlement and no accepted buyer delivery is recorded. Treat this payment path as no-charge terminal; a buyer may create a fresh payment for a new attempt."
+          : "This payment path reached a terminal state. Read the result/artifact state before creating another payment."
         : payloadRetryRejected
           ? "This signed x402 payload cannot be retried for verification. Do not create a new payment while canonical state is non-terminal; poll the execution/payment state or escalate reconciliation."
         : paymentPayloadDigestSha256
@@ -4511,6 +4554,13 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const proofVerified = proofStatus === "return_validated" || proofStatus === "anchored_or_attested";
     const returnVerified = agentCompleted && proofVerified && latestLedger?.returnStatus !== "rejected";
     const buyerComplete = returnVerified && buyerDeliveryAvailable;
+    const expiredAuthorizationNoChargeTerminal =
+      Boolean(
+        latestLedger?.errorCode === "payment_payload_expired_for_retry" &&
+        postAckRelayTimeout &&
+        !ledgerHasSettledPayment(latestLedger) &&
+        latestLedger?.returnStatus !== "accepted"
+      );
     const staleDeliveryFailureAfterReturn =
       returnVerified &&
       !hireRequest.returnValidationError &&
@@ -4575,6 +4625,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     };
     const buyerCompletionStatus = buyerComplete
       ? "buyer_complete"
+      : expiredAuthorizationNoChargeTerminal
+        ? "payment_expired_no_charge"
       : returnVerified && buyerDeliveryAvailable
         ? "buyer_delivery_available"
         : returnVerified
@@ -4586,6 +4638,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
               : "in_progress";
     const platformReconciliationStatus = returnVerified
       ? "seller_return_recorded"
+      : expiredAuthorizationNoChargeTerminal
+        ? "terminal_payment_expired_no_charge"
       : acceptedPendingResult
         ? "pending_worker_return_or_late_completion"
         : hasFailure
@@ -4593,7 +4647,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
           : "pending";
     const executionRetrySafety = paymentPayloadRetrySafety({
       paymentPayloadDigestSha256,
-      terminal: buyerAccepted || hasFailure,
+      terminal: buyerAccepted || hasFailure || expiredAuthorizationNoChargeTerminal,
       latestLedger
     });
     const paymentRecoveryBlocked =
@@ -4690,31 +4744,48 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         buyerVerified,
         buyerAccepted,
         failed: hasFailure,
-        terminal: buyerAccepted || hasFailure
+        terminal: buyerAccepted || hasFailure || expiredAuthorizationNoChargeTerminal,
+        ...(expiredAuthorizationNoChargeTerminal ? { paymentPathTerminal: true } : {})
       },
       ...(acceptedPendingResult
         ? {
-            agentNextAction: executionRetrySafety.payloadRetryRejected
+            agentNextAction: expiredAuthorizationNoChargeTerminal
+              ? "create_new_payment_or_retry_job"
+              : executionRetrySafety.payloadRetryRejected
               ? "poll_state_or_escalate_payment_recovery"
               : "poll_state_or_resume_same_payment",
-            retryMode: executionRetrySafety.payloadRetryRejected
+            retryMode: expiredAuthorizationNoChargeTerminal
+              ? "fresh_payment_allowed_after_expired_authorization"
+              : executionRetrySafety.payloadRetryRejected
               ? "poll_or_reconcile_existing_payment"
               : "same_payment_payload_only",
             safeToRetrySamePayload: executionRetrySafety.safeToRetrySamePayload,
             safeToRetrySamePaymentPayload: executionRetrySafety.safeToRetrySamePayload,
-            safeToCreateNewPayment: false,
-            doNotCreateNewPayment: true,
+            safeToCreateNewPayment: expiredAuthorizationNoChargeTerminal,
+            doNotCreateNewPayment: !expiredAuthorizationNoChargeTerminal,
+            ...(expiredAuthorizationNoChargeTerminal
+              ? {
+                  terminalReason: "payment_payload_expired_no_charge",
+                  refundOrNoChargeStatus: "no_charge_authorization_expired"
+                }
+              : {}),
             ...(executionRetrySafety.payloadRetryRejected
               ? {
                   ...(executionRetrySafety.payloadExpiredForRetry ? { paymentPayloadExpiredForRetry: true } : {}),
                   paymentPayloadRetryRejected: true,
-                  humanOrPlatformInterventionRequired: true,
-                  reason: paymentRecoveryMissingBuyerDelivery
+                  humanOrPlatformInterventionRequired: expiredAuthorizationNoChargeTerminal ? false : true,
+                  reason: expiredAuthorizationNoChargeTerminal
+                    ? "payment_payload_expired_no_charge"
+                    : paymentRecoveryMissingBuyerDelivery
                     ? "authorized_payment_missing_buyer_delivery"
                     : "payment_payload_retry_rejected_non_terminal",
                   reconciliation: {
-                    status: "operator_reconciliation_required",
-                    reason: paymentRecoveryMissingBuyerDelivery
+                    status: expiredAuthorizationNoChargeTerminal
+                      ? "terminal_no_charge"
+                      : "operator_reconciliation_required",
+                    reason: expiredAuthorizationNoChargeTerminal
+                      ? "payment_payload_expired_no_charge"
+                      : paymentRecoveryMissingBuyerDelivery
                       ? "authorized_payment_missing_buyer_delivery"
                       : "payment_payload_retry_rejected_non_terminal",
                     paymentStateUrl,
