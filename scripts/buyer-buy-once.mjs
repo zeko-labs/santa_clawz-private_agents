@@ -91,6 +91,10 @@ Options:
   --dry-run                          Force dry-run even when --allow-real-money is present.
   --allow-real-money                 Required before signing/submitting a paid payload.
   --json
+
+Env:
+  CLAWZ_API_FETCH_TIMEOUT_MS          Timeout for ordinary API reads. Default 10000.
+  CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS  Timeout for paid submit POST. Default 20000.
 `);
 }
 
@@ -706,8 +710,19 @@ function formatUsd(value) {
   return Number.isFinite(value) ? value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "") : "unknown";
 }
 
-async function requestJson(url, init = {}) {
-  const timeoutMs = Number.parseInt(process.env.CLAWZ_API_FETCH_TIMEOUT_MS ?? "10000", 10);
+function boundedIntegerEnv(name, fallback, min, max) {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(parsed, max));
+}
+
+const API_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_API_FETCH_TIMEOUT_MS", 10_000, 1_000, 120_000);
+const PAID_SUBMIT_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS", 20_000, 5_000, 120_000);
+
+async function requestJson(url, init = {}, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+    ? options.timeoutMs
+    : API_FETCH_TIMEOUT_MS;
   const fetchInit = {
     ...init,
     ...(!init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -724,7 +739,8 @@ async function requestJson(url, init = {}) {
       status: 0,
       payload: createRetryablePlatformFailure(0, error instanceof Error ? error.message : String(error), {
         code: "platform_unavailable_retryable",
-        operation: init.method ?? "GET"
+        operation: init.method ?? "GET",
+        transportTimeoutMs: timeoutMs
       })
     };
   }
@@ -736,11 +752,16 @@ async function requestJson(url, init = {}) {
     payload = isRetryablePlatformStatus(response.status)
       ? createRetryablePlatformFailure(response.status, text, {
           code: "platform_unavailable_retryable",
-          operation: init.method ?? "GET"
+          operation: init.method ?? "GET",
+          transportTimeoutMs: timeoutMs
         })
       : { error: text.slice(0, 1000) };
   }
   return { ok: response.ok, status: response.status, payload };
+}
+
+function paidSubmitJson(url, init) {
+  return requestJson(url, init, { timeoutMs: PAID_SUBMIT_FETCH_TIMEOUT_MS });
 }
 
 function firstRecord(...values) {
@@ -1366,7 +1387,7 @@ if (!planResponse.ok) {
       ...(jobContext ? { jobContext } : {}),
       paymentPayload: suppliedPaymentPayload
     };
-    const submit = await requestJson(hireUrl, {
+    const submit = await paidSubmitJson(hireUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(submitBody)
@@ -1702,7 +1723,7 @@ const submitBody = {
   ...(jobContext ? { jobContext } : {}),
   paymentPayload
 };
-const submit = await requestJson(hireUrl, {
+const submit = await paidSubmitJson(hireUrl, {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify(submitBody)
