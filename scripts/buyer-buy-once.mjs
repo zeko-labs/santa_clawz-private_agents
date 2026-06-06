@@ -817,6 +817,36 @@ function buyerDeliveryProjection(payload) {
   };
 }
 
+function buyerVisibleOutputTexts(payload) {
+  const response = isRecord(payload?.response) ? payload.response : payload;
+  const protocolReturn = firstRecord(response?.protocolReturn, payload?.protocolReturn);
+  const verifiedOutput = firstRecord(
+    protocolReturn.verifiedOutput,
+    protocolReturn.verified_output,
+    response?.verifiedOutput,
+    response?.verified_output,
+    response?.delivery?.protocolVerifiedOutput,
+    payload?.verifiedOutput,
+    payload?.verified_output
+  );
+  return [
+    ...arrayValue(verifiedOutput, "buyerVisibleOutputs"),
+    ...arrayValue(verifiedOutput, "buyer_visible_outputs")
+  ]
+    .filter((entry) => isRecord(entry) && typeof entry.text === "string" && entry.text.trim().length > 0)
+    .map((entry) => entry.text.trim());
+}
+
+function writeBuyerOutputFile(runDir, payload) {
+  const outputs = buyerVisibleOutputTexts(payload);
+  if (outputs.length === 0) {
+    return "";
+  }
+  const filePath = path.join(runDir, "buyer-output.md");
+  writeFileSync(filePath, `${outputs.join("\n\n---\n\n")}\n`, { mode: 0o600 });
+  return filePath;
+}
+
 function paidExecutionSummary(responseOk, payload) {
   const operational = isRecord(payload?.operationalStatus) ? payload.operationalStatus : {};
   const payment = isRecord(payload?.payment) ? payload.payment : {};
@@ -1137,6 +1167,45 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
   };
 }
 
+async function enrichRecoveredSummaryFromExecutionState(recovered) {
+  if (!recovered?.stateUrl) {
+    return { recovered };
+  }
+  const executionStateResponse = await requestJson(recovered.stateUrl);
+  if (!executionStateResponse.ok) {
+    return {
+      recovered,
+      executionStateResponse
+    };
+  }
+  const completion = recoveredCompletionFromState(executionStateResponse.payload);
+  if (!completion.buyerDeliveryAvailable) {
+    return {
+      recovered,
+      executionStateResponse
+    };
+  }
+  return {
+    recovered: {
+      ...recovered,
+      paymentStatus: completion.paymentStatus,
+      settlementStatus: completion.settlementStatus,
+      relayDeliveryStatus: completion.relayDeliveryStatus,
+      agentExecutionStatus: completion.agentExecutionStatus,
+      proofStatus: completion.proofStatus,
+      buyerDeliveryStatus: completion.buyerDeliveryStatus,
+      buyerDeliveryAvailable: completion.buyerDeliveryAvailable,
+      buyerVisibleOutputCount: completion.buyerVisibleOutputCount,
+      inlineOutputCount: completion.inlineOutputCount,
+      artifactDeliveryAvailable: completion.artifactDeliveryAvailable,
+      artifactDeliveryStatus: completion.artifactDeliveryStatus,
+      buyerVerificationStatus: completion.buyerVerificationStatus,
+      buyerAcceptanceStatus: completion.buyerAcceptanceStatus
+    },
+    executionStateResponse
+  };
+}
+
 function recoveredPaymentStateOutput(input) {
   return {
     ...input.recovered,
@@ -1159,7 +1228,19 @@ function recoveredPaymentStateOutput(input) {
     stateUrl: input.recovered.stateUrl || input.resultStateUrl,
     paymentStateUrl: input.paymentStateUrl,
     recoveryMode: "payment_state_digest_after_submit_timeout",
+    ...(input.buyerOutputPath ? { buyerOutputPath: input.buyerOutputPath } : {}),
     paymentState: input.paymentStateResponse.payload,
+    ...(input.executionStateResponse?.ok
+      ? { executionState: input.executionStateResponse.payload }
+      : input.executionStateResponse
+        ? {
+            executionStateRecovery: {
+              ok: false,
+              status: input.executionStateResponse.status,
+              payload: input.executionStateResponse.payload
+            }
+          }
+        : {}),
     response: input.response
   };
 }
@@ -1318,9 +1399,14 @@ if (!planResponse.ok) {
           )
         : null;
       if (recoveredFromPaymentState?.ok === true) {
+        const enrichedRecovery = await enrichRecoveredSummaryFromExecutionState(recoveredFromPaymentState);
+        const buyerOutputPath = enrichedRecovery.executionStateResponse?.ok
+          ? writeBuyerOutputFile(runDir, enrichedRecovery.executionStateResponse.payload)
+          : "";
         const output = recoveredPaymentStateOutput({
-          recovered: recoveredFromPaymentState,
+          recovered: enrichedRecovery.recovered,
           paymentStateResponse: postSubmitPaymentState,
+          executionStateResponse: enrichedRecovery.executionStateResponse,
           agentId,
           executionIds,
           priceUsd: null,
@@ -1329,6 +1415,7 @@ if (!planResponse.ok) {
           paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
           paymentStateUrl: suppliedPaymentStateUrl,
           resultStateUrl,
+          buyerOutputPath,
           response: submit.payload
         });
         writeJson(path.join(runDir, "buyer-run.json"), output);
@@ -1650,9 +1737,14 @@ if (!submit.ok && submit.payload?.retryable === true) {
       )
     : null;
   if (recoveredFromPaymentState?.ok === true) {
+    const enrichedRecovery = await enrichRecoveredSummaryFromExecutionState(recoveredFromPaymentState);
+    const buyerOutputPath = enrichedRecovery.executionStateResponse?.ok
+      ? writeBuyerOutputFile(runDir, enrichedRecovery.executionStateResponse.payload)
+      : "";
     const output = recoveredPaymentStateOutput({
-      recovered: recoveredFromPaymentState,
+      recovered: enrichedRecovery.recovered,
       paymentStateResponse: postSubmitPaymentState,
+      executionStateResponse: enrichedRecovery.executionStateResponse,
       agentId,
       executionIds,
       priceUsd: baseOutput.priceUsd,
@@ -1661,6 +1753,7 @@ if (!submit.ok && submit.payload?.retryable === true) {
       paymentPayloadDigestSha256,
       paymentStateUrl,
       resultStateUrl,
+      buyerOutputPath,
       response: submit.payload
     });
     writeJson(path.join(runDir, "buyer-run.json"), output);
