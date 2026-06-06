@@ -5302,6 +5302,25 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredSettled.sellerOutcome, "completed");
   assert.equal(deliveredSettled.operatorObligation, "none");
 
+  const deliveredAwaitingSettlement = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "authorization_verified",
+    settlementStatus: "authorized",
+    agentExecutionStatus: "completed",
+    proofStatus: "return_validated",
+    sellerExecutionCompleted: true,
+    buyerDeliveryAvailable: true,
+    buyerComplete: false,
+    paymentAuthorized: true,
+    paymentSettled: false
+  });
+  assert.equal(deliveredAwaitingSettlement.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+  assert.equal(deliveredAwaitingSettlement.terminal, false);
+  assert.equal(deliveredAwaitingSettlement.buyerAction, "view_delivery");
+  assert.equal(deliveredAwaitingSettlement.sellerOutcome, "completed");
+  assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
+  assert.equal(deliveredAwaitingSettlement.buyerAnswer.canCreateFreshPayment, false);
+  assert.equal(deliveredAwaitingSettlement.buyerAnswer.canRetrySamePaymentPayload, false);
+
   const authorizedWaiting = reduceSantaClawzPaidLifecycle({
     paymentStatus: "authorization_verified",
     relayDeliveryStatus: "acknowledged",
