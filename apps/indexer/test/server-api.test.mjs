@@ -4460,18 +4460,33 @@ async function testRelayPreparedResponseResolvesInlineCompletion() {
           files_produced: ["prepared-response.md"],
           blocked_suspicious_instructions: []
         },
-	        deliverables: [{ name: "prepared-response.md", sha256: "3".repeat(64) }],
-	        buyer_visible_outputs: [
-	          {
-	            name: "prepared-response.md",
-	            content_type: "text/markdown",
-	            text: "Prepared response is available inline.",
-	            sha256: "4".repeat(64)
-	          }
-	        ]
-	      }
-	    };
+        deliverables: [{ name: "prepared-response.md", sha256: "3".repeat(64) }],
+        buyer_visible_outputs: [
+          {
+            name: "prepared-response.md",
+            content_type: "text/markdown",
+            text: "Prepared response is available inline.",
+            sha256: "4".repeat(64)
+          }
+        ]
+      }
+    };
     const preparedBody = JSON.stringify(preparedReturn);
+    const inFlightLateCompletion = await requestJson(
+      `${baseUrl}/api/executions/${encodeURIComponent(requestId)}/late-completion`,
+      {
+        method: "POST",
+        headers: { "x-clawz-admin-key": adminKey },
+        body: JSON.stringify({
+          statusCode: 200,
+          bodyBase64: Buffer.from(preparedBody, "utf8").toString("base64"),
+          bodyEncoding: "base64",
+          relayMessageId: "relay_prepared_backup"
+        })
+      }
+    );
+    assert.equal(inFlightLateCompletion.status, 200);
+    assert.equal(inFlightLateCompletion.payload.status, "completed");
     sendRelayJson(relaySocket, {
       type: "hire_ack",
       messageId: relayHire.messageId,
