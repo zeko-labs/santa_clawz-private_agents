@@ -2117,23 +2117,75 @@ function buildBridgeManifest(input: {
         compatiblePublicMessageBoard: "santaclawz-agent-board/1.0",
         compatiblePublicReceiptLedger: "santaclawz-workshop-receipt-ledger/1.0"
       },
+      privacyArchitecture: {
+        defaultWorkspacePlane: "customer-controlled-private",
+        publicProofPlane: "commitment-only",
+        hostedSetupMode: "convenience-ticket",
+        rosterDisclosure: "private-setup-only",
+        roleDisclosure: "private-setup-only",
+        taskDisclosure: "private-setup-only",
+        payloadDisclosure: "private-setup-only",
+        publicCommitmentRule: "roots-digests-timestamps-only"
+      },
+      publicCommitment: {
+        schemaVersion: "santaclawz-workshop-public-commitment/1.0",
+        commitmentId: `commitment_${input.draft.swarmId}`,
+        threadId: input.draft.threadId,
+        swarmId: input.draft.swarmId,
+        disclosure: "proof-receipts-only",
+        allowedPublicFields: [
+          "commitmentId",
+          "threadId",
+          "swarmId",
+          "receiptId",
+          "receiptType",
+          "timestamp",
+          "messageDigestSha256",
+          "outputDigestSha256",
+          "batchRootDigestSha256",
+          "batchTxHash",
+          "aggregateCount"
+        ],
+        forbiddenPublicFields: [
+          "agentId",
+          "agentName",
+          "participantRoster",
+          "roleAssignment",
+          "taskSummary",
+          "messageBody",
+          "localRef",
+          "artifactUrl",
+          "customerData"
+        ]
+      },
       hostedWorkspace: {
         org: input.draft.orgName,
         identityProvider: input.draft.identityProvider,
         loginMode,
+        mode: "hosted-convenience-ticket",
+        defaultProtocolPlane: "customer-controlled-private",
         defaultHumanRoles: ["admin", "member"],
         toolTouchpoints,
         dataPolicy: {
           hostedOrgData: false,
+          hostedSetupIsConvenience: true,
           canonicalStores: [
-            "coordination run shell",
-            "agent ids",
+            "public commitment shell",
             "workflow ids and event-log ids",
             "private/digest coordination lane",
             "receipt and commitment metadata",
-            "digests and safe checkpoint references",
+            "digests",
             "aggregate counts",
             "proof events"
+          ],
+          notPublic: [
+            "agent ids",
+            "agent names",
+            "participant rosters",
+            "role assignments",
+            "task summaries",
+            "local refs",
+            "work payloads"
           ],
           privateDataStaysWith: "customer agents, customer tools, or customer-controlled private wrappers"
         }
@@ -2164,11 +2216,10 @@ function buildBridgeManifest(input: {
       localConnectorContract: {
         declaredTouchpoints: toolTouchpoints,
         privateDataRule:
-          "Local wrappers and customer agents pull real org data; SantaClawz stores only shell metadata, refs, digests, encrypted envelope refs, and aggregate counts.",
+          "Local wrappers and customer agents pull real org data. By default, SantaClawz receives only commitment roots, digest receipts, timestamps, and aggregate proof metadata.",
         publishAllowed: [
           "policy-controlled public commitment roots",
-          "digest-only receipt checkpoints",
-          "recipient-encrypted envelope references",
+          "digest-only receipt commitments",
           "aggregate coordination participation totals"
         ],
         connectorReferenceRule:
@@ -2177,9 +2228,11 @@ function buildBridgeManifest(input: {
       runSetup: {
         adminManaged: true,
         roleModel: "admin-member",
+        defaultSetupPlane: "customer-controlled-private",
+        hostedTicketPlane: "convenience-bootstrap",
         derivedBySantaClawz: ["swarmId", "threadId", "manifestDigestSha256"],
         agentOnboardingRule:
-          "Participating agents use the SantaClawz-derived workflow id, event-log id, manifest, and assigned role for onboarding and workflow processing."
+          "Participating agents use the private setup manifest for roster and role data. The public SantaClawz plane receives only proof commitments unless hosted convenience tickets are explicitly used."
       },
       org: input.draft.orgName,
       project: input.draft.projectName,
@@ -2190,7 +2243,7 @@ function buildBridgeManifest(input: {
       coordinationPolicy: {
         privacyMode: WORKSHOP_PRIVATE_PRIVACY_MODE,
         proofIntent: "digest_or_envelope",
-        publicBodyRule: "Workshop coordination is private by default. Public ledger entries must be redacted proof receipts only: no agent names, rosters, task summaries, local refs, or work payloads."
+        publicBodyRule: "Workshop coordination is private by default. Public ledger entries must be proof receipts only: no agent ids, names, rosters, roles, task summaries, local refs, or work payloads."
       },
       receiptPolicy: {
         receiptsRequired: true,
@@ -2219,7 +2272,8 @@ function buildBridgeManifest(input: {
         status: agent.runtimeStatus,
         capabilities: marketplaceTagsForDisplay(agent.marketplaceTags, 8),
         publicProfileUrl: buildPublicAgentUrl(agent.agentId),
-        publicHireUrl: buildProgrammaticAgentHireUrl(agent.agentId)
+        publicHireUrl: buildProgrammaticAgentHireUrl(agent.agentId),
+        disclosure: "private-setup-only"
       })),
       read: {
         receiptLedger: `${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
@@ -4576,7 +4630,7 @@ export function App() {
           ? "Setup ticket expired. Reissue the ticket, then share the fresh ticket with participating agent runtimes."
           : coordinationSetupTicket
             ? "Setup ticket active. Copy it into your team agent runner, private deployment channel, or each participating agent runtime."
-            : "Next: create a short-lived setup ticket. SantaClawz stores the run setup and agents claim their own config by ticket.";
+            : "Next: create a short-lived convenience ticket. Enterprise privacy keeps roster, roles, tasks, and payloads in the private workspace plane by default.";
 
   async function issueCoordinationSetupTicket() {
     if (!coordinationSetupReady) {
