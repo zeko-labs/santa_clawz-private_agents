@@ -91,7 +91,7 @@ export function reduceSantaClawzPaidLifecycle(
 ): SantaClawzPaidLifecycleProjection {
   const paymentSettled = Boolean(
     input.paymentSettled ||
-      isOneOf(input.paymentStatus, ["settled", "already_settled", "execution_completed"]) ||
+      isOneOf(input.paymentStatus, ["settled", "already_settled"]) ||
       isOneOf(input.settlementStatus, ["settled"])
   );
   const paymentAuthorized = Boolean(
