@@ -1054,48 +1054,60 @@ function mergeHireRelayTrace(input: {
   deliveryStatus?: HireRequestReceipt["deliveryStatus"];
   completed?: boolean;
 }): HireRelayTraceStep[] {
-  const trace: HireRelayTraceStep[] = [
-    {
-      step: "accepted_by_indexer",
-      status: "completed",
-      occurredAtIso: input.submittedAtIso
+  const statusRank = (status: HireRelayTraceStep["status"]) =>
+    status === "completed" ? 3 : status === "failed" ? 2 : 1;
+  const mergeTraceStep = (trace: HireRelayTraceStep[], next: HireRelayTraceStep) => {
+    const existingIndex = trace.findIndex((entry) => entry.step === next.step);
+    if (existingIndex < 0) {
+      trace.push(next);
+      return;
     }
-  ];
+    const existing = trace[existingIndex]!;
+    if (statusRank(next.status) >= statusRank(existing.status)) {
+      const occurredAtIso = next.occurredAtIso ?? existing.occurredAtIso;
+      trace[existingIndex] = {
+        ...existing,
+        ...next,
+        ...(occurredAtIso ? { occurredAtIso } : {})
+      };
+    }
+  };
+  const trace: HireRelayTraceStep[] = [];
+  mergeTraceStep(trace, {
+    step: "accepted_by_indexer",
+    status: "completed",
+    occurredAtIso: input.submittedAtIso
+  });
   if (input.paymentStatus === "authorized" || input.paymentStatus === "settled" || input.paymentStatus === "paid" || input.paymentStatus === "escrowed") {
-    trace.push({
+    mergeTraceStep(trace, {
       step: "payment_authorized",
       status: "completed",
       occurredAtIso: input.submittedAtIso
     });
   }
-  trace.push(...(input.relayTrace ?? []));
-  if (!trace.some((entry) => entry.step === "sent_to_relay")) {
-    trace.push({
-      step: "sent_to_relay",
-      status: input.deliveryFailed ? "failed" : input.deliveryStatus ? "completed" : "not_reached",
-      occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso
-    });
+  for (const step of input.relayTrace ?? []) {
+    mergeTraceStep(trace, step);
   }
-  if (!trace.some((entry) => entry.step === "worker_ack")) {
-    trace.push({
-      step: "worker_ack",
-      status: input.deliveryFailed ? "not_reached" : input.deliveryStatus ? "completed" : "not_reached"
-    });
-  }
-  if (!trace.some((entry) => entry.step === "worker_completed")) {
-    trace.push({
-      step: "worker_completed",
-      status: input.completed ? "completed" : input.deliveryFailed ? "not_reached" : "not_reached"
-    });
-  }
-  if (!trace.some((entry) => entry.step === "relay_returned")) {
-    trace.push({
-      step: "relay_returned",
-      status: input.deliveryFailed ? "failed" : input.deliveryStatus ? "completed" : "not_reached",
-      occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso
-    });
-  }
-  trace.push({
+  mergeTraceStep(trace, {
+    step: "sent_to_relay",
+    status: input.deliveryFailed ? "failed" : input.deliveryStatus ? "completed" : "not_reached",
+    occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso
+  });
+  mergeTraceStep(trace, {
+    step: "worker_ack",
+    status: input.deliveryFailed ? "not_reached" : input.deliveryStatus ? "completed" : "not_reached"
+  });
+  mergeTraceStep(trace, {
+    step: "worker_completed",
+    status: input.completed ? "completed" : input.deliveryFailed ? "not_reached" : "not_reached",
+    ...(input.completed ? { occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso } : {})
+  });
+  mergeTraceStep(trace, {
+    step: "relay_returned",
+    status: input.deliveryFailed ? "failed" : input.deliveryStatus ? "completed" : "not_reached",
+    occurredAtIso: input.requestUpdatedAtIso ?? input.submittedAtIso
+  });
+  mergeTraceStep(trace, {
     step: "state_updated",
     status: "completed",
     occurredAtIso: input.requestUpdatedAtIso ?? new Date().toISOString()
@@ -13007,25 +13019,33 @@ export class ClawzControlPlane {
       throw new Error("Late worker reconciliation only accepts completed or failed santaclawz-return/1.0 payloads.");
     }
     const occurredAtIso = new Date().toISOString();
-    const relayTrace: HireRelayTraceStep[] = [
-      ...(existing.relayTrace ?? []),
-      {
-        step: "worker_completed",
-        status: completed ? "completed" : "failed",
-        occurredAtIso,
-        ...(existing.deliveryReceipt?.relayMessageId ? { relayMessageId: existing.deliveryReceipt.relayMessageId } : {}),
-        requestId: existing.requestId,
-        ...(existing.ingressBodyDigestSha256 ? { requestBodyDigestSha256: existing.ingressBodyDigestSha256 } : {}),
-        detail: "late worker return reconciled through authenticated endpoint"
-      },
-      {
-        step: "state_updated",
-        status: "completed",
-        occurredAtIso,
-        requestId: existing.requestId,
-        detail: "late worker return reconciliation updated execution state"
-      }
-    ];
+    const relayTrace = mergeHireRelayTrace({
+      submittedAtIso: existing.submittedAtIso,
+      requestUpdatedAtIso: occurredAtIso,
+      paymentStatus: existing.paymentStatus,
+      deliveryStatus: completed ? "reconciled_completed" : existing.deliveryStatus,
+      deliveryFailed: failed,
+      completed,
+      relayTrace: [
+        ...(existing.relayTrace ?? []),
+        {
+          step: "worker_completed",
+          status: completed ? "completed" : "failed",
+          occurredAtIso,
+          ...(existing.deliveryReceipt?.relayMessageId ? { relayMessageId: existing.deliveryReceipt.relayMessageId } : {}),
+          requestId: existing.requestId,
+          ...(existing.ingressBodyDigestSha256 ? { requestBodyDigestSha256: existing.ingressBodyDigestSha256 } : {}),
+          detail: "late worker return reconciled through authenticated endpoint"
+        },
+        {
+          step: "state_updated",
+          status: "completed",
+          occurredAtIso,
+          requestId: existing.requestId,
+          detail: "late worker return reconciliation updated execution state"
+        }
+      ]
+    });
     const operationalStatus: NonNullable<HireRequestReceipt["operationalStatus"]> = {
       ...(existing.operationalStatus ?? buildHireOperationalStatus({
         requestType: existing.requestType,

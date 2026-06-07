@@ -384,6 +384,21 @@ function requestIdFromSignedBody(body) {
   return parsed && typeof parsed.request_id === "string" ? parsed.request_id : "unknown";
 }
 
+function promptFromSignedBody(body) {
+  const parsed = safeJsonParse(typeof body === "string" ? body : "{}");
+  if (!parsed || typeof parsed !== "object") {
+    return "";
+  }
+  return firstNonEmptyString(
+    parsed.task_prompt,
+    parsed.taskPrompt,
+    parsed.prompt,
+    parsed.instructions,
+    parsed.body && typeof parsed.body === "object" ? parsed.body.task_prompt : "",
+    parsed.body && typeof parsed.body === "object" ? parsed.body.prompt : ""
+  ).slice(0, 500);
+}
+
 function sha256Hex(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -634,39 +649,35 @@ function relayStarterFastPathEnabled(agentId) {
 
 function buildStarterFastPathReturn(requestBody) {
   const requestId = requestIdFromSignedBody(requestBody);
+  const promptPreview = promptFromSignedBody(requestBody);
   const createdAtIso = new Date().toISOString();
-  const deliverableNames = [
-    "00_summary.md",
-    "01_onboarding_checklist.md",
-    "02_payment_setup.md",
-    "03_relay_setup.md",
-    "04_readiness_checks.md",
-    "05_pricing_guidance.md",
-    "06_delivery_lanes.md",
-    "07_privacy_guidance.md",
-    "08_testing_plan.md",
-    "09_agent_profile_tips.md",
-    "10_operator_notes.md",
-    "11_completion_receipt.json"
-  ];
-  const deliverables = deliverableNames.map((name, index) => {
-    const contentDigest = sha256Hex(`${requestId}:${name}:${index}:santaclawz-agent-job-pack-v1`);
-    return {
-      name,
-      sha256: contentDigest,
-      content_type: name.endsWith(".json") ? "application/json" : "text/markdown"
-    };
-  });
-  const packageHash = sha256Hex(JSON.stringify(deliverables));
   const buyerVisibleSummary = [
     "# SantaClawz Agent Job Pack",
     "",
-    "This starter package proves the agent can receive paid work, return a verified package, and expose buyer-readable output.",
+    "This deterministic reference package proves the agent can receive paid work, return a verified package, and expose buyer-readable output.",
     "",
-    "Use it as a deterministic onboarding/reference agent, not as a general worker. Production agents should replace this response with real work matched to the buyer request.",
+    "Use Agent Job Pack as an onboarding and protocol validation fixture, not as a general prompt-following worker. Production agents should replace this response with real work matched to the buyer request.",
     "",
-    "Included guidance covers activation, payments, relay routing, readiness, delivery lanes, privacy, testing, profile tips, and the completion receipt."
+    ...(promptPreview ? [`Buyer request preview: ${promptPreview}`, ""] : []),
+    "Buyer inputs: a concise task prompt, a payment cap, and the payment payload digest saved for recovery.",
+    "",
+    "Deliverable: this inline markdown summary. No downloadable artifact bundle is claimed for the starter fast path.",
+    "",
+    "Readiness notes: verify /x402-plan, run a dry-run, submit the signed payment once, recover by payment payload digest after transport timeout, and read execution-state before retrying."
   ].join("\n");
+  const summaryDigest = sha256Hex(buyerVisibleSummary);
+  const deliverables = [
+    {
+      name: "agent-job-pack-summary.md",
+      sha256: summaryDigest,
+      content_type: "text/markdown"
+    }
+  ];
+  const packageHash = sha256Hex(JSON.stringify({
+    requestId,
+    deliverables,
+    summaryDigest
+  }));
   return JSON.stringify({
     schema_version: "santaclawz-return/1.0",
     request_id: requestId,
@@ -685,7 +696,7 @@ function buildStarterFastPathReturn(requestBody) {
         input_digest_sha256: sha256Hex(typeof requestBody === "string" ? requestBody : "{}"),
         checks_performed: [
           "relay_starter_fast_path_generated",
-          "deliverables_hashed",
+          "buyer_visible_summary_hashed",
           "santaclawz_return_payload_valid"
         ],
         files_produced: deliverables.map((item) => item.name),
@@ -697,7 +708,7 @@ function buildStarterFastPathReturn(requestBody) {
           name: "agent-job-pack-summary.md",
           content_type: "text/markdown",
           text: buyerVisibleSummary,
-          sha256: sha256Hex(buyerVisibleSummary)
+          sha256: summaryDigest
         }
       ]
 	    }

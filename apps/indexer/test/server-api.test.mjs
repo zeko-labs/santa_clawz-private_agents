@@ -4033,8 +4033,67 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
 	    assert.equal(recoveredState.payload.lifecycle.buyerCompletionStatus, "buyer_complete");
     assert.equal(recoveredState.payload.lifecycle.platformReconciliationStatus, "seller_return_recorded");
 	    assert.equal(recoveredState.payload.lifecycle.sellerReputationImpact, "none");
+    assert.equal(recoveredState.payload.lifecycle.buyerVisibleInlineOutputCount, 1);
+    assert.equal(recoveredState.payload.lifecycle.buyerDownloadableArtifactCount, 0);
+    assert.equal(recoveredState.payload.lifecycle.artifactReceiptCount, 0);
+    assert.equal(recoveredState.payload.lifecycle.verifiedOutputDeliverableCount, 1);
+    assert.equal(recoveredState.payload.lifecycle.filesProducedCount, 1);
+    assert.equal(recoveredState.payload.lifecycle.internalPackageOnly, true);
+    assert.equal(recoveredState.payload.partyFinality.buyerTerminal, true);
+    assert.equal(recoveredState.payload.partyFinality.sellerTerminal, true);
     assert.equal(recoveredState.payload.lifecycleChecks.failed, false);
 	    assert.equal(recoveredState.payload.lifecycleChecks.terminal, false);
+    assert.equal(
+      recoveredState.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "completed"),
+      true
+    );
+    assert.equal(
+      recoveredState.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "not_reached"),
+      false
+    );
+
+    const deliveredAwaitingSettlementDigest = "e".repeat(64);
+    const deliveredPaymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_delivered_awaiting_settlement_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_delivered_awaiting_settlement_test",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: deliveredAwaitingSettlementDigest,
+          transactionHashes: [],
+          paymentStatus: "authorization_verified",
+          executionStatus: "completed",
+          returnStatus: "accepted"
+        }
+      ]
+    }, null, 2), "utf8");
+    const deliveredPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
+    );
+    assert.equal(deliveredPaymentState.status, 200);
+    assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
+    assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(deliveredPaymentState.payload.retryResume.nextAction, "view_delivery");
+    assert.equal(deliveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(deliveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.match(deliveredPaymentState.payload.retryResume.guidance, /Delivery is available/);
+    assert.doesNotMatch(deliveredPaymentState.payload.retryResume.guidance, /Retry or resume/);
+    assert.equal(deliveredPaymentState.payload.partyFinality.buyerTerminal, true);
+    assert.equal(deliveredPaymentState.payload.partyFinality.sellerTerminal, true);
+    assert.equal(deliveredPaymentState.payload.partyFinality.paymentTerminal, false);
+    assert.equal(deliveredPaymentState.payload.partyFinality.operatorTerminal, false);
 
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
@@ -4373,10 +4432,26 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
     assert.equal(reconciledState.payload.lifecycle.sellerExecutionCompleted, true);
 	    assert.equal(reconciledState.payload.lifecycle.buyerCompletionStatus, "buyer_complete");
 	    assert.equal(reconciledState.payload.lifecycle.sellerReputationImpact, "none");
+    assert.equal(reconciledState.payload.lifecycle.buyerVisibleInlineOutputCount, 1);
+    assert.equal(reconciledState.payload.lifecycle.buyerDownloadableArtifactCount, 0);
+    assert.equal(reconciledState.payload.lifecycle.verifiedOutputDeliverableCount, 1);
+    assert.equal(reconciledState.payload.lifecycle.filesProducedCount, 1);
+    assert.equal(reconciledState.payload.lifecycle.internalPackageOnly, true);
+    assert.equal(reconciledState.payload.partyFinality.buyerTerminal, true);
+    assert.equal(reconciledState.payload.partyFinality.sellerTerminal, true);
+    assert.equal(reconciledState.payload.partyFinality.paymentTerminal, false);
     assert.equal(reconciledState.payload.lifecycleChecks.agentCompleted, true);
     assert.equal(reconciledState.payload.lifecycleChecks.failed, false);
 	    assert.equal(reconciledState.payload.lifecycleChecks.terminal, false);
     assert.equal(reconciledState.payload.relayTrace.some((entry) => entry.detail === "late worker return reconciled through authenticated endpoint"), true);
+    assert.equal(
+      reconciledState.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "completed"),
+      true
+    );
+    assert.equal(
+      reconciledState.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "not_reached"),
+      false
+    );
 
     console.log("ok - relay post-ack timeout remains pending, retry-safe, and reconcilable");
   } finally {
