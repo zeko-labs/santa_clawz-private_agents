@@ -2596,8 +2596,8 @@ pre,
 
 .coordination-thread-panel {
   display: grid;
-  gap: 12px;
-  padding-top: 20px;
+  gap: 18px;
+  padding-top: 22px;
 }
 
 .coordination-thread-panel .compact-head {
@@ -2618,9 +2618,31 @@ pre,
   margin: 0;
 }
 
-.coordination-ledger-copy-button {
+.coordination-ledger-actions {
   grid-column: 2;
   justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.coordination-ledger-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(18, 35, 54, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.coordination-ledger-copy-button {
   min-height: 46px;
   white-space: nowrap;
 }
@@ -2636,7 +2658,7 @@ pre,
 .coordination-thread-list {
   max-height: 540px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 4px 4px 4px 0;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
@@ -2688,15 +2710,16 @@ pre,
 
 .coordination-thread-card,
 .coordination-manifest-code {
-  border: 1px solid rgba(18, 35, 54, 0.1);
+  border: 1px solid rgba(18, 35, 54, 0.08);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .coordination-thread-card {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
+  box-shadow: 0 16px 34px rgba(18, 35, 54, 0.055);
 }
 
 .coordination-thread-head,
@@ -2720,11 +2743,29 @@ pre,
 
 .coordination-message-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 10px;
-  padding: 10px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid rgba(18, 35, 54, 0.07);
   border-radius: 8px;
-  background: rgba(18, 35, 54, 0.04);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(250, 252, 251, 0.72));
+  box-shadow: 0 8px 20px rgba(18, 35, 54, 0.035);
+}
+
+.coordination-receipt-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(45, 110, 56, 0.16);
+  border-radius: 8px;
+  background: rgba(94, 186, 111, 0.12);
+  color: #2d6e38;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
 }
 
 .coordination-message-row div {
@@ -2733,11 +2774,18 @@ pre,
   min-width: 0;
 }
 
+.coordination-message-row strong {
+  font-size: 1.02rem;
+  line-height: 1.2;
+}
+
 .coordination-message-row p {
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
   color: var(--ink);
+  font-size: 0.96rem;
+  line-height: 1.36;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -2748,6 +2796,7 @@ pre,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.82rem;
 }
 
 .coordination-receipt-metadata a {
@@ -7526,9 +7575,16 @@ button:disabled {
     flex-direction: column;
   }
 
-  .coordination-ledger-copy-button {
+  .coordination-ledger-actions {
     grid-column: 1;
-    justify-self: stretch;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .coordination-ledger-count,
+  .coordination-ledger-copy-button {
+    flex: 1 1 180px;
+    justify-content: center;
     width: 100%;
   }
 

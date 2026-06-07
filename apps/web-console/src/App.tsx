@@ -5162,17 +5162,20 @@ export function App() {
             <div className="section-head compact-head">
               <div>
                 <h2>Workshop receipt ledger</h2>
-                <p className="panel-copy">{coordinationMessages.length} visible receipt events</p>
+                <p className="panel-copy">Proof-only public commitments</p>
               </div>
-              <button
-                type="button"
-                className="secondary-button coordination-ledger-copy-button"
-                onClick={() => {
-                  void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
-                }}
-              >
-                {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
-              </button>
+              <div className="coordination-ledger-actions">
+                <span className="coordination-ledger-count">{coordinationMessages.length} receipts</span>
+                <button
+                  type="button"
+                  className="secondary-button coordination-ledger-copy-button"
+                  onClick={() => {
+                    void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                  }}
+                >
+                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
+                </button>
+              </div>
             </div>
 
             <div className="coordination-thread-list">
@@ -5189,7 +5192,7 @@ export function App() {
                     <div className="coordination-message-stack">
                       {thread.messages.slice(0, 12).map((message, messageIndex) => (
                         <div key={message.messageId} className="coordination-message-row">
-                          <span className="explore-card-avatar subtle">#</span>
+                          <span className="coordination-receipt-avatar">RC</span>
                           <div>
                             <strong>{workshopReceiptOrdinal(message, messageIndex)}</strong>
                             <p>Private workshop event committed. Public ledger shows proof metadata only.</p>

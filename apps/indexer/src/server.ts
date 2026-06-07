@@ -2987,26 +2987,32 @@ async function buildX402PaymentStateResponse(input: {
   const safeToCreateNewPayment = latestLedger
     ? protocolLifecycle.buyerAnswer.canCreateFreshPayment
     : false;
+  const canonicalSafeToRetrySamePayload = latestLedger
+    ? protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload
+    : safeToRetrySamePayload;
   const retryResumeTerminal = latestLedger
     ? protocolLifecycle.terminal
     : false;
-  const nextAction = terminal
-    ? expiredAuthorizationNoChargeTerminal
-      ? "create_new_payment_or_retry_job"
-      : "result_lookup"
-    : payloadRetryRejected && resolvedRequestId
-      ? "poll_execution_state"
-      : payloadRetryRejected
-        ? "inspect_payment_state"
-    : postAckPending
-      ? "poll_execution_state"
-    : latestLedger?.settlementRecovery?.canRetrySettlement
-      ? "retry_settlement_same_payload"
-      : resolvedRequestId
-        ? "poll_execution_state"
-        : paymentAuthorized
-          ? "retry_same_payment_payload"
-          : "submit_or_resubmit_payment_payload";
+  const nextAction = retryResumeActionForLifecycle({
+    lifecycle: protocolLifecycle,
+    expiredAuthorizationNoChargeTerminal,
+    payloadRetryRejected,
+    postAckPending,
+    ...(resolvedRequestId ? { resolvedRequestId } : {}),
+    settlementCanRetry: latestLedger?.settlementRecovery?.canRetrySettlement,
+    paymentAuthorized
+  });
+  const retryGuidance = retryResumeGuidanceForLifecycle({
+    lifecycle: protocolLifecycle,
+    expiredAuthorizationNoChargeTerminal,
+    payloadRetryRejected,
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
+    safeToRetrySamePayload: canonicalSafeToRetrySamePayload
+  });
+  const partyFinality = lifecyclePartyFinality({
+    lifecycle: protocolLifecycle,
+    paymentSettled
+  });
   return {
     schemaVersion: "santaclawz-x402-payment-state/1.0",
     ok: true,
@@ -3027,15 +3033,16 @@ async function buildX402PaymentStateResponse(input: {
     buyerAction: protocolLifecycle.buyerAction,
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
+    partyFinality,
     ...(intent ? { intent } : {}),
     ...(hireRequest ? { execution: hireRequest } : {}),
     retryResume: {
-      safeToRetrySamePayload,
+      safeToRetrySamePayload: canonicalSafeToRetrySamePayload,
       safeToCreateNewPayment,
       ...(postAckPending && !payloadRetryRejected
         ? {
             retryMode: "same_payment_payload_only",
-            safeToRetrySamePaymentPayload: safeToRetrySamePayload,
+            safeToRetrySamePaymentPayload: canonicalSafeToRetrySamePayload,
             workerAcknowledged: true,
             lateCompletionSupported: true,
             resultMayStillArrive: true
@@ -3066,15 +3073,7 @@ async function buildX402PaymentStateResponse(input: {
         : {}),
       ...(retryEndpoint ? { retryEndpoint } : {}),
       ...(stateEndpoint ? { stateEndpoint } : {}),
-      guidance: retryResumeTerminal
-        ? expiredAuthorizationNoChargeTerminal
-          ? "The signed x402 authorization expired before settlement and no accepted buyer delivery is recorded. Treat this payment path as no-charge terminal; a buyer may create a fresh payment for a new attempt."
-          : "This payment path reached a terminal state. Read the result/artifact state before creating another payment."
-        : payloadRetryRejected
-          ? "This signed x402 payload cannot be retried for verification. Do not create a new payment while canonical state is non-terminal; poll the execution/payment state or escalate reconciliation."
-        : paymentPayloadDigestSha256
-          ? "Retry or resume with the exact same signed x402 payment payload. Do not ask the buyer to sign a new payment until this state says it failed or expired."
-          : "No signed payment payload digest was found yet. Submit the signed x402 payload once, then use this endpoint to resume safely."
+      guidance: retryGuidance
     }
   };
 }
@@ -3096,6 +3095,94 @@ function paymentPayloadRetrySafety(input: {
     payloadExpiredForRetry,
     payloadRetryRejected,
     safeToRetrySamePayload: Boolean(input.paymentPayloadDigestSha256 && !input.terminal && !payloadRetryRejected)
+  };
+}
+
+function retryResumeActionForLifecycle(input: {
+  lifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>;
+  expiredAuthorizationNoChargeTerminal: boolean;
+  payloadRetryRejected: boolean;
+  postAckPending: boolean;
+  resolvedRequestId?: string | undefined;
+  settlementCanRetry?: boolean | undefined;
+  paymentAuthorized: boolean;
+}) {
+  if (input.lifecycle.buyerAction === "view_delivery") {
+    return "view_delivery";
+  }
+  if (input.lifecycle.buyerAction === "stop_and_contact_operator") {
+    return "stop_and_contact_operator";
+  }
+  if (input.lifecycle.buyerAction === "create_fresh_payment") {
+    return input.expiredAuthorizationNoChargeTerminal
+      ? "create_new_payment_or_retry_job"
+      : "create_fresh_payment";
+  }
+  if (input.payloadRetryRejected && input.resolvedRequestId) {
+    return "poll_execution_state";
+  }
+  if (input.payloadRetryRejected) {
+    return "inspect_payment_state";
+  }
+  if (input.postAckPending) {
+    return "poll_execution_state";
+  }
+  if (input.settlementCanRetry) {
+    return "retry_settlement_same_payload";
+  }
+  if (input.resolvedRequestId) {
+    return "poll_execution_state";
+  }
+  return input.paymentAuthorized ? "retry_same_payment_payload" : "submit_or_resubmit_payment_payload";
+}
+
+function retryResumeGuidanceForLifecycle(input: {
+  lifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>;
+  expiredAuthorizationNoChargeTerminal: boolean;
+  payloadRetryRejected: boolean;
+  paymentPayloadDigestSha256?: string | undefined;
+  safeToRetrySamePayload: boolean;
+}) {
+  if (input.lifecycle.buyerAction === "view_delivery") {
+    return input.lifecycle.operatorObligation === "settle_payment"
+      ? "Delivery is available. Do not retry payment and do not create a new payment. Read the result state while SantaClawz settles or reconciles the authorized payment."
+      : "Delivery is available. Read the result state. Do not retry payment and do not create a new payment for this job.";
+  }
+  if (input.expiredAuthorizationNoChargeTerminal) {
+    return "The signed x402 authorization expired before settlement and no accepted buyer delivery is recorded. Treat this payment path as no-charge terminal; a buyer may create a fresh payment for a new attempt.";
+  }
+  if (input.lifecycle.buyerAction === "stop_and_contact_operator") {
+    return "This payment path needs platform reconciliation. Do not retry payment and do not create a new payment until canonical state changes.";
+  }
+  if (input.payloadRetryRejected) {
+    return "This signed x402 payload cannot be retried for verification. Do not create a new payment while canonical state is non-terminal; poll the execution/payment state or escalate reconciliation.";
+  }
+  if (input.safeToRetrySamePayload && input.paymentPayloadDigestSha256) {
+    return "Retry or resume with the exact same signed x402 payment payload. Do not ask the buyer to sign a new payment until this state says it failed or expired.";
+  }
+  if (input.paymentPayloadDigestSha256) {
+    return "A signed payment payload exists, but this state does not allow retrying it. Poll the result/payment state and do not create a fresh payment.";
+  }
+  return "No signed payment payload digest was found yet. Submit the signed x402 payload once, then use this endpoint to resume safely.";
+}
+
+function lifecyclePartyFinality(input: {
+  lifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>;
+  paymentSettled: boolean;
+  buyerAccepted?: boolean | undefined;
+}) {
+  return {
+    buyerTerminal: input.lifecycle.buyerAnswer.hasBuyerDelivery || input.lifecycle.terminal,
+    sellerTerminal:
+      input.lifecycle.sellerOutcome === "completed" ||
+      input.lifecycle.sellerOutcome === "failed" ||
+      input.lifecycle.sellerOutcome === "not_at_fault",
+    paymentTerminal:
+      input.paymentSettled ||
+      input.lifecycle.protocolState === "EXPIRED_NO_CHARGE" ||
+      input.lifecycle.protocolState === "SELLER_FAILED_NO_SETTLEMENT",
+    operatorTerminal: input.lifecycle.operatorObligation === "none",
+    ...(typeof input.buyerAccepted === "boolean" ? { buyerAccepted: input.buyerAccepted } : {})
   };
 }
 
@@ -3151,6 +3238,7 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
     ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
     ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
+    ...(isRecord(payload.partyFinality) ? { partyFinality: payload.partyFinality } : {}),
     payment: {
       ledgerEntryCount: typeof payment?.ledgerEntryCount === "number" ? payment.ledgerEntryCount : 0,
       ...(latestLedger ? { latestLedger } : {})
@@ -4768,12 +4856,18 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
             ? "anchored_or_attested"
             : "return_validated"
           : "not_started";
+    const verifiedOutput = hireRequest.protocolReturn?.verifiedOutput;
     const artifactDelivered =
-      Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactManifestUrl) ||
-      Boolean(hireRequest.protocolReturn?.verifiedOutput?.artifactBundleDigestSha256) ||
+      Boolean(verifiedOutput?.artifactManifestUrl) ||
+      Boolean(verifiedOutput?.artifactBundleDigestSha256) ||
       artifactReceipts.length > 0;
-    const buyerVisibleOutputCount = hireRequest.protocolReturn?.verifiedOutput?.buyerVisibleOutputs?.length ?? 0;
+    const buyerVisibleOutputCount = verifiedOutput?.buyerVisibleOutputs?.length ?? 0;
     const inlineOutputAvailable = buyerVisibleOutputCount > 0;
+    const buyerDownloadableArtifactCount = artifactReceipts.length;
+    const buyerVisibleInlineOutputCount = buyerVisibleOutputCount;
+    const verifiedOutputDeliverableCount = verifiedOutput?.deliverableCount ?? 0;
+    const filesProducedCount = verifiedOutput?.filesProducedCount ?? 0;
+    const internalPackageOnly = verifiedOutputDeliverableCount > 0 && inlineOutputAvailable && !artifactDelivered;
     const buyerDeliveryAvailable = inlineOutputAvailable || artifactDelivered;
     const buyerDeliveryStatus = inlineOutputAvailable
       ? "inline_available"
@@ -4976,6 +5070,11 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
           agentExecutionStatus !== "worker_completed_return_rejected"
       )
     });
+    const partyFinality = lifecyclePartyFinality({
+      lifecycle: protocolLifecycle,
+      paymentSettled,
+      buyerAccepted
+    });
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -5002,6 +5101,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       buyerAction: protocolLifecycle.buyerAction,
       sellerOutcome: protocolLifecycle.sellerOutcome,
       operatorObligation: protocolLifecycle.operatorObligation,
+      partyFinality,
       agentId: hireRequest.agentId,
       sessionId: hireRequest.sessionId,
       requestType: hireRequest.requestType,
@@ -5040,6 +5140,12 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         buyerDeliveryStatus,
         buyerDeliveryAvailable,
         buyerVisibleOutputCount,
+        buyerVisibleInlineOutputCount,
+        buyerDownloadableArtifactCount,
+        artifactReceiptCount: artifactReceipts.length,
+        verifiedOutputDeliverableCount,
+        filesProducedCount,
+        internalPackageOnly,
         buyerDeliveryBlocker: paymentRecoveryMissingBuyerDelivery ? "authorized_payment_missing_buyer_delivery" : undefined,
         artifactDeliveryStatus: artifactDelivered ? "delivered" : "not_delivered",
         artifactDeliveryAvailable: artifactDelivered,
