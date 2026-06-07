@@ -22,11 +22,57 @@ export interface SantaClawzCoordinationBridgeParticipant {
   capabilities?: string[];
   publicProfileUrl?: string;
   publicHireUrl?: string;
+  disclosure?: "private-setup-only";
+}
+
+export interface SantaClawzCoordinationPrivacyArchitecture {
+  defaultWorkspacePlane: "customer-controlled-private";
+  publicProofPlane: "commitment-only";
+  hostedSetupMode: "disabled-by-default" | "convenience-ticket";
+  rosterDisclosure: "private-setup-only";
+  roleDisclosure: "private-setup-only";
+  taskDisclosure: "private-setup-only";
+  payloadDisclosure: "private-setup-only";
+  publicCommitmentRule: "roots-digests-timestamps-only";
+}
+
+export interface SantaClawzCoordinationPublicCommitment {
+  schemaVersion: "santaclawz-workshop-public-commitment/1.0";
+  commitmentId: string;
+  threadId: string;
+  swarmId: string;
+  disclosure: "proof-receipts-only";
+  allowedPublicFields: Array<
+    | "commitmentId"
+    | "threadId"
+    | "swarmId"
+    | "receiptId"
+    | "receiptType"
+    | "timestamp"
+    | "messageDigestSha256"
+    | "outputDigestSha256"
+    | "batchRootDigestSha256"
+    | "batchTxHash"
+    | "aggregateCount"
+  >;
+  forbiddenPublicFields: Array<
+    | "agentId"
+    | "agentName"
+    | "participantRoster"
+    | "roleAssignment"
+    | "taskSummary"
+    | "messageBody"
+    | "localRef"
+    | "artifactUrl"
+    | "customerData"
+  >;
 }
 
 export interface SantaClawzCoordinationBridgeManifest {
   schemaVersion: SantaClawzCoordinationBridgeSchemaVersion;
   protocol?: SantaClawzCoordinationBridgeVersionDescriptor;
+  privacyArchitecture?: SantaClawzCoordinationPrivacyArchitecture;
+  publicCommitment?: SantaClawzCoordinationPublicCommitment;
   hostedWorkspace?: Record<string, unknown>;
   securityCapabilities?: Record<string, unknown>;
   localConnectorContract?: Record<string, unknown>;
@@ -55,7 +101,7 @@ export interface SantaClawzCoordinationBridgeManifest {
     publicAnchor?: string;
     supportedStrategies?: string[];
   };
-  participants: SantaClawzCoordinationBridgeParticipant[];
+  participants?: SantaClawzCoordinationBridgeParticipant[];
   read?: Record<string, unknown>;
   write?: Record<string, unknown>;
 }
@@ -97,8 +143,19 @@ export function assertValidCoordinationBridgeManifest(
   if (!manifest.org || !manifest.project || !manifest.goal) {
     throw new Error("Coordination bridge manifest requires org, project, and goal.");
   }
-  if (!Array.isArray(manifest.participants)) {
-    throw new Error("Coordination bridge manifest requires participants.");
+  if (manifest.privacyArchitecture) {
+    if (manifest.privacyArchitecture.defaultWorkspacePlane !== "customer-controlled-private") {
+      throw new Error("Coordination bridge default workspace plane must be customer-controlled-private.");
+    }
+    if (manifest.privacyArchitecture.publicProofPlane !== "commitment-only") {
+      throw new Error("Coordination bridge public proof plane must be commitment-only.");
+    }
+  }
+  if (manifest.publicCommitment?.disclosure && manifest.publicCommitment.disclosure !== "proof-receipts-only") {
+    throw new Error("Coordination bridge public commitment must be proof-receipts-only.");
+  }
+  if (manifest.participants && !Array.isArray(manifest.participants)) {
+    throw new Error("Coordination bridge participants must be an array when present.");
   }
   return manifest;
 }

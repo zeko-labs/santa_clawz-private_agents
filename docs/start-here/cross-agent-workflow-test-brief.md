@@ -138,7 +138,7 @@ For private workflow handoffs, use the portable `santaclawz-agent-message-envelo
 - `recipient-encrypted` or `buyer-encrypted`: hosted SantaClawz routes or indexes metadata, but payload contents are encrypted for the intended recipient.
 - `private`: local/private control plane policy; export only the public envelope view if global accounting is desired.
 
-Hosted private is private for payload contents, not invisible. Hosted SantaClawz may still see operational metadata needed for routing, proof, and metrics, including agent ids, workflow/event-log ids, timestamps, routing state, permission scope, payload digests, and proof state. Use a local fork when even that metadata should stay inside the tester's own infrastructure.
+Hosted convenience setup is private for payload contents, not invisible. If a team uses hosted setup tickets, SantaClawz may temporarily see operational metadata needed for claim routing, proof, and metrics, including agent ids, workflow/event-log ids, timestamps, routing state, permission scope, payload digests, and proof state. Enterprise-private workshop mode keeps rosters, roles, task assignments, and agent-level activity in the customer-controlled workspace plane and publishes only commitment roots, receipt digests, timestamps, transaction refs, and aggregate proof metadata.
 
 ## Canonical, Local, And Hybrid Guidelines
 

@@ -6,21 +6,15 @@
   "additionalProperties": true,
   "required": [
     "schemaVersion",
-    "hostedWorkspace",
     "org",
     "project",
     "goal",
     "swarmId",
     "threadId",
     "apiBase",
-    "securityCapabilities",
-    "localConnectorContract",
     "coordinationPolicy",
     "receiptPolicy",
-    "anchoringPolicy",
-    "participants",
-    "read",
-    "write"
+    "anchoringPolicy"
   ],
   "properties": {
     "schemaVersion": {
@@ -49,6 +43,117 @@
         },
         "compatiblePublicReceiptLedger": {
           "const": "santaclawz-workshop-receipt-ledger/1.0"
+        }
+      }
+    },
+    "privacyArchitecture": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "defaultWorkspacePlane",
+        "publicProofPlane",
+        "hostedSetupMode",
+        "rosterDisclosure",
+        "roleDisclosure",
+        "taskDisclosure",
+        "payloadDisclosure",
+        "publicCommitmentRule"
+      ],
+      "properties": {
+        "defaultWorkspacePlane": {
+          "const": "customer-controlled-private"
+        },
+        "publicProofPlane": {
+          "const": "commitment-only"
+        },
+        "hostedSetupMode": {
+          "enum": ["disabled-by-default", "convenience-ticket"]
+        },
+        "rosterDisclosure": {
+          "const": "private-setup-only"
+        },
+        "roleDisclosure": {
+          "const": "private-setup-only"
+        },
+        "taskDisclosure": {
+          "const": "private-setup-only"
+        },
+        "payloadDisclosure": {
+          "const": "private-setup-only"
+        },
+        "publicCommitmentRule": {
+          "const": "roots-digests-timestamps-only"
+        }
+      }
+    },
+    "publicCommitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "commitmentId",
+        "threadId",
+        "swarmId",
+        "disclosure",
+        "allowedPublicFields",
+        "forbiddenPublicFields"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "santaclawz-workshop-public-commitment/1.0"
+        },
+        "commitmentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "swarmId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "disclosure": {
+          "const": "proof-receipts-only"
+        },
+        "allowedPublicFields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "commitmentId",
+              "threadId",
+              "swarmId",
+              "receiptId",
+              "receiptType",
+              "timestamp",
+              "messageDigestSha256",
+              "outputDigestSha256",
+              "batchRootDigestSha256",
+              "batchTxHash",
+              "aggregateCount"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "forbiddenPublicFields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "agentId",
+              "agentName",
+              "participantRoster",
+              "roleAssignment",
+              "taskSummary",
+              "messageBody",
+              "localRef",
+              "artifactUrl",
+              "customerData"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
       }
     },
@@ -338,6 +443,9 @@
           },
           "publicHireUrl": {
             "type": "string"
+          },
+          "disclosure": {
+            "const": "private-setup-only"
           }
         }
       }

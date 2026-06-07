@@ -14,6 +14,25 @@ export type ClawzCoordinationProofIntent = "per_message" | "aggregate" | "agent_
 export interface ClawzCoordinationBridgeManifest {
   schemaVersion: "santaclawz-team-coordination-bridge/0.1";
   protocol?: Record<string, unknown>;
+  privacyArchitecture?: {
+    defaultWorkspacePlane: "customer-controlled-private";
+    publicProofPlane: "commitment-only";
+    hostedSetupMode: "disabled-by-default" | "convenience-ticket";
+    rosterDisclosure: "private-setup-only";
+    roleDisclosure: "private-setup-only";
+    taskDisclosure: "private-setup-only";
+    payloadDisclosure: "private-setup-only";
+    publicCommitmentRule: "roots-digests-timestamps-only";
+  };
+  publicCommitment?: {
+    schemaVersion: "santaclawz-workshop-public-commitment/1.0";
+    commitmentId: string;
+    threadId: string;
+    swarmId: string;
+    disclosure: "proof-receipts-only";
+    allowedPublicFields: string[];
+    forbiddenPublicFields: string[];
+  };
   org: string;
   project: string;
   goal: string;
@@ -42,7 +61,7 @@ export interface ClawzCoordinationBridgeManifest {
     publicAnchor?: string;
     supportedStrategies?: string[];
   };
-  participants: Array<{
+  participants?: Array<{
     agentId: string;
     name?: string;
     role?: "admin" | "member";
@@ -50,12 +69,13 @@ export interface ClawzCoordinationBridgeManifest {
     capabilities?: string[];
     publicProfileUrl?: string;
     publicHireUrl?: string;
+    disclosure?: "private-setup-only";
   }>;
   read?: Record<string, unknown>;
   write?: Record<string, unknown>;
 }
 
-export type ClawzCoordinationParticipant = ClawzCoordinationBridgeManifest["participants"][number];
+export type ClawzCoordinationParticipant = NonNullable<ClawzCoordinationBridgeManifest["participants"]>[number];
 
 export interface ClawzCoordinationAgentSetup {
   schemaVersion: "santaclawz-coordination-agent-setup/0.1";
@@ -128,8 +148,19 @@ export function parseCoordinationBridgeManifest(input: string | ClawzCoordinatio
   if (!manifest.threadId || !manifest.swarmId || !manifest.apiBase) {
     throw new Error("Coordination bridge manifest requires threadId, swarmId, and apiBase.");
   }
-  if (!Array.isArray(manifest.participants)) {
-    throw new Error("Coordination bridge manifest requires participants.");
+  if (manifest.privacyArchitecture) {
+    if (manifest.privacyArchitecture.defaultWorkspacePlane !== "customer-controlled-private") {
+      throw new Error("Coordination bridge default workspace plane must be customer-controlled-private.");
+    }
+    if (manifest.privacyArchitecture.publicProofPlane !== "commitment-only") {
+      throw new Error("Coordination bridge public proof plane must be commitment-only.");
+    }
+  }
+  if (manifest.publicCommitment?.disclosure && manifest.publicCommitment.disclosure !== "proof-receipts-only") {
+    throw new Error("Coordination bridge public commitment must be proof-receipts-only.");
+  }
+  if (manifest.participants && !Array.isArray(manifest.participants)) {
+    throw new Error("Coordination bridge participants must be an array when present.");
   }
   return manifest;
 }
@@ -139,6 +170,9 @@ export function createCoordinationAgentSetup(input: ClawzCoordinationAgentSetupI
   const agentId = input.agentId.trim();
   if (!agentId) {
     throw new Error("createCoordinationAgentSetup requires agentId.");
+  }
+  if (!manifest.participants?.length) {
+    throw new Error("Coordination agent setup requires a private setup manifest with participants.");
   }
   const participant = manifest.participants.find((candidate) => candidate.agentId === agentId);
   if (!participant) {

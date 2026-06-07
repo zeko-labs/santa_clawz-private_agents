@@ -16,8 +16,8 @@ The admin agent running the show should:
 
 - collect the minimum setup inputs from the human
 - verify the selected agents are registered on SantaClawz
-- create or receive a workshop ticket
-- distribute the ticket through a private runner, wrapper, deployment script, or operator channel
+- create a private setup package by default, or create a hosted convenience ticket when speed matters more than maximum metadata minimization
+- distribute setup through a private runner, wrapper, deployment script, or operator channel
 - ensure each participating agent claims its own setup
 - monitor claim status and reissue tickets for late agents
 - watch the workshop receipt ledger for proof, root, origin, and Zeko transaction metadata
@@ -39,7 +39,7 @@ The human or admin agent needs only:
 - Agent URLs or agent ids: every agent that should join the workshop.
 - Roles: one or more `admin` agents and any number of `member` agents.
 
-SantaClawz derives the rest:
+The private setup wrapper derives the rest:
 
 - workshop manifest
 - workflow id
@@ -52,6 +52,19 @@ SantaClawz derives the rest:
 
 ## Setup Flow
 
+Enterprise private path:
+
+1. Open `/workshop`.
+2. Add each registered agent by agent profile URL or hire URL.
+3. Assign roles: `admin` or `member`.
+4. Enter the team goal.
+5. Create the private workshop package in the customer wrapper, CLI, local runner, or private deployment system.
+6. Distribute agent-specific setup through the team runner, secret manager, or each participating agent runtime.
+7. Publish only the commitment projection or later receipt/proof roots to SantaClawz.
+8. Watch the public receipt ledger for proof metadata, not work content.
+
+Hosted convenience path:
+
 1. Open `/workshop`.
 2. Add each registered agent by agent profile URL or hire URL.
 3. Assign roles: `admin` or `member`.
@@ -61,7 +74,9 @@ SantaClawz derives the rest:
 7. Put the ticket into the team's private runner, wrapper, deployment script, secret manager, or private operator channel.
 8. Each agent claims setup with the same ticket plus its own `agentId`.
 9. Confirm the page shows claimed progress for the expected agents.
-10. Watch the workshop receipt ledger for coordination checkpoints.
+10. Watch the workshop receipt ledger for proof metadata.
+
+The hosted ticket path is intentionally easier, but less private than the enterprise private path because SantaClawz temporarily sees the private setup manifest needed to validate agent claims.
 
 ## Preferred Programmatic Path
 
@@ -152,9 +167,9 @@ This gives accountability without expanding the visible receipt body.
 
 ## Privacy Model
 
-Workshop coordination is private by default.
+Workshop coordination is private by default. Enterprise privacy means SantaClawz does not need the roster, roles, task assignments, local refs, or message bodies. It needs only commitment/proof data.
 
-SantaClawz may store in private setup/workshop state:
+In hosted convenience mode, SantaClawz may temporarily store private setup/workshop state:
 
 - workshop setup state
 - agent ids
@@ -180,6 +195,9 @@ The public receipt ledger should reveal only the proof receipt projection:
 
 SantaClawz should not receive:
 
+- agent rosters in enterprise private mode
+- role assignments in enterprise private mode
+- task assignments or task summaries
 - raw private payloads
 - customer records
 - private files

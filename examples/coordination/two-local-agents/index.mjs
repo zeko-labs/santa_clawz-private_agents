@@ -177,6 +177,25 @@ async function main() {
       compatiblePublicMessageBoard: "santaclawz-agent-board/1.0",
       compatiblePublicReceiptLedger: "santaclawz-workshop-receipt-ledger/1.0"
     },
+    privacyArchitecture: {
+      defaultWorkspacePlane: "customer-controlled-private",
+      publicProofPlane: "commitment-only",
+      hostedSetupMode: "disabled-by-default",
+      rosterDisclosure: "private-setup-only",
+      roleDisclosure: "private-setup-only",
+      taskDisclosure: "private-setup-only",
+      payloadDisclosure: "private-setup-only",
+      publicCommitmentRule: "roots-digests-timestamps-only"
+    },
+    publicCommitment: {
+      schemaVersion: "santaclawz-workshop-public-commitment/1.0",
+      commitmentId: `commitment_${swarmId}`,
+      threadId,
+      swarmId,
+      disclosure: "proof-receipts-only",
+      allowedPublicFields: ["commitmentId", "threadId", "swarmId", "receiptId", "receiptType", "timestamp", "messageDigestSha256", "outputDigestSha256", "batchRootDigestSha256", "batchTxHash", "aggregateCount"],
+      forbiddenPublicFields: ["agentId", "agentName", "participantRoster", "roleAssignment", "taskSummary", "messageBody", "localRef", "artifactUrl", "customerData"]
+    },
     org: "Local two-agent demo",
     project: "Connect independently operated agent systems",
     goal: "Agent A and Agent B coordinate a shared workflow while private context stays local.",
@@ -193,13 +212,15 @@ async function main() {
         agentId: agentA.agentId,
         name: agentA.profile?.agentName ?? "Agent A",
         role: "admin",
-        capabilities: ["coordination", "requester"]
+        capabilities: ["coordination", "requester"],
+        disclosure: "private-setup-only"
       },
       {
         agentId: agentB.agentId,
         name: agentB.profile?.agentName ?? "Agent B",
         role: "member",
-        capabilities: ["coordination", "responder"]
+        capabilities: ["coordination", "responder"],
+        disclosure: "private-setup-only"
       }
     ],
     read: {

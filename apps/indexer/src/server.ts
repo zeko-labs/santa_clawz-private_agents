@@ -208,6 +208,21 @@ function clearConsoleStateCache() {
   publicReadInflight.clear();
 }
 
+function agentIdFromHeartbeatPath(pathname: string) {
+  const match = /^\/api\/agents\/([^/]+)\/heartbeat$/.exec(pathname);
+  return match?.[1] ? decodeURIComponent(match[1]) : "";
+}
+
+function invalidateCachesAfterWrite(pathname: string) {
+  const heartbeatAgentId = agentIdFromHeartbeatPath(pathname);
+  if (heartbeatAgentId) {
+    publicReadCache.delete(`agent-availability:${heartbeatAgentId}`);
+    publicReadInflight.delete(`agent-availability:${heartbeatAgentId}`);
+    return;
+  }
+  clearConsoleStateCache();
+}
+
 function hotReadRetainedUntilMs(ttlMs: number, nowMs = Date.now()) {
   return nowMs + Math.max(ttlMs, HOT_READ_STALE_WHILE_REVALIDATE_MS);
 }
@@ -525,6 +540,8 @@ interface IndexerResponse<ResBody = unknown> {
 }
 interface CacheInvalidationRequest {
   method: string;
+  originalUrl?: string;
+  path?: string;
 }
 interface CacheInvalidationResponse {
   statusCode: number;
@@ -579,7 +596,7 @@ app.use((request: CacheInvalidationRequest, response: CacheInvalidationResponse,
   }
   response.on("finish", () => {
     if (response.statusCode >= 200 && response.statusCode < 400) {
-      clearConsoleStateCache();
+      invalidateCachesAfterWrite(request.path ?? request.originalUrl?.split("?")[0] ?? "");
     }
   });
   next();

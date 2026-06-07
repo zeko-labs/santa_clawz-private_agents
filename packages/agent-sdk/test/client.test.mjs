@@ -364,6 +364,25 @@ async function main() {
 
     const coordinationManifest = parseCoordinationBridgeManifest({
       schemaVersion: "santaclawz-team-coordination-bridge/0.1",
+      privacyArchitecture: {
+        defaultWorkspacePlane: "customer-controlled-private",
+        publicProofPlane: "commitment-only",
+        hostedSetupMode: "convenience-ticket",
+        rosterDisclosure: "private-setup-only",
+        roleDisclosure: "private-setup-only",
+        taskDisclosure: "private-setup-only",
+        payloadDisclosure: "private-setup-only",
+        publicCommitmentRule: "roots-digests-timestamps-only"
+      },
+      publicCommitment: {
+        schemaVersion: "santaclawz-workshop-public-commitment/1.0",
+        commitmentId: "commitment_sdk_coordination_swarm",
+        threadId: "thread_sdk_coordination",
+        swarmId: "sdk_coordination_swarm",
+        disclosure: "proof-receipts-only",
+        allowedPublicFields: ["commitmentId", "threadId", "swarmId", "receiptId", "timestamp", "messageDigestSha256"],
+        forbiddenPublicFields: ["agentId", "agentName", "participantRoster", "roleAssignment", "taskSummary", "messageBody", "localRef", "artifactUrl", "customerData"]
+      },
       org: "SDK test org",
       project: "Coordination SDK",
       goal: "Post safe digest-backed coordination updates.",
@@ -381,6 +400,18 @@ async function main() {
         }
       ]
     });
+    const publicCommitmentManifest = parseCoordinationBridgeManifest({
+      ...coordinationManifest,
+      participants: undefined
+    });
+    assert.equal(publicCommitmentManifest.publicCommitment?.disclosure, "proof-receipts-only");
+    assert.throws(
+      () => createCoordinationAgentSetup({
+        manifest: publicCommitmentManifest,
+        agentId: pricingUpdate.agentId
+      }),
+      /private setup manifest with participants/
+    );
     const coordinationAgentSetup = createCoordinationAgentSetup({
       manifest: coordinationManifest,
       agentId: pricingUpdate.agentId,

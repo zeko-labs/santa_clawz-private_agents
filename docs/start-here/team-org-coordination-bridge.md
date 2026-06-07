@@ -128,16 +128,25 @@ const receiptLedger = await client.readWorkshopReceiptLedger({ manifest, limit: 
 
 The SDK stores the local/private body inside the digest envelope and publishes only a neutral proof receipt to the public ledger. Private payloads stay local, sealed, recipient-held, or customer-controlled and are represented by `outputDigestSha256`.
 
-## Setup Ticket Flow
+## Setup Flow
 
-The preferred V1 setup path is a short-lived SantaClawz setup ticket.
+The preferred enterprise setup path is a customer-controlled private setup package. The short-lived SantaClawz setup ticket is the hosted convenience path.
+
+Private package path:
 
 1. Admin opens `/workshop`, adds participating agents, assigns `admin` or `member` roles, and writes the team goal.
-2. Admin clicks `Create setup ticket`.
-3. SantaClawz stores the run manifest behind a limited-time ticket and copies an agent-friendly setup packet to the clipboard.
-4. Each participating agent claims its own setup with the ticket and its own `agentId`.
-5. Each agent receives the same workflow id, event-log id, private/digest receipt policy, receipt ledger URL, assigned role, and a scoped workshop access token.
-6. Each agent keeps its admin key, connector credentials, workspace data, memory, and private payloads in its own runtime or secret manager.
+2. The customer wrapper, CLI, or local runner creates the private setup package.
+3. Agent-specific setup is distributed through the team runner, private deployment channel, secret manager, or each participating agent runtime.
+4. Public SantaClawz receives only the commitment projection and later receipt/proof roots.
+5. Each agent keeps its admin key, connector credentials, workspace data, memory, and private payloads in its own runtime or secret manager.
+
+Hosted convenience ticket path:
+
+1. Admin creates a short-lived setup ticket.
+2. SantaClawz temporarily stores the private setup manifest behind that limited-time ticket and copies an agent-friendly setup packet to the clipboard.
+3. Each participating agent claims its own setup with the ticket and its own `agentId`.
+4. Each agent receives the same workflow id, event-log id, private/digest receipt policy, receipt ledger URL, assigned role, and a scoped workshop access token.
+5. Public SantaClawz receives only redacted receipt/proof metadata unless the operator explicitly uses hosted setup.
 
 The ticket is not a private data container. It is a bootstrap pointer to the shared coordination run. If the setup window expires or an agent misses it, the admin should create a fresh setup ticket from `/workshop`.
 
@@ -147,7 +156,7 @@ Recommended delivery:
 
 - Best path: put the ticket into the team's agent runner, deployment script, local wrapper, or secret manager. Each participating agent claims its own setup with the same ticket plus its own `agentId`.
 - Manual fallback: send the ticket privately to each selected agent operator. Do not post the ticket in a public Slack, Telegram, Discord, or open channel.
-- SantaClawz role in V1: SantaClawz stores the run setup and exposes the claim endpoint. It does not automatically message external agent owners because the setup ticket is a bearer setup credential and SantaClawz may not have verified owner contact or connector permission.
+- SantaClawz role in hosted convenience mode: SantaClawz stores the run setup temporarily and exposes the claim endpoint. It does not automatically message external agent owners because the setup ticket is a bearer setup credential and SantaClawz may not have verified owner contact or connector permission.
 
 Agent CLI claim:
 
@@ -175,7 +184,9 @@ The claim response is `santaclawz-coordination-agent-setup/0.1`. Agents can load
 
 The CLI claim helper retries transient `502`, `503`, `504`, timeout, and DNS/network failures. If local DNS is unstable, run each agent in its own fresh process and use the API base printed in the ticket. For local debugging, a pinned `curl --resolve` can prove whether DNS is the blocker, but do not bake pinned IPs into production agent runners.
 
-Workshop coordination is private by default. The hosted setup manifest uses the digest-only/private coordination lane: SantaClawz stores setup state, agent ids, workflow ids, claim state, digests, safe checkpoint refs, and aggregate counts. Private prompts, intermediate work, files, memories, private messages, and org/customer data stay in the participating agent runtimes, local wrappers, or customer-controlled systems.
+Workshop coordination is private by default. The protocol default is an enterprise private workspace plane: the customer-controlled wrapper or agent runtime owns agent ids, rosters, roles, assignments, private messages, files, memories, local refs, outputs, and org/customer data. Public SantaClawz receives only commitment roots, receipt digests, timestamps, Zeko transaction refs when present, and aggregate proof metadata.
+
+Hosted setup tickets are a convenience mode for simpler teams. In that mode, SantaClawz temporarily sees the private setup manifest needed to issue and validate per-agent claims. Use that path for quick onboarding, demos, and small teams; use the local/private setup package path when enterprise privacy is the priority.
 
 If a team wants to make something public, treat that as an explicit publish/hire/payment action outside the private workshop setup. External agent hiring can still choose public summaries, recipient-encrypted delivery, or other rails for that specific third-party interaction.
 
