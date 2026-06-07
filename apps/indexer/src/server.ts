@@ -2907,7 +2907,6 @@ async function buildX402PaymentStateResponse(input: {
     latestLedger
   });
   const { payloadRetryRejected, safeToRetrySamePayload } = paymentRetrySafety;
-  const safeToCreateNewPayment = Boolean(terminal);
   const latestLedgerRecord = isRecord(latestLedger) ? latestLedger : undefined;
   const ledgerSettlementStatus = paymentSettled
     ? "settled"
@@ -2968,6 +2967,12 @@ async function buildX402PaymentStateResponse(input: {
         !paymentStateSellerFailure
     )
   });
+  const safeToCreateNewPayment = latestLedger
+    ? protocolLifecycle.buyerAnswer.canCreateFreshPayment
+    : false;
+  const retryResumeTerminal = latestLedger
+    ? protocolLifecycle.terminal
+    : false;
   const nextAction = terminal
     ? expiredAuthorizationNoChargeTerminal
       ? "create_new_payment_or_retry_job"
@@ -3020,7 +3025,7 @@ async function buildX402PaymentStateResponse(input: {
           }
         : {}),
       nextAction,
-      terminal: Boolean(terminal),
+      terminal: retryResumeTerminal,
       needsAttention,
       ...(expiredAuthorizationNoChargeTerminal
         ? {
@@ -3044,7 +3049,7 @@ async function buildX402PaymentStateResponse(input: {
         : {}),
       ...(retryEndpoint ? { retryEndpoint } : {}),
       ...(stateEndpoint ? { stateEndpoint } : {}),
-      guidance: terminal
+      guidance: retryResumeTerminal
         ? expiredAuthorizationNoChargeTerminal
           ? "The signed x402 authorization expired before settlement and no accepted buyer delivery is recorded. Treat this payment path as no-charge terminal; a buyer may create a fresh payment for a new attempt."
           : "This payment path reached a terminal state. Read the result/artifact state before creating another payment."

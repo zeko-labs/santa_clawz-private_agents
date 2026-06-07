@@ -2966,7 +2966,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       quote: {
         amount_usd: "0.42",
         currency: "USDC",
-        expires_at_iso: "2026-06-06T23:59:59.000Z",
+        expires_at_iso: "2099-01-01T00:00:00.000Z",
         summary: "The agent can complete this after a paid exact quote."
       }
     }));
@@ -5320,6 +5320,21 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canRetrySamePaymentPayload, false);
+
+  const executionCompletedWithoutSettlement = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "execution_completed",
+    settlementStatus: "authorized",
+    agentExecutionStatus: "completed",
+    proofStatus: "return_validated",
+    sellerExecutionCompleted: true,
+    buyerDeliveryAvailable: true,
+    buyerComplete: false,
+    paymentAuthorized: true,
+    paymentSettled: false
+  });
+  assert.equal(executionCompletedWithoutSettlement.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+  assert.equal(executionCompletedWithoutSettlement.operatorObligation, "settle_payment");
+  assert.equal(executionCompletedWithoutSettlement.buyerAnswer.canCreateFreshPayment, false);
 
   const authorizedWaiting = reduceSantaClawzPaidLifecycle({
     paymentStatus: "authorization_verified",
