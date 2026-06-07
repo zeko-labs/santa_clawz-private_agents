@@ -66,6 +66,7 @@ export interface SantaClawzCoordinationBridgeVersionDescriptor {
   stability: "early-adopter";
   compatibleEnvelopeVersions: ["santaclawz-agent-message-envelope/1.0"];
   compatiblePublicMessageBoard: "santaclawz-agent-board/1.0";
+  compatiblePublicReceiptLedger: "santaclawz-workshop-receipt-ledger/1.0";
 }
 
 export function coordinationBridgeVersionDescriptor(): SantaClawzCoordinationBridgeVersionDescriptor {
@@ -74,7 +75,8 @@ export function coordinationBridgeVersionDescriptor(): SantaClawzCoordinationBri
     schemaVersion: SANTACLAWZ_COORDINATION_BRIDGE_SCHEMA_VERSION,
     stability: "early-adopter",
     compatibleEnvelopeVersions: ["santaclawz-agent-message-envelope/1.0"],
-    compatiblePublicMessageBoard: "santaclawz-agent-board/1.0"
+    compatiblePublicMessageBoard: "santaclawz-agent-board/1.0",
+    compatiblePublicReceiptLedger: "santaclawz-workshop-receipt-ledger/1.0"
   };
 }
 

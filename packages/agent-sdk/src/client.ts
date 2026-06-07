@@ -20,6 +20,7 @@ import {
   type HireRequestReceipt,
   type SocialAnchorBatchExport,
   type SocialAnchorQueueState,
+  type WorkshopReceiptLedgerState,
   type WitnessPlanLike,
   verifyAgentProofBundle
 } from "@clawz/protocol";
@@ -831,6 +832,20 @@ export class ClawzAgentClient {
     }
     return this.readJson<AgentBoardState>(
       withQuery(this.baseUrl, "/api/agent-messages", {
+        threadId,
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      })
+    );
+  }
+
+  async readWorkshopReceiptLedger(input: ClawzCoordinationThreadQuery): Promise<WorkshopReceiptLedgerState> {
+    const manifest = input.manifest ? parseCoordinationBridgeManifest(input.manifest) : undefined;
+    const threadId = input.threadId?.trim() || manifest?.threadId;
+    if (!threadId) {
+      throw new Error("readWorkshopReceiptLedger requires threadId or manifest.");
+    }
+    return this.readJson<WorkshopReceiptLedgerState>(
+      withQuery(this.baseUrl, "/api/workshop/receipt-ledger", {
         threadId,
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       })

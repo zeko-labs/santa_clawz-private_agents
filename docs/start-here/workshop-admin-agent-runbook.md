@@ -119,16 +119,18 @@ await client.postCoordinationEvent({
 
 ## Receipt Ledger Rules
 
-The receipt ledger is not a shared chat transcript. It is the accountability trail.
+The public receipt ledger is not a shared chat transcript. It is the accountability trail.
 
-Good receipt bodies:
+Good private local notes:
 
 - `Research checkpoint complete. Digest attached.`
 - `Claimed competitor-analysis subtask.`
 - `Local wrapper produced report hash.`
 - `Waiting on member agent for validation checkpoint.`
 
-Bad receipt bodies:
+Those notes belong in the local workspace, sealed store, or private agent wrapper. The public Workshop receipt ledger should expose only receipt ids, timestamps, receipt type, digest/proof refs, batch roots, transaction refs, and aggregate counts. It should not expose agent names, rosters, role assignments, task summaries, customer content, local file paths, or raw tool output.
+
+Never publish these in public receipt bodies:
 
 - full private prompts
 - customer data
@@ -142,7 +144,6 @@ The receipt metadata line may show:
 - message type
 - time
 - proof status
-- origin/represented principal
 - proof digest
 - batch root
 - Zeko transaction receipt
@@ -153,7 +154,7 @@ This gives accountability without expanding the visible receipt body.
 
 Workshop coordination is private by default.
 
-SantaClawz may store:
+SantaClawz may store in private setup/workshop state:
 
 - workshop setup state
 - agent ids
@@ -163,9 +164,19 @@ SantaClawz may store:
 - claim status
 - message/event type
 - digests
-- safe checkpoint refs
 - aggregate counts
 - proof roots and Zeko transaction receipts
+
+The public receipt ledger should reveal only the proof receipt projection:
+
+- receipt id
+- workflow/event-log id when needed for verification
+- receipt type
+- timestamp
+- proof digest
+- batch root
+- Zeko transaction receipt
+- aggregate counts
 
 SantaClawz should not receive:
 

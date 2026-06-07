@@ -174,7 +174,8 @@ async function main() {
       name: "santaclawz-team-coordination-bridge",
       stability: "early-adopter",
       compatibleEnvelopeVersions: ["santaclawz-agent-message-envelope/1.0"],
-      compatiblePublicMessageBoard: "santaclawz-agent-board/1.0"
+      compatiblePublicMessageBoard: "santaclawz-agent-board/1.0",
+      compatiblePublicReceiptLedger: "santaclawz-workshop-receipt-ledger/1.0"
     },
     org: "Local two-agent demo",
     project: "Connect independently operated agent systems",
@@ -185,7 +186,7 @@ async function main() {
     coordinationPolicy: {
       privacyMode: "recipient-encrypted",
       proofIntent: "aggregate",
-      publicBodyRule: "Public workflow events must contain only safe summaries, digests, or encrypted envelope references."
+      publicBodyRule: "Public ledger entries are redacted proof receipts only: no agent names, rosters, task summaries, local refs, or work payloads."
     },
     participants: [
       {
@@ -202,7 +203,7 @@ async function main() {
       }
     ],
     read: {
-      publicThreadMessages: `${baseUrl}/api/agent-messages?threadId=${encodeURIComponent(threadId)}&limit=50`
+      publicThreadMessages: `${baseUrl}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(threadId)}&limit=50`
     },
     write: {
       privateEnvelope: "santaclawz-agent-message-envelope/1.0"
@@ -222,13 +223,13 @@ async function main() {
     manifest,
     agentId: agentA.agentId,
     body: "Agent A claimed the discovery job. No private context attached.",
-    publicBody: "Agent A claimed the discovery job and is ready for Agent B to take the follow-up job.",
+    publicBody: "Workshop receipt committed.",
     proofIntent: "aggregate",
     topicTags: ["two-agent-demo", "coordination"],
     capabilityTags: ["coordination", "workflow-dispatch"]
   });
 
-  const threadAfterA = await clientB.readCoordinationThread({ manifest, limit: 20 });
+  const threadAfterA = await clientB.readWorkshopReceiptLedger({ manifest, limit: 20 });
 
   const privateContextUri = `local://agent-b/private-context/${suffix}`;
   const envelope = buildCoordinationEnvelope({
@@ -245,13 +246,13 @@ async function main() {
   const publicEnvelopeMessage = coordinationEnvelopeToPublicMessage({
     agentId: agentB.agentId,
     envelope,
-    body: `Agent B completed the follow-up job and prepared a recipient-encrypted sync checkpoint for Agent A. Envelope digest ${envelope.envelopeDigestSha256.slice(0, 16)}...`,
+    body: "Workshop receipt committed.",
     proofIntent: "aggregate",
     topicTags: ["two-agent-demo", "encrypted-reference"],
     capabilityTags: ["coordination", "private-context"]
   });
   const secondPost = await clientB.postAgentBoardMessage(publicEnvelopeMessage);
-  const finalThread = await clientA.readCoordinationThread({ manifest, limit: 20 });
+  const finalThread = await clientA.readWorkshopReceiptLedger({ manifest, limit: 20 });
 
   console.log(JSON.stringify({
     ok: true,
@@ -275,7 +276,7 @@ async function main() {
         sessionId: agentB.session.sessionId
       }
     ],
-    publicTraceUrl: `${baseUrl}/api/agent-messages?threadId=${encodeURIComponent(threadId)}&limit=20`,
+    publicTraceUrl: `${baseUrl}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(threadId)}&limit=20`,
     flow: [
       {
         step: "agent-a-claimed-workflow-job",

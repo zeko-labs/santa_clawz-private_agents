@@ -1214,10 +1214,10 @@ function WorkshopReceiptMetadata({ message }: { message: AgentBoardState["messag
     formatRelativeTime(message.createdAtIso),
     boardAnchorLabel(message.anchorStatus)
   ];
-  if (message.representedPrincipal) {
-    parts.push(`origin ${message.representedPrincipal}`);
-  }
   parts.push(`proof ${shorten(message.messageDigestSha256, 8, 6)}`);
+  if (message.outputDigestSha256) {
+    parts.push(`receipt ${shorten(message.outputDigestSha256, 8, 6)}`);
+  }
   if (message.batchRootDigestSha256) {
     parts.push(`root ${shorten(message.batchRootDigestSha256, 8, 6)}`);
   }
@@ -2052,6 +2052,11 @@ function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
   return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
 }
 
+function workshopReceiptOrdinal(message: AgentBoardState["messages"][number], index: number) {
+  const digest = message.outputDigestSha256 || message.messageDigestSha256 || message.bodyDigestSha256;
+  return `Receipt ${index + 1} - ${shorten(digest, 8, 6)}`;
+}
+
 function extractAgentIdFromCoordinationInput(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -2109,7 +2114,8 @@ function buildBridgeManifest(input: {
         name: "santaclawz-team-coordination-bridge",
         stability: "early-adopter",
         compatibleEnvelopeVersions: ["santaclawz-agent-message-envelope/1.0"],
-        compatiblePublicMessageBoard: "santaclawz-agent-board/1.0"
+        compatiblePublicMessageBoard: "santaclawz-agent-board/1.0",
+        compatiblePublicReceiptLedger: "santaclawz-workshop-receipt-ledger/1.0"
       },
       hostedWorkspace: {
         org: input.draft.orgName,
@@ -2184,7 +2190,7 @@ function buildBridgeManifest(input: {
       coordinationPolicy: {
         privacyMode: WORKSHOP_PRIVATE_PRIVACY_MODE,
         proofIntent: "digest_or_envelope",
-        publicBodyRule: "Workshop coordination is private by default. Public workflow events must avoid private payloads; use digest-backed or encrypted envelopes."
+        publicBodyRule: "Workshop coordination is private by default. Public ledger entries must be redacted proof receipts only: no agent names, rosters, task summaries, local refs, or work payloads."
       },
       receiptPolicy: {
         receiptsRequired: true,
@@ -2216,14 +2222,14 @@ function buildBridgeManifest(input: {
         publicHireUrl: buildProgrammaticAgentHireUrl(agent.agentId)
       })),
       read: {
-        receiptLedger: `${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
-        publicThreadMessages: `${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
+        receiptLedger: `${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
+        publicThreadMessages: `${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
         publicDirectory: `${input.apiBase}/api/agents`
       },
       write: {
         publicMessageShape: {
           messageType: "dispatch",
-          body: "Safe workflow checkpoint.",
+          body: "Workshop receipt committed.",
           threadId: input.draft.threadId,
           swarmId: input.draft.swarmId,
           topicTags: ["team-coordination", input.draft.projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-")],
@@ -2274,7 +2280,7 @@ function buildCoordinationSetupTicketHandoff(input: {
     `{ \"ticket\": \"${input.ticket.ticket}\", \"agentId\": \"<agent_id>\" }`,
     "",
     "Keep agent admin keys and connector credentials in each agent's local wrapper or secret manager.",
-    `Receipt ledger: ${input.apiBase}/api/agent-messages?threadId=${encodeURIComponent(input.ticket.threadId)}&limit=100`
+    `Receipt ledger: ${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.ticket.threadId)}&limit=100`
   ].join("\n");
 }
 
@@ -4471,7 +4477,6 @@ export function App() {
     : "";
   const coordinationMessages = agentBoard.messages
     .filter((message) =>
-      selectedCoordinationAgentIdSet.has(message.agentId) ||
       message.threadId === coordinationDraft.threadId ||
       message.swarmId === coordinationDraft.swarmId
     )
@@ -4511,7 +4516,7 @@ export function App() {
   });
   const bridgeManifestPayload = JSON.parse(bridgeManifest) as Record<string, unknown>;
   const publicCoordinationThreadUrl =
-    `${apiBase}/api/agent-messages?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
+    `${apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
   const selectedCoordinationRoles = selectedCoordinationAgents.map((agent, index) => (
     coordinationAgentRoles[agent.agentId] ?? (index === 0 ? "admin" : "member")
   ));
@@ -5128,12 +5133,12 @@ export function App() {
                 coordinationThreads.slice(0, 12).map((thread) => (
                   <article key={thread.key} className="coordination-thread-card">
                     <div className="coordination-message-stack">
-                      {thread.messages.slice(0, 12).map((message) => (
+                      {thread.messages.slice(0, 12).map((message, messageIndex) => (
                         <div key={message.messageId} className="coordination-message-row">
-                          <span className="explore-card-avatar subtle">{agentInitials(message.agentName)}</span>
+                          <span className="explore-card-avatar subtle">#</span>
                           <div>
-                            <strong>{message.agentName}</strong>
-                            <p>{message.body}</p>
+                            <strong>{workshopReceiptOrdinal(message, messageIndex)}</strong>
+                            <p>Private workshop event committed. Public ledger shows proof metadata only.</p>
                             <small className="coordination-receipt-metadata">
                               <WorkshopReceiptMetadata message={message} />
                             </small>

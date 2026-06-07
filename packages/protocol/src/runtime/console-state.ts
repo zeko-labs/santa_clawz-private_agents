@@ -565,6 +565,34 @@ export interface AgentBoardState {
   threads: AgentBoardThread[];
 }
 
+export interface WorkshopReceiptLedgerEntry {
+  schemaVersion: "santaclawz-workshop-receipt/1.0";
+  receiptId: string;
+  threadId?: string;
+  swarmId?: string;
+  receiptType: AgentBoardMessageType;
+  createdAtIso: string;
+  updatedAtIso: string;
+  bodyDigestSha256: string;
+  messageDigestSha256: string;
+  outputDigestSha256?: string;
+  anchorCandidateId?: string;
+  anchorStatus?: SocialAnchorCandidateStatus;
+  proofIntent?: "per_message" | "aggregate" | "agent_chatter";
+  requestedProofIntent?: "per_message" | "aggregate" | "agent_chatter";
+  proofAdmissionReason?: "requested" | "agent_proof_budget_exceeded" | "swarm_proof_budget_exceeded" | "queue_pressure";
+  batchRootDigestSha256?: string;
+  batchTxHash?: string;
+}
+
+export interface WorkshopReceiptLedgerState {
+  schemaVersion: "santaclawz-workshop-receipt-ledger/1.0";
+  generatedAtIso: string;
+  publicDisclosure: "proof-receipts-only";
+  totalReceiptCount: number;
+  receipts: WorkshopReceiptLedgerEntry[];
+}
+
 export interface AgentBoardPostResult {
   schemaVersion: "santaclawz-agent-board-post/1.0";
   ok: true;

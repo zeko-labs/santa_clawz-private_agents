@@ -5,7 +5,9 @@ import type { Socket } from "node:net";
 import path from "node:path";
 
 import {
+  type AgentBoardMessage,
   type AgentBoardMessageType,
+  type AgentBoardState,
   type AgentMarketplaceTags,
   type AgentPaymentRail,
   type AgentActivationLaneAttemptStatus,
@@ -38,6 +40,7 @@ import {
   reduceSantaClawzPaidLifecycle,
   type TrustModeId,
   type WitnessPlanLike,
+  type WorkshopReceiptLedgerState,
   verifyAgentProofBundle
 } from "@clawz/protocol";
 
@@ -4274,6 +4277,66 @@ app.get("/api/agent-messages", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load public agent messages."
+    });
+  }
+}));
+
+function buildWorkshopReceiptLedger(messages: AgentBoardState): WorkshopReceiptLedgerState {
+  const receipts = messages.messages.map((message: AgentBoardMessage) => ({
+    schemaVersion: "santaclawz-workshop-receipt/1.0" as const,
+    receiptId: message.messageId,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    ...(message.swarmId ? { swarmId: message.swarmId } : {}),
+    receiptType: message.messageType,
+    createdAtIso: message.createdAtIso,
+    updatedAtIso: message.updatedAtIso,
+    bodyDigestSha256: message.bodyDigestSha256,
+    messageDigestSha256: message.messageDigestSha256,
+    ...(message.outputDigestSha256 ? { outputDigestSha256: message.outputDigestSha256 } : {}),
+    ...(message.anchorCandidateId ? { anchorCandidateId: message.anchorCandidateId } : {}),
+    ...(message.anchorStatus ? { anchorStatus: message.anchorStatus } : {}),
+    ...(message.proofIntent ? { proofIntent: message.proofIntent } : {}),
+    ...(message.requestedProofIntent ? { requestedProofIntent: message.requestedProofIntent } : {}),
+    ...(message.proofAdmissionReason ? { proofAdmissionReason: message.proofAdmissionReason } : {}),
+    ...(message.batchRootDigestSha256 ? { batchRootDigestSha256: message.batchRootDigestSha256 } : {}),
+    ...(message.batchTxHash ? { batchTxHash: message.batchTxHash } : {})
+  }));
+  return {
+    schemaVersion: "santaclawz-workshop-receipt-ledger/1.0",
+    generatedAtIso: messages.generatedAtIso,
+    publicDisclosure: "proof-receipts-only",
+    totalReceiptCount: receipts.length,
+    receipts
+  };
+}
+
+app.get("/api/workshop/receipt-ledger", route(async (request, response) => {
+  try {
+    const rawLimit = queryString(request.query, "limit");
+    const threadId = queryString(request.query, "threadId");
+    const swarmId = queryString(request.query, "swarmId");
+    if (!threadId && !swarmId) {
+      response.status(400).json({ error: "threadId or swarmId is required." });
+      return;
+    }
+    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    const limit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(parsedLimit, 200))
+      : 100;
+    const options = {
+      ...(threadId ? { threadId } : {}),
+      ...(swarmId ? { swarmId } : {}),
+      limit
+    };
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `workshop-receipt-ledger:${JSON.stringify(options)}`,
+      () => controlPlane.listAgentBoardMessages(options)
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    response.json(buildWorkshopReceiptLedger(payload));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load workshop receipt ledger."
     });
   }
 }));
