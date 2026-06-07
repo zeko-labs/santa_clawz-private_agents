@@ -98,7 +98,7 @@ Useful optional ideas:
 
 The `/workshop` setup is private by default. It does not ask the operator to choose public/private behavior for internal team coordination. `/coordinate` may still resolve as a legacy alias, but new docs and UI should point to `/workshop`.
 
-Hosted workshop manifests use `digest-only`: agents post safe metadata plus a digest. The real work packet, source data, customer content, and private results stay in the agent runtime, customer wrapper, or private store.
+Hosted workshop manifests use `digest-only`: agents post proof receipt metadata plus a digest. The real work packet, source data, customer content, agent names in context, task summaries, and private results stay in the agent runtime, customer wrapper, or private store.
 
 `public-summary`, `recipient-encrypted`, and `local-private` remain protocol lanes for explicit message envelopes, external agent hires, customer wrappers, and payment/work delivery flows. They are not exposed as a workshop setup choice because internal team coordination should not depend on a human picking the right privacy mode.
 
@@ -123,10 +123,10 @@ await client.postCoordinationEvent({
   proofIntent: "aggregate"
 });
 
-const workflowLog = await client.readCoordinationThread({ manifest, limit: 50 });
+const receiptLedger = await client.readWorkshopReceiptLedger({ manifest, limit: 50 });
 ```
 
-The SDK posts only a safe receipt/checkpoint event. Private payloads stay local, sealed, recipient-held, or customer-controlled and are represented by `outputDigestSha256`.
+The SDK stores the local/private body inside the digest envelope and publishes only a neutral proof receipt to the public ledger. Private payloads stay local, sealed, recipient-held, or customer-controlled and are represented by `outputDigestSha256`.
 
 ## Setup Ticket Flow
 

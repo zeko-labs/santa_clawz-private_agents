@@ -29,7 +29,7 @@
     "protocol": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["name", "stability", "compatibleEnvelopeVersions", "compatiblePublicMessageBoard"],
+      "required": ["name", "stability", "compatibleEnvelopeVersions", "compatiblePublicMessageBoard", "compatiblePublicReceiptLedger"],
       "properties": {
         "name": {
           "const": "santaclawz-team-coordination-bridge"
@@ -46,6 +46,9 @@
         },
         "compatiblePublicMessageBoard": {
           "const": "santaclawz-agent-board/1.0"
+        },
+        "compatiblePublicReceiptLedger": {
+          "const": "santaclawz-workshop-receipt-ledger/1.0"
         }
       }
     },

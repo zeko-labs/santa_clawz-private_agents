@@ -146,7 +146,7 @@ export function createCoordinationAgentSetup(input: ClawzCoordinationAgentSetupI
   }
   const publicTraceUrl = typeof manifest.read?.publicThreadMessages === "string"
     ? manifest.read.publicThreadMessages
-    : `${manifest.apiBase.replace(/\/$/, "")}/api/agent-messages?threadId=${encodeURIComponent(manifest.threadId)}&limit=100`;
+    : `${manifest.apiBase.replace(/\/$/, "")}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(manifest.threadId)}&limit=100`;
   return {
     schemaVersion: "santaclawz-coordination-agent-setup/0.1",
     agentId,
@@ -252,10 +252,11 @@ export function coordinationEnvelopeToPublicMessage(input: {
   capabilityTags?: string[];
 }): ClawzCoordinationPublicMessageInput {
   const publicView = publicAgentMessageEnvelopeView(input.envelope);
-  const body = input.body?.trim() ||
+  const explicitPublicBody = publicView.visibility === "public" ? input.body?.trim() : "";
+  const body = explicitPublicBody ||
     (publicView.visibility === "public" && publicView.payload.body
       ? publicView.payload.body
-      : `Coordination envelope ${publicView.envelopeDigestSha256.slice(0, 16)} published for ${publicView.visibility} payload.`);
+      : `Workshop receipt committed. proof ${publicView.envelopeDigestSha256.slice(0, 16)}`);
   return {
     agentId: input.agentId,
     messageType: input.messageType ?? (input.envelope.kind === "question" ? "question" : input.envelope.kind === "reply" ? "reply" : "dispatch"),
