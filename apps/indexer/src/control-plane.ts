@@ -792,6 +792,7 @@ interface HirePaymentAuthorization {
 interface AgentRuntimeAvailabilityOptions {
   sessionId?: string;
   agentId?: string;
+  verifyReachability?: boolean;
 }
 
 interface AgentRuntimeReachabilityState {
@@ -5825,6 +5826,7 @@ export class ClawzControlPlane {
     sessionId: string;
     profile: AgentProfileState;
     trustModeId?: TrustModeId;
+    skipNetworkCheck?: boolean;
   }): Promise<AgentRuntimeReachabilityState> {
     const checkedAtIso = new Date().toISOString();
     const openClawUrl = input.profile.openClawUrl.trim();
@@ -5874,7 +5876,7 @@ export class ClawzControlPlane {
       };
     }
 
-    if (!shouldCheckAgentRuntimeReachability()) {
+    if (input.skipNetworkCheck || !shouldCheckAgentRuntimeReachability()) {
       return {
         agentId,
         sessionId: input.sessionId,
@@ -10109,13 +10111,7 @@ export class ClawzControlPlane {
     });
     const relayProfile = isRelayDeliveryProfile(profile);
     const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
-    const availability = await this.checkPublicClawzAgentReachability({
-      state,
-      sessionId: focus.sessionId,
-      profile,
-      trustModeId: focus.trustModeId
-    });
-    const runtimeReachable = relayProfile ? relayConnected : availability.reachable;
+    const runtimeReachable = relayProfile ? relayConnected : heartbeat.status === "live";
     const adminAccess = this.buildAdminAccessState(
       state,
       focus.sessionId,
@@ -10257,7 +10253,8 @@ export class ClawzControlPlane {
         state,
         sessionId,
         profile,
-        trustModeId
+        trustModeId,
+        skipNetworkCheck: options.verifyReachability !== true
       })
     ]);
     const heartbeatRecord = heartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
@@ -10270,7 +10267,18 @@ export class ClawzControlPlane {
     const relayAgentId = this.agentIdForSession(state, sessionId, trustModeId);
     const relayProfile = isRelayDeliveryProfile(profile);
     const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(relayAgentId) ?? false);
-    const runtimeStatus: AgentRuntimeStatus = relayConnected ? "live" : reachability.reachable ? heartbeat.status : "offline";
+    const observedNonRelayReachable = options.verifyReachability === true
+      ? reachability.reachable
+      : heartbeat.status === "live";
+    const observedNonRelayStatus = options.verifyReachability === true
+      ? reachability.status
+      : observedNonRelayReachable
+        ? "online"
+        : "offline";
+    const observedNonRelayReason = options.verifyReachability === true
+      ? reachability.reason ?? ""
+      : heartbeat.reason ?? "Runtime status is based on the latest heartbeat.";
+    const runtimeStatus: AgentRuntimeStatus = relayConnected ? "live" : observedNonRelayReachable ? heartbeat.status : "offline";
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const published = isSessionPublishedOnZeko({
       liveFlowTargets,
@@ -10286,7 +10294,7 @@ export class ClawzControlPlane {
       ownership,
       published,
       relayConnected,
-      runtimeReachable: relayProfile ? relayConnected : reachability.reachable,
+      runtimeReachable: relayProfile ? relayConnected : observedNonRelayReachable,
       heartbeat,
       paymentReady: hasReadyPaymentProfile(profile),
       paidExecutionProofByHistory: paidExecutionProofForSession(hireRequestFile, sessionId, {
@@ -10304,11 +10312,11 @@ export class ClawzControlPlane {
       ? relayConnected
         ? "SantaClawz relay has an active outbound agent connection."
         : "SantaClawz relay is waiting for this agent to connect."
-      : reachability.reason ?? "";
+      : observedNonRelayReason;
     return {
       ...reachability,
-      reachable: relayProfile ? relayConnected : reachability.reachable,
-      status: relayProfile ? relayConnected ? "online" : "offline" : reachability.status,
+      reachable: relayProfile ? relayConnected : observedNonRelayReachable,
+      status: relayProfile ? relayConnected ? "online" : "offline" : observedNonRelayStatus,
       reason: availabilityReason,
       runtimeStatus,
       heartbeat,
@@ -14316,7 +14324,7 @@ export class ClawzControlPlane {
       this.getConsoleState(consoleStateOptions),
       options.verifyAvailability === false
         ? Promise.resolve(undefined)
-        : this.getAgentRuntimeAvailability({ sessionId, agentId }).catch((error: unknown) => ({
+        : this.getAgentRuntimeAvailability({ sessionId, agentId, verifyReachability: true }).catch((error: unknown) => ({
             agentId,
             sessionId,
             openClawUrl: "",
