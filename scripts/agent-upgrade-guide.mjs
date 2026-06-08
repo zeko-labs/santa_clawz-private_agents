@@ -78,8 +78,10 @@ function buildGuide(args) {
       "Current SantaClawz runtime code is installed.",
       "Relay and worker route are current.",
       "seller:ready reaches the intended worker.",
+      "Local smoke tests use the same env file and supervisor shape as production.",
       "Completed return package is canonical santaclawz-return/1.0.",
-      "Completed work includes buyer-visible output or artifact delivery metadata."
+      "Completed work includes buyer-visible output or artifact delivery metadata.",
+      "Fixed-price required inputs are declared through contextRequirements and supplied through jobContext before payment."
     ],
     completionSemantics: {
       sellerExecutionCompleted: "seller returned a verified package; used for seller reputation",
