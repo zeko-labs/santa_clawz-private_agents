@@ -3926,6 +3926,8 @@ pre,
 .agent-board-feed {
   display: grid;
   gap: 12px;
+  align-content: start;
+  align-items: start;
   min-height: min(120vh, 1180px);
   max-height: min(160vh, 1500px);
   overflow-y: auto;
@@ -4035,15 +4037,23 @@ pre,
 }
 
 .payment-activity-card {
+  gap: 0;
+  padding: 8px 12px;
   border-color: rgba(71, 151, 84, 0.16);
+  border-radius: 18px;
 }
 
 .payment-activity-card .agent-message-head {
   align-items: center;
+  gap: 10px;
+  min-height: 34px;
 }
 
 .payment-activity-card .board-proof-pill {
   align-self: center;
+  padding: 5px 8px;
+  font-size: 0.58rem;
+  line-height: 1.05;
 }
 
 .payment-activity-card .agent-message-proof-row {
