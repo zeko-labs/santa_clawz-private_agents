@@ -3837,7 +3837,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       buyerVerified: true,
       buyerAccepted: true,
       failed: false,
-      terminal: true
+      terminal: true,
+      protocolTerminal: false
     });
     assert.equal(executionState.payload.privacy.jobVisibility, "private");
     assert.equal(executionState.payload.delivery.latestReceipt.deliveryState, "buyer_accepted");
@@ -4259,10 +4260,15 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorActionRequired, true);
+    assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.reconciliationRequired, false);
+    assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorReconciliationRequired, false);
     assert.equal(deliveredPaymentState.payload.paymentFinality, "pending");
     assert.equal(deliveredPaymentState.payload.paymentFinalityPending, true);
     assert.equal(deliveredPaymentState.payload.statePollingRequired, true);
     assert.equal(deliveredPaymentState.payload.recommendedPollAfterMs, 2000);
+    assert.equal(deliveredPaymentState.payload.sourceFreshness.paymentStateCanonicalForRetrySafety, true);
+    assert.equal(typeof deliveredPaymentState.payload.stateProjectionUpdatedAtIso, "string");
     assert.equal(deliveredPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(deliveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
@@ -5485,6 +5491,63 @@ async function testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsAre
   }
 }
 
+async function testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-baseline-"));
+  const priorRuntimeEnv = process.env.CLAWZ_RUNTIME_ENV;
+  try {
+    process.env.CLAWZ_RUNTIME_ENV = "production";
+    const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
+    const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
+    const nowIso = new Date().toISOString();
+    await controlPlane.savePaymentLedgerFile({
+      entries: [
+        {
+          ledgerId: "pay_retained_before_verified_snapshot",
+          createdAtIso: nowIso,
+          updatedAtIso: nowIso,
+          agentId: "baseline-agent--session_agent_baseline",
+          sessionId: "session_agent_baseline",
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          sellerNetAmountUsd: "0.248",
+          settlementReference: "baseline-retained-settlement",
+          transactionHashes: [`0x${"1".padStart(64, "0")}`],
+          paymentStatus: "settled",
+          executionStatus: "completed",
+          returnStatus: "accepted"
+        }
+      ],
+      allTimeStats: {
+        completedPaymentCount: 1825,
+        completedBasePaymentCount: 1825,
+        completedSellerPayoutUsd: "499.256003",
+        completedBaseSellerPayoutUsd: "499.256003",
+        countedPaymentKeys: []
+      }
+    });
+
+    const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    const saved = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
+    assert.equal(saved.allTimeStats.completedPaymentCount, 2360);
+    assert.equal(saved.allTimeStats.completedBasePaymentCount, 2360);
+    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "749.385576");
+    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "749.385576");
+    assert.ok(saved.allTimeStats.countedPaymentKeys.includes("baseline-retained-settlement"));
+
+    console.log("ok - production payment ledger uses verified Base payout baseline");
+  } finally {
+    if (priorRuntimeEnv === undefined) {
+      delete process.env.CLAWZ_RUNTIME_ENV;
+    } else {
+      process.env.CLAWZ_RUNTIME_ENV = priorRuntimeEnv;
+    }
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-monotonic-"));
   try {
@@ -5915,6 +5978,9 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredAwaitingSettlement.buyerAction, "view_delivery");
   assert.equal(deliveredAwaitingSettlement.sellerOutcome, "completed");
   assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
+  assert.equal(deliveredAwaitingSettlement.operatorAnswer.operatorActionRequired, true);
+  assert.equal(deliveredAwaitingSettlement.operatorAnswer.reconciliationRequired, false);
+  assert.equal(deliveredAwaitingSettlement.operatorAnswer.operatorReconciliationRequired, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canRetrySamePaymentPayload, false);
 
@@ -5938,6 +6004,9 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredSettlementFailed.buyerAction, "view_delivery");
   assert.equal(deliveredSettlementFailed.sellerOutcome, "completed");
   assert.equal(deliveredSettlementFailed.operatorObligation, "reconcile_platform_state");
+  assert.equal(deliveredSettlementFailed.operatorAnswer.operatorActionRequired, true);
+  assert.equal(deliveredSettlementFailed.operatorAnswer.reconciliationRequired, true);
+  assert.equal(deliveredSettlementFailed.operatorAnswer.operatorReconciliationRequired, true);
   assert.equal(deliveredSettlementFailed.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredSettlementFailed.sellerAnswer.reputationImpact, "none");
 
@@ -6032,6 +6101,7 @@ async function main() {
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
+  await testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline();
   await testPaymentLedgerExecutionUpdatesAreMonotonic();
   await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();

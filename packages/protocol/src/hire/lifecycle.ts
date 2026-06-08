@@ -77,7 +77,9 @@ export interface SantaClawzPaidLifecycleProjection {
     reputationImpact: "none" | "none_until_delivery_fault_attributed" | "seller_failure";
   };
   operatorAnswer: {
+    operatorActionRequired: boolean;
     reconciliationRequired: boolean;
+    operatorReconciliationRequired: boolean;
     reason?: string;
   };
 }
@@ -321,6 +323,9 @@ function paidLifecycleProjection(input: {
             : "not_started";
   const paymentFinalityPending = paymentFinality === "pending";
   const statePollingRequired = paymentFinalityPending || paymentFinality === "requires_reconciliation";
+  const reconciliationRequired =
+    input.operatorObligation === "reconcile_platform_state" ||
+    input.operatorObligation === "refund_or_clear_payment";
   return {
     schemaVersion: SANTACLAWZ_PAID_LIFECYCLE_REDUCER_SCHEMA_VERSION,
     protocolState: input.protocolState,
@@ -344,7 +349,9 @@ function paidLifecycleProjection(input: {
       reputationImpact: input.reputationImpact
     },
     operatorAnswer: {
-      reconciliationRequired: input.operatorObligation !== "none",
+      operatorActionRequired: input.operatorObligation !== "none",
+      reconciliationRequired,
+      operatorReconciliationRequired: reconciliationRequired,
       ...(input.reconciliationReason ? { reason: input.reconciliationReason } : {})
     }
   };

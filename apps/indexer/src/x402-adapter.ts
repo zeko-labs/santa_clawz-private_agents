@@ -1,6 +1,7 @@
 import type {
   AgentPaymentRail,
   AgentPricingMode,
+  AgentReadinessState,
   AgentX402Plan,
   AgentX402RailPlan,
   ConsoleStateResponse
@@ -1251,6 +1252,60 @@ function buildZekoRailPlan(consoleState: ConsoleStateResponse): AgentX402RailPla
   };
 }
 
+function buildActivationDecision(input: {
+  pricingMode: AgentPricingMode;
+  readiness?: AgentReadinessState;
+}): NonNullable<AgentX402Plan["activationDecision"]> {
+  const blockers = input.readiness?.blockers ?? [];
+  const paidExecutionProven = input.readiness?.paidExecutionProven === true;
+  const paidExecutionNotProven = blockers.includes("paid-execution-not-proven") || input.readiness?.paidExecutionProven === false;
+  const readinessBlocked = Boolean(input.readiness && blockers.some((blocker) => blocker !== "paid-execution-not-proven"));
+  const activationRequiredNow = Boolean(!paidExecutionProven && paidExecutionNotProven);
+  const activationHistoryAffectsHireability = Boolean(
+    !paidExecutionProven &&
+      input.readiness?.readinessNotes?.some((note) => note.code.startsWith("activation_probe_failed_"))
+  );
+  const recommendedBuyerAction = activationRequiredNow
+    ? "run_paid_activation_probe"
+    : readinessBlocked
+      ? "fix_readiness_blockers"
+      : !input.readiness
+        ? "inspect_plan"
+        : input.pricingMode === "quote-required"
+          ? "request_quote"
+          : "run_paid_execution";
+  return {
+    schemaVersion: "santaclawz-activation-decision/1.0",
+    activationRequiredNow,
+    activationBlockingReason: activationRequiredNow
+      ? "paid-execution-not-proven"
+      : readinessBlocked
+        ? "readiness-blocked"
+        : null,
+    activationHistoryAffectsHireability,
+    recommendedBuyerAction
+  };
+}
+
+function buildActivationDiagnostics(
+  consoleState: ConsoleStateResponse,
+  activationDecision: NonNullable<AgentX402Plan["activationDecision"]>
+): AgentX402Plan["diagnostics"] | undefined {
+  const activationProbes = consoleState.activationProbes ?? consoleState.readiness?.activationProbes;
+  const activationLaneStatus = consoleState.activationLaneStatus ?? consoleState.readiness?.activationLaneStatus;
+  if (!activationProbes && !activationLaneStatus) {
+    return undefined;
+  }
+  return {
+    activationHistory: {
+      informationalOnly: !activationDecision.activationHistoryAffectsHireability,
+      activationHistoryAffectsHireability: activationDecision.activationHistoryAffectsHireability,
+      ...(activationProbes ? { activationProbes } : {}),
+      ...(activationLaneStatus ? { activationLaneStatus } : {})
+    }
+  };
+}
+
 export function buildAgentX402Plan(input: {
   baseUrl: string;
   consoleState: ConsoleStateResponse;
@@ -1282,6 +1337,11 @@ export function buildAgentX402Plan(input: {
     profile.contextRequirements?.hardRequirements?.length || profile.contextRequirements?.softGuidance?.length
       ? profile.contextRequirements
       : undefined;
+  const activationDecision = buildActivationDecision({
+    pricingMode: profile.paymentProfile.pricingMode,
+    ...(consoleState.readiness ? { readiness: consoleState.readiness } : {})
+  });
+  const diagnostics = buildActivationDiagnostics(consoleState, activationDecision);
 
   return {
     serviceId: serviceIdFor(agentId),
@@ -1289,6 +1349,8 @@ export function buildAgentX402Plan(input: {
     sessionId,
     published,
     ...(consoleState.readiness ? { readiness: consoleState.readiness } : {}),
+    activationDecision,
+    ...(diagnostics ? { diagnostics } : {}),
     paymentsEnabled: consoleState.paymentsEnabled,
     paymentProfileReady: consoleState.paymentProfileReady,
     payoutAddressConfigured: consoleState.payoutAddressConfigured,

@@ -1365,6 +1365,26 @@ export interface AgentX402Plan {
   sessionId: string;
   published: boolean;
   readiness?: AgentReadinessState;
+  activationDecision?: {
+    schemaVersion: "santaclawz-activation-decision/1.0";
+    activationRequiredNow: boolean;
+    activationBlockingReason: "paid-execution-not-proven" | "readiness-blocked" | null;
+    activationHistoryAffectsHireability: boolean;
+    recommendedBuyerAction:
+      | "run_paid_execution"
+      | "request_quote"
+      | "run_paid_activation_probe"
+      | "fix_readiness_blockers"
+      | "inspect_plan";
+  };
+  diagnostics?: {
+    activationHistory?: {
+      informationalOnly: boolean;
+      activationHistoryAffectsHireability: boolean;
+      activationProbes?: AgentActivationProbeStats;
+      activationLaneStatus?: AgentActivationLaneStatus;
+    };
+  };
   paymentsEnabled: boolean;
   paymentProfileReady: boolean;
   payoutAddressConfigured: boolean;
