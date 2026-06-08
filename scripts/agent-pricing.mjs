@@ -8,23 +8,23 @@ const BOOLEAN_FLAGS = new Set(["help", "json", "open-for-work", "closed"]);
 function printUsage() {
   console.error(`Usage:
   pnpm agent:pricing -- \\
-    --env-file .env.santaclawz \\
+    --agent-env-file .env.santaclawz \\
     --open-for-work \\
     --pricing-mode quote-required \\
     --reference-price-usd 0.35 \\
     [--reference-price-unit minimum]
 
   pnpm agent:pricing -- \\
-    --env-file .env.santaclawz \\
+    --agent-env-file .env.santaclawz \\
     --open-for-work \\
     --pricing-mode fixed-exact \\
     --fixed-price-usd 1.25
 
   pnpm agent:pricing -- \\
-    --env-file .env.santaclawz \\
+    --agent-env-file .env.santaclawz \\
     --pricing-mode free-test
 
-  pnpm agent:pricing -- --env-file .env.santaclawz --closed
+  pnpm agent:pricing -- --agent-env-file .env.santaclawz --closed
 
 Environment variables:
   CLAWZ_API_BASE
@@ -33,6 +33,8 @@ Environment variables:
   CLAWZ_AGENT_ADMIN_KEY
 
 Options:
+  --agent-env-file .env.santaclawz
+  --env-file .env.santaclawz  Legacy alias for --agent-env-file.
   --base-payout-address 0x...
   --ethereum-payout-address 0x...
   --default-rail base-usdc
@@ -139,7 +141,7 @@ function resolveConfig(args) {
   const adminKey = String(args["admin-key"] ?? process.env.CLAWZ_AGENT_ADMIN_KEY ?? "").trim();
   if (!agentId || !adminKey) {
     printUsage();
-    throw new Error("agent-id and admin-key are required. Use --env-file .env.santaclawz or set CLAWZ_AGENT_ID and CLAWZ_AGENT_ADMIN_KEY.");
+    throw new Error("agent-id and admin-key are required. Use --agent-env-file .env.santaclawz or set CLAWZ_AGENT_ID and CLAWZ_AGENT_ADMIN_KEY.");
   }
 
   return {
@@ -224,8 +226,14 @@ if (args.help) {
   printUsage();
   process.exit(0);
 }
-if (typeof args["env-file"] === "string" && args["env-file"].trim().length > 0) {
-  loadEnvFile(args["env-file"].trim());
+const requestedEnvFile =
+  typeof args["agent-env-file"] === "string" && args["agent-env-file"].trim().length > 0
+    ? args["agent-env-file"].trim()
+    : typeof args["env-file"] === "string" && args["env-file"].trim().length > 0
+      ? args["env-file"].trim()
+      : "";
+if (requestedEnvFile) {
+  loadEnvFile(requestedEnvFile);
 }
 
 const config = resolveConfig(args);

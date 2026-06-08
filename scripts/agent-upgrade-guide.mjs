@@ -39,12 +39,12 @@ function envAgentId(envFile) {
 }
 
 function buildGuide(args) {
-  const envFile = String(args["env-file"] ?? ".env.santaclawz").trim() || ".env.santaclawz";
+  const envFile = String(args["agent-env-file"] ?? args["env-file"] ?? ".env.santaclawz").trim() || ".env.santaclawz";
   const localPaidUrl = String(args["local-paid-url"] ?? "").trim();
   const agentId = String(args["agent"] ?? args["agent-id"] ?? envAgentId(envFile)).trim();
   const readinessCommand = [
     "pnpm seller:ready --",
-    `--env-file ${shellQuote(envFile)}`,
+    `--agent-env-file ${shellQuote(envFile)}`,
     ...(localPaidUrl ? [`--local-paid-url ${shellQuote(localPaidUrl)}`] : []),
     "--json"
   ].join(" ");
@@ -97,9 +97,10 @@ function buildGuide(args) {
 
 function printUsage() {
   console.error(`Usage:
-  pnpm agent:upgrade-guide -- --env-file .env.santaclawz
+  pnpm agent:upgrade-guide -- --agent-env-file .env.santaclawz
 
 Options:
+  --agent-env-file .env.santaclawz
   --env-file .env.santaclawz
   --local-paid-url http://127.0.0.1:<port>/hire
   --agent <agent-id>

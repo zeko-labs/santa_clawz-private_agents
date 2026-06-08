@@ -6,13 +6,13 @@ const BOOLEAN_FLAGS = new Set(["help", "json", "check", "disable"]);
 function printUsage() {
   console.error(`Usage:
   pnpm agent:enterprise-auth -- \\
-    --env-file .env.santaclawz \\
+    --agent-env-file .env.santaclawz \\
     --authority-url https://auth-sidecar.example.com \\
     --provider custom-oidc \\
     --scopes "github:repo,drive.readonly" \\
     --check
 
-  pnpm agent:enterprise-auth -- --env-file .env.santaclawz --disable
+  pnpm agent:enterprise-auth -- --agent-env-file .env.santaclawz --disable
 
 Environment variables:
   CLAWZ_API_BASE
@@ -21,6 +21,8 @@ Environment variables:
   CLAWZ_AGENT_ADMIN_KEY
 
 Options:
+  --agent-env-file .env.santaclawz
+  --env-file .env.santaclawz
   --agent-id agent-slug--session_agent_...
   --session-id session_agent_...
   --admin-key sck_...
@@ -86,7 +88,7 @@ function resolveConfig(args) {
   if (!agentId || !adminKey) {
     printUsage();
     throw new Error(
-      "agent-id and admin-key are required. Use --env-file .env.santaclawz or set CLAWZ_AGENT_ID and CLAWZ_AGENT_ADMIN_KEY."
+      "agent-id and admin-key are required. Use --agent-env-file .env.santaclawz or set CLAWZ_AGENT_ID and CLAWZ_AGENT_ADMIN_KEY."
     );
   }
   if (!args.disable && !authorityUrl) {
@@ -178,8 +180,14 @@ if (args.help) {
   printUsage();
   process.exit(0);
 }
-if (typeof args["env-file"] === "string" && args["env-file"].trim().length > 0) {
-  applyEnvFile(args["env-file"].trim());
+const requestedEnvFile =
+  typeof args["agent-env-file"] === "string" && args["agent-env-file"].trim().length > 0
+    ? args["agent-env-file"].trim()
+    : typeof args["env-file"] === "string" && args["env-file"].trim().length > 0
+      ? args["env-file"].trim()
+      : "";
+if (requestedEnvFile) {
+  applyEnvFile(requestedEnvFile);
 }
 
 const config = resolveConfig(args);

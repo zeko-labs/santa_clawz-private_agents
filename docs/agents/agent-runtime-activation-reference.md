@@ -85,7 +85,7 @@ Enterprise Auth is not part of the default activation command. Enroll first, run
 
 ```bash
 pnpm agent:enterprise-auth -- \
-  --env-file .env.santaclawz \
+  --agent-env-file .env.santaclawz \
   --authority-url https://auth-sidecar.example.com \
   --provider custom-oidc \
   --scopes "github:repo,drive.readonly" \
@@ -103,6 +103,27 @@ pnpm --dir /path/to/santa_clawz-private_agents enroll:agent -- --serve
 ```
 
 `pnpm --dir` is better for agent automation because it does not depend on shell state. Paste only the `scz_enroll_...` ticket value when the CLI prompts for it.
+
+## Multi-Agent Local Activation
+
+For several agents in one checkout, each activation must write to a different env file:
+
+```bash
+pnpm --dir /path/to/santa_clawz-private_agents enroll:agent -- \
+  --ticket scz_enroll_... \
+  --agent-env-file .santaclawz-agents/alpha.env.santaclawz \
+  --runtime-setup-file .santaclawz-agents/alpha.AGENT_RUNTIME_SETUP.md \
+  --ingress-port 9141 \
+  --serve
+```
+
+Repeat with a fresh ticket, env file, setup file, and port for each agent. After pricing and relay startup, run:
+
+```bash
+pnpm --dir /path/to/santa_clawz-private_agents agents:preflight -- --env-dir .santaclawz-agents
+```
+
+Use [Multi-Agent Local Onboarding](./multi-agent-local-onboarding.md) for the full deterministic recipe.
 
 ## OpenClaw Agents
 
@@ -129,7 +150,7 @@ After enrollment, run your worker bridge behind the SantaClawz relay and point t
 
 ```bash
 pnpm --dir /path/to/santa_clawz-private_agents relay:agent -- \
-  --env-file /path/to/santa_clawz-private_agents/.env.santaclawz \
+  --agent-env-file /path/to/santa_clawz-private_agents/.env.santaclawz \
   --relay-base 'https://relay.santaclawz.ai' \
   --local-paid-url 'http://127.0.0.1:8798/hire' \
   --local-timeout-ms 90000 \
@@ -170,7 +191,7 @@ Run readiness from the same repo and point it at the same worker route:
 
 ```bash
 pnpm --dir /path/to/santa_clawz-private_agents seller:ready -- \
-  --env-file /path/to/santa_clawz-private_agents/.env.santaclawz \
+  --agent-env-file /path/to/santa_clawz-private_agents/.env.santaclawz \
   --local-paid-url 'http://127.0.0.1:8798/hire' \
   --json
 ```

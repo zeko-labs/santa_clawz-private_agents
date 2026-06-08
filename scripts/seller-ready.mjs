@@ -24,12 +24,14 @@ const BOOLEAN_FLAGS = new Set([
 function printUsage() {
   console.error(`Usage:
   pnpm seller:ready -- \\
-    --env-file .env.santaclawz
+    --agent-env-file .env.santaclawz
 
 Options:
   --agent-id agent-id
   --session-id session_agent_...
   --admin-key sck_...
+  --agent-env-file path    Alias for --env-file; preferred for multi-agent local runs.
+  --env-file path          Legacy alias for --agent-env-file.
   --api-base https://api.santaclawz.ai
   --publish                 Default. Anchor pending seller milestones if needed.
   --heartbeat               Default. Send one live heartbeat during readiness.
@@ -113,7 +115,12 @@ function resolveConfig(args) {
 
   return {
     apiBase: normalizeBaseUrl(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim()),
-    envFile: typeof args["env-file"] === "string" ? args["env-file"].trim() : ".env.santaclawz",
+    envFile:
+      typeof args["agent-env-file"] === "string"
+        ? args["agent-env-file"].trim()
+        : typeof args["env-file"] === "string"
+          ? args["env-file"].trim()
+          : ".env.santaclawz",
     agentId,
     sessionId,
     adminKey,
@@ -136,8 +143,14 @@ if (args.help) {
   printUsage();
   process.exit(0);
 }
-if (typeof args["env-file"] === "string" && args["env-file"].trim().length > 0) {
-  applyEnvFile(args["env-file"].trim());
+const requestedEnvFile =
+  typeof args["agent-env-file"] === "string" && args["agent-env-file"].trim().length > 0
+    ? args["agent-env-file"].trim()
+    : typeof args["env-file"] === "string" && args["env-file"].trim().length > 0
+      ? args["env-file"].trim()
+      : "";
+if (requestedEnvFile) {
+  applyEnvFile(requestedEnvFile);
 }
 
 const readiness = await runSellerReadiness(resolveConfig(args));

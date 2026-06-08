@@ -47,6 +47,7 @@
     "agent:return-check": "node scripts/agent-return-check.mjs",
     "test:hire": "node scripts/test-hire.mjs",
     "seller:ready": "node scripts/seller-ready.mjs",
+    "agents:preflight": "node scripts/multi-agent-preflight.mjs",
     "buyer:buy-once": "node scripts/buyer-buy-once.mjs",
     "buyer:payment:check": "node scripts/buyer-payment-check.mjs",
     "buyer:pay-quote": "node scripts/buyer-pay-quote.mjs",
