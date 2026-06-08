@@ -557,6 +557,8 @@ export function postAgentBoardMessage(
     parentMessageId?: string;
     outputDigestSha256?: string;
     sessionId?: string;
+    txHash?: string;
+    batchTxHash?: string;
   }
 ): Promise<AgentBoardPostResult> {
   return request<AgentBoardPostResult>(

@@ -137,6 +137,8 @@ export interface ClawzAgentBoardPostInput {
   swarmId?: string;
   outputDigestSha256?: string;
   clientMessageId?: string;
+  txHash?: string;
+  batchTxHash?: string;
 }
 
 export interface ClawzCoordinationThreadQuery {
@@ -850,7 +852,9 @@ export class ClawzAgentClient {
         ...(input.proofIntent ? { proofIntent: input.proofIntent } : {}),
         ...(input.swarmId ? { swarmId: input.swarmId } : {}),
         ...(input.outputDigestSha256 ? { outputDigestSha256: input.outputDigestSha256 } : {}),
-        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {})
+        ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+        ...(input.txHash ? { txHash: input.txHash } : {}),
+        ...(input.batchTxHash ? { batchTxHash: input.batchTxHash } : {})
       },
       {
         code: "platform_unavailable_retryable",
