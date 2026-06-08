@@ -1255,6 +1255,7 @@ async function testProtectedApiAuth() {
         body: "Workshop auth smoke: participant can publish a scoped coordination ping.",
         threadId: "eventlog_public_workshop_auth_smoke",
         swarmId: "workflow_public_workshop_auth_smoke",
+        clientMessageId: "workshop-auth-smoke-transition-1",
         topicTags: ["team-coordination"],
         proofIntent: "agent_chatter"
       })
@@ -1262,6 +1263,31 @@ async function testProtectedApiAuth() {
     assert.equal(publicWorkshopMessage.status, 200);
     assert.equal(publicWorkshopMessage.payload.postedMessage.agentId, workshopAgentId);
     assert.equal(publicWorkshopMessage.payload.postedMessage.threadId, "eventlog_public_workshop_auth_smoke");
+    assert.equal(publicWorkshopMessage.payload.workshopTrace.workshopId, "workflow_public_workshop_auth_smoke");
+    assert.equal(publicWorkshopMessage.payload.workshopTrace.indexingStatus.visibleInWorkshopTrace, true);
+    assert.equal(publicWorkshopMessage.payload.workshopTrace.indexingStatus.visibleInPublicAgentBoard, false);
+    assert.match(publicWorkshopMessage.payload.workshopTrace.readUrls.messages, /\/api\/workshops\/workflow_public_workshop_auth_smoke\/messages$/);
+    assert.match(publicWorkshopMessage.payload.workshopTrace.readUrls.state, /\/api\/workshops\/workflow_public_workshop_auth_smoke\/state$/);
+    assert.match(publicWorkshopMessage.payload.workshopTrace.readUrls.message, /\/messages\/msg_/);
+
+    const duplicateWorkshopMessage = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(workshopAgentId)}/messages`, {
+      method: "POST",
+      headers: {
+        "x-santaclawz-workshop-token": publicWorkshopTicketClaim.payload.workshopAccessToken
+      },
+      body: JSON.stringify({
+        messageType: "dispatch",
+        body: "Workshop auth smoke: participant can publish a scoped coordination ping.",
+        threadId: "eventlog_public_workshop_auth_smoke",
+        swarmId: "workflow_public_workshop_auth_smoke",
+        clientMessageId: "workshop-auth-smoke-transition-1",
+        topicTags: ["team-coordination"],
+        proofIntent: "agent_chatter"
+      })
+    });
+    assert.equal(duplicateWorkshopMessage.status, 200);
+    assert.equal(duplicateWorkshopMessage.payload.idempotencyStatus, "duplicate-returned");
+    assert.equal(duplicateWorkshopMessage.payload.postedMessage.messageId, publicWorkshopMessage.payload.postedMessage.messageId);
 
     const encryptedEnvelope = buildAgentMessageEnvelope({
       threadId: "eventlog_public_workshop_auth_smoke",
@@ -1369,6 +1395,36 @@ async function testProtectedApiAuth() {
     assert.equal(workshopPublicThread.status, 200);
     assert.equal(workshopPublicThread.payload.messages.some((message) => message.body.includes("ciphertext:workshop-smoke-private-message")), false);
     assert.equal(workshopPublicThread.payload.messages.some((message) => message.threadId === "eventlog_public_workshop_auth_smoke"), false);
+
+    const workshopTraceMessages = await requestJson(
+      `${baseUrl}/api/workshops/${encodeURIComponent("workflow_public_workshop_auth_smoke")}/messages?limit=10`,
+      { method: "GET" }
+    );
+    assert.equal(workshopTraceMessages.status, 200);
+    assert.equal(workshopTraceMessages.payload.schemaVersion, "santaclawz-workshop-messages/0.1");
+    assert.equal(workshopTraceMessages.payload.workshopId, "workflow_public_workshop_auth_smoke");
+    assert.equal(workshopTraceMessages.payload.totalMessageCount, 1);
+    assert.equal(workshopTraceMessages.payload.messages[0].messageId, publicWorkshopMessage.payload.postedMessage.messageId);
+    assert.equal(workshopTraceMessages.payload.state.stateVersion, 1);
+    assert.equal(workshopTraceMessages.payload.state.lastMessageId, publicWorkshopMessage.payload.postedMessage.messageId);
+    assert.equal(workshopTraceMessages.payload.state.publicDisclosure, "workshop-public-actions-only");
+
+    const workshopTraceState = await requestJson(
+      `${baseUrl}/api/workshops/${encodeURIComponent("workflow_public_workshop_auth_smoke")}/state`,
+      { method: "GET" }
+    );
+    assert.equal(workshopTraceState.status, 200);
+    assert.equal(workshopTraceState.payload.schemaVersion, "santaclawz-workshop-state/0.1");
+    assert.equal(workshopTraceState.payload.stateVersion, 1);
+    assert.equal(workshopTraceState.payload.lastTransitionDigest, publicWorkshopMessage.payload.postedMessage.messageDigestSha256);
+
+    const directWorkshopMessage = await requestJson(
+      `${baseUrl}/api/workshops/${encodeURIComponent("workflow_public_workshop_auth_smoke")}/messages/${encodeURIComponent(publicWorkshopMessage.payload.postedMessage.messageId)}`,
+      { method: "GET" }
+    );
+    assert.equal(directWorkshopMessage.status, 200);
+    assert.equal(directWorkshopMessage.payload.totalMessageCount, 1);
+    assert.equal(directWorkshopMessage.payload.messages[0].messageId, publicWorkshopMessage.payload.postedMessage.messageId);
 
     const publicWorkshopWrongThread = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(workshopAgentId)}/messages`, {
       method: "POST",

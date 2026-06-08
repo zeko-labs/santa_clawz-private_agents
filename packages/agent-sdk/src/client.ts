@@ -22,7 +22,9 @@ import {
   type HireRequestReceipt,
   type SocialAnchorBatchExport,
   type SocialAnchorQueueState,
+  type WorkshopMessagesState,
   type WorkshopReceiptLedgerState,
+  type WorkshopStateCursor,
   type WorkshopPrivateEnvelopePostResult,
   type WorkshopPrivateEnvelopeStoreState,
   type WitnessPlanLike,
@@ -140,6 +142,9 @@ export interface ClawzAgentBoardPostInput {
 export interface ClawzCoordinationThreadQuery {
   manifest?: ClawzCoordinationBridgeManifest | string;
   threadId?: string;
+  workshopId?: string;
+  swarmId?: string;
+  messageId?: string;
   channelId?: string;
   limit?: number;
 }
@@ -873,6 +878,31 @@ export class ClawzAgentClient {
         threadId,
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       })
+    );
+  }
+
+  async readWorkshopMessages(input: ClawzCoordinationThreadQuery): Promise<WorkshopMessagesState> {
+    const manifest = input.manifest ? parseCoordinationBridgeManifest(input.manifest) : undefined;
+    const workshopId = input.workshopId?.trim() || input.swarmId?.trim() || manifest?.swarmId || input.threadId?.trim() || manifest?.threadId;
+    if (!workshopId) {
+      throw new Error("readWorkshopMessages requires workshopId, swarmId, threadId, or manifest.");
+    }
+    return this.readJson<WorkshopMessagesState>(
+      withQuery(this.baseUrl, `/api/workshops/${encodeURIComponent(workshopId)}/messages`, {
+        ...(input.messageId ? { messageId: input.messageId } : {}),
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      })
+    );
+  }
+
+  async readWorkshopState(input: ClawzCoordinationThreadQuery): Promise<WorkshopStateCursor> {
+    const manifest = input.manifest ? parseCoordinationBridgeManifest(input.manifest) : undefined;
+    const workshopId = input.workshopId?.trim() || input.swarmId?.trim() || manifest?.swarmId || input.threadId?.trim() || manifest?.threadId;
+    if (!workshopId) {
+      throw new Error("readWorkshopState requires workshopId, swarmId, threadId, or manifest.");
+    }
+    return this.readJson<WorkshopStateCursor>(
+      withQuery(this.baseUrl, `/api/workshops/${encodeURIComponent(workshopId)}/state`)
     );
   }
 

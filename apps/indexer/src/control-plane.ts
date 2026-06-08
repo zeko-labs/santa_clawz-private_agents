@@ -46,6 +46,8 @@ import {
   type AgentBoardPostResult,
   type AgentBoardState,
   type AgentBoardThread,
+  type WorkshopMessagesState,
+  type WorkshopStateCursor,
   assertValidAgentMessageEnvelope,
   type AgentMessageEnvelope,
   type AgentCompletionScore,
@@ -557,6 +559,8 @@ interface SocialAnchorExportOptions {
 interface AgentBoardListOptions {
   agentId?: string;
   threadId?: string;
+  swarmId?: string;
+  messageId?: string;
   topic?: string;
   capability?: string;
   outputDigestSha256?: string;
@@ -578,6 +582,7 @@ interface AgentBoardPostOptions {
   outputDigestSha256?: string;
   proofIntent?: "per_message" | "aggregate" | "agent_chatter" | "display_only";
   swarmId?: string;
+  clientMessageId?: string;
 }
 
 type AgentBoardProofIntent = "per_message" | "aggregate" | "agent_chatter";
@@ -8307,6 +8312,8 @@ export class ClawzControlPlane {
       )
       .filter((message) => !options.agentId || message.agentId === options.agentId)
       .filter((message) => !options.threadId || message.threadId === options.threadId)
+      .filter((message) => !options.swarmId || message.swarmId === options.swarmId)
+      .filter((message) => !options.messageId || message.messageId === options.messageId)
       .filter((message) => !options.topic || message.topicTags.includes(options.topic))
       .filter((message) => !options.capability || (message.capabilityTags ?? []).includes(options.capability))
       .filter((message) => !options.outputDigestSha256 || message.outputDigestSha256 === options.outputDigestSha256)
@@ -8396,6 +8403,8 @@ export class ClawzControlPlane {
     const sanitizedOptions: AgentBoardListOptions = {
       ...(options.agentId ? { agentId: options.agentId } : {}),
       ...(options.threadId ? { threadId: options.threadId } : {}),
+      ...(options.swarmId ? { swarmId: options.swarmId } : {}),
+      ...(options.messageId ? { messageId: options.messageId } : {}),
       ...(options.includeWorkshopCoordination ? { includeWorkshopCoordination: true } : {}),
       ...(typeof options.limit === "number" ? { limit: options.limit } : {})
     };
@@ -8411,6 +8420,118 @@ export class ClawzControlPlane {
       sanitizedOptions.outputDigestSha256 = options.outputDigestSha256;
     }
     return this.buildAgentBoardState(file, state, queue, sanitizedOptions);
+  }
+
+  async listWorkshopMessages(options: {
+    workshopId?: string;
+    threadId?: string;
+    swarmId?: string;
+    messageId?: string;
+    limit?: number;
+  }): Promise<WorkshopMessagesState> {
+    const workshopId = typeof options.workshopId === "string" ? options.workshopId.trim().slice(0, 128) : "";
+    const threadId = typeof options.threadId === "string" ? options.threadId.trim().slice(0, 128) : "";
+    const swarmId = typeof options.swarmId === "string" ? options.swarmId.trim().slice(0, 128) : "";
+    const messageId = typeof options.messageId === "string" ? options.messageId.trim().slice(0, 128) : "";
+    if (!workshopId && !threadId && !swarmId && !messageId) {
+      throw new Error("workshopId, threadId, swarmId, or messageId is required.");
+    }
+
+    const [state, file, queue] = await Promise.all([
+      this.loadState(),
+      this.loadAgentBoardFile(),
+      this.loadSocialAnchorQueueFile()
+    ]);
+    const matchingMessages = file.messages.filter((message) => {
+      if (!isWorkshopCoordinationBoardMessage(message)) {
+        return false;
+      }
+      if (messageId && message.messageId !== messageId) {
+        return false;
+      }
+      if (threadId && message.threadId !== threadId) {
+        return false;
+      }
+      if (swarmId && message.swarmId !== swarmId) {
+        return false;
+      }
+      if (workshopId && message.threadId !== workshopId && message.swarmId !== workshopId) {
+        return false;
+      }
+      return true;
+    });
+    const board = this.buildAgentBoardState({ messages: matchingMessages }, state, queue, {
+      includeWorkshopCoordination: true,
+      ...(typeof options.limit === "number" ? { limit: options.limit } : {})
+    });
+    const inferredWorkshopId =
+      workshopId ||
+      swarmId ||
+      threadId ||
+      board.messages[0]?.swarmId ||
+      board.messages[0]?.threadId ||
+      messageId;
+    const stateCursor = this.buildWorkshopStateCursor({
+      workshopId: inferredWorkshopId,
+      board
+    });
+    return {
+      schemaVersion: "santaclawz-workshop-messages/0.1",
+      generatedAtIso: board.generatedAtIso,
+      workshopId: inferredWorkshopId,
+      ...(stateCursor.threadId ? { threadId: stateCursor.threadId } : {}),
+      ...(stateCursor.swarmId ? { swarmId: stateCursor.swarmId } : {}),
+      totalMessageCount: board.totalVisibleMessages,
+      messages: board.messages,
+      state: stateCursor
+    };
+  }
+
+  async getWorkshopState(options: {
+    workshopId?: string;
+    threadId?: string;
+    swarmId?: string;
+  }): Promise<WorkshopStateCursor> {
+    const messages = await this.listWorkshopMessages({
+      ...options,
+      limit: 1
+    });
+    return messages.state;
+  }
+
+  private buildWorkshopStateCursor(input: {
+    workshopId: string;
+    board: AgentBoardState;
+  }): WorkshopStateCursor {
+    const latest = input.board.messages[0];
+    const lastAction = latest?.body.trim();
+    const normalizedAction = lastAction?.toLowerCase() ?? "";
+    const completionStatus: WorkshopStateCursor["completionStatus"] = !latest
+      ? "empty"
+      : /\b(failed|failure|error|rejected)\b/.test(normalizedAction)
+        ? "failed"
+        : /\b(done|complete|completed|final|finished)\b/.test(normalizedAction) || latest.messageType === "output"
+          ? "completed"
+          : "running";
+    return {
+      schemaVersion: "santaclawz-workshop-state/0.1",
+      generatedAtIso: input.board.generatedAtIso,
+      workshopId: input.workshopId,
+      ...(latest?.threadId ? { threadId: latest.threadId } : {}),
+      ...(latest?.swarmId ? { swarmId: latest.swarmId } : {}),
+      stateVersion: input.board.totalVisibleMessages,
+      totalMessageCount: input.board.totalVisibleMessages,
+      completionStatus,
+      ...(latest?.messageId ? { lastMessageId: latest.messageId } : {}),
+      ...(latest?.agentId ? { lastAgentId: latest.agentId } : {}),
+      ...(lastAction ? { lastAction } : {}),
+      ...(latest?.messageDigestSha256 ? { lastMessageDigestSha256: latest.messageDigestSha256 } : {}),
+      ...(latest?.outputDigestSha256 ?? latest?.messageDigestSha256
+        ? { lastTransitionDigest: latest.outputDigestSha256 ?? latest.messageDigestSha256 }
+        : {}),
+      ...(latest?.anchorStatus ? { lastAnchorStatus: latest.anchorStatus } : {}),
+      publicDisclosure: "workshop-public-actions-only"
+    };
   }
 
   async postAgentBoardMessage(options: AgentBoardPostOptions): Promise<AgentBoardPostResult> {
@@ -8660,6 +8781,53 @@ export class ClawzControlPlane {
       typeof options.outputDigestSha256 === "string" && /^[a-f0-9]{64}$/.test(options.outputDigestSha256)
         ? options.outputDigestSha256
         : undefined;
+    const clientMessageId =
+      typeof options.clientMessageId === "string" && options.clientMessageId.trim().length > 0
+        ? options.clientMessageId.trim().replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 128)
+        : undefined;
+    const bodyDigestSha256 = sha256Hex(body);
+    const duplicateMessage = clientMessageId
+      ? file.messages.find(
+          (message) =>
+            message.clientMessageId === clientMessageId &&
+            message.agentId === options.agentId &&
+            message.threadId === threadId &&
+            (!swarmId || message.swarmId === swarmId)
+        )
+      : undefined;
+    if (duplicateMessage) {
+      if (
+        duplicateMessage.bodyDigestSha256 !== bodyDigestSha256 ||
+        duplicateMessage.messageType !== messageType ||
+        (duplicateMessage.outputDigestSha256 ?? "") !== (outputDigestSha256 ?? "")
+      ) {
+        throw new Error("Client message idempotency conflict: reuse the same clientMessageId only for the same transition.");
+      }
+      const boardPreview = this.buildAgentBoardState({ messages: file.messages }, state, socialAnchorQueue, {
+        agentId: options.agentId,
+        limit: 24
+      });
+      return {
+        schemaVersion: "santaclawz-agent-board-post/1.0",
+        ok: true,
+        postedMessage: duplicateMessage,
+        boardPreview,
+        idempotencyStatus: "duplicate-returned",
+        ...(options.workshopToken
+          ? {
+              workshopTrace: {
+                workshopId: duplicateMessage.swarmId ?? duplicateMessage.threadId,
+                indexingStatus: {
+                  indexed: true,
+                  visibleInWorkshopTrace: true,
+                  visibleInPublicAgentBoard: false,
+                  reason: "workshop_receipt_lane"
+                }
+              }
+            }
+          : {})
+      };
+    }
     const { proofIntent, proofAdmissionReason } = resolveAgentBoardProofAdmission({
       requestedProofIntent,
       agentId: options.agentId,
@@ -8670,7 +8838,6 @@ export class ClawzControlPlane {
       board: file,
       queue: socialAnchorQueue
     });
-    const bodyDigestSha256 = sha256Hex(body);
     const messageDigestSha256 = canonicalDigest({
       schemaVersion: "santaclawz-agent-message/1.0",
       messageId,
@@ -8683,6 +8850,7 @@ export class ClawzControlPlane {
       topicTags,
       capabilityTags,
       visibility: "public",
+      ...(clientMessageId ? { clientMessageId } : {}),
       ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
       createdAtIso
     }).sha256Hex;
@@ -8704,6 +8872,7 @@ export class ClawzControlPlane {
       moderationStatus: "visible",
       createdAtIso,
       updatedAtIso: createdAtIso,
+      ...(clientMessageId ? { clientMessageId } : {}),
       bodyDigestSha256,
       messageDigestSha256,
       ...(outputDigestSha256 ? { outputDigestSha256 } : {}),
@@ -8760,7 +8929,21 @@ export class ClawzControlPlane {
       schemaVersion: "santaclawz-agent-board-post/1.0",
       ok: true,
       postedMessage,
-      boardPreview
+      boardPreview,
+      idempotencyStatus: "created",
+      ...(options.workshopToken
+        ? {
+            workshopTrace: {
+              workshopId: swarmId ?? threadId,
+              indexingStatus: {
+                indexed: true,
+                visibleInWorkshopTrace: true,
+                visibleInPublicAgentBoard: false,
+                reason: "workshop_receipt_lane"
+              }
+            }
+          }
+        : {})
     };
   }
 

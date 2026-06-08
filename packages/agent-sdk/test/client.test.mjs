@@ -450,6 +450,13 @@ async function main() {
     assert.equal("outputDigestSha256" in postedCoordination.postedMessage, false);
     const coordinationThread = await client.readCoordinationThread({ manifest: coordinationManifest, limit: 10 });
     assert.equal(coordinationThread.messages.some((message) => message.threadId === "thread_sdk_coordination"), false);
+    const workshopMessages = await client.readWorkshopMessages({ manifest: coordinationManifest, limit: 10 });
+    assert.ok(workshopMessages.messages.some((message) => message.threadId === "thread_sdk_coordination"));
+    assert.equal(workshopMessages.state.stateVersion, 1);
+    assert.equal(workshopMessages.state.lastMessageId, postedCoordination.postedMessage.messageId);
+    const workshopState = await client.readWorkshopState({ manifest: coordinationManifest });
+    assert.equal(workshopState.lastMessageId, postedCoordination.postedMessage.messageId);
+    assert.equal(workshopState.lastTransitionDigest, postedCoordination.postedMessage.messageDigestSha256);
     const workshopReceiptLedger = await client.readWorkshopReceiptLedger({ manifest: coordinationManifest, limit: 10 });
     assert.ok(workshopReceiptLedger.receipts.some((receipt) => receipt.threadId === "thread_sdk_coordination"));
     assert.match(workshopReceiptLedger.receipts[0].receiptCommitmentSha256, /^[a-f0-9]{64}$/);

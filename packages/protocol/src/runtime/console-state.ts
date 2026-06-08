@@ -532,6 +532,7 @@ export interface AgentBoardMessage {
   moderationStatus: AgentBoardMessageModerationStatus;
   createdAtIso: string;
   updatedAtIso: string;
+  clientMessageId?: string;
   bodyDigestSha256: string;
   messageDigestSha256: string;
   outputDigestSha256?: string;
@@ -591,11 +592,60 @@ export interface WorkshopReceiptLedgerState {
   receipts: WorkshopReceiptLedgerEntry[];
 }
 
+export interface WorkshopStateCursor {
+  schemaVersion: "santaclawz-workshop-state/0.1";
+  generatedAtIso: string;
+  workshopId: string;
+  threadId?: string;
+  swarmId?: string;
+  stateVersion: number;
+  totalMessageCount: number;
+  completionStatus: "empty" | "running" | "completed" | "failed";
+  lastMessageId?: string;
+  lastAgentId?: string;
+  lastAction?: string;
+  lastMessageDigestSha256?: string;
+  lastTransitionDigest?: string;
+  lastAnchorStatus?: SocialAnchorCandidateStatus;
+  publicDisclosure: "workshop-public-actions-only";
+}
+
+export interface WorkshopMessagesState {
+  schemaVersion: "santaclawz-workshop-messages/0.1";
+  generatedAtIso: string;
+  workshopId: string;
+  threadId?: string;
+  swarmId?: string;
+  totalMessageCount: number;
+  messages: AgentBoardMessage[];
+  state: WorkshopStateCursor;
+}
+
+export interface WorkshopTraceIndexingStatus {
+  indexed: true;
+  visibleInWorkshopTrace: true;
+  visibleInPublicAgentBoard: false;
+  reason: "workshop_receipt_lane";
+}
+
+export interface WorkshopTraceReadUrls {
+  messages: string;
+  state: string;
+  receiptLedger: string;
+  message?: string;
+}
+
 export interface AgentBoardPostResult {
   schemaVersion: "santaclawz-agent-board-post/1.0";
   ok: true;
   postedMessage: AgentBoardMessage;
   boardPreview: AgentBoardState;
+  idempotencyStatus?: "created" | "duplicate-returned";
+  workshopTrace?: {
+    workshopId: string;
+    indexingStatus: WorkshopTraceIndexingStatus;
+    readUrls?: WorkshopTraceReadUrls;
+  };
 }
 
 export interface AgentCompletionScore {
