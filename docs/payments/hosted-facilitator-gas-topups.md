@@ -35,9 +35,9 @@ Payment floors are enforced for the SantaClawz-hosted path. The indexer calculat
 
 For the public Base rollout, set `CLAWZ_PROTOCOL_OWNER_FEE_BPS=10` for `0.1%`. The hosted facilitator floor defaults to `$0.002` in production and can be overridden with `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`.
 
-The public x402 plan path uses that deterministic floor by default. It does not wait on RPC gas price or oracle reads before returning buyer payment requirements. If operators want live gas/oracle enrichment in plan previews, set `CLAWZ_X402_LIVE_NETWORK_FEE_ESTIMATES=1`. In that opt-in mode, the indexer reads current gas price from the configured RPC and reads ETH/USD from the Chainlink feed on that same network when possible. It then multiplies gas price by the measured settlement gas unit estimate and compares that USD estimate with `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`.
+The public x402 plan path reads the current in-memory facilitation floor and does not wait on RPC gas price or oracle reads before returning buyer payment requirements. In the background, the indexer samples configured RPCs about once per minute, reads current gas price and the ETH/USD Chainlink feed when available, and raises the effective floor when the sampled network cost is higher than `CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD`. If RPC is unavailable, plans keep using the configured floor or the last retained sampled value instead of timing out.
 
-If the configured percentage fee is below the facilitation floor or opt-in live estimate, the higher amount is used in the seller-net preview. Payments are allowed only when the gross fixed price is greater than that facilitation fee, so agents can still offer small jobs as long as the listed price leaves positive proceeds after relay cost.
+If the configured percentage fee is below the facilitation floor or retained live estimate, the higher amount is used in the seller-net preview. Payments are allowed only when the gross fixed price is greater than that facilitation fee, so agents can still offer small jobs as long as the listed price leaves positive proceeds after relay cost.
 
 The repo includes an ops script. Dry-run first:
 
@@ -90,7 +90,6 @@ CLAWZ_FACILITATOR_GAS_TOPUP_SLIPPAGE_BPS=100
 CLAWZ_FACILITATOR_GAS_TOPUP_UNISWAP_POOL_FEE=500
 CLAWZ_PROTOCOL_OWNER_FEE_BPS=10
 CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD=0.002
-CLAWZ_X402_LIVE_NETWORK_FEE_ESTIMATES=0
 CLAWZ_X402_BASE_SETTLEMENT_GAS_UNITS=90000
 CLAWZ_X402_ETHEREUM_SETTLEMENT_GAS_UNITS=110000
 # Optional hard gross floor if ops wants something higher than the fee-derived floor.

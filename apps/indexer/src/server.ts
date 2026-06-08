@@ -75,6 +75,7 @@ import {
   buildQuoteIntentX402RuntimeContext,
   buildAgentX402PaymentRequiredPreview,
   buildAgentX402PlanWithNetworkQuotes,
+  startNetworkFacilitationFeeMonitor,
   settleAgentX402Payment,
   verifyAgentX402Payment
 } from "./x402-adapter.js";
@@ -621,6 +622,7 @@ app.use((request: CacheInvalidationRequest, response: CacheInvalidationResponse,
 const clawzDataDir = process.env.CLAWZ_DATA_DIR?.trim() || path.join(process.cwd(), ".clawz-data");
 const controlPlane = await ClawzControlPlane.boot(clawzDataDir);
 controlPlane.startSharedSocialAnchorDrainer();
+startNetworkFacilitationFeeMonitor();
 const artifactStore = new ArtifactStore(process.env.CLAWZ_ARTIFACT_STORE_DIR?.trim() || path.join(clawzDataDir, "artifacts"));
 await artifactStore.ensureDirs();
 void artifactStore.cleanupExpired().catch((error) => {

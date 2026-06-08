@@ -30,6 +30,8 @@ const BASE_ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70";
 const ETHEREUM_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 const ETH_USD_FEED_LATEST_ROUND_DATA = "0xfeaf968c";
 const NETWORK_FEE_ESTIMATE_TIMEOUT_MS = 1_800;
+const NETWORK_FEE_REFRESH_INTERVAL_MS = 60_000;
+const NETWORK_FEE_STALE_RETAIN_MS = 10 * 60_000;
 
 const BASE_MAINNET = {
   networkId: "eip155:8453",
@@ -551,12 +553,6 @@ function minNetworkFacilitationFeeUsd(): string {
   return process.env.NODE_ENV === "production" ? DEFAULT_HOSTED_NETWORK_FACILITATION_FEE_USD : DEV_MIN_NETWORK_FACILITATION_FEE_USD;
 }
 
-function liveNetworkFeeEstimatesEnabled(): boolean {
-  return ["1", "true", "yes", "on"].includes(
-    process.env.CLAWZ_X402_LIVE_NETWORK_FEE_ESTIMATES?.trim().toLowerCase() ?? ""
-  );
-}
-
 function envList(names: string[]): string[] {
   return names.flatMap((name) =>
     (process.env[name]?.trim() ?? "")
@@ -764,43 +760,52 @@ function formatEthFromWei(value: bigint): string {
   return `${whole}.${fraction.toString().padStart(18, "0").replace(/0+$/, "")}`;
 }
 
-const networkFacilitationFeeCache = new Map<string, {
+const networkFacilitationFeeCache = new Map<AgentPaymentRail, {
   expiresAt: number;
+  retainedUntil: number;
   value: NetworkFacilitationFeeEstimate | undefined;
 }>();
+const networkFacilitationFeeInflight = new Set<AgentPaymentRail>();
+let networkFacilitationFeeMonitorStarted = false;
 
-async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<NetworkFacilitationFeeEstimate | undefined> {
-  if (rail !== "base-usdc" && rail !== "ethereum-usdc") {
-    return undefined;
-  }
-
-  const cacheKey = rail;
-  const cached = networkFacilitationFeeCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.value;
-  }
-
+function deterministicNetworkFacilitationFee(): NetworkFacilitationFeeEstimate | undefined {
   const configuredFloorAtomic = parseUsdAtomic(minNetworkFacilitationFeeUsd());
-  const deterministicFloor =
-    configuredFloorAtomic !== null
-      ? {
-          amountUsd: formatUsdAtomic(configuredFloorAtomic)
-        } satisfies NetworkFacilitationFeeEstimate
-      : undefined;
-  if (!liveNetworkFeeEstimatesEnabled()) {
-    networkFacilitationFeeCache.set(cacheKey, {
-      expiresAt: Date.now() + 60_000,
-      value: deterministicFloor
-    });
-    return deterministicFloor;
-  }
+  return configuredFloorAtomic !== null
+    ? {
+        amountUsd: formatUsdAtomic(configuredFloorAtomic)
+      }
+    : undefined;
+}
 
+function cacheNetworkFacilitationFee(rail: AgentPaymentRail, value: NetworkFacilitationFeeEstimate | undefined) {
+  const nowMs = Date.now();
+  networkFacilitationFeeCache.set(rail, {
+    expiresAt: nowMs + NETWORK_FEE_REFRESH_INTERVAL_MS,
+    retainedUntil: nowMs + NETWORK_FEE_STALE_RETAIN_MS,
+    value
+  });
+}
+
+function higherNetworkFacilitationFee(
+  left: NetworkFacilitationFeeEstimate | undefined,
+  right: NetworkFacilitationFeeEstimate | undefined
+): NetworkFacilitationFeeEstimate | undefined {
+  const leftAtomic = parseUsdAtomic(left?.amountUsd);
+  const rightAtomic = parseUsdAtomic(right?.amountUsd);
+  if (leftAtomic === null) {
+    return right;
+  }
+  if (rightAtomic === null) {
+    return left;
+  }
+  return leftAtomic >= rightAtomic ? left : right;
+}
+
+async function sampleNetworkFacilitationFee(rail: AgentPaymentRail): Promise<NetworkFacilitationFeeEstimate | undefined> {
+  const deterministicFloor = deterministicNetworkFacilitationFee();
+  const configuredFloorAtomic = parseUsdAtomic(deterministicFloor?.amountUsd);
   const rpcUrls = rpcUrlsForRail(rail);
   if (rpcUrls.length === 0) {
-    networkFacilitationFeeCache.set(cacheKey, {
-      expiresAt: Date.now() + 60_000,
-      value: deterministicFloor
-    });
     return deterministicFloor;
   }
 
@@ -844,11 +849,64 @@ async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<N
         }
       : deterministicFloor;
 
-  networkFacilitationFeeCache.set(cacheKey, {
-    expiresAt: Date.now() + 10_000,
-    value
-  });
   return value;
+}
+
+function launchNetworkFacilitationFeeRefresh(rail: AgentPaymentRail) {
+  if (networkFacilitationFeeInflight.has(rail)) {
+    return;
+  }
+  networkFacilitationFeeInflight.add(rail);
+  void sampleNetworkFacilitationFee(rail)
+    .then((value) => {
+      cacheNetworkFacilitationFee(rail, value);
+    })
+    .catch((error) => {
+      if (!networkFacilitationFeeCache.get(rail)) {
+        cacheNetworkFacilitationFee(rail, deterministicNetworkFacilitationFee());
+      }
+      console.warn(JSON.stringify({
+        event: "x402_network_facilitation_fee_refresh_failed",
+        rail,
+        error: error instanceof Error ? error.message : String(error)
+      }));
+    })
+    .finally(() => {
+      networkFacilitationFeeInflight.delete(rail);
+    });
+}
+
+export function startNetworkFacilitationFeeMonitor() {
+  if (networkFacilitationFeeMonitorStarted) {
+    return;
+  }
+  networkFacilitationFeeMonitorStarted = true;
+  const refresh = () => {
+    launchNetworkFacilitationFeeRefresh("base-usdc");
+    launchNetworkFacilitationFeeRefresh("ethereum-usdc");
+  };
+  refresh();
+  const interval = setInterval(refresh, NETWORK_FEE_REFRESH_INTERVAL_MS);
+  (interval as unknown as { unref?: () => void }).unref?.();
+}
+
+async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<NetworkFacilitationFeeEstimate | undefined> {
+  if (rail !== "base-usdc" && rail !== "ethereum-usdc") {
+    return undefined;
+  }
+
+  const deterministicFloor = deterministicNetworkFacilitationFee();
+  const cached = networkFacilitationFeeCache.get(rail);
+  if (cached && cached.expiresAt > Date.now()) {
+    return higherNetworkFacilitationFee(cached.value, deterministicFloor);
+  }
+  if (cached && cached.retainedUntil > Date.now()) {
+    launchNetworkFacilitationFeeRefresh(rail);
+    return higherNetworkFacilitationFee(cached.value, deterministicFloor);
+  }
+
+  launchNetworkFacilitationFeeRefresh(rail);
+  return deterministicFloor;
 }
 
 function hasBaseCdpFacilitatorCredentials(): boolean {
