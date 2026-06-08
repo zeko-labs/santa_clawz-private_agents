@@ -1222,21 +1222,25 @@ function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
 }
 
 function WorkshopReceiptMetadata({ receipt }: { receipt: WorkshopReceipt }) {
+  const receiptTxHash =
+    receipt.batchTxHash || (typeof (receipt as WorkshopReceipt & { txHash?: string }).txHash === "string"
+      ? (receipt as WorkshopReceipt & { txHash?: string }).txHash
+      : "");
   const parts: ReactNode[] = [
     boardMessageTypeLabel(receipt.receiptType),
     formatRelativeTime(receipt.createdAtIso),
     boardAnchorLabel(receipt.anchorStatus)
   ];
   parts.push(`commitment ${shorten(receipt.receiptCommitmentSha256, 8, 6)}`);
-  if (receipt.batchRootDigestSha256) {
-    parts.push(`root ${shorten(receipt.batchRootDigestSha256, 8, 6)}`);
-  }
-  if (receipt.batchTxHash) {
+  if (receiptTxHash) {
     parts.push(
-      <ExplorerTxLink kind="zeko" txHash={receipt.batchTxHash}>
-        tx {shorten(receipt.batchTxHash, 8, 6)}
+      <ExplorerTxLink kind="zeko" txHash={receiptTxHash}>
+        tx {shorten(receiptTxHash, 8, 6)}
       </ExplorerTxLink>
     );
+  }
+  if (receipt.batchRootDigestSha256) {
+    parts.push(`root ${shorten(receipt.batchRootDigestSha256, 8, 6)}`);
   }
 
   return (
@@ -1354,7 +1358,8 @@ function paymentActivityHeadline(entry: PaymentLedgerEntry) {
 
 function paymentActivityBadge(entry: PaymentLedgerEntry) {
   if (entry.lifecycleStatus?.label) {
-    return normalizePaymentLifecycleLabel(entry.lifecycleStatus.label);
+    const label = normalizePaymentLifecycleLabel(entry.lifecycleStatus.label);
+    return label.toLowerCase() === "paid, return verified" ? "Paid verified" : label;
   }
   if (entry.settlementRecovery?.canRetrySettlement) {
     return "Retry settlement";
