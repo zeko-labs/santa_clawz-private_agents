@@ -393,6 +393,7 @@ function publicReadRouteCost(pathname: string, method: string): number {
     pathname === "/api/agents" ||
     pathname === "/api/agent-messages" ||
     pathname === "/api/workshop/receipt-ledger" ||
+    /^\/api\/workshops\/[^/]+\/(messages|state)(\/[^/]+)?$/.test(pathname) ||
     pathname === "/api/social/anchors/public"
   ) {
     return 2;
@@ -4836,6 +4837,19 @@ function buildWorkshopReceiptLedger(messages: AgentBoardState): WorkshopReceiptL
   };
 }
 
+function buildWorkshopTraceReadUrls(baseUrl: string, message: AgentBoardMessage, workshopId = message.swarmId ?? message.threadId) {
+  const encodedWorkshopId = encodeURIComponent(workshopId);
+  const receiptParams = new URLSearchParams(
+    message.swarmId ? { swarmId: message.swarmId } : { threadId: message.threadId }
+  );
+  return {
+    messages: `${baseUrl}/api/workshops/${encodedWorkshopId}/messages`,
+    state: `${baseUrl}/api/workshops/${encodedWorkshopId}/state`,
+    receiptLedger: `${baseUrl}/api/workshop/receipt-ledger?${receiptParams.toString()}`,
+    message: `${baseUrl}/api/workshops/${encodedWorkshopId}/messages/${encodeURIComponent(message.messageId)}`
+  };
+}
+
 app.get("/api/workshop/receipt-ledger", route(async (request, response) => {
   try {
     const rawLimit = queryString(request.query, "limit");
@@ -4864,6 +4878,82 @@ app.get("/api/workshop/receipt-ledger", route(async (request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load workshop receipt ledger."
+    });
+  }
+}));
+
+app.get("/api/workshops/:workshopId/messages", route(async (request, response) => {
+  try {
+    const workshopId = request.params.workshopId?.trim();
+    if (!workshopId) {
+      response.status(400).json({ error: "workshopId is required." });
+      return;
+    }
+    const rawLimit = queryString(request.query, "limit");
+    const messageId = queryString(request.query, "messageId");
+    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+    const limit = typeof parsedLimit === "number" && Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(parsedLimit, 200))
+      : 100;
+    const options = {
+      workshopId,
+      ...(messageId ? { messageId } : {}),
+      limit
+    };
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `workshop-messages:${JSON.stringify(options)}`,
+      () => controlPlane.listWorkshopMessages(options)
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    response.json(payload);
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load workshop messages."
+    });
+  }
+}));
+
+app.get("/api/workshops/:workshopId/messages/:messageId", route(async (request, response) => {
+  try {
+    const workshopId = request.params.workshopId?.trim();
+    const messageId = request.params.messageId?.trim();
+    if (!workshopId || !messageId) {
+      response.status(400).json({ error: "workshopId and messageId are required." });
+      return;
+    }
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `workshop-message:${workshopId}:${messageId}`,
+      () => controlPlane.listWorkshopMessages({ workshopId, messageId, limit: 1 })
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    if (payload.totalMessageCount < 1) {
+      response.status(404).json({ error: "Workshop message was not found." });
+      return;
+    }
+    response.json(payload);
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load workshop message."
+    });
+  }
+}));
+
+app.get("/api/workshops/:workshopId/state", route(async (request, response) => {
+  try {
+    const workshopId = request.params.workshopId?.trim();
+    if (!workshopId) {
+      response.status(400).json({ error: "workshopId is required." });
+      return;
+    }
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `workshop-state:${workshopId}`,
+      () => controlPlane.getWorkshopState({ workshopId })
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    response.json(payload);
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load workshop state."
     });
   }
 }));
@@ -6332,8 +6422,23 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
         ? { proofIntent: body.proofIntent as "per_message" | "aggregate" | "agent_chatter" | "display_only" }
         : {}),
       ...(typeof body.swarmId === "string" ? { swarmId: body.swarmId } : {}),
-      ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {})
+      ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {}),
+      ...(typeof body.clientMessageId === "string" ? { clientMessageId: body.clientMessageId } : {})
     });
+    if (result.workshopTrace) {
+      response.json({
+        ...result,
+        workshopTrace: {
+          ...result.workshopTrace,
+          readUrls: buildWorkshopTraceReadUrls(
+            requestBaseUrl(request),
+            result.postedMessage,
+            result.workshopTrace.workshopId
+          )
+        }
+      });
+      return;
+    }
     response.json(result);
   } catch (error) {
     response.status(400).json({

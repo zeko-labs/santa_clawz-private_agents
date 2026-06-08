@@ -134,6 +134,10 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && /^\/api\/workshops\/[^/]+\/(messages|state)(\/[^/]+)?$/.test(pathname)) {
+    return true;
+  }
+
   if (method === "GET" && /^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
     return true;
   }
