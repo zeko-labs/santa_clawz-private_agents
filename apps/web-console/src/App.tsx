@@ -6731,6 +6731,9 @@ export function App() {
                                         {paymentActivityBadge(payment)}
                                       </span>
                                     </div>
+                                    <div className="agent-message-proof-row payment-activity-proof-row">
+                                      {paymentHistoryDetail(payment)}
+                                    </div>
                                   </article>
                                 );
                               }

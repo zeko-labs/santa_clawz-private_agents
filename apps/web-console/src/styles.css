@@ -4051,9 +4051,12 @@ pre,
 
 .payment-activity-card .board-proof-pill {
   align-self: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 24px;
   padding: 5px 8px;
   font-size: 0.66rem;
-  line-height: 1.05;
+  line-height: 1;
 }
 
 .payment-activity-card .board-proof-pill.payment-status-pill {
@@ -4065,9 +4068,17 @@ pre,
   white-space: nowrap;
 }
 
+.payment-activity-card .board-proof-pill::before {
+  flex: 0 0 7px;
+}
+
 .payment-activity-card .agent-message-proof-row {
   gap: 5px 10px;
   font-size: 0.62rem;
+}
+
+.payment-activity-proof-row {
+  margin-left: 48px;
 }
 
 .profile-url-action {
@@ -8021,7 +8032,8 @@ button:disabled {
     flex: 0 0 auto;
     max-width: 128px;
     font-size: 0.66rem;
-    line-height: 1.08;
+    line-height: 1;
+    min-height: 24px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
