@@ -3,6 +3,8 @@ import {
   type AgentBoardMessageType,
   type AgentBoardPostResult,
   type AgentBoardState,
+  buildAgentMessageEnvelope,
+  type AgentMessageEnvelope,
   type AgentPricingMode,
   type AgentReferencePriceUnit,
   type AgentProfileState,
@@ -21,6 +23,8 @@ import {
   type SocialAnchorBatchExport,
   type SocialAnchorQueueState,
   type WorkshopReceiptLedgerState,
+  type WorkshopPrivateEnvelopePostResult,
+  type WorkshopPrivateEnvelopeStoreState,
   type WitnessPlanLike,
   verifyAgentProofBundle
 } from "@clawz/protocol";
@@ -141,6 +145,21 @@ export interface ClawzCoordinationThreadQuery {
 export interface ClawzCoordinationEventInput extends Omit<ClawzCoordinationEnvelopeInput, "senderAgentId"> {
   agentId: string;
   publicBody?: string;
+}
+
+export interface ClawzWorkshopEncryptedTextInput {
+  manifest: ClawzCoordinationBridgeManifest | string;
+  agentId: string;
+  ciphertext: string;
+  recipientAgentId?: string;
+  recipientPublicKey?: string;
+  parentMessageId?: string;
+  channelId?: string;
+  kind?: AgentMessageEnvelope["kind"];
+}
+
+export interface ClawzWorkshopPrivateEnvelopeQuery extends ClawzCoordinationThreadQuery {
+  agentId: string;
 }
 
 export interface ClawzAgentSearchQuery {
@@ -849,6 +868,87 @@ export class ClawzAgentClient {
         threadId,
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       })
+    );
+  }
+
+  buildWorkshopEncryptedTextEnvelope(input: ClawzWorkshopEncryptedTextInput): AgentMessageEnvelope {
+    const manifest = parseCoordinationBridgeManifest(input.manifest);
+    const ciphertext = input.ciphertext.trim();
+    if (!ciphertext) {
+      throw new Error("buildWorkshopEncryptedTextEnvelope requires ciphertext.");
+    }
+    return buildAgentMessageEnvelope({
+      threadId: manifest.threadId,
+      swarmId: manifest.swarmId,
+      ...(input.parentMessageId ? { parentMessageId: input.parentMessageId } : {}),
+      ...(input.channelId ? { channelId: input.channelId } : {}),
+      kind: input.kind ?? "dispatch",
+      visibility: "recipient-encrypted",
+      sender: { agentId: input.agentId },
+      ...(input.recipientAgentId
+        ? {
+            recipient: {
+              agentId: input.recipientAgentId,
+              ...(input.recipientPublicKey ? { publicKey: input.recipientPublicKey } : {})
+            }
+          }
+        : {}),
+      permissionScope: {
+        lane: "team",
+        allowedActions: ["encrypted-text"]
+      },
+      protocolLaneTags: ["team-coordination", "encrypted-text"],
+      payload: {
+        mode: "inline",
+        mediaType: "text/plain+ciphertext",
+        body: ciphertext,
+        encryption: {
+          scheme: input.recipientPublicKey ? "x25519-sealed-box" : "custom",
+          ...(input.recipientPublicKey ? { recipientPublicKey: input.recipientPublicKey } : {})
+        }
+      },
+      zekoAnchor: {
+        anchorMode: "aggregate"
+      }
+    });
+  }
+
+  async sendWorkshopEncryptedText(input: ClawzWorkshopEncryptedTextInput): Promise<WorkshopPrivateEnvelopePostResult> {
+    if (!this.workshopAccessToken) {
+      throw new Error("sendWorkshopEncryptedText requires workshopAccessToken.");
+    }
+    const envelope = this.buildWorkshopEncryptedTextEnvelope(input);
+    return this.postJson<WorkshopPrivateEnvelopePostResult>(
+      "/api/workshop/envelopes",
+      {
+        agentId: input.agentId,
+        envelope
+      },
+      {
+        headers: {
+          "x-santaclawz-workshop-token": this.workshopAccessToken
+        }
+      }
+    );
+  }
+
+  async readWorkshopEncryptedEnvelopes(input: ClawzWorkshopPrivateEnvelopeQuery): Promise<WorkshopPrivateEnvelopeStoreState> {
+    if (!this.workshopAccessToken) {
+      throw new Error("readWorkshopEncryptedEnvelopes requires workshopAccessToken.");
+    }
+    const manifest = input.manifest ? parseCoordinationBridgeManifest(input.manifest) : undefined;
+    const threadId = input.threadId?.trim() || manifest?.threadId;
+    return this.readJson<WorkshopPrivateEnvelopeStoreState>(
+      withQuery(this.baseUrl, "/api/workshop/envelopes", {
+        agentId: input.agentId,
+        ...(threadId ? { threadId } : {}),
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      }),
+      {
+        headers: {
+          "x-santaclawz-workshop-token": this.workshopAccessToken
+        }
+      }
     );
   }
 

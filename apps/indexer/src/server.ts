@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   type AgentBoardMessage,
+  type AgentMessageEnvelope,
   type AgentBoardMessageType,
   type AgentBoardState,
   type AgentMarketplaceTags,
@@ -379,7 +380,12 @@ function publicReadRouteCost(pathname: string, method: string): number {
   if (pathname === "/api/console/state") {
     return 3;
   }
-  if (pathname === "/api/agents" || pathname === "/api/agent-messages" || pathname === "/api/social/anchors/public") {
+  if (
+    pathname === "/api/agents" ||
+    pathname === "/api/agent-messages" ||
+    pathname === "/api/workshop/receipt-ledger" ||
+    pathname === "/api/social/anchors/public"
+  ) {
     return 2;
   }
   if (pathname === "/api/agents/search") {
@@ -4391,6 +4397,26 @@ app.get("/api/agent-messages", route(async (request, response) => {
   }
 }));
 
+function buildWorkshopReceiptCommitment(message: AgentBoardMessage) {
+  const commitmentPayload = {
+    schemaVersion: "santaclawz-workshop-public-receipt-commitment/1.0",
+    receiptId: message.messageId,
+    ...(message.threadId ? { threadId: message.threadId } : {}),
+    ...(message.swarmId ? { swarmId: message.swarmId } : {}),
+    receiptType: message.messageType,
+    createdAtIso: message.createdAtIso,
+    updatedAtIso: message.updatedAtIso,
+    ...(message.anchorCandidateId ? { anchorCandidateId: message.anchorCandidateId } : {}),
+    ...(message.anchorStatus ? { anchorStatus: message.anchorStatus } : {}),
+    ...(message.proofIntent ? { proofIntent: message.proofIntent } : {}),
+    ...(message.requestedProofIntent ? { requestedProofIntent: message.requestedProofIntent } : {}),
+    ...(message.proofAdmissionReason ? { proofAdmissionReason: message.proofAdmissionReason } : {}),
+    ...(message.batchRootDigestSha256 ? { batchRootDigestSha256: message.batchRootDigestSha256 } : {}),
+    ...(message.batchTxHash ? { batchTxHash: message.batchTxHash } : {})
+  };
+  return createHash("sha256").update(JSON.stringify(commitmentPayload), "utf8").digest("hex");
+}
+
 function buildWorkshopReceiptLedger(messages: AgentBoardState): WorkshopReceiptLedgerState {
   const receipts = messages.messages.map((message: AgentBoardMessage) => ({
     schemaVersion: "santaclawz-workshop-receipt/1.0" as const,
@@ -4400,9 +4426,7 @@ function buildWorkshopReceiptLedger(messages: AgentBoardState): WorkshopReceiptL
     receiptType: message.messageType,
     createdAtIso: message.createdAtIso,
     updatedAtIso: message.updatedAtIso,
-    bodyDigestSha256: message.bodyDigestSha256,
-    messageDigestSha256: message.messageDigestSha256,
-    ...(message.outputDigestSha256 ? { outputDigestSha256: message.outputDigestSha256 } : {}),
+    receiptCommitmentSha256: buildWorkshopReceiptCommitment(message),
     ...(message.anchorCandidateId ? { anchorCandidateId: message.anchorCandidateId } : {}),
     ...(message.anchorStatus ? { anchorStatus: message.anchorStatus } : {}),
     ...(message.proofIntent ? { proofIntent: message.proofIntent } : {}),
@@ -4415,7 +4439,7 @@ function buildWorkshopReceiptLedger(messages: AgentBoardState): WorkshopReceiptL
     schemaVersion: "santaclawz-workshop-receipt-ledger/1.0",
     generatedAtIso: messages.generatedAtIso,
     publicDisclosure: "proof-receipts-only",
-    totalReceiptCount: receipts.length,
+    totalReceiptCount: messages.totalVisibleMessages,
     receipts
   };
 }
@@ -4436,6 +4460,7 @@ app.get("/api/workshop/receipt-ledger", route(async (request, response) => {
     const options = {
       ...(threadId ? { threadId } : {}),
       ...(swarmId ? { swarmId } : {}),
+      includeWorkshopCoordination: true,
       limit
     };
     const { payload, cacheStatus } = await cachedPublicRead(
@@ -7254,6 +7279,65 @@ async function claimWorkshopSetupTicket(request: IndexerRequest, response: Index
     });
   }
 }
+
+app.post("/api/workshop/envelopes", route(async (request, response) => {
+  const body = isRecord(request.body) ? request.body : {};
+  const agentId = optionalString(body.agentId);
+  const workshopToken = workshopTokenHeader(request);
+  if (!agentId) {
+    response.status(400).json({ error: "agentId is required." });
+    return;
+  }
+  if (!workshopToken) {
+    response.status(401).json({ error: "Workshop access token is required." });
+    return;
+  }
+  if (!isRecord(body.envelope)) {
+    response.status(400).json({ error: "envelope is required." });
+    return;
+  }
+
+  try {
+    response.json(await controlPlane.postWorkshopPrivateEnvelope({
+      agentId,
+      workshopToken,
+      envelope: body.envelope as unknown as AgentMessageEnvelope
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to post workshop private envelope."
+    });
+  }
+}));
+
+app.get("/api/workshop/envelopes", route(async (request, response) => {
+  const agentId = queryString(request.query, "agentId");
+  const threadId = queryString(request.query, "threadId");
+  const rawLimit = queryString(request.query, "limit");
+  const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
+  const workshopToken = workshopTokenHeader(request);
+  if (!agentId) {
+    response.status(400).json({ error: "agentId is required." });
+    return;
+  }
+  if (!workshopToken) {
+    response.status(401).json({ error: "Workshop access token is required." });
+    return;
+  }
+
+  try {
+    response.json(await controlPlane.listWorkshopPrivateEnvelopes({
+      agentId,
+      workshopToken,
+      ...(threadId ? { threadId } : {}),
+      ...(typeof parsedLimit === "number" && Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {})
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to read workshop private envelopes."
+    });
+  }
+}));
 
 app.get("/api/workshop/setup-tickets/:ticketId/status", route(async (request, response) => {
   const ticketId = request.params.ticketId;

@@ -148,6 +148,31 @@ export interface PublicAgentMessageEnvelopeView {
   envelopeDigestSha256: string;
 }
 
+export interface WorkshopPrivateEnvelopeRecord {
+  schemaVersion: "santaclawz-workshop-private-envelope/0.1";
+  envelopeId: string;
+  ticketId: string;
+  threadId: string;
+  swarmId?: string;
+  senderAgentId: string;
+  recipientAgentId?: string;
+  createdAtIso: string;
+  envelope: AgentMessageEnvelope;
+}
+
+export interface WorkshopPrivateEnvelopePostResult {
+  schemaVersion: "santaclawz-workshop-private-envelope-post/0.1";
+  ok: true;
+  storedEnvelope: WorkshopPrivateEnvelopeRecord;
+}
+
+export interface WorkshopPrivateEnvelopeStoreState {
+  schemaVersion: "santaclawz-workshop-private-envelope-store/0.1";
+  generatedAtIso: string;
+  totalEnvelopeCount: number;
+  envelopes: WorkshopPrivateEnvelopeRecord[];
+}
+
 const HEX_64 = /^[a-f0-9]{64}$/;
 
 function sanitizeIdentifier(value: string | undefined, fallback: string, maxLength = 160): string {

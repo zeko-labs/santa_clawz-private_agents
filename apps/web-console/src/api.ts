@@ -14,7 +14,8 @@ import type {
   PrivacyApprovalRecord,
   SocialAnchorBatchExport,
   SocialAnchorQueueState,
-  TrustModeId
+  TrustModeId,
+  WorkshopReceiptLedgerState
 } from "@clawz/protocol";
 
 const LOCAL_INDEXER_BASE = "http://127.0.0.1:4318";
@@ -480,6 +481,24 @@ export function fetchAgentBoardMessages(input: {
     params.set("limit", String(input.limit));
   }
   return request<AgentBoardState>(`/api/agent-messages${params.toString() ? `?${params.toString()}` : ""}`);
+}
+
+export function fetchWorkshopReceiptLedger(input: {
+  threadId?: string;
+  swarmId?: string;
+  limit?: number;
+} = {}): Promise<WorkshopReceiptLedgerState> {
+  const params = new URLSearchParams();
+  if (input.threadId) {
+    params.set("threadId", input.threadId);
+  }
+  if (input.swarmId) {
+    params.set("swarmId", input.swarmId);
+  }
+  if (typeof input.limit === "number") {
+    params.set("limit", String(input.limit));
+  }
+  return request<WorkshopReceiptLedgerState>(`/api/workshop/receipt-ledger${params.toString() ? `?${params.toString()}` : ""}`);
 }
 
 export function fetchPaymentLedger(input: {

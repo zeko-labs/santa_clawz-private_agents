@@ -46,6 +46,8 @@ import {
   type AgentBoardPostResult,
   type AgentBoardState,
   type AgentBoardThread,
+  assertValidAgentMessageEnvelope,
+  type AgentMessageEnvelope,
   type AgentCompletionScore,
   type AgentJobActivityStats,
   type AgentMarketplaceTagStat,
@@ -89,6 +91,9 @@ import {
   type SantaClawzJobContext,
   type ShadowWalletState,
   type TrustModeId,
+  type WorkshopPrivateEnvelopePostResult,
+  type WorkshopPrivateEnvelopeRecord,
+  type WorkshopPrivateEnvelopeStoreState,
   type ZekoContractDeployment,
   type ZekoDeploymentState
 } from "@clawz/protocol";
@@ -140,6 +145,12 @@ const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 const COORDINATION_SETUP_TICKET_TTL_MS = 15 * 60 * 1000;
 const COORDINATION_SETUP_TICKET_SCHEMA_VERSION = "santaclawz-coordination-setup-ticket/0.1";
 const COORDINATION_AGENT_SETUP_SCHEMA_VERSION = "santaclawz-coordination-agent-setup/0.1";
+const WORKSHOP_PRIVATE_ENVELOPE_RETAIN_LIMIT = parseBoundedIntegerEnv(
+  "CLAWZ_WORKSHOP_PRIVATE_ENVELOPE_RETAIN_LIMIT",
+  2000,
+  100,
+  100_000
+);
 const JOB_COMPLETION_SCORE_WINDOW_SIZE = 100;
 const JOB_COMPLETION_STALE_MS = 30 * 60 * 1000;
 const ACTIVATION_LANE_UNRESOLVED_PAYMENT_GUARD_MS =
@@ -259,6 +270,7 @@ interface ConsolePersistenceState {
   deletedAgentRegistrationsBySession: Record<string, DeletedAgentRegistrationRecord>;
   enrollmentTicketsById: Record<string, EnrollmentTicketRecord>;
   coordinationSetupTicketsById: Record<string, CoordinationSetupTicketRecord>;
+  workshopPrivateEnvelopesById: Record<string, WorkshopPrivateEnvelopeRecord>;
 }
 
 interface SessionAdminAccessRecord {
@@ -541,6 +553,7 @@ interface AgentBoardListOptions {
   topic?: string;
   capability?: string;
   outputDigestSha256?: string;
+  includeWorkshopCoordination?: boolean;
   limit?: number;
 }
 
@@ -1737,7 +1750,8 @@ function buildDefaultState(nowIso: string): ConsolePersistenceState {
     publishedSessionsBySession: {},
     deletedAgentRegistrationsBySession: {},
     enrollmentTicketsById: {},
-    coordinationSetupTicketsById: {}
+    coordinationSetupTicketsById: {},
+    workshopPrivateEnvelopesById: {}
   };
 }
 
@@ -3602,6 +3616,12 @@ function sanitizeAgentBoardFilterTag(value: unknown, maxLength = AGENT_BOARD_CAP
   return normalized.length > 0 && !hasBlockedPublicTerm([normalized]) ? normalized : undefined;
 }
 
+function isWorkshopCoordinationBoardMessage(message: AgentBoardMessage) {
+  return message.topicTags.includes("team-coordination") ||
+    message.topicTags.includes("agent-workshop") ||
+    (message.capabilityTags ?? []).includes("coordination");
+}
+
 function sanitizeMarketplaceTagList(input: unknown): string[] {
   return sanitizeAgentBoardCapabilityTags(input);
 }
@@ -4528,7 +4548,8 @@ export class ClawzControlPlane {
         publishedSessionsBySession: state.publishedSessionsBySession ?? {},
         deletedAgentRegistrationsBySession: state.deletedAgentRegistrationsBySession ?? {},
         enrollmentTicketsById: state.enrollmentTicketsById ?? {},
-        coordinationSetupTicketsById: state.coordinationSetupTicketsById ?? {}
+        coordinationSetupTicketsById: state.coordinationSetupTicketsById ?? {},
+        workshopPrivateEnvelopesById: state.workshopPrivateEnvelopesById ?? {}
       };
       if (
         state.schemaVersion !== 7 ||
@@ -4542,7 +4563,8 @@ export class ClawzControlPlane {
         !state.publishedSessionsBySession ||
         !state.deletedAgentRegistrationsBySession ||
         !state.enrollmentTicketsById ||
-        !state.coordinationSetupTicketsById
+        !state.coordinationSetupTicketsById ||
+        !state.workshopPrivateEnvelopesById
       ) {
         await this.saveState(migratedState);
       }
@@ -8003,6 +8025,7 @@ export class ClawzControlPlane {
       .filter((message) => !options.topic || message.topicTags.includes(options.topic))
       .filter((message) => !options.capability || (message.capabilityTags ?? []).includes(options.capability))
       .filter((message) => !options.outputDigestSha256 || message.outputDigestSha256 === options.outputDigestSha256)
+      .filter((message) => options.includeWorkshopCoordination || !isWorkshopCoordinationBoardMessage(message))
       .filter((message) => {
         const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId);
         if (!sessionId) {
@@ -8088,6 +8111,7 @@ export class ClawzControlPlane {
     const sanitizedOptions: AgentBoardListOptions = {
       ...(options.agentId ? { agentId: options.agentId } : {}),
       ...(options.threadId ? { threadId: options.threadId } : {}),
+      ...(options.includeWorkshopCoordination ? { includeWorkshopCoordination: true } : {}),
       ...(typeof options.limit === "number" ? { limit: options.limit } : {})
     };
     const topic = sanitizeAgentBoardFilterTag(options.topic, AGENT_BOARD_TOPIC_MAX_LENGTH);
@@ -8136,6 +8160,144 @@ export class ClawzControlPlane {
     if (!options.swarmId || options.swarmId !== normalized.swarmId) {
       throw new Error("Workshop access token can only post to its workshop workflow.");
     }
+  }
+
+  private validateWorkshopParticipantAccess(
+    state: ConsolePersistenceState,
+    options: {
+      agentId: string;
+      workshopToken: string;
+      threadId?: string;
+      swarmId?: string;
+    }
+  ) {
+    const parsedToken = parseWorkshopAccessToken(options.workshopToken);
+    const record = state.coordinationSetupTicketsById[parsedToken.ticketId];
+    if (!record) {
+      throw new Error("Workshop access token was not found.");
+    }
+    const claim = record.claimedAgentsById[options.agentId];
+    if (!claim?.workshopTokenHash || !timingSafeEqualHex(claim.workshopTokenHash, sha256Hex(parsedToken.token))) {
+      throw new Error("Workshop access token was rejected for this agent.");
+    }
+    const normalized = this.normalizeCoordinationManifest(record.manifest);
+    const participantAgentIds = normalized.participants.map((participant) =>
+      assertStringValue(participant, "agentId", "Coordination manifest participant")
+    );
+    if (!participantAgentIds.includes(options.agentId)) {
+      throw new Error("Workshop access token does not include this agent.");
+    }
+    if (options.threadId && options.threadId !== normalized.threadId) {
+      throw new Error("Workshop access token can only access its workshop thread.");
+    }
+    if (options.swarmId && options.swarmId !== normalized.swarmId) {
+      throw new Error("Workshop access token can only access its workshop workflow.");
+    }
+    return {
+      ticketId: record.ticketId,
+      record,
+      normalized,
+      participantAgentIds
+    };
+  }
+
+  private pruneWorkshopPrivateEnvelopes(envelopesById: Record<string, WorkshopPrivateEnvelopeRecord>) {
+    return Object.fromEntries(
+      Object.values(envelopesById)
+        .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso))
+        .slice(0, WORKSHOP_PRIVATE_ENVELOPE_RETAIN_LIMIT)
+        .map((record) => [record.envelopeId, record])
+    );
+  }
+
+  async postWorkshopPrivateEnvelope(input: {
+    agentId: string;
+    workshopToken: string;
+    envelope: AgentMessageEnvelope;
+  }): Promise<WorkshopPrivateEnvelopePostResult> {
+    const state = await this.loadState();
+    const envelope = assertValidAgentMessageEnvelope(input.envelope);
+    const senderAgentId = envelope.sender.agentId;
+    const recipientAgentId = envelope.recipient?.agentId;
+    if (senderAgentId !== input.agentId) {
+      throw new Error("Encrypted workshop envelope sender must match the claimed agent.");
+    }
+    if (envelope.visibility !== "recipient-encrypted") {
+      throw new Error("Workshop private envelope transport requires recipient-encrypted visibility.");
+    }
+    if (envelope.payload.mode !== "inline") {
+      throw new Error("Workshop private text envelopes must use inline encrypted text payloads.");
+    }
+    if (!envelope.payload.body?.trim()) {
+      throw new Error("Workshop private text envelope requires ciphertext in payload.body.");
+    }
+    if (!envelope.payload.encryption) {
+      throw new Error("Workshop private text envelope requires payload.encryption metadata.");
+    }
+    const access = this.validateWorkshopParticipantAccess(state, {
+      agentId: input.agentId,
+      workshopToken: input.workshopToken,
+      threadId: envelope.threadId,
+      ...(envelope.swarmId ? { swarmId: envelope.swarmId } : {})
+    });
+    if (recipientAgentId && !access.participantAgentIds.includes(recipientAgentId)) {
+      throw new Error("Workshop private envelope recipient must be enrolled in this workshop.");
+    }
+    const createdAtIso = new Date().toISOString();
+    const storedEnvelope: WorkshopPrivateEnvelopeRecord = {
+      schemaVersion: "santaclawz-workshop-private-envelope/0.1",
+      envelopeId: envelope.messageId,
+      ticketId: access.ticketId,
+      threadId: envelope.threadId,
+      ...(envelope.swarmId ? { swarmId: envelope.swarmId } : {}),
+      senderAgentId,
+      ...(recipientAgentId ? { recipientAgentId } : {}),
+      createdAtIso,
+      envelope
+    };
+    const nextEnvelopesById = this.pruneWorkshopPrivateEnvelopes({
+      ...state.workshopPrivateEnvelopesById,
+      [storedEnvelope.envelopeId]: storedEnvelope
+    });
+    await this.saveState({
+      ...state,
+      workshopPrivateEnvelopesById: nextEnvelopesById
+    });
+    return {
+      schemaVersion: "santaclawz-workshop-private-envelope-post/0.1",
+      ok: true,
+      storedEnvelope
+    };
+  }
+
+  async listWorkshopPrivateEnvelopes(input: {
+    agentId: string;
+    workshopToken: string;
+    threadId?: string;
+    limit?: number;
+  }): Promise<WorkshopPrivateEnvelopeStoreState> {
+    const state = await this.loadState();
+    const access = this.validateWorkshopParticipantAccess(state, {
+      agentId: input.agentId,
+      workshopToken: input.workshopToken,
+      ...(input.threadId ? { threadId: input.threadId } : {})
+    });
+    const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
+    const visibleEnvelopes = Object.values(state.workshopPrivateEnvelopesById)
+      .filter((record) => record.ticketId === access.ticketId)
+      .filter((record) => !input.threadId || record.threadId === input.threadId)
+      .filter((record) =>
+        record.senderAgentId === input.agentId ||
+        record.recipientAgentId === input.agentId ||
+        !record.recipientAgentId
+      )
+      .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso));
+    return {
+      schemaVersion: "santaclawz-workshop-private-envelope-store/0.1",
+      generatedAtIso: new Date().toISOString(),
+      totalEnvelopeCount: visibleEnvelopes.length,
+      envelopes: visibleEnvelopes.slice(0, limit)
+    };
   }
 
   private async postAgentBoardMessageLocked(options: AgentBoardPostOptions): Promise<AgentBoardPostResult> {
@@ -10930,6 +11092,7 @@ export class ClawzControlPlane {
     const registry = await this.listRegisteredAgents();
     const agentBoard = await this.listAgentBoardMessages({
       threadId: run.threadId,
+      includeWorkshopCoordination: true,
       limit: 200
     });
     const scopedMessages = agentBoard.messages.filter((message) =>

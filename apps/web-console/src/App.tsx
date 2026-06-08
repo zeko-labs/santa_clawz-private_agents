@@ -13,7 +13,8 @@ import type {
   PrivacyProvingLocation,
   SocialAnchorCandidate,
   SocialAnchorCandidateKind,
-  SocialAnchorQueueState
+  SocialAnchorQueueState,
+  WorkshopReceiptLedgerState
 } from "@clawz/protocol";
 
 import {
@@ -33,6 +34,7 @@ import {
   fetchPaymentLedger,
   fetchPublicMarketplaceSnapshot,
   fetchPublicSocialAnchors,
+  fetchWorkshopReceiptLedger,
   fetchZekoHealth,
   getApiBase,
   issueOwnershipChallenge,
@@ -66,6 +68,7 @@ type StaticPageKey = "terms-of-service" | "privacy-policy";
 type HiddenPageKey = "sdk" | "hire";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationAgentRole = "admin" | "member";
+type WorkshopReceipt = WorkshopReceiptLedgerState["receipts"][number];
 type SiteAnnouncement = {
   enabled: boolean;
   title: string;
@@ -1208,23 +1211,20 @@ function ProofActivityDetail({ item }: { item: SocialAnchorCandidate }) {
   );
 }
 
-function WorkshopReceiptMetadata({ message }: { message: AgentBoardState["messages"][number] }) {
+function WorkshopReceiptMetadata({ receipt }: { receipt: WorkshopReceipt }) {
   const parts: ReactNode[] = [
-    boardMessageTypeLabel(message.messageType),
-    formatRelativeTime(message.createdAtIso),
-    boardAnchorLabel(message.anchorStatus)
+    boardMessageTypeLabel(receipt.receiptType),
+    formatRelativeTime(receipt.createdAtIso),
+    boardAnchorLabel(receipt.anchorStatus)
   ];
-  parts.push(`proof ${shorten(message.messageDigestSha256, 8, 6)}`);
-  if (message.outputDigestSha256) {
-    parts.push(`receipt ${shorten(message.outputDigestSha256, 8, 6)}`);
+  parts.push(`commitment ${shorten(receipt.receiptCommitmentSha256, 8, 6)}`);
+  if (receipt.batchRootDigestSha256) {
+    parts.push(`root ${shorten(receipt.batchRootDigestSha256, 8, 6)}`);
   }
-  if (message.batchRootDigestSha256) {
-    parts.push(`root ${shorten(message.batchRootDigestSha256, 8, 6)}`);
-  }
-  if (message.batchTxHash) {
+  if (receipt.batchTxHash) {
     parts.push(
-      <ExplorerTxLink kind="zeko" txHash={message.batchTxHash}>
-        tx {shorten(message.batchTxHash, 8, 6)}
+      <ExplorerTxLink kind="zeko" txHash={receipt.batchTxHash}>
+        tx {shorten(receipt.batchTxHash, 8, 6)}
       </ExplorerTxLink>
     );
   }
@@ -2048,12 +2048,12 @@ function clearStoredCoordinationDraft() {
   }
 }
 
-function coordinationThreadKey(message: AgentBoardState["messages"][number]) {
-  return message.threadId || message.swarmId || `${message.agentId}:dispatch`;
+function coordinationThreadKey(receipt: Pick<WorkshopReceipt, "threadId" | "swarmId" | "receiptId">) {
+  return receipt.threadId || receipt.swarmId || receipt.receiptId;
 }
 
-function workshopReceiptOrdinal(message: AgentBoardState["messages"][number], index: number) {
-  const digest = message.outputDigestSha256 || message.messageDigestSha256 || message.bodyDigestSha256;
+function workshopReceiptOrdinal(receipt: WorkshopReceipt, index: number) {
+  const digest = receipt.receiptCommitmentSha256 || receipt.receiptId;
   return `Receipt ${index + 1} - ${shorten(digest, 8, 6)}`;
 }
 
@@ -2140,8 +2140,7 @@ function buildBridgeManifest(input: {
           "receiptId",
           "receiptType",
           "timestamp",
-          "messageDigestSha256",
-          "outputDigestSha256",
+          "receiptCommitmentSha256",
           "batchRootDigestSha256",
           "batchTxHash",
           "aggregateCount"
@@ -2535,6 +2534,7 @@ export function App() {
   const [pendingAgentBoard, setPendingAgentBoard] = useState<AgentBoardState | null>(null);
   const [pendingPaymentLedger, setPendingPaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [pendingPublicSocialAnchorQueue, setPendingPublicSocialAnchorQueue] = useState<SocialAnchorQueueState | null>(null);
+  const [workshopReceiptLedger, setWorkshopReceiptLedger] = useState<WorkshopReceiptLedgerState | null>(null);
   const [pendingExploreUpdateCount, setPendingExploreUpdateCount] = useState(0);
   const [profilePaymentLedger, setProfilePaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
@@ -2924,6 +2924,53 @@ export function App() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [activeSection, exploreActivitySnapshot, sharedAgentId]);
+
+  useEffect(() => {
+    if (activeSection !== "workshop" || sharedAgentId) {
+      setWorkshopReceiptLedger(null);
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: number | undefined;
+
+    const refreshWorkshopReceiptLedger = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
+      void fetchWorkshopReceiptLedger({ threadId: coordinationDraft.threadId, limit: 100 })
+        .then((nextLedger) => {
+          if (!cancelled) {
+            setWorkshopReceiptLedger(nextLedger);
+            clearBackgroundError();
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setWorkshopReceiptLedger(null);
+          }
+        });
+    };
+
+    refreshWorkshopReceiptLedger();
+    intervalId = window.setInterval(refreshWorkshopReceiptLedger, EXPLORE_AGENT_BOARD_POLL_MS);
+
+    const refreshWhenVisible = () => {
+      if (!document.hidden) {
+        refreshWorkshopReceiptLedger();
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [activeSection, coordinationDraft.threadId, sharedAgentId]);
 
   useEffect(() => {
     if (activeSection !== "explore" || !sharedAgentId) {
@@ -4529,27 +4576,22 @@ export function App() {
         : "Registered agent found"
       : "No registered agent found for that URL"
     : "";
-  const coordinationMessages = agentBoard.messages
-    .filter((message) =>
-      message.threadId === coordinationDraft.threadId ||
-      message.swarmId === coordinationDraft.swarmId
-    )
-    .sort((left, right) => timestampValue(right.createdAtIso) - timestampValue(left.createdAtIso))
-    .slice(0, 80);
+  const coordinationReceipts = workshopReceiptLedger?.receipts ?? [];
+  const coordinationReceiptCount = workshopReceiptLedger?.totalReceiptCount ?? 0;
   const coordinationThreads = Array.from(
-    coordinationMessages
-      .reduce((groups, message) => {
-        const key = coordinationThreadKey(message);
+    coordinationReceipts
+      .reduce((groups, receipt) => {
+        const key = coordinationThreadKey(receipt);
         const existing = groups.get(key) ?? {
           key,
-          threadId: message.threadId,
-          ...(message.swarmId ? { swarmId: message.swarmId } : {}),
-          messages: [] as AgentBoardState["messages"],
-          latestAtIso: message.createdAtIso
+          ...(receipt.threadId ? { threadId: receipt.threadId } : {}),
+          ...(receipt.swarmId ? { swarmId: receipt.swarmId } : {}),
+          receipts: [] as WorkshopReceipt[],
+          latestAtIso: receipt.createdAtIso
         };
-        existing.messages.push(message);
-        if (timestampValue(message.createdAtIso) > timestampValue(existing.latestAtIso)) {
-          existing.latestAtIso = message.createdAtIso;
+        existing.receipts.push(receipt);
+        if (timestampValue(receipt.createdAtIso) > timestampValue(existing.latestAtIso)) {
+          existing.latestAtIso = receipt.createdAtIso;
         }
         groups.set(key, existing);
         return groups;
@@ -4557,7 +4599,7 @@ export function App() {
         key: string;
         threadId?: string;
         swarmId?: string;
-        messages: AgentBoardState["messages"];
+        receipts: WorkshopReceipt[];
         latestAtIso: string;
       }>())
       .values()
@@ -5165,7 +5207,7 @@ export function App() {
                 <p className="panel-copy">Proof-only public commitments</p>
               </div>
               <div className="coordination-ledger-actions">
-                <span className="coordination-ledger-count">{coordinationMessages.length} receipts</span>
+                <span className="coordination-ledger-count">{coordinationReceiptCount} receipts</span>
                 <button
                   type="button"
                   className="secondary-button coordination-ledger-copy-button"
@@ -5190,14 +5232,14 @@ export function App() {
                 coordinationThreads.slice(0, 12).map((thread) => (
                   <article key={thread.key} className="coordination-thread-card">
                     <div className="coordination-message-stack">
-                      {thread.messages.slice(0, 12).map((message, messageIndex) => (
-                        <div key={message.messageId} className="coordination-message-row">
+                      {thread.receipts.slice(0, 12).map((receipt, receiptIndex) => (
+                        <div key={receipt.receiptId} className="coordination-message-row">
                           <span className="coordination-receipt-avatar">RC</span>
                           <div>
-                            <strong>{workshopReceiptOrdinal(message, messageIndex)}</strong>
+                            <strong>{workshopReceiptOrdinal(receipt, receiptIndex)}</strong>
                             <p>Private workshop event committed. Public ledger shows proof metadata only.</p>
                             <small className="coordination-receipt-metadata">
-                              <WorkshopReceiptMetadata message={message} />
+                              <WorkshopReceiptMetadata receipt={receipt} />
                             </small>
                           </div>
                         </div>
