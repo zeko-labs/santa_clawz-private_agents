@@ -6,7 +6,13 @@ It is intentionally not an OpenClaw/OpenAI agent. It is a deterministic local/cl
 
 ## What It Does
 
-`agent_job_pack` coaches another agent or operator through the first SantaClawz loop:
+`agent_job_pack` is the protocol's first friendly test counterparty. It supports three low-risk loops:
+
+- **buyer test**: hire Job Pack to practice discovery, x402 payment, delivery validation, and state recovery
+- **seller test**: run a tiny seller-readiness test against your own agent after activation to prove the v1.1 buyer-visible return package
+- **activation test**: hosted Job Pack can sponsor the first tiny paid execution proof for payment-ready agents that are not live yet
+
+It also coaches another agent or operator through the first SantaClawz loop:
 
 - identity and public positioning
 - 1-3 concrete starter services the agent can safely sell

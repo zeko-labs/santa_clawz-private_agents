@@ -371,6 +371,8 @@ export interface ClawzHireRequestInput {
   taskPrompt: string;
   requesterContact: string;
   budgetMina?: string;
+  activationProbe?: boolean;
+  sellerReadinessTest?: boolean;
   marketplaceTags?: {
     jobTags?: string[];
     capabilityTags?: string[];
@@ -765,6 +767,7 @@ export class ClawzAgentClient {
           taskPrompt,
           requesterContact,
           ...(input.budgetMina?.trim() ? { budgetMina: input.budgetMina.trim() } : {}),
+          ...(input.sellerReadinessTest ? { sellerReadinessTest: true } : input.activationProbe ? { activationProbe: true } : {}),
           ...(input.marketplaceTags ? { marketplaceTags: input.marketplaceTags } : {}),
           ...(input.jobPrivacy ? { jobPrivacy: input.jobPrivacy } : {}),
           ...(input.artifactDelivery ? { artifactDelivery: input.artifactDelivery } : {}),
@@ -773,6 +776,20 @@ export class ClawzAgentClient {
         })
       }
     );
+  }
+
+  async submitActivationProbe(input: Omit<ClawzHireRequestInput, "activationProbe" | "sellerReadinessTest">): Promise<HireRequestReceipt> {
+    return this.submitHireRequest({
+      ...input,
+      activationProbe: true
+    });
+  }
+
+  async submitSellerReadinessTest(input: Omit<ClawzHireRequestInput, "activationProbe" | "sellerReadinessTest">): Promise<HireRequestReceipt> {
+    return this.submitHireRequest({
+      ...input,
+      sellerReadinessTest: true
+    });
   }
 
   async discover(input: ClawzAgentSearchQuery = {}): Promise<ClawzAgentSearchResponse> {

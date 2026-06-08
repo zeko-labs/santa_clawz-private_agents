@@ -703,6 +703,8 @@ type HireRequestBody = {
   activation_lane?: unknown;
   activationProbe?: unknown;
   activation_probe?: unknown;
+  sellerReadinessTest?: unknown;
+  seller_readiness_test?: unknown;
 };
 type ArtifactReceiptBody = {
   deliveryMode?: unknown;
@@ -1819,7 +1821,9 @@ function parseHireRequest(body: unknown): HireRequestBody {
         activationLane: body.activationLane,
         activation_lane: body.activation_lane,
         activationProbe: body.activationProbe,
-        activation_probe: body.activation_probe
+        activation_probe: body.activation_probe,
+        sellerReadinessTest: body.sellerReadinessTest,
+        seller_readiness_test: body.seller_readiness_test
       }
     : {};
 }
@@ -2516,6 +2520,14 @@ function paidExecutionProbeRequiredBody(input: {
         purpose:
           "Any funded buyer/operator can run this tiny paid proving job. It is marked as an activation probe, not normal marketplace work."
       },
+      sellerReadinessTest: {
+        available: true,
+        query: "sellerReadinessTest=true",
+        body: { sellerReadinessTest: true },
+        amountUsd: publicProbeAmountUsd,
+        purpose:
+          "After activation, any funded buyer/operator can run this tiny seller practice job to verify the v1.1 paid route and buyer-visible return package without affecting marketplace success score."
+      },
       hostedJobPack: {
         available: true,
         purpose:
@@ -2568,7 +2580,13 @@ function compactPaymentLedgerEntryForPublicSnapshot(entry: PaymentLedgerEntry): 
 
 function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
   const resource = entry.resource ?? "";
-  if (resource.includes("/api/activation-lane/") || resource.includes("activationLane=true") || resource.includes("activationProbe=true")) {
+  if (
+    resource.includes("/api/activation-lane/") ||
+    resource.includes("activationLane=true") ||
+    resource.includes("activationProbe=true") ||
+    resource.includes("sellerReadinessTest=true") ||
+    resource.includes("sellerTest=true")
+  ) {
     return true;
   }
   return parseUsdMicros(entry.amountUsd, "0") === parseUsdMicros(activationLaneAmountUsd(), "0");
@@ -7493,7 +7511,12 @@ const handleAgentHireRequest = route(async (request, response) => {
       queryBoolean(request.query, "activationProbe") === true ||
       bodyRecord.activationProbe === true ||
       bodyRecord.activation_probe === true;
-    const activationProbeRequested = activationLaneRequested || publicActivationProbeRequested;
+    const sellerReadinessTestRequested =
+      queryBoolean(request.query, "sellerReadinessTest") === true ||
+      queryBoolean(request.query, "sellerTest") === true ||
+      bodyRecord.sellerReadinessTest === true ||
+      bodyRecord.seller_readiness_test === true;
+    const activationProbeRequested = activationLaneRequested || publicActivationProbeRequested || sellerReadinessTestRequested;
     if (activationLaneRequested && !requireActivationLaneAccess(request, response)) {
       return;
     }
@@ -7501,7 +7524,9 @@ const handleAgentHireRequest = route(async (request, response) => {
     const taskPrompt =
       typeof body.taskPrompt === "string" && body.taskPrompt.trim().length > 0
         ? body.taskPrompt.trim()
-        : activationProbeRequested
+        : sellerReadinessTestRequested
+          ? "SantaClawz seller readiness test. Return a compact v1.1 buyer-visible package with a short answer, verification manifest, and delivery summary proving paid execution works end-to-end."
+          : activationProbeRequested
           ? "SantaClawz paid activation probe. Return a compact buyer-visible package proving this agent can receive paid work, complete it, and return delivery."
           : "";
     const requesterContact =
@@ -7509,6 +7534,8 @@ const handleAgentHireRequest = route(async (request, response) => {
         ? body.requesterContact.trim()
         : activationLaneRequested
           ? "agent_job_pack@santaclawz.ai"
+          : sellerReadinessTestRequested
+            ? "seller_readiness_test@santaclawz.ai"
           : publicActivationProbeRequested
             ? "buyer_activation_probe@santaclawz.ai"
           : "";
@@ -7563,6 +7590,9 @@ const handleAgentHireRequest = route(async (request, response) => {
           paymentPayloadDigestSha256?: string;
           paymentAuthorizationDigestSha256?: string;
           paymentResponseDigestSha256?: string;
+          activationLane?: boolean;
+          publicActivationProbe?: boolean;
+          sellerReadinessTest?: boolean;
         }
       | undefined;
     let paymentPayloadForDeferredSettlement: Record<string, unknown> | undefined;
@@ -7872,7 +7902,8 @@ const handleAgentHireRequest = route(async (request, response) => {
       paymentAuthorization = {
         status: "authorized",
         ...(activationProbeRequested ? { activationLane: true } : {}),
-        ...(publicActivationProbeRequested ? { publicActivationProbe: true } : {}),
+        ...(publicActivationProbeRequested || sellerReadinessTestRequested ? { publicActivationProbe: true } : {}),
+        ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : {}),
         rail: verification.rail.rail,
         ...(verification.rail.amountUsd ? { amountUsd: verification.rail.amountUsd } : {}),
         authorizationId: paymentPayloadDigestSha256,

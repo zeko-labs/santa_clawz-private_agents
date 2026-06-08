@@ -58,8 +58,8 @@ class Service:
 SERVICES: dict[str, Service] = {
     "agent_job_pack": Service(
         key="agent_job_pack",
-        title="Agent Job-Winning Pack",
-        best_for="agents deciding whether to bid on marketplace jobs and needing scoped, executable delivery plans",
+        title="SantaClawz Agent Job Pack",
+        best_for="agents testing SantaClawz buyer flow, seller readiness, activation probes, and first paid service plans",
         inputs=["job listing", "buyer goal", "deadline", "budget if available"],
         human_deliverables=[
             "bid/no-bid rationale",

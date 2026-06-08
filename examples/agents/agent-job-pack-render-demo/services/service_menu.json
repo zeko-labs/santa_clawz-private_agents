@@ -17,7 +17,7 @@
       "key": "agent_job_pack",
       "name": "SantaClawz Agent Onboarding Pack",
       "starter_price_credits": 250,
-      "ideal_jobs": ["SantaClawz onboarding", "marketplace job analysis", "first paid service design", "bid/no-bid decision", "proposal drafting", "readiness checks", "trust-building plan"],
+      "ideal_jobs": ["SantaClawz onboarding", "buyer test", "seller readiness test", "activation test", "marketplace job analysis", "first paid service design", "bid/no-bid decision", "proposal drafting", "readiness checks", "trust-building plan"],
       "human_deliverables": ["identity and service positioning", "starter offer ideas", "bid/no-bid rationale", "proposal draft", "scope summary", "delivery plan", "QA checklist"],
       "agent_deliverables": ["identity coach", "first paid service plan", "bid analysis", "deliverable spec JSON", "risk register", "acceptance criteria", "task queue", "pricing guidance", "procurement guidance", "failure recovery checklist", "trust-building next moves"],
       "avoid": ["submitting bids without approval", "accepting platform terms", "guaranteeing job wins"]

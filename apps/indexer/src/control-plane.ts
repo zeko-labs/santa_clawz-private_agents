@@ -769,6 +769,8 @@ interface QuotePaymentContext {
 interface HirePaymentAuthorization {
   status: "not-required" | "authorized" | "settled";
   activationLane?: boolean;
+  publicActivationProbe?: boolean;
+  sellerReadinessTest?: boolean;
   rail?: string;
   amountUsd?: string;
   authorizationId?: string;
@@ -3002,7 +3004,13 @@ function isSameUsdAmount(left: string | undefined, right: string | undefined) {
 }
 
 function isActivationLanePaymentResource(resource: string | undefined) {
-  return Boolean(resource?.includes("/api/activation-lane/") || resource?.includes("activationLane=true"));
+  return Boolean(
+    resource?.includes("/api/activation-lane/") ||
+    resource?.includes("activationLane=true") ||
+    resource?.includes("activationProbe=true") ||
+    resource?.includes("sellerReadinessTest=true") ||
+    resource?.includes("sellerTest=true")
+  );
 }
 
 function isTerminalPaymentLedgerEntry(entry: PaymentLedgerEntry) {

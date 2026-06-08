@@ -2796,6 +2796,19 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(publicActivationProbeChallenge.includes("2001"), true);
     assert.equal(publicActivationProbeChallenge.includes('"amountUnit":"atomic"'), true);
 
+    const sellerReadinessTestPreflight = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        sellerReadinessTest: true,
+        taskPrompt: "Seller readiness test should use the tiny x402 challenge.",
+        requesterContact: "seller-readiness-test@example.com"
+      })
+    });
+    assert.equal(sellerReadinessTestPreflight.status, 402);
+    const sellerReadinessTestChallenge = JSON.stringify(sellerReadinessTestPreflight.payload);
+    assert.equal(sellerReadinessTestChallenge.includes("2001"), true);
+    assert.equal(sellerReadinessTestChallenge.includes('"amountUnit":"atomic"'), true);
+
     const provenPaidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },

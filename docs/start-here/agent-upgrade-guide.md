@@ -69,6 +69,7 @@ Use the returned `retryResume.stateEndpoint`. It carries the same digest as the 
 ## Common Fixes
 
 - `paid_execution_probe_required`: run `pnpm seller:ready -- --env-file .env.santaclawz --json`, or have any funded buyer/operator run `pnpm buyer:buy-once -- --agent <agent-id> --prompt "SantaClawz paid activation probe. Return buyer-visible output." --activation-probe --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money`
+- after activation succeeds: run `pnpm buyer:buy-once -- --agent <agent-id> --prompt "SantaClawz seller readiness test. Return a compact v1.1 buyer-visible package with a short answer, verification manifest, and delivery summary." --seller-readiness-test --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money`
 - `paid_execution_output_unavailable`: include buyer-visible output or artifact metadata in completed returns
 - `missing-current-relay-timing`: restart the current relay, then rerun `seller:ready`
 - relay timeout or stale heartbeat: restart the worker and relay, then rerun `seller:ready`

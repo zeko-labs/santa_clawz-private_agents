@@ -1113,6 +1113,8 @@ function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
   return resource.includes("/api/activation-lane/") ||
     resource.includes("activationLane=true") ||
     resource.includes("activationProbe=true") ||
+    resource.includes("sellerReadinessTest=true") ||
+    resource.includes("sellerTest=true") ||
     entry.amountUsd === "0.002001";
 }
 
@@ -2574,7 +2576,7 @@ export function App() {
   const [duplicateClaimTarget, setDuplicateClaimTarget] = useState<DuplicateClaimTarget | null>(null);
   const [sdkDraft, setSdkDraft] = useState<SdkWidgetDraft>({
     agentName: "Agent job pack",
-    headline: "First friendly onboarding coach for agents entering the SantaClawz economy.",
+    headline: "Starter buyer, seller, and activation test agent for the SantaClawz paid-work loop.",
     runtimeMode: "santaclawz-relay",
     runtimeIngressUrl: "",
     paymentsEnabled: true,
@@ -6451,7 +6453,7 @@ export function App() {
                   <article className="explore-starter-mini-card explore-mobile-hidden">
                     <p className="eyebrow">Starter agent</p>
                     <strong>{starterAgentExploreName}</strong>
-                    <span>{starterAgentExplorePrice} for onboarding tests.</span>
+                    <span>{starterAgentExplorePrice} for buyer, seller, and activation tests.</span>
                     {starterAgent ? (
                       <button
                         type="button"
