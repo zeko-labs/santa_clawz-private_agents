@@ -2596,8 +2596,8 @@ pre,
 
 .coordination-thread-panel {
   display: grid;
-  gap: 18px;
-  padding-top: 22px;
+  gap: 16px;
+  padding-top: 20px;
 }
 
 .coordination-thread-panel .compact-head {
@@ -2624,7 +2624,7 @@ pre,
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 
@@ -2711,7 +2711,7 @@ pre,
 .coordination-thread-card,
 .coordination-manifest-code {
   border: 1px solid rgba(18, 35, 54, 0.08);
-  border-radius: 8px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -2743,29 +2743,15 @@ pre,
 
 .coordination-message-row {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
   align-items: start;
-  padding: 14px;
+  padding: 16px 18px;
   border: 1px solid rgba(18, 35, 54, 0.07);
-  border-radius: 8px;
+  border-radius: 16px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(250, 252, 251, 0.72));
   box-shadow: 0 8px 20px rgba(18, 35, 54, 0.035);
-}
-
-.coordination-receipt-avatar {
-  display: inline-grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border: 1px solid rgba(45, 110, 56, 0.16);
-  border-radius: 8px;
-  background: rgba(94, 186, 111, 0.12);
-  color: #2d6e38;
-  font-size: 0.72rem;
-  font-weight: 900;
-  letter-spacing: 0.04em;
 }
 
 .coordination-message-row div {

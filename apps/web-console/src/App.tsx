@@ -688,6 +688,14 @@ function buildPublicAgentHireUrl(agentId: string) {
   return `${buildPublicAgentUrl(agentId)}/hire`;
 }
 
+function buildPublicWorkshopLedgerUrl() {
+  const path = "/workshop#workshop-ledger";
+  if (typeof window !== "undefined") {
+    return new URL(path, window.location.origin).toString();
+  }
+  return `https://www.santaclawz.ai${path}`;
+}
+
 function buildProgrammaticAgentHireUrl(agentId: string) {
   return `${getApiBase().replace(/\/+$/, "")}/api/agents/${encodeURIComponent(agentId)}/hire`;
 }
@@ -4611,8 +4619,7 @@ export function App() {
     apiBase
   });
   const bridgeManifestPayload = JSON.parse(bridgeManifest) as Record<string, unknown>;
-  const publicCoordinationThreadUrl =
-    `${apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(coordinationDraft.threadId)}&limit=100`;
+  const publicCoordinationThreadUrl = buildPublicWorkshopLedgerUrl();
   const selectedCoordinationRoles = selectedCoordinationAgents.map((agent, index) => (
     coordinationAgentRoles[agent.agentId] ?? (index === 0 ? "admin" : "member")
   ));
@@ -5200,14 +5207,14 @@ export function App() {
         </section>
 
         <div className="coordination-grid">
-          <section className="panel coordination-thread-panel">
+          <section id="workshop-ledger" className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
                 <h2>Workshop receipt ledger</h2>
                 <p className="panel-copy">Proof-only public commitments</p>
               </div>
               <div className="coordination-ledger-actions">
-                <span className="coordination-ledger-count">{coordinationReceiptCount} receipts</span>
+                <span className="coordination-ledger-count">{coordinationReceiptCount} receipts total</span>
                 <button
                   type="button"
                   className="secondary-button coordination-ledger-copy-button"
@@ -5234,7 +5241,6 @@ export function App() {
                     <div className="coordination-message-stack">
                       {thread.receipts.slice(0, 12).map((receipt, receiptIndex) => (
                         <div key={receipt.receiptId} className="coordination-message-row">
-                          <span className="coordination-receipt-avatar">RC</span>
                           <div>
                             <strong>{workshopReceiptOrdinal(receipt, receiptIndex)}</strong>
                             <p>Private workshop event committed. Public ledger shows proof metadata only.</p>
