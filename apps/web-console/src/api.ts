@@ -362,6 +362,7 @@ export interface CoordinationSetupTicketResponse {
   privacyMode: string;
   threadId: string;
   swarmId: string;
+  channels?: Array<{ channelId: string; name: string; allowedRoles?: string[]; allowedAgentIds?: string[] }>;
 }
 
 export interface CoordinationSetupTicketStatusResponse {
@@ -377,6 +378,7 @@ export interface CoordinationSetupTicketStatusResponse {
   privacyMode: string;
   threadId: string;
   swarmId: string;
+  channels?: Array<{ channelId: string; name: string; allowedRoles?: string[]; allowedAgentIds?: string[] }>;
 }
 
 async function request<T>(path: string, init?: RequestInit, adminContext?: AdminKeyContext): Promise<T> {

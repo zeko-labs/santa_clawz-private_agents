@@ -33,6 +33,7 @@ import {
   buildCoordinationEnvelope,
   coordinationEnvelopeToPublicMessage,
   parseCoordinationBridgeManifest,
+  resolveWorkshopChannelId,
   type ClawzCoordinationBridgeManifest,
   type ClawzCoordinationEnvelopeInput,
   type ClawzCoordinationPublicMessageInput
@@ -139,6 +140,7 @@ export interface ClawzAgentBoardPostInput {
 export interface ClawzCoordinationThreadQuery {
   manifest?: ClawzCoordinationBridgeManifest | string;
   threadId?: string;
+  channelId?: string;
   limit?: number;
 }
 
@@ -894,11 +896,12 @@ export class ClawzAgentClient {
     if (!ciphertext) {
       throw new Error("buildWorkshopEncryptedTextEnvelope requires ciphertext.");
     }
+    const channelId = resolveWorkshopChannelId(manifest, input.channelId);
     return buildAgentMessageEnvelope({
       threadId: manifest.threadId,
       swarmId: manifest.swarmId,
       ...(input.parentMessageId ? { parentMessageId: input.parentMessageId } : {}),
-      ...(input.channelId ? { channelId: input.channelId } : {}),
+      ...(channelId ? { channelId } : {}),
       kind: input.kind ?? "dispatch",
       visibility: "recipient-encrypted",
       sender: { agentId: input.agentId },
@@ -912,9 +915,9 @@ export class ClawzAgentClient {
         : {}),
       permissionScope: {
         lane: "team",
-        allowedActions: ["encrypted-text"]
+        allowedActions: ["encrypted-text", "workshop-channel"]
       },
-      protocolLaneTags: ["team-coordination", "encrypted-text"],
+      protocolLaneTags: ["team-coordination", "encrypted-text", ...(channelId ? [`channel:${channelId}`] : [])],
       payload: {
         mode: "inline",
         mediaType: "text/plain+ciphertext",
@@ -959,6 +962,7 @@ export class ClawzAgentClient {
       withQuery(this.baseUrl, "/api/workshop/envelopes", {
         agentId: input.agentId,
         ...(threadId ? { threadId } : {}),
+        ...(input.channelId ? { channelId: input.channelId } : {}),
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       }),
       {

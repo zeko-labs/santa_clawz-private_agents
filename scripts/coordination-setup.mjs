@@ -115,6 +115,9 @@ async function claimTicketWithRetry(url, body) {
 function envOutput(setup) {
   const manifestJson = JSON.stringify(setup.manifest);
   const setupJson = JSON.stringify(setup);
+  const defaultChannelId = setup.channelPolicy?.defaultChannelId ||
+    setup.channels?.find((channel) => channel.default)?.channelId ||
+    "general";
   const lines = [
     `export SANTACLAWZ_COORDINATION_AGENT_SETUP_JSON=${shellQuote(setupJson)}`,
     `export SANTACLAWZ_BRIDGE_MANIFEST_JSON=${shellQuote(manifestJson)}`,
@@ -123,8 +126,18 @@ function envOutput(setup) {
     `export SANTACLAWZ_COORDINATION_THREAD_ID=${shellQuote(setup.threadId)}`,
     `export SANTACLAWZ_COORDINATION_WORKFLOW_ID=${shellQuote(setup.swarmId)}`,
     `export SANTACLAWZ_COORDINATION_PRIVACY_MODE=${shellQuote(setup.privacyMode)}`,
+    `export SANTACLAWZ_WORKSHOP_DEFAULT_CHANNEL_ID=${shellQuote(defaultChannelId)}`,
     `export SANTACLAWZ_COORDINATION_PUBLIC_TRACE_URL=${shellQuote(setup.publicTraceUrl)}`
   ];
+  if (setup.channels?.length) {
+    lines.push(`export SANTACLAWZ_WORKSHOP_CHANNELS_JSON=${shellQuote(JSON.stringify(setup.channels))}`);
+  }
+  if (setup.transport?.privateEnvelopeEndpoint) {
+    lines.push(`export SANTACLAWZ_WORKSHOP_ENVELOPE_ENDPOINT=${shellQuote(setup.transport.privateEnvelopeEndpoint)}`);
+  }
+  if (setup.transport?.receiptLedgerEndpoint) {
+    lines.push(`export SANTACLAWZ_WORKSHOP_RECEIPT_LEDGER_ENDPOINT=${shellQuote(setup.transport.receiptLedgerEndpoint)}`);
+  }
   if (setup.adminKey) {
     lines.push(`export SANTACLAWZ_AGENT_ADMIN_KEY=${shellQuote(setup.adminKey)}`);
   }

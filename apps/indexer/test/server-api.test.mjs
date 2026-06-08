@@ -6,11 +6,12 @@ import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { buildAgentMessageEnvelope } from "@clawz/protocol";
 
 const serverEntry = fileURLToPath(new URL("../dist/apps/indexer/src/server.js", import.meta.url));
+const controlPlaneEntry = fileURLToPath(new URL("../dist/apps/indexer/src/control-plane.js", import.meta.url));
 const verifierEntry = fileURLToPath(new URL("../dist/apps/indexer/src/verify-agent-proof.js", import.meta.url));
 const relayEntry = fileURLToPath(new URL("../../../scripts/relay-agent.mjs", import.meta.url));
 const SERVER_READY_TIMEOUT_MS = 30000;
@@ -1175,6 +1176,28 @@ async function testProtectedApiAuth() {
           coordinationPolicy: {
             privacyMode: "digest-only"
           },
+          channelPolicy: {
+            defaultChannelId: "general",
+            agentCreatedChannels: "allowed",
+            channelIdPattern: "^[a-z0-9][a-z0-9._:-]{0,79}$",
+            privateEnvelopeRequired: true,
+            receiptsRequired: true,
+            publicLedgerProjection: "proof-only"
+          },
+          channels: [
+            {
+              channelId: "general",
+              name: "General workshop",
+              allowedRoles: ["admin", "member"],
+              disclosure: "private-setup-only"
+            },
+            {
+              channelId: "admin",
+              name: "Admin coordination",
+              allowedRoles: ["admin"],
+              disclosure: "private-setup-only"
+            }
+          ],
           participants: [
             {
               agentId: workshopAgentId,
@@ -1242,6 +1265,7 @@ async function testProtectedApiAuth() {
     const encryptedEnvelope = buildAgentMessageEnvelope({
       threadId: "eventlog_public_workshop_auth_smoke",
       swarmId: "workflow_public_workshop_auth_smoke",
+      channelId: "general",
       kind: "dispatch",
       visibility: "recipient-encrypted",
       sender: { agentId: workshopAgentId },
@@ -1277,6 +1301,7 @@ async function testProtectedApiAuth() {
     assert.equal(workshopEnvelopePost.status, 200);
     assert.equal(workshopEnvelopePost.payload.schemaVersion, "santaclawz-workshop-private-envelope-post/0.1");
     assert.equal(workshopEnvelopePost.payload.storedEnvelope.senderAgentId, workshopAgentId);
+    assert.equal(workshopEnvelopePost.payload.storedEnvelope.channelId, "general");
     assert.equal(workshopEnvelopePost.payload.storedEnvelope.recipientAgentId, workshopRecipientAgentId);
     assert.equal(workshopEnvelopePost.payload.storedEnvelope.envelope.payload.body, "ciphertext:workshop-smoke-private-message");
 
@@ -1284,6 +1309,7 @@ async function testProtectedApiAuth() {
       `${baseUrl}/api/workshop/envelopes?${new URLSearchParams({
         agentId: workshopRecipientAgentId,
         threadId: "eventlog_public_workshop_auth_smoke",
+        channelId: "general",
         limit: "10"
       }).toString()}`,
       {
@@ -1297,6 +1323,43 @@ async function testProtectedApiAuth() {
     assert.equal(workshopRecipientEnvelopeInbox.payload.schemaVersion, "santaclawz-workshop-private-envelope-store/0.1");
     assert.equal(workshopRecipientEnvelopeInbox.payload.totalEnvelopeCount, 1);
     assert.equal(workshopRecipientEnvelopeInbox.payload.envelopes[0].envelopeId, encryptedEnvelope.messageId);
+
+    const memberAdminChannelEnvelope = buildAgentMessageEnvelope({
+      threadId: "eventlog_public_workshop_auth_smoke",
+      swarmId: "workflow_public_workshop_auth_smoke",
+      channelId: "admin",
+      kind: "dispatch",
+      visibility: "recipient-encrypted",
+      sender: { agentId: workshopRecipientAgentId },
+      permissionScope: {
+        lane: "team",
+        allowedActions: ["encrypted-text"]
+      },
+      protocolLaneTags: ["team-coordination", "encrypted-text", "channel:admin"],
+      payload: {
+        mode: "inline",
+        mediaType: "text/plain+ciphertext",
+        body: "ciphertext:member-should-not-post-admin-channel",
+        encryption: {
+          scheme: "custom"
+        }
+      },
+      zekoAnchor: {
+        anchorMode: "aggregate"
+      }
+    });
+    const memberAdminChannelPost = await requestJson(`${baseUrl}/api/workshop/envelopes`, {
+      method: "POST",
+      headers: {
+        "x-santaclawz-workshop-token": publicWorkshopRecipientTicketClaim.payload.workshopAccessToken
+      },
+      body: JSON.stringify({
+        agentId: workshopRecipientAgentId,
+        envelope: memberAdminChannelEnvelope
+      })
+    });
+    assert.equal(memberAdminChannelPost.status, 400);
+    assert.match(memberAdminChannelPost.payload.error, /channel/i);
 
     const workshopPublicThread = await requestJson(
       `${baseUrl}/api/agent-messages?threadId=${encodeURIComponent("eventlog_public_workshop_auth_smoke")}&limit=10`,
@@ -5303,6 +5366,48 @@ async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
     console.log("ok - public payout summary uses all-time payment ledger stats");
   } finally {
     await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+async function testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-uncapped-"));
+  try {
+    const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
+    const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
+    const nowIso = new Date().toISOString();
+    const entries = Array.from({ length: 2001 }, (_, index) => ({
+      ledgerId: `pay_uncapped_${index.toString().padStart(4, "0")}`,
+      createdAtIso: nowIso,
+      updatedAtIso: nowIso,
+      agentId: "agent_uncapped",
+      sessionId: "session_uncapped",
+      resource: "http://127.0.0.1/hire",
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      sellerNetAmountUsd: "0.25",
+      settlementReference: `settlement_uncapped_${index}`,
+      transactionHashes: [`0x${(index + 1).toString(16).padStart(64, "0")}`],
+      paymentStatus: "settled",
+      executionStatus: "completed",
+      returnStatus: "accepted"
+    }));
+
+    await controlPlane.savePaymentLedgerFile({ entries });
+
+    const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    const saved = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
+    assert.equal(saved.entries.length, 2001);
+    assert.equal(saved.allTimeStats.completedPaymentCount, 2001);
+    assert.equal(saved.allTimeStats.completedBasePaymentCount, 2001);
+    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "500.25");
+    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "500.25");
+
+    console.log("ok - payment ledger persistence keeps completed payout rows uncapped");
+  } finally {
     await rm(workspaceDir, { recursive: true, force: true });
   }
 }

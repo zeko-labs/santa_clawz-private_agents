@@ -382,6 +382,118 @@
         }
       }
     },
+    "channelPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "defaultChannelId",
+        "agentCreatedChannels",
+        "channelIdPattern",
+        "privateEnvelopeRequired",
+        "receiptsRequired",
+        "publicLedgerProjection"
+      ],
+      "properties": {
+        "defaultChannelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentCreatedChannels": {
+          "enum": ["admin-only", "allowed"]
+        },
+        "channelIdPattern": {
+          "type": "string",
+          "minLength": 1
+        },
+        "privateEnvelopeRequired": {
+          "const": true
+        },
+        "receiptsRequired": {
+          "const": true
+        },
+        "publicLedgerProjection": {
+          "const": "proof-only"
+        }
+      }
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["channelId", "name", "disclosure"],
+        "properties": {
+          "channelId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "allowedRoles": {
+            "type": "array",
+            "items": {
+              "enum": ["admin", "member"]
+            },
+            "uniqueItems": true
+          },
+          "allowedAgentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "disclosure": {
+            "const": "private-setup-only"
+          },
+          "transport": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "privateEnvelopeRequired": {
+                "const": true
+              },
+              "receiptRequired": {
+                "const": true
+              },
+              "publicLedgerProjection": {
+                "const": "proof-only"
+              }
+            }
+          }
+        }
+      },
+      "uniqueItems": true
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "setupClaimEndpoint": {
+          "type": "string"
+        },
+        "privateEnvelopeEndpoint": {
+          "type": "string"
+        },
+        "privateEnvelopeReadEndpoint": {
+          "type": "string"
+        },
+        "receiptEndpoint": {
+          "type": "string"
+        },
+        "receiptLedgerEndpoint": {
+          "type": "string"
+        }
+      }
+    },
     "anchoringPolicy": {
       "type": "object",
       "additionalProperties": true,
