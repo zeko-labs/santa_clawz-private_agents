@@ -224,6 +224,15 @@ function invalidateCachesAfterWrite(pathname: string) {
   clearConsoleStateCache();
 }
 
+function invalidateAgentRuntimeStatusCaches(agentId: string) {
+  if (!agentId) {
+    return;
+  }
+  clearConsoleStateCache();
+  publicReadCache.delete(`agent-availability:${agentId}`);
+  publicReadInflight.delete(`agent-availability:${agentId}`);
+}
+
 function hotReadRetainedUntilMs(ttlMs: number, nowMs = Date.now()) {
   return nowMs + Math.max(ttlMs, HOT_READ_STALE_WHILE_REVALIDATE_MS);
 }
@@ -2699,6 +2708,17 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
   };
 }
 
+async function cachedRegisteredAgents() {
+  return cachedPublicRead("agents-registry", () => controlPlane.listRegisteredAgents());
+}
+
+async function cachedAgentDirectoryEntries(baseUrl: string) {
+  return cachedPublicRead(
+    `agent-directory:${baseUrl}`,
+    async () => Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)))
+  );
+}
+
 function setHeaders(response: IndexerResponse, headers: Record<string, string>) {
   for (const [name, value] of Object.entries(headers)) {
     response.set(name, value);
@@ -4155,7 +4175,9 @@ app.get("/api/console/state", route(async (request, response) => {
 }));
 
 app.get("/api/agents", route(async (_request, response) => {
-  response.json(await controlPlane.listRegisteredAgents());
+  const { payload, cacheStatus } = await cachedRegisteredAgents();
+  response.set("x-santaclawz-cache", cacheStatus);
+  response.json(payload);
 }));
 
 app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
@@ -4227,7 +4249,8 @@ app.get("/api/agents/search", route(async (request, response) => {
     const rawLimit = queryString(request.query, "limit");
     const limit = rawLimit ? Math.max(1, Math.min(Number.parseInt(rawLimit, 10), 100)) : 50;
     const baseUrl = getBaseUrl(request);
-    const agents = await Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)));
+    const { payload: agents, cacheStatus } = await cachedAgentDirectoryEntries(baseUrl);
+    response.set("x-santaclawz-cache", cacheStatus);
     const filtered = agents.filter((agent) => {
       const tagValues = agentMarketplaceTagValues(agent.marketplaceTags);
       if (q) {
@@ -4285,6 +4308,7 @@ app.get("/api/agents/search", route(async (request, response) => {
       schemaVersion: "santaclawz-agent-directory-search/1.0",
       ok: true,
       generatedAtIso: new Date().toISOString(),
+      cacheStatus,
       totalMatchingAgents: filtered.length,
       agents: filtered.slice(0, limit)
     });
@@ -4303,9 +4327,10 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       return;
     }
     const baseUrl = getBaseUrl(request);
+    const verifyAvailability = queryBoolean(request.query, "verifyAvailability") === true;
     const [consoleState, availability, scannerHealth] = await Promise.all([
       controlPlane.getConsoleState({ agentId }),
-      controlPlane.getAgentRuntimeAvailability({ agentId }),
+      controlPlane.getAgentRuntimeAvailability({ agentId, verifyReachability: verifyAvailability }),
       artifactStore.scannerHealth()
     ]);
     const plan = (await buildX402PlanFromOptions(baseUrl, { agentId })).plan;
@@ -4416,7 +4441,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       reputation: {
         completionScore: consoleState.completionScore,
         jobActivityStats: consoleState.jobActivityStats,
-        anchoredSocialFactCount: (await controlPlane.listRegisteredAgents()).find((agent) => agent.agentId === agentId)?.anchoredSocialFactCount ?? 0
+        anchoredSocialFactCount: (await cachedRegisteredAgents()).payload.find((agent) => agent.agentId === agentId)?.anchoredSocialFactCount ?? 0
       }
     });
   } catch (error) {
@@ -9319,6 +9344,7 @@ class AgentRelayHub {
     if (connection.isFresh()) {
       return true;
     }
+    invalidateAgentRuntimeStatusCaches(agentId);
     connection.terminate("Relay heartbeat is stale.");
     return false;
   }
@@ -9328,6 +9354,7 @@ class AgentRelayHub {
     const connection = this.activeConnection(agentId);
     const connected = Boolean(connection && connection.isFresh());
     if (connection && !connected) {
+      invalidateAgentRuntimeStatusCaches(agentId);
       connection.terminate("Relay heartbeat is stale.");
     }
     return {
@@ -9380,6 +9407,7 @@ class AgentRelayHub {
     for (const [agentId, connections] of this.connectionsByAgent.entries()) {
       for (const connection of connections) {
         if (!connection.isFresh(nowMs)) {
+          invalidateAgentRuntimeStatusCaches(agentId);
           connection.terminate("Relay heartbeat is stale.");
         }
       }
@@ -9473,6 +9501,7 @@ class AgentRelayHub {
         void this.handleMessage(connection, message);
       },
       () => {
+        invalidateAgentRuntimeStatusCaches(agentId);
         const remaining = this.cleanupConnections(agentId).filter((candidate) => candidate !== connection);
         if (remaining.length > 0) {
           this.connectionsByAgent.set(agentId, remaining);
@@ -9491,6 +9520,7 @@ class AgentRelayHub {
     );
     connection.markHeartbeat();
     this.connectionsByAgent.set(agentId, [...existing, connection]);
+    invalidateAgentRuntimeStatusCaches(agentId);
     if (existing.length > 0) {
       console.error(JSON.stringify({
         event: "relay_additional_connection",
