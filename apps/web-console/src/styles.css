@@ -4060,7 +4060,9 @@ pre,
   flex: 0 0 auto;
   max-width: 150px;
   text-align: center;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .payment-activity-card .agent-message-proof-row {
@@ -8020,7 +8022,9 @@ button:disabled {
     max-width: 128px;
     font-size: 0.66rem;
     line-height: 1.08;
-    white-space: normal;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .agent-message-card.compact .board-proof-pill::before {
