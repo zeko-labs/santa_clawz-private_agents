@@ -3105,6 +3105,7 @@ async function buildX402PaymentStateResponse(input: {
     buyerAction: protocolLifecycle.buyerAction,
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
+    ...lifecycleFinalityFields(protocolLifecycle),
     partyFinality,
     paymentStatus: paymentStatePaymentStatus,
     settlementStatus: paymentStateSettlementStatus,
@@ -3273,6 +3274,17 @@ function lifecyclePartyFinality(input: {
   };
 }
 
+function lifecycleFinalityFields(lifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>) {
+  return {
+    paymentFinality: lifecycle.paymentFinality,
+    paymentFinalityPending: lifecycle.paymentFinalityPending,
+    statePollingRequired: lifecycle.statePollingRequired,
+    ...(typeof lifecycle.recommendedPollAfterMs === "number"
+      ? { recommendedPollAfterMs: lifecycle.recommendedPollAfterMs }
+      : {})
+  };
+}
+
 function redactLatestPaymentLedger(entry: unknown) {
   if (!isRecord(entry)) return undefined;
   const lifecycleStatus = isRecord(entry.lifecycleStatus) ? entry.lifecycleStatus : undefined;
@@ -3350,6 +3362,10 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
     ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
     ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
+    ...(typeof payload.paymentFinality === "string" ? { paymentFinality: payload.paymentFinality } : {}),
+    ...(typeof payload.paymentFinalityPending === "boolean" ? { paymentFinalityPending: payload.paymentFinalityPending } : {}),
+    ...(typeof payload.statePollingRequired === "boolean" ? { statePollingRequired: payload.statePollingRequired } : {}),
+    ...(typeof payload.recommendedPollAfterMs === "number" ? { recommendedPollAfterMs: payload.recommendedPollAfterMs } : {}),
     ...(typeof payload.paymentStatus === "string" ? { paymentStatus: payload.paymentStatus } : {}),
     ...(typeof payload.settlementStatus === "string" ? { settlementStatus: payload.settlementStatus } : {}),
     ...(isRecord(payload.partyFinality) ? { partyFinality: payload.partyFinality } : {}),
@@ -5059,7 +5075,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
               protocolState: aliasProtocolLifecycle.protocolState,
               buyerAction: aliasProtocolLifecycle.buyerAction,
               sellerOutcome: aliasProtocolLifecycle.sellerOutcome,
-              operatorObligation: aliasProtocolLifecycle.operatorObligation
+              operatorObligation: aliasProtocolLifecycle.operatorObligation,
+              ...lifecycleFinalityFields(aliasProtocolLifecycle)
             }
           : {}),
         safeToRetrySamePayload: aliasRetrySafety.safeToRetrySamePayload,
@@ -5411,6 +5428,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       buyerAction: protocolLifecycle.buyerAction,
       sellerOutcome: protocolLifecycle.sellerOutcome,
       operatorObligation: protocolLifecycle.operatorObligation,
+      ...lifecycleFinalityFields(protocolLifecycle),
       partyFinality,
       agentId: hireRequest.agentId,
       sessionId: hireRequest.sessionId,
@@ -8304,6 +8322,7 @@ const handleAgentHireRequest = route(async (request, response) => {
             buyerAction: protocolLifecycle.buyerAction,
             sellerOutcome: protocolLifecycle.sellerOutcome,
             operatorObligation: protocolLifecycle.operatorObligation,
+            ...lifecycleFinalityFields(protocolLifecycle),
             buyerDeliveryAvailable: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
             buyerComplete: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
             sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,
@@ -8430,6 +8449,7 @@ const handleAgentHireRequest = route(async (request, response) => {
           buyerAction: protocolLifecycle.buyerAction,
           sellerOutcome: protocolLifecycle.sellerOutcome,
           operatorObligation: protocolLifecycle.operatorObligation,
+          ...lifecycleFinalityFields(protocolLifecycle),
           buyerDeliveryAvailable: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
           buyerComplete: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
           sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,

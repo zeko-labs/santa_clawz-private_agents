@@ -4259,6 +4259,10 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(deliveredPaymentState.payload.paymentFinality, "pending");
+    assert.equal(deliveredPaymentState.payload.paymentFinalityPending, true);
+    assert.equal(deliveredPaymentState.payload.statePollingRequired, true);
+    assert.equal(deliveredPaymentState.payload.recommendedPollAfterMs, 2000);
     assert.equal(deliveredPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(deliveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
@@ -5780,6 +5784,9 @@ async function testPaidLifecycleReducerInvariants() {
   });
   assert.equal(deliveredSettled.protocolState, "DELIVERED_SETTLED");
   assert.equal(deliveredSettled.terminal, true);
+  assert.equal(deliveredSettled.paymentFinality, "settled");
+  assert.equal(deliveredSettled.paymentFinalityPending, false);
+  assert.equal(deliveredSettled.statePollingRequired, false);
   assert.equal(deliveredSettled.buyerAction, "view_delivery");
   assert.equal(deliveredSettled.sellerOutcome, "completed");
   assert.equal(deliveredSettled.operatorObligation, "none");
@@ -5797,6 +5804,10 @@ async function testPaidLifecycleReducerInvariants() {
   });
   assert.equal(deliveredAwaitingSettlement.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
   assert.equal(deliveredAwaitingSettlement.terminal, false);
+  assert.equal(deliveredAwaitingSettlement.paymentFinality, "pending");
+  assert.equal(deliveredAwaitingSettlement.paymentFinalityPending, true);
+  assert.equal(deliveredAwaitingSettlement.statePollingRequired, true);
+  assert.equal(deliveredAwaitingSettlement.recommendedPollAfterMs, 2000);
   assert.equal(deliveredAwaitingSettlement.buyerAction, "view_delivery");
   assert.equal(deliveredAwaitingSettlement.sellerOutcome, "completed");
   assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
@@ -5816,6 +5827,10 @@ async function testPaidLifecycleReducerInvariants() {
   });
   assert.equal(deliveredSettlementFailed.protocolState, "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION");
   assert.equal(deliveredSettlementFailed.terminal, false);
+  assert.equal(deliveredSettlementFailed.paymentFinality, "requires_reconciliation");
+  assert.equal(deliveredSettlementFailed.paymentFinalityPending, false);
+  assert.equal(deliveredSettlementFailed.statePollingRequired, true);
+  assert.equal(deliveredSettlementFailed.recommendedPollAfterMs, 5000);
   assert.equal(deliveredSettlementFailed.buyerAction, "view_delivery");
   assert.equal(deliveredSettlementFailed.sellerOutcome, "completed");
   assert.equal(deliveredSettlementFailed.operatorObligation, "reconcile_platform_state");

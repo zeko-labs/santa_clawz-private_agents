@@ -58,6 +58,10 @@ export interface SantaClawzPaidLifecycleProjection {
   schemaVersion: typeof SANTACLAWZ_PAID_LIFECYCLE_REDUCER_SCHEMA_VERSION;
   protocolState: SantaClawzPaidProtocolState;
   terminal: boolean;
+  paymentFinality: "not_started" | "pending" | "settled" | "not_settled" | "requires_reconciliation";
+  paymentFinalityPending: boolean;
+  statePollingRequired: boolean;
+  recommendedPollAfterMs?: number | undefined;
   buyerAction: SantaClawzBuyerAction;
   sellerOutcome: SantaClawzSellerOutcome;
   operatorObligation: SantaClawzOperatorObligation;
@@ -302,10 +306,29 @@ function paidLifecycleProjection(input: {
   reputationImpact: SantaClawzPaidLifecycleProjection["sellerAnswer"]["reputationImpact"];
   reconciliationReason?: string | undefined;
 }): SantaClawzPaidLifecycleProjection {
+  const paymentFinality =
+    input.protocolState === "DELIVERED_SETTLED"
+      ? "settled"
+      : input.protocolState === "DELIVERED_AWAITING_SETTLEMENT" ||
+          input.protocolState === "AUTHORIZED_WAITING_FOR_DELIVERY"
+        ? "pending"
+        : input.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION" ||
+            input.protocolState === "PLATFORM_FAILED_RECONCILE"
+          ? "requires_reconciliation"
+          : input.protocolState === "SELLER_FAILED_NO_SETTLEMENT" ||
+              input.protocolState === "EXPIRED_NO_CHARGE"
+            ? "not_settled"
+            : "not_started";
+  const paymentFinalityPending = paymentFinality === "pending";
+  const statePollingRequired = paymentFinalityPending || paymentFinality === "requires_reconciliation";
   return {
     schemaVersion: SANTACLAWZ_PAID_LIFECYCLE_REDUCER_SCHEMA_VERSION,
     protocolState: input.protocolState,
     terminal: input.terminal,
+    paymentFinality,
+    paymentFinalityPending,
+    statePollingRequired,
+    ...(statePollingRequired ? { recommendedPollAfterMs: paymentFinalityPending ? 2000 : 5000 } : {}),
     buyerAction: input.buyerAction,
     sellerOutcome: input.sellerOutcome,
     operatorObligation: input.operatorObligation,
