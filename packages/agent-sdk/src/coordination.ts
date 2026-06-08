@@ -11,6 +11,30 @@ import {
 export type ClawzCoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 export type ClawzCoordinationProofIntent = "per_message" | "aggregate" | "agent_chatter";
 
+export interface ClawzWorkshopChannel {
+  channelId: string;
+  name: string;
+  purpose?: string;
+  default?: boolean;
+  allowedRoles?: Array<"admin" | "member">;
+  allowedAgentIds?: string[];
+  disclosure?: "private-setup-only";
+  transport?: {
+    privateEnvelopeRequired?: boolean;
+    receiptRequired?: boolean;
+    publicLedgerProjection?: "proof-only";
+  };
+}
+
+export interface ClawzWorkshopChannelPolicy {
+  defaultChannelId: string;
+  agentCreatedChannels: "admin-only" | "allowed";
+  channelIdPattern: string;
+  privateEnvelopeRequired: boolean;
+  receiptsRequired: boolean;
+  publicLedgerProjection: "proof-only";
+}
+
 export interface ClawzCoordinationBridgeManifest {
   schemaVersion: "santaclawz-team-coordination-bridge/0.1";
   protocol?: Record<string, unknown>;
@@ -55,6 +79,15 @@ export interface ClawzCoordinationBridgeManifest {
     selectiveRevealSupported?: boolean;
     publicDisclosureDefault?: string;
   };
+  channelPolicy?: ClawzWorkshopChannelPolicy;
+  channels?: ClawzWorkshopChannel[];
+  transport?: {
+    privateEnvelopeEndpoint?: string;
+    privateEnvelopeReadEndpoint?: string;
+    receiptEndpoint?: string;
+    receiptLedgerEndpoint?: string;
+    setupClaimEndpoint?: string;
+  };
   anchoringPolicy?: {
     mode: string;
     defaultAnchor?: string;
@@ -87,6 +120,9 @@ export interface ClawzCoordinationAgentSetup {
   threadId: string;
   swarmId: string;
   privacyMode: ClawzCoordinationPrivacyMode;
+  channelPolicy?: ClawzWorkshopChannelPolicy;
+  channels?: ClawzWorkshopChannel[];
+  transport?: ClawzCoordinationBridgeManifest["transport"];
   publicTraceUrl: string;
   adminKey?: string;
   workshopAccessToken?: string;
@@ -108,6 +144,7 @@ export interface ClawzCoordinationEnvelopeInput {
   recipientPublicKey?: string;
   messageId?: string;
   parentMessageId?: string;
+  channelId?: string;
   kind?: AgentMessageEnvelopeKind;
   visibility?: AgentMessageEnvelopeVisibility;
   payloadMode?: AgentMessageEnvelopePayload["mode"];
@@ -139,6 +176,29 @@ function normalizeTags(values: string[] | undefined, fallback: string[]): string
   return normalized.slice(0, 12);
 }
 
+function defaultWorkshopChannelId(manifest: ClawzCoordinationBridgeManifest): string | undefined {
+  return manifest.channelPolicy?.defaultChannelId || manifest.channels?.find((channel) => channel.default)?.channelId;
+}
+
+export function resolveWorkshopChannelId(
+  manifest: ClawzCoordinationBridgeManifest | string,
+  channelId?: string
+): string | undefined {
+  const parsedManifest = parseCoordinationBridgeManifest(manifest);
+  const resolved = channelId?.trim() || defaultWorkshopChannelId(parsedManifest);
+  if (!resolved) {
+    return undefined;
+  }
+  const declaredChannel = parsedManifest.channels?.find((channel) => channel.channelId === resolved);
+  if (!declaredChannel && parsedManifest.channelPolicy) {
+    const pattern = new RegExp(parsedManifest.channelPolicy.channelIdPattern);
+    if (!pattern.test(resolved)) {
+      throw new Error(`Workshop channelId ${resolved} does not match channel policy.`);
+    }
+  }
+  return resolved;
+}
+
 export function parseCoordinationBridgeManifest(input: string | ClawzCoordinationBridgeManifest): ClawzCoordinationBridgeManifest {
   const manifest = typeof input === "string" ? JSON.parse(input) as ClawzCoordinationBridgeManifest : input;
   if (manifest.schemaVersion !== "santaclawz-team-coordination-bridge/0.1") {
@@ -160,6 +220,12 @@ export function parseCoordinationBridgeManifest(input: string | ClawzCoordinatio
   }
   if (manifest.participants && !Array.isArray(manifest.participants)) {
     throw new Error("Coordination bridge participants must be an array when present.");
+  }
+  if (manifest.channelPolicy?.publicLedgerProjection && manifest.channelPolicy.publicLedgerProjection !== "proof-only") {
+    throw new Error("Workshop channel public ledger projection must be proof-only.");
+  }
+  if (manifest.channels && !Array.isArray(manifest.channels)) {
+    throw new Error("Coordination bridge channels must be an array when present.");
   }
   return manifest;
 }
@@ -190,6 +256,9 @@ export function createCoordinationAgentSetup(input: ClawzCoordinationAgentSetupI
     threadId: manifest.threadId,
     swarmId: manifest.swarmId,
     privacyMode: manifest.coordinationPolicy.privacyMode,
+    ...(manifest.channelPolicy ? { channelPolicy: manifest.channelPolicy } : {}),
+    ...(manifest.channels ? { channels: manifest.channels } : {}),
+    ...(manifest.transport ? { transport: manifest.transport } : {}),
     publicTraceUrl,
     ...(input.adminKey?.trim() ? { adminKey: input.adminKey.trim() } : {})
   };
@@ -213,12 +282,16 @@ export function parseCoordinationAgentSetup(input: string | ClawzCoordinationAge
     ...(typeof setup.workshopAccessToken === "string" && setup.workshopAccessToken.trim()
       ? { workshopAccessToken: setup.workshopAccessToken.trim() }
       : {}),
+    ...(setup.channelPolicy ? { channelPolicy: setup.channelPolicy } : {}),
+    ...(setup.channels ? { channels: setup.channels } : {}),
+    ...(setup.transport ? { transport: setup.transport } : {}),
     publicTraceUrl: setup.publicTraceUrl || expected.publicTraceUrl
   };
 }
 
 export function buildCoordinationEnvelope(input: ClawzCoordinationEnvelopeInput): AgentMessageEnvelope {
   const manifest = parseCoordinationBridgeManifest(input.manifest);
+  const channelId = resolveWorkshopChannelId(manifest, input.channelId);
   const visibility = input.visibility ?? (
     manifest.coordinationPolicy.privacyMode === "public-summary"
       ? "public"
@@ -258,6 +331,7 @@ export function buildCoordinationEnvelope(input: ClawzCoordinationEnvelopeInput)
     threadId: manifest.threadId,
     swarmId: manifest.swarmId,
     ...(input.parentMessageId ? { parentMessageId: input.parentMessageId } : {}),
+    ...(channelId ? { channelId } : {}),
     kind: input.kind ?? "dispatch",
     visibility,
     sender: { agentId: input.senderAgentId },

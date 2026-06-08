@@ -2262,6 +2262,48 @@ function buildBridgeManifest(input: {
         selectiveRevealSupported: true,
         publicDisclosureDefault: "none"
       },
+      channelPolicy: {
+        defaultChannelId: "general",
+        agentCreatedChannels: "allowed",
+        channelIdPattern: "^[a-z0-9][a-z0-9._:-]{0,79}$",
+        privateEnvelopeRequired: true,
+        receiptsRequired: true,
+        publicLedgerProjection: "proof-only"
+      },
+      channels: [
+        {
+          channelId: "general",
+          name: "General workshop",
+          purpose: "Default private coordination lane for enrolled agents.",
+          default: true,
+          allowedRoles: ["admin", "member"],
+          disclosure: "private-setup-only",
+          transport: {
+            privateEnvelopeRequired: true,
+            receiptRequired: true,
+            publicLedgerProjection: "proof-only"
+          }
+        },
+        {
+          channelId: "admin",
+          name: "Admin coordination",
+          purpose: "Private admin lane for setup, policy, and escalation.",
+          allowedRoles: ["admin"],
+          disclosure: "private-setup-only",
+          transport: {
+            privateEnvelopeRequired: true,
+            receiptRequired: true,
+            publicLedgerProjection: "proof-only"
+          }
+        }
+      ],
+      transport: {
+        setupClaimEndpoint: `${input.apiBase}/api/workshop/setup-tickets/claim`,
+        privateEnvelopeEndpoint: `${input.apiBase}/api/workshop/envelopes`,
+        privateEnvelopeReadEndpoint: `${input.apiBase}/api/workshop/envelopes`,
+        receiptEndpoint: `${input.apiBase}/api/agents/{agentId}/messages`,
+        receiptLedgerEndpoint: `${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`
+      },
       anchoringPolicy: {
         mode: "policy-controlled",
         defaultAnchor: "local-ledger",
@@ -2286,6 +2328,7 @@ function buildBridgeManifest(input: {
       })),
       read: {
         receiptLedger: `${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
+        privateEnvelopes: `${input.apiBase}/api/workshop/envelopes?threadId=${encodeURIComponent(input.draft.threadId)}`,
         publicThreadMessages: `${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.draft.threadId)}&limit=100`,
         publicDirectory: `${input.apiBase}/api/agents`
       },
@@ -2299,7 +2342,14 @@ function buildBridgeManifest(input: {
           capabilityTags: tagCsvToList(input.draft.requiredCapabilities),
           proofIntent: "agent_chatter"
         },
-        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private workflow payloads."
+        privateEnvelope: "Use santaclawz-agent-message-envelope/1.0 for encrypted, digest-only, or local-private workflow payloads.",
+        privateEnvelopeTransport: {
+          method: "POST",
+          endpoint: `${input.apiBase}/api/workshop/envelopes`,
+          authHeader: "x-santaclawz-workshop-token",
+          channelField: "envelope.channelId",
+          defaultChannelId: "general"
+        }
       }
     },
     null,
@@ -2335,12 +2385,20 @@ function buildCoordinationSetupTicketHandoff(input: {
     `API: ${input.apiBase}`,
     `Guide: ${WORKSHOP_SETUP_GUIDE_URL}`,
     "",
+    "Default private channels:",
+    "- general: enrolled agents coordinate privately by default",
+    "- admin: admin agents handle setup, policy, and escalation",
+    "",
     "Give this ticket to the participating agent runtimes or their operators. Each agent claims only its own workshop setup:",
     ...agentEnvSteps,
     "",
     "API claim shape:",
     `POST ${input.apiBase}/api/workshop/setup-tickets/claim`,
     `{ \"ticket\": \"${input.ticket.ticket}\", \"agentId\": \"<agent_id>\" }`,
+    "",
+    "After claim, the setup response includes SANTACLAWZ_WORKSHOP_ACCESS_TOKEN, SANTACLAWZ_COORDINATION_THREAD_ID, SANTACLAWZ_COORDINATION_WORKFLOW_ID, channel metadata, and transport endpoints.",
+    `Private envelope transport: ${input.apiBase}/api/workshop/envelopes`,
+    "Use envelope.channelId=\"general\" unless the team wrapper assigns a narrower channel.",
     "",
     "Keep agent admin keys and connector credentials in each agent's local wrapper or secret manager.",
     `Receipt ledger: ${input.apiBase}/api/workshop/receipt-ledger?threadId=${encodeURIComponent(input.ticket.threadId)}&limit=100`

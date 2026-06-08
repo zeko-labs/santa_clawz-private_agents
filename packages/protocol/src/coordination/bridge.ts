@@ -25,6 +25,30 @@ export interface SantaClawzCoordinationBridgeParticipant {
   disclosure?: "private-setup-only";
 }
 
+export interface SantaClawzWorkshopChannel {
+  channelId: string;
+  name: string;
+  purpose?: string;
+  default?: boolean;
+  allowedRoles?: Array<"admin" | "member">;
+  allowedAgentIds?: string[];
+  disclosure?: "private-setup-only";
+  transport?: {
+    privateEnvelopeRequired?: boolean;
+    receiptRequired?: boolean;
+    publicLedgerProjection?: "proof-only";
+  };
+}
+
+export interface SantaClawzWorkshopChannelPolicy {
+  defaultChannelId: string;
+  agentCreatedChannels: "admin-only" | "allowed";
+  channelIdPattern: string;
+  privateEnvelopeRequired: boolean;
+  receiptsRequired: boolean;
+  publicLedgerProjection: "proof-only";
+}
+
 export interface SantaClawzCoordinationPrivacyArchitecture {
   defaultWorkspacePlane: "customer-controlled-private";
   publicProofPlane: "commitment-only";
@@ -94,6 +118,15 @@ export interface SantaClawzCoordinationBridgeManifest {
     selectiveRevealSupported?: boolean;
     publicDisclosureDefault?: string;
   };
+  channelPolicy?: SantaClawzWorkshopChannelPolicy;
+  channels?: SantaClawzWorkshopChannel[];
+  transport?: {
+    privateEnvelopeEndpoint?: string;
+    privateEnvelopeReadEndpoint?: string;
+    receiptEndpoint?: string;
+    receiptLedgerEndpoint?: string;
+    setupClaimEndpoint?: string;
+  };
   anchoringPolicy?: {
     mode: string;
     defaultAnchor?: string;
@@ -155,6 +188,35 @@ export function assertValidCoordinationBridgeManifest(
   }
   if (manifest.participants && !Array.isArray(manifest.participants)) {
     throw new Error("Coordination bridge participants must be an array when present.");
+  }
+  if (manifest.channelPolicy) {
+    if (!manifest.channelPolicy.defaultChannelId) {
+      throw new Error("Coordination bridge channelPolicy requires defaultChannelId.");
+    }
+    if (manifest.channelPolicy.publicLedgerProjection !== "proof-only") {
+      throw new Error("Workshop channel public ledger projection must be proof-only.");
+    }
+  }
+  if (manifest.channels) {
+    if (!Array.isArray(manifest.channels)) {
+      throw new Error("Coordination bridge channels must be an array when present.");
+    }
+    const channelIds = new Set<string>();
+    for (const channel of manifest.channels) {
+      if (!channel.channelId || !channel.name) {
+        throw new Error("Coordination bridge channels require channelId and name.");
+      }
+      if (channelIds.has(channel.channelId)) {
+        throw new Error(`Duplicate workshop channelId: ${channel.channelId}`);
+      }
+      channelIds.add(channel.channelId);
+      if (channel.disclosure && channel.disclosure !== "private-setup-only") {
+        throw new Error("Workshop channel disclosure must be private-setup-only.");
+      }
+      if (channel.transport?.publicLedgerProjection && channel.transport.publicLedgerProjection !== "proof-only") {
+        throw new Error("Workshop channel public ledger projection must be proof-only.");
+      }
+    }
   }
   return manifest;
 }

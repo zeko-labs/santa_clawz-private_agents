@@ -154,6 +154,7 @@ export interface WorkshopPrivateEnvelopeRecord {
   ticketId: string;
   threadId: string;
   swarmId?: string;
+  channelId?: string;
   senderAgentId: string;
   recipientAgentId?: string;
   createdAtIso: string;

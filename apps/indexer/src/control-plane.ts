@@ -339,6 +339,13 @@ interface CoordinationSetupTicketRecord {
   claimedAgentsById: Record<string, { claimedAtIso: string; workshopTokenHash?: string }>;
 }
 
+interface WorkshopChannelDefinition {
+  channelId: string;
+  name: string;
+  allowedRoles?: Array<"admin" | "member">;
+  allowedAgentIds?: string[];
+}
+
 export class DuplicatePublicClawzUrlError extends Error {
   existingAgentId: string;
   canReclaim: boolean;
@@ -671,6 +678,7 @@ interface CoordinationSetupTicketIssueResult {
   privacyMode: string;
   threadId: string;
   swarmId: string;
+  channels?: WorkshopChannelDefinition[];
 }
 
 interface CoordinationSetupTicketStatusResult {
@@ -686,6 +694,7 @@ interface CoordinationSetupTicketStatusResult {
   privacyMode: string;
   threadId: string;
   swarmId: string;
+  channels?: WorkshopChannelDefinition[];
 }
 
 interface CoordinationSetupTicketClaimResult {
@@ -701,6 +710,8 @@ interface CoordinationSetupTicketClaimResult {
   swarmId: string;
   privacyMode: string;
   publicTraceUrl: string;
+  channels?: WorkshopChannelDefinition[];
+  transport?: Record<string, unknown>;
   manifest: Record<string, unknown>;
 }
 
@@ -2293,6 +2304,10 @@ function usdAmountFromAtomic(value: bigint): string {
     return whole.toString();
   }
   return `${whole}.${fraction.toString().padStart(6, "0").replace(/0+$/, "")}`;
+}
+
+function settlementRetryEndpointForLedgerId(ledgerId: string) {
+  return `/api/x402/settlement-retry?${new URLSearchParams({ ledgerId }).toString()}`;
 }
 
 function assertSha256Hex(value: string, context: string) {
@@ -5044,7 +5059,7 @@ export class ClawzControlPlane {
     await this.ensureDirs();
     const entries = file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId);
     await writeJsonFile(this.paymentLedgerPath, {
-      entries: entries.slice(0, 2000),
+      entries,
       allTimeStats: this.buildPaymentLedgerAllTimeStats(file.allTimeStats, entries)
     });
   }
@@ -7241,7 +7256,7 @@ export class ClawzControlPlane {
         : entry.errorMessage ? { settlementFailureReason: entry.errorMessage } : {}),
       nextSettlementAction: retryable ? "retry_settlement" : "manual_review",
       ...(retryable
-        ? { retryEndpoint: entry.quoteIntentId ? "/api/x402/quote-intent" : `/api/agents/${encodeURIComponent(entry.agentId)}/hire` }
+        ? { retryEndpoint: settlementRetryEndpointForLedgerId(entry.ledgerId) }
         : {})
     };
   }
@@ -7309,8 +7324,9 @@ export class ClawzControlPlane {
     const protocolFeeTxHash = input.protocolFeeTxHash ?? existing?.protocolFeeTxHash;
     const nextTransactionHashes = uniqueTransactionHashes(existing?.transactionHashes, transactionHashes);
     const existingPaymentStatus = input.paymentStatus ?? (nextTransactionHashes.length > 0 ? undefined : existing?.paymentStatus);
+    const ledgerId = existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const nextEntry: PaymentLedgerEntry = {
-      ledgerId: existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+      ledgerId,
       createdAtIso: existing?.createdAtIso ?? nowIso,
       updatedAtIso: nowIso,
       agentId: input.agentId,
@@ -7397,7 +7413,7 @@ export class ClawzControlPlane {
               canRetrySettlement: input.settlementRetryable,
               ...(input.errorMessage ? { settlementFailureReason: input.errorMessage } : {}),
               nextSettlementAction: input.settlementRetryable ? "retry_settlement" : "manual_review",
-              retryEndpoint: "/api/x402/quote-intent"
+              retryEndpoint: settlementRetryEndpointForLedgerId(ledgerId)
             }
           }
         : existing?.settlementRecovery
@@ -7541,7 +7557,7 @@ export class ClawzControlPlane {
         canRetrySettlement: input.settlementRetryable,
         settlementFailureReason: input.errorMessage,
         nextSettlementAction: input.settlementRetryable ? "retry_settlement" : "manual_review",
-        retryEndpoint: existing.quoteIntentId ? "/api/x402/quote-intent" : "/api/agents/:agentId/hire"
+        retryEndpoint: settlementRetryEndpointForLedgerId(existing.ledgerId)
       }
     };
     await this.savePaymentLedgerFile({
@@ -8300,6 +8316,7 @@ export class ClawzControlPlane {
       throw new Error("Workshop access token was rejected for this agent.");
     }
     const normalized = this.normalizeCoordinationManifest(record.manifest);
+    const participant = normalized.participants.find((candidate) => stringValue(candidate, "agentId") === options.agentId);
     const participantAgentIds = normalized.participants.map((participant) =>
       assertStringValue(participant, "agentId", "Coordination manifest participant")
     );
@@ -8316,7 +8333,8 @@ export class ClawzControlPlane {
       ticketId: record.ticketId,
       record,
       normalized,
-      participantAgentIds
+      participantAgentIds,
+      participant: participant ?? {}
     };
   }
 
@@ -8338,6 +8356,7 @@ export class ClawzControlPlane {
     const envelope = assertValidAgentMessageEnvelope(input.envelope);
     const senderAgentId = envelope.sender.agentId;
     const recipientAgentId = envelope.recipient?.agentId;
+    const channelId = envelope.channelId?.trim();
     if (senderAgentId !== input.agentId) {
       throw new Error("Encrypted workshop envelope sender must match the claimed agent.");
     }
@@ -8362,6 +8381,12 @@ export class ClawzControlPlane {
     if (recipientAgentId && !access.participantAgentIds.includes(recipientAgentId)) {
       throw new Error("Workshop private envelope recipient must be enrolled in this workshop.");
     }
+    const validatedChannelId = this.validateWorkshopChannelAccess({
+      manifest: access.record.manifest,
+      participant: access.participant,
+      agentId: input.agentId,
+      ...(channelId ? { channelId } : {})
+    });
     const createdAtIso = new Date().toISOString();
     const storedEnvelope: WorkshopPrivateEnvelopeRecord = {
       schemaVersion: "santaclawz-workshop-private-envelope/0.1",
@@ -8369,6 +8394,7 @@ export class ClawzControlPlane {
       ticketId: access.ticketId,
       threadId: envelope.threadId,
       ...(envelope.swarmId ? { swarmId: envelope.swarmId } : {}),
+      ...(validatedChannelId ? { channelId: validatedChannelId } : {}),
       senderAgentId,
       ...(recipientAgentId ? { recipientAgentId } : {}),
       createdAtIso,
@@ -8393,6 +8419,7 @@ export class ClawzControlPlane {
     agentId: string;
     workshopToken: string;
     threadId?: string;
+    channelId?: string;
     limit?: number;
   }): Promise<WorkshopPrivateEnvelopeStoreState> {
     const state = await this.loadState();
@@ -8401,10 +8428,17 @@ export class ClawzControlPlane {
       workshopToken: input.workshopToken,
       ...(input.threadId ? { threadId: input.threadId } : {})
     });
+    const validatedChannelId = this.validateWorkshopChannelAccess({
+      manifest: access.record.manifest,
+      participant: access.participant,
+      agentId: input.agentId,
+      ...(input.channelId ? { channelId: input.channelId } : {})
+    });
     const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
     const visibleEnvelopes = Object.values(state.workshopPrivateEnvelopesById)
       .filter((record) => record.ticketId === access.ticketId)
       .filter((record) => !input.threadId || record.threadId === input.threadId)
+      .filter((record) => !validatedChannelId || record.channelId === validatedChannelId)
       .filter((record) =>
         record.senderAgentId === input.agentId ||
         record.recipientAgentId === input.agentId ||
@@ -11662,14 +11696,90 @@ export class ClawzControlPlane {
         throw new Error("Coordination participant role must be admin or member.");
       }
     }
+    const channels = Array.isArray(input.channels)
+      ? input.channels
+        .filter((channel): channel is Record<string, unknown> => isRecord(channel))
+        .map((channel): WorkshopChannelDefinition => {
+          const channelId = assertStringValue(channel, "channelId", "Coordination manifest channel");
+          const name = assertStringValue(channel, "name", "Coordination manifest channel");
+          if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(channelId)) {
+            throw new Error("Workshop channelId must be a safe identifier.");
+          }
+          const allowedRoles = Array.isArray(channel.allowedRoles)
+            ? channel.allowedRoles.filter((role): role is "admin" | "member" => role === "admin" || role === "member")
+            : undefined;
+          const allowedAgentIds = Array.isArray(channel.allowedAgentIds)
+            ? channel.allowedAgentIds.filter((agentId): agentId is string => typeof agentId === "string" && agentId.trim().length > 0)
+            : undefined;
+          return {
+            channelId,
+            name,
+            ...(allowedRoles?.length ? { allowedRoles } : {}),
+            ...(allowedAgentIds?.length ? { allowedAgentIds } : {})
+          };
+        })
+      : [];
+    const channelIds = new Set<string>();
+    for (const channel of channels) {
+      if (channelIds.has(channel.channelId)) {
+        throw new Error(`Duplicate workshop channelId: ${channel.channelId}`);
+      }
+      channelIds.add(channel.channelId);
+    }
     return {
       manifest: input,
       threadId,
       swarmId,
       apiBase,
       privacyMode,
-      participants
+      participants,
+      channels
     };
+  }
+
+  private validateWorkshopChannelAccess(input: {
+    manifest: Record<string, unknown>;
+    participant: Record<string, unknown>;
+    agentId: string;
+    channelId?: string;
+  }) {
+    const channelId = input.channelId?.trim();
+    if (!channelId) {
+      return undefined;
+    }
+    if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(channelId)) {
+      throw new Error("Workshop channelId must be a safe identifier.");
+    }
+    const channels = Array.isArray(input.manifest.channels)
+      ? input.manifest.channels.filter((channel): channel is Record<string, unknown> => isRecord(channel))
+      : [];
+    const declaredChannel = channels.find((channel) => stringValue(channel, "channelId") === channelId);
+    const role = stringValue(input.participant, "role");
+    if (declaredChannel) {
+      const allowedAgentIds = Array.isArray(declaredChannel.allowedAgentIds)
+        ? declaredChannel.allowedAgentIds.filter((agentId): agentId is string => typeof agentId === "string")
+        : [];
+      if (allowedAgentIds.length > 0 && !allowedAgentIds.includes(input.agentId)) {
+        throw new Error("Workshop channel does not include this agent.");
+      }
+      const allowedRoles = Array.isArray(declaredChannel.allowedRoles)
+        ? declaredChannel.allowedRoles.filter((candidate): candidate is "admin" | "member" => candidate === "admin" || candidate === "member")
+        : [];
+      if (allowedRoles.length > 0 && (role !== "admin" && role !== "member" || !allowedRoles.includes(role))) {
+        throw new Error("Workshop channel does not include this agent role.");
+      }
+      return channelId;
+    }
+    const channelPolicy = isRecord(input.manifest.channelPolicy) ? input.manifest.channelPolicy : {};
+    const agentCreatedChannels = stringValue(channelPolicy, "agentCreatedChannels") || "allowed";
+    if (agentCreatedChannels === "admin-only" && role !== "admin") {
+      throw new Error("Only workshop admins can create undeclared workshop channels.");
+    }
+    const channelIdPattern = stringValue(channelPolicy, "channelIdPattern") || "^[a-z0-9][a-z0-9._:-]{0,79}$";
+    if (!new RegExp(channelIdPattern).test(channelId)) {
+      throw new Error("Workshop channelId does not match channel policy.");
+    }
+    return channelId;
   }
 
   private activeCoordinationSetupTickets(
@@ -11719,7 +11829,8 @@ export class ClawzControlPlane {
       participantAgentIds: normalized.participants.map((participant) => assertStringValue(participant, "agentId", "Coordination manifest participant")),
       privacyMode: normalized.privacyMode,
       threadId: normalized.threadId,
-      swarmId: normalized.swarmId
+      swarmId: normalized.swarmId,
+      ...(normalized.channels.length ? { channels: normalized.channels } : {})
     };
   }
 
@@ -11758,7 +11869,8 @@ export class ClawzControlPlane {
       claimedAgentsById,
       privacyMode: normalized.privacyMode,
       threadId: normalized.threadId,
-      swarmId: normalized.swarmId
+      swarmId: normalized.swarmId,
+      ...(normalized.channels.length ? { channels: normalized.channels } : {})
     };
   }
 
@@ -11819,6 +11931,8 @@ export class ClawzControlPlane {
       swarmId: normalized.swarmId,
       privacyMode: normalized.privacyMode,
       publicTraceUrl,
+      ...(normalized.channels.length ? { channels: normalized.channels } : {}),
+      ...(isRecord(normalized.manifest.transport) ? { transport: normalized.manifest.transport } : {}),
       manifest: normalized.manifest
     };
   }

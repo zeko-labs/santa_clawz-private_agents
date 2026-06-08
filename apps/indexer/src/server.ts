@@ -2799,11 +2799,16 @@ function paymentLedgerListOptionsFromQuery(query: unknown) {
 
 function paymentStateRetryEndpoint(input: {
   apiBase: string;
+  ledgerId?: string;
+  settlementCanRetry?: boolean;
   intentId?: string;
   requestId?: string;
   agentId?: string;
   paymentPayloadDigestSha256?: string;
 }) {
+  if (input.settlementCanRetry && input.ledgerId) {
+    return `${input.apiBase}/api/x402/settlement-retry?${new URLSearchParams({ ledgerId: input.ledgerId }).toString()}`;
+  }
   if (input.intentId) {
     return `${input.apiBase}/api/x402/quote-intent?${new URLSearchParams({ intentId: input.intentId }).toString()}`;
   }
@@ -2920,6 +2925,8 @@ async function buildX402PaymentStateResponse(input: {
   const paymentPayloadDigestSha256 = input.paymentPayloadDigestSha256 ?? latestLedger?.paymentPayloadDigestSha256;
   const retryEndpoint = paymentStateRetryEndpoint({
     apiBase: input.apiBase,
+    ...(latestLedger?.ledgerId ? { ledgerId: latestLedger.ledgerId } : {}),
+    ...(latestLedger?.settlementRecovery?.canRetrySettlement ? { settlementCanRetry: true } : {}),
     ...(intentId ? { intentId } : {}),
     ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
     ...(latestLedger?.agentId ? { agentId: latestLedger.agentId } : {}),
@@ -7408,6 +7415,7 @@ app.post("/api/workshop/envelopes", route(async (request, response) => {
 app.get("/api/workshop/envelopes", route(async (request, response) => {
   const agentId = queryString(request.query, "agentId");
   const threadId = queryString(request.query, "threadId");
+  const channelId = queryString(request.query, "channelId");
   const rawLimit = queryString(request.query, "limit");
   const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : undefined;
   const workshopToken = workshopTokenHeader(request);
@@ -7425,6 +7433,7 @@ app.get("/api/workshop/envelopes", route(async (request, response) => {
       agentId,
       workshopToken,
       ...(threadId ? { threadId } : {}),
+      ...(channelId ? { channelId } : {}),
       ...(typeof parsedLimit === "number" && Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {})
     }));
   } catch (error) {
