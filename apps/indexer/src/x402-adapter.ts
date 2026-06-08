@@ -23,6 +23,7 @@ const X402_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 const USD_SCALE = 1_000_000n;
 const WEI_PER_ETH = 1_000_000_000_000_000_000n;
 const DEV_MIN_NETWORK_FACILITATION_FEE_USD = "0.001";
+const DEFAULT_HOSTED_NETWORK_FACILITATION_FEE_USD = "0.002";
 const DEFAULT_BASE_SETTLEMENT_GAS_UNITS = 90_000n;
 const DEFAULT_ETHEREUM_SETTLEMENT_GAS_UNITS = 110_000n;
 const BASE_ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70";
@@ -547,7 +548,13 @@ function minNetworkFacilitationFeeUsd(): string {
     return configured;
   }
 
-  return process.env.NODE_ENV === "production" ? "" : DEV_MIN_NETWORK_FACILITATION_FEE_USD;
+  return process.env.NODE_ENV === "production" ? DEFAULT_HOSTED_NETWORK_FACILITATION_FEE_USD : DEV_MIN_NETWORK_FACILITATION_FEE_USD;
+}
+
+function liveNetworkFeeEstimatesEnabled(): boolean {
+  return ["1", "true", "yes", "on"].includes(
+    process.env.CLAWZ_X402_LIVE_NETWORK_FEE_ESTIMATES?.trim().toLowerCase() ?? ""
+  );
 }
 
 function envList(names: string[]): string[] {
@@ -774,7 +781,29 @@ async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<N
   }
 
   const configuredFloorAtomic = parseUsdAtomic(minNetworkFacilitationFeeUsd());
+  const deterministicFloor =
+    configuredFloorAtomic !== null
+      ? {
+          amountUsd: formatUsdAtomic(configuredFloorAtomic)
+        } satisfies NetworkFacilitationFeeEstimate
+      : undefined;
+  if (!liveNetworkFeeEstimatesEnabled()) {
+    networkFacilitationFeeCache.set(cacheKey, {
+      expiresAt: Date.now() + 60_000,
+      value: deterministicFloor
+    });
+    return deterministicFloor;
+  }
+
   const rpcUrls = rpcUrlsForRail(rail);
+  if (rpcUrls.length === 0) {
+    networkFacilitationFeeCache.set(cacheKey, {
+      expiresAt: Date.now() + 60_000,
+      value: deterministicFloor
+    });
+    return deterministicFloor;
+  }
+
   const gasUnits = gasUnitsForRail(rail);
   const rpcEstimate = await withTimeout(
     (async () => {
@@ -813,7 +842,7 @@ async function estimateNetworkFacilitationFee(rail: AgentPaymentRail): Promise<N
               }
             : {})
         }
-      : undefined;
+      : deterministicFloor;
 
   networkFacilitationFeeCache.set(cacheKey, {
     expiresAt: Date.now() + 10_000,
