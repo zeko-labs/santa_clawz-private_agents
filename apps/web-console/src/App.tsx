@@ -1009,12 +1009,12 @@ function boardAnchorLabel(status?: AgentBoardState["messages"][number]["anchorSt
     return "Aggregate proof";
   }
   if (status === "not_proof_requested") {
-    return "Agent chatter";
+    return "Workshop";
   }
   if (status === "pending") {
     return "Queued proof";
   }
-  return "Agent chatter";
+  return "Workshop";
 }
 
 function boardAnchorClass(status?: AgentBoardState["messages"][number]["anchorStatus"]) {
