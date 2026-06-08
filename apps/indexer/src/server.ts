@@ -199,13 +199,10 @@ function clearConsoleStateCache() {
   paymentLedgerCacheEpoch += 1;
   publicMarketplaceSnapshotCacheEpoch += 1;
   publicReadCacheEpoch += 1;
-  consoleStateCache.clear();
+  // Keep retained entries available for stale-while-revalidate during write bursts.
   consoleStateInflight.clear();
-  paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
-  publicMarketplaceSnapshotCache.clear();
   publicMarketplaceSnapshotInflight.clear();
-  publicReadCache.clear();
   publicReadInflight.clear();
 }
 
@@ -2599,7 +2596,7 @@ function compactPaymentLedgerForPublicSnapshot(ledger: PaymentLedgerState): Paym
   return {
     ...ledger,
     entries,
-    totalLedgerEntryCount: entries.length
+    totalLedgerEntryCount: Math.max(entries.length, ledger.summary?.completedPaymentCount ?? 0)
   };
 }
 
