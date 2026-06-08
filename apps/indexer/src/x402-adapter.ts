@@ -2158,8 +2158,8 @@ function facilitatorSettleRetryDelayMs() {
 }
 
 function facilitatorSettleAttemptTimeoutMs() {
-  const raw = Number(process.env.CLAWZ_X402_FACILITATOR_SETTLE_ATTEMPT_TIMEOUT_MS ?? "10000");
-  return Number.isFinite(raw) ? Math.max(2_500, Math.min(Math.round(raw), 60_000)) : 10_000;
+  const raw = Number(process.env.CLAWZ_X402_FACILITATOR_SETTLE_ATTEMPT_TIMEOUT_MS ?? "30000");
+  return Number.isFinite(raw) ? Math.max(2_500, Math.min(Math.round(raw), 60_000)) : 30_000;
 }
 
 function isRetryableFacilitatorSettlementError(error: unknown) {

@@ -3063,6 +3063,7 @@ async function buildX402PaymentStateResponse(input: {
     settlementCanRetry: latestLedger?.settlementRecovery?.canRetrySettlement,
     paymentAuthorized
   });
+  const settlementCanRetry = latestLedger?.settlementRecovery?.canRetrySettlement === true;
   const retryGuidance = retryResumeGuidanceForLifecycle({
     lifecycle: protocolLifecycle,
     expiredAuthorizationNoChargeTerminal,
@@ -3145,6 +3146,16 @@ async function buildX402PaymentStateResponse(input: {
           }
         : {}),
       ...(retryEndpoint ? { retryEndpoint } : {}),
+      ...(settlementCanRetry && retryEndpoint
+        ? {
+            settlementRecovery: {
+              actor: "platform_operator",
+              action: "retry_settlement_same_payload",
+              retryEndpoint,
+              requiresOriginalPaymentPayload: true
+            }
+          }
+        : {}),
       ...(stateEndpoint ? { stateEndpoint } : {}),
       guidance: retryGuidance
     }
@@ -6954,6 +6965,157 @@ app.post("/api/x402/verify", route(async (_request, response) => {
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to verify x402 payment."
+    });
+  }
+}));
+
+app.post("/api/x402/settlement-retry", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    const ledgerId = queryString(request.query, "ledgerId") ?? optionalString(body.ledgerId);
+    const requestId =
+      queryString(request.query, "requestId") ??
+      queryString(request.query, "hireRequestId") ??
+      optionalString(body.requestId) ??
+      optionalString(body.hireRequestId);
+    const paymentPayloadDigestSha256 =
+      validSha256(queryString(request.query, "paymentPayloadDigestSha256")) ??
+      validSha256(queryString(request.query, "paymentPayloadDigest")) ??
+      validSha256(queryString(request.query, "payloadDigest")) ??
+      validSha256(optionalString(body.paymentPayloadDigestSha256)) ??
+      validSha256(optionalString(body.paymentPayloadDigest));
+    const paymentHeaderValue = request.header("payment-signature");
+    const paymentPayload = parseAgentX402PaymentPayload({
+      ...(paymentHeaderValue ? { headerValue: paymentHeaderValue } : {}),
+      body: request.body ?? null
+    });
+    const ledgerEntry =
+      ledgerId
+        ? await controlPlane.getPaymentLedgerEntry(ledgerId)
+        : (await controlPlane.listPaymentLedger({
+            ...(requestId ? { hireRequestId: requestId } : {}),
+            ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
+            limit: 1
+          })).entries[0];
+    if (!ledgerEntry) {
+      response.status(404).json({
+        ok: false,
+        code: "settlement_retry_ledger_not_found",
+        error: "No x402 ledger entry matched this settlement retry request."
+      });
+      return;
+    }
+    const stateLookup = {
+      ledgerId: ledgerEntry.ledgerId,
+      ...(ledgerEntry.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: ledgerEntry.paymentPayloadDigestSha256 } : {})
+    };
+    if (ledgerHasSettledPayment(ledgerEntry)) {
+      response.json({
+        ok: true,
+        idempotent: true,
+        status: "settled",
+        code: "settlement_already_recorded",
+        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
+      });
+      return;
+    }
+    const completedHire = ledgerEntry.hireRequestId
+      ? await optionalHireRequest(ledgerEntry.hireRequestId)
+      : undefined;
+    const sellerReturnAccepted =
+      ledgerEntry.executionStatus === "completed" &&
+      ledgerEntry.returnStatus === "accepted" &&
+      (
+        protocolReturnHasBuyerDelivery(completedHire?.protocolReturn) ||
+        isRecord(ledgerEntry.deliveryReceipt)
+      );
+    if (!sellerReturnAccepted || !ledgerEntry.hireRequestId) {
+      response.status(409).json({
+        ok: false,
+        code: "settlement_retry_requires_accepted_delivery",
+        error: "Settlement retry is only allowed after the seller return is accepted and buyer delivery exists.",
+        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
+      });
+      return;
+    }
+    if (!paymentPayload) {
+      response.status(400).json({
+        ok: false,
+        code: "payment_payload_required_for_settlement_retry",
+        error: "Settlement retry requires the original signed x402 payment payload. Do not create a new payment.",
+        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
+      });
+      return;
+    }
+    const retryPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
+    if (
+      ledgerEntry.paymentPayloadDigestSha256 &&
+      retryPayloadDigestSha256 !== ledgerEntry.paymentPayloadDigestSha256
+    ) {
+      response.status(409).json({
+        ok: false,
+        code: "settlement_retry_payload_digest_mismatch",
+        error: "Settlement retry must use the same signed x402 payment payload as the original authorization.",
+        expectedPaymentPayloadDigestSha256: ledgerEntry.paymentPayloadDigestSha256,
+        actualPaymentPayloadDigestSha256: retryPayloadDigestSha256,
+        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
+      });
+      return;
+    }
+    const { consoleState, plan } = await buildX402PlanFromOptions(getBaseUrl(request), {
+      agentId: ledgerEntry.agentId
+    });
+    const runtime = buildAgentX402RuntimeContext({
+      baseUrl: getBaseUrl(request),
+      plan,
+      serviceNetworkId: consoleState.deployment.networkId
+    });
+    if (!runtime) {
+      response.status(501).json({
+        ok: false,
+        code: "settlement_retry_runtime_unavailable",
+        error: "No live exact-price x402 rail is configured for this agent."
+      });
+      return;
+    }
+    const outcome = await settleCompletedAgentHirePaymentOutcome({
+      agentId: ledgerEntry.agentId,
+      sessionId: ledgerEntry.sessionId,
+      pricingMode: ledgerEntry.pricingMode,
+      runtime,
+      paymentPayload,
+      requestId: ledgerEntry.hireRequestId,
+      authorizationId: ledgerEntry.authorizationId ?? retryPayloadDigestSha256,
+      ledgerId: ledgerEntry.ledgerId,
+      amountUsd: ledgerEntry.amountUsd,
+      ...(typeof ledgerEntry.protocolFeeBps === "number" ? { protocolFeeBps: ledgerEntry.protocolFeeBps } : {})
+    });
+    const paymentState = await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup });
+    if (outcome.status === "settled") {
+      response.json({
+        ok: true,
+        status: "settled",
+        code: "settlement_retry_settled",
+        idempotent: true,
+        paymentState
+      });
+      return;
+    }
+    response.status(isRetryableSettlementError(outcome.error) ? 503 : 409).json({
+      ok: false,
+      status: "settlement_failed",
+      code: isRetryableSettlementError(outcome.error)
+        ? "settlement_retry_failed_retryable"
+        : "settlement_retry_failed_terminal",
+      retryable: isRetryableSettlementError(outcome.error),
+      error: errorMessage(outcome.error, "Unable to settle x402 payment."),
+      paymentState
+    });
+  } catch (error) {
+    response.status(400).json({
+      ok: false,
+      code: "settlement_retry_failed",
+      error: errorMessage(error, "Unable to retry x402 settlement.")
     });
   }
 }));

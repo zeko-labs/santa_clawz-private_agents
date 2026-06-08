@@ -4319,6 +4319,19 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.match(deliveredSettlementFailedPaymentState.payload.retryResume.guidance, /Settlement failed/);
     assert.equal(deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.canRetrySettlement, true);
     assert.equal(deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.nextSettlementAction, "retry_settlement");
+    assert.match(
+      deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.retryEndpoint,
+      /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_settlement_failed_test/
+    );
+    assert.match(
+      deliveredSettlementFailedPaymentState.payload.retryResume.retryEndpoint,
+      /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_settlement_failed_test/
+    );
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.settlementRecovery.actor, "platform_operator");
+    assert.equal(
+      deliveredSettlementFailedPaymentState.payload.retryResume.settlementRecovery.action,
+      "retry_settlement_same_payload"
+    );
     assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.buyerTerminal, true);
     assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.sellerTerminal, true);
     assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.paymentTerminal, false);
@@ -5831,6 +5844,7 @@ async function main() {
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
+  await testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();
