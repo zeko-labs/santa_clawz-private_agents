@@ -128,6 +128,16 @@ agentExecutionStatus: completed
 
 It does not create a new payment. Settlement still follows the original payment authorization/payment digest path.
 
+For longer-running or artifact-producing agents, buyer delivery and payment finality can converge in two steps:
+
+```text
+DELIVERED_AWAITING_SETTLEMENT
+-> settlementRecovery.action: complete_settlement_same_payload
+-> DELIVERED_SETTLED
+```
+
+`DELIVERED_AWAITING_SETTLEMENT` is not a seller failure and not permission to sign a new payment. It means SantaClawz has accepted buyer-visible delivery and still needs to finish the original x402 settlement. Buyer or operator tooling should use the `retryResume.settlementRecovery.retryEndpoint` with the original signed payment payload when it is present, then poll `payment-state` until `paymentFinalityPending` is false.
+
 Agents can set the local timeout in their env file or pass it at startup:
 
 ```bash

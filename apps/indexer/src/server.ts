@@ -2962,15 +2962,6 @@ async function buildX402PaymentStateResponse(input: {
   );
   const resolvedRequestId = hireRequest?.requestId ?? requestId;
   const paymentPayloadDigestSha256 = input.paymentPayloadDigestSha256 ?? latestLedger?.paymentPayloadDigestSha256;
-  const retryEndpoint = paymentStateRetryEndpoint({
-    apiBase: input.apiBase,
-    ...(latestLedger?.ledgerId ? { ledgerId: latestLedger.ledgerId } : {}),
-    ...(latestLedger?.settlementRecovery?.canRetrySettlement ? { settlementCanRetry: true } : {}),
-    ...(intentId ? { intentId } : {}),
-    ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
-    ...(latestLedger?.agentId ? { agentId: latestLedger.agentId } : {}),
-    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
-  });
   const stateEndpoint = resolvedRequestId
     ? `${input.apiBase}/api/executions/${encodeURIComponent(resolvedRequestId)}/state${
         paymentPayloadDigestSha256
@@ -3114,6 +3105,33 @@ async function buildX402PaymentStateResponse(input: {
     lifecycle: protocolLifecycle,
     paymentSettled
   });
+  const settlementCompletionRequired = Boolean(
+    latestLedger &&
+      protocolLifecycle.operatorObligation === "settle_payment" &&
+      paymentStateBuyerDeliveryAvailable &&
+      paymentAuthorized &&
+      !paymentSettled
+  );
+  const settlementActionEndpoint =
+    settlementCanRetry || settlementCompletionRequired
+      ? paymentStateRetryEndpoint({
+          apiBase: input.apiBase,
+          ...(latestLedger?.ledgerId ? { ledgerId: latestLedger.ledgerId } : {}),
+          settlementCanRetry: true,
+          ...(intentId ? { intentId } : {}),
+          ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+          ...(latestLedger?.agentId ? { agentId: latestLedger.agentId } : {}),
+          ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+        })
+      : undefined;
+  const retryEndpoint = settlementActionEndpoint ?? paymentStateRetryEndpoint({
+    apiBase: input.apiBase,
+    ...(latestLedger?.ledgerId ? { ledgerId: latestLedger.ledgerId } : {}),
+    ...(intentId ? { intentId } : {}),
+    ...(resolvedRequestId ? { requestId: resolvedRequestId } : {}),
+    ...(latestLedger?.agentId ? { agentId: latestLedger.agentId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+  });
   const canonicalExecution = hireRequest
     ? {
         ...hireRequest,
@@ -3201,13 +3219,16 @@ async function buildX402PaymentStateResponse(input: {
           }
         : {}),
       ...(retryEndpoint ? { retryEndpoint } : {}),
-      ...(settlementCanRetry && retryEndpoint
+      ...(settlementActionEndpoint
         ? {
             settlementRecovery: {
-              actor: "platform_operator",
-              action: "retry_settlement_same_payload",
-              retryEndpoint,
-              requiresOriginalPaymentPayload: true
+              actor: "platform_or_buyer_agent_with_original_payload",
+              action: settlementCompletionRequired ? "complete_settlement_same_payload" : "retry_settlement_same_payload",
+              status: settlementCompletionRequired ? "pending_settlement" : "retryable_settlement_failure",
+              retryEndpoint: settlementActionEndpoint,
+              requiresOriginalPaymentPayload: true,
+              doNotCreateNewPayment: true,
+              ...(settlementCompletionRequired ? { reason: "buyer_delivery_recorded_before_settlement" } : {})
             }
           }
         : {}),

@@ -64,6 +64,21 @@ Use fixed price only when the agent has:
 
 For broad audits, research reports, private data work, sales prospecting, chief-of-staff tasks, or anything needing approval, quote first and execute one bounded milestone at a time.
 
+## Code Audit And OpenClaw Agent Rules
+
+Code-audit, repo-review, research, and OpenClaw-backed agents should publish their required inputs as protocol context, not just prompt prose. A repo-review seller should declare a hard URL requirement and expect the buyer to send it in `jobContext.urls`.
+
+For fixed-price code-audit work:
+
+- reject or return `missing_required_input` before work if the required URL, document, image, file, or structured input is absent
+- state the bounded scope, scan limits, runtime/tool path, confidence level, and recommended next action in the buyer-visible summary
+- prove the real runtime path used by the supervised process, for example deterministic scan plus OpenClaw semantic pass
+- return a compact inline verdict and attach the full report through an artifact receipt or manifest
+- label pattern findings as candidates when exploitability was not fully validated
+- preserve the original x402 payment payload when payment finality is pending
+
+If `payment-state` reaches `DELIVERED_AWAITING_SETTLEMENT`, the seller has not failed. Buyer/operator tooling should read `retryResume.settlementRecovery` and complete settlement with the original signed payload when the endpoint is present. Do not ask the buyer to sign a fresh payment for the same delivered job.
+
 ## Delivery Rules
 
 Do not return `completed` unless the buyer can see or retrieve the output.

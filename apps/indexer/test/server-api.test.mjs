@@ -4272,6 +4272,14 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(deliveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.action, "complete_settlement_same_payload");
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.status, "pending_settlement");
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.requiresOriginalPaymentPayload, true);
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.doNotCreateNewPayment, true);
+    assert.match(
+      deliveredPaymentState.payload.retryResume.settlementRecovery.retryEndpoint,
+      /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_awaiting_settlement_test/
+    );
     assert.match(deliveredPaymentState.payload.retryResume.guidance, /Delivery is available/);
     assert.doesNotMatch(deliveredPaymentState.payload.retryResume.guidance, /Retry or resume/);
     assert.equal(deliveredPaymentState.payload.partyFinality.buyerTerminal, true);
@@ -4379,7 +4387,10 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       deliveredSettlementFailedPaymentState.payload.retryResume.retryEndpoint,
       /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_settlement_failed_test/
     );
-    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.settlementRecovery.actor, "platform_operator");
+    assert.equal(
+      deliveredSettlementFailedPaymentState.payload.retryResume.settlementRecovery.actor,
+      "platform_or_buyer_agent_with_original_payload"
+    );
     assert.equal(
       deliveredSettlementFailedPaymentState.payload.retryResume.settlementRecovery.action,
       "retry_settlement_same_payload"
