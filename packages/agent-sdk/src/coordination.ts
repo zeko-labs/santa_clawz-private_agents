@@ -125,7 +125,6 @@ export interface ClawzCoordinationPublicMessageInput {
   threadId: string;
   swarmId: string;
   proofIntent: ClawzCoordinationProofIntent;
-  outputDigestSha256: string;
   clientMessageId: string;
 }
 
@@ -290,7 +289,7 @@ export function coordinationEnvelopeToPublicMessage(input: {
   const body = explicitPublicBody ||
     (publicView.visibility === "public" && publicView.payload.body
       ? publicView.payload.body
-      : `Workshop receipt committed. proof ${publicView.envelopeDigestSha256.slice(0, 16)}`);
+      : "Workshop receipt committed.");
   return {
     agentId: input.agentId,
     messageType: input.messageType ?? (input.envelope.kind === "question" ? "question" : input.envelope.kind === "reply" ? "reply" : "dispatch"),
@@ -300,7 +299,6 @@ export function coordinationEnvelopeToPublicMessage(input: {
     threadId: input.envelope.threadId,
     swarmId: input.envelope.swarmId ?? input.envelope.threadId,
     proofIntent: input.proofIntent ?? (publicView.visibility === "public" ? "aggregate" : "agent_chatter"),
-    outputDigestSha256: publicView.envelopeDigestSha256,
     clientMessageId: input.envelope.messageId
   };
 }

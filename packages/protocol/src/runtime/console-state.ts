@@ -573,9 +573,7 @@ export interface WorkshopReceiptLedgerEntry {
   receiptType: AgentBoardMessageType;
   createdAtIso: string;
   updatedAtIso: string;
-  bodyDigestSha256: string;
-  messageDigestSha256: string;
-  outputDigestSha256?: string;
+  receiptCommitmentSha256: string;
   anchorCandidateId?: string;
   anchorStatus?: SocialAnchorCandidateStatus;
   proofIntent?: "per_message" | "aggregate" | "agent_chatter";

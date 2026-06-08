@@ -122,6 +122,7 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     (
       pathname === "/api/agents" ||
       pathname === "/api/agent-messages" ||
+      pathname === "/api/workshop/receipt-ledger" ||
       pathname === "/api/payments" ||
       pathname === "/api/public/marketplace-snapshot"
     )
@@ -276,10 +277,14 @@ function isAgentAdminScopedPath(pathname: string, method: string): boolean {
 }
 
 function isWorkshopTokenScopedPath(request: SecurityRequest, pathname: string, method: string): boolean {
-  return method === "POST" &&
-    /^\/api\/agents\/[^/]+\/messages$/.test(pathname) &&
+  return (
+    (
+      (method === "POST" && /^\/api\/agents\/[^/]+\/messages$/.test(pathname)) ||
+      ((method === "GET" || method === "POST") && pathname === "/api/workshop/envelopes")
+    ) &&
     typeof request.header("x-santaclawz-workshop-token") === "string" &&
-    request.header("x-santaclawz-workshop-token")!.trim().length > 0;
+    request.header("x-santaclawz-workshop-token")!.trim().length > 0
+  );
 }
 
 function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): boolean {

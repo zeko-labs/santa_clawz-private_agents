@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildAgentMessageEnvelope } from "@clawz/protocol";
+
 const serverEntry = fileURLToPath(new URL("../dist/apps/indexer/src/server.js", import.meta.url));
 const verifierEntry = fileURLToPath(new URL("../dist/apps/indexer/src/verify-agent-proof.js", import.meta.url));
 const relayEntry = fileURLToPath(new URL("../../../scripts/relay-agent.mjs", import.meta.url));
@@ -1135,6 +1137,20 @@ async function testProtectedApiAuth() {
     assert.equal(workshopAgent.status, 200);
     const workshopAgentId = workshopAgent.payload.agentId;
     assert.ok(workshopAgentId);
+    const workshopRecipientAgent = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      headers: {
+        "x-api-key": "test_operator_key"
+      },
+      body: JSON.stringify({
+        agentName: "Workshop Recipient Smoke Agent",
+        headline: "Temporary workshop encrypted recipient smoke registration.",
+        openClawUrl: "http://127.0.0.1:49994/agent"
+      })
+    });
+    assert.equal(workshopRecipientAgent.status, 200);
+    const workshopRecipientAgentId = workshopRecipientAgent.payload.agentId;
+    assert.ok(workshopRecipientAgentId);
 
     const publicProcurement = await requestJson(`${baseUrl}/api/procurement/intents`, {
       method: "POST",
@@ -1163,6 +1179,10 @@ async function testProtectedApiAuth() {
             {
               agentId: workshopAgentId,
               role: "admin"
+            },
+            {
+              agentId: workshopRecipientAgentId,
+              role: "member"
             }
           ]
         }
@@ -1178,7 +1198,7 @@ async function testProtectedApiAuth() {
     );
     assert.equal(publicWorkshopTicketStatus.status, 200);
     assert.equal(publicWorkshopTicketStatus.payload.claimedCount, 0);
-    assert.equal(publicWorkshopTicketStatus.payload.totalCount, 1);
+    assert.equal(publicWorkshopTicketStatus.payload.totalCount, 2);
 
     const publicWorkshopTicketClaim = await requestJson(`${baseUrl}/api/workshop/setup-tickets/claim`, {
       method: "POST",
@@ -1190,6 +1210,16 @@ async function testProtectedApiAuth() {
     assert.equal(publicWorkshopTicketClaim.status, 200);
     assert.equal(publicWorkshopTicketClaim.payload.agentId, workshopAgentId);
     assert.match(publicWorkshopTicketClaim.payload.workshopAccessToken, /^scz_workshop_/);
+    const publicWorkshopRecipientTicketClaim = await requestJson(`${baseUrl}/api/workshop/setup-tickets/claim`, {
+      method: "POST",
+      body: JSON.stringify({
+        ticket: publicWorkshopTicket.payload.ticket,
+        agentId: workshopRecipientAgentId
+      })
+    });
+    assert.equal(publicWorkshopRecipientTicketClaim.status, 200);
+    assert.equal(publicWorkshopRecipientTicketClaim.payload.agentId, workshopRecipientAgentId);
+    assert.match(publicWorkshopRecipientTicketClaim.payload.workshopAccessToken, /^scz_workshop_/);
 
     const publicWorkshopMessage = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(workshopAgentId)}/messages`, {
       method: "POST",
@@ -1208,6 +1238,73 @@ async function testProtectedApiAuth() {
     assert.equal(publicWorkshopMessage.status, 200);
     assert.equal(publicWorkshopMessage.payload.postedMessage.agentId, workshopAgentId);
     assert.equal(publicWorkshopMessage.payload.postedMessage.threadId, "eventlog_public_workshop_auth_smoke");
+
+    const encryptedEnvelope = buildAgentMessageEnvelope({
+      threadId: "eventlog_public_workshop_auth_smoke",
+      swarmId: "workflow_public_workshop_auth_smoke",
+      kind: "dispatch",
+      visibility: "recipient-encrypted",
+      sender: { agentId: workshopAgentId },
+      recipient: { agentId: workshopRecipientAgentId, publicKey: "recipient-key-smoke" },
+      permissionScope: {
+        lane: "team",
+        allowedActions: ["encrypted-text"]
+      },
+      protocolLaneTags: ["team-coordination", "encrypted-text"],
+      payload: {
+        mode: "inline",
+        mediaType: "text/plain+ciphertext",
+        body: "ciphertext:workshop-smoke-private-message",
+        encryption: {
+          scheme: "x25519-sealed-box",
+          recipientPublicKey: "recipient-key-smoke"
+        }
+      },
+      zekoAnchor: {
+        anchorMode: "aggregate"
+      }
+    });
+    const workshopEnvelopePost = await requestJson(`${baseUrl}/api/workshop/envelopes`, {
+      method: "POST",
+      headers: {
+        "x-santaclawz-workshop-token": publicWorkshopTicketClaim.payload.workshopAccessToken
+      },
+      body: JSON.stringify({
+        agentId: workshopAgentId,
+        envelope: encryptedEnvelope
+      })
+    });
+    assert.equal(workshopEnvelopePost.status, 200);
+    assert.equal(workshopEnvelopePost.payload.schemaVersion, "santaclawz-workshop-private-envelope-post/0.1");
+    assert.equal(workshopEnvelopePost.payload.storedEnvelope.senderAgentId, workshopAgentId);
+    assert.equal(workshopEnvelopePost.payload.storedEnvelope.recipientAgentId, workshopRecipientAgentId);
+    assert.equal(workshopEnvelopePost.payload.storedEnvelope.envelope.payload.body, "ciphertext:workshop-smoke-private-message");
+
+    const workshopRecipientEnvelopeInbox = await requestJson(
+      `${baseUrl}/api/workshop/envelopes?${new URLSearchParams({
+        agentId: workshopRecipientAgentId,
+        threadId: "eventlog_public_workshop_auth_smoke",
+        limit: "10"
+      }).toString()}`,
+      {
+        method: "GET",
+        headers: {
+          "x-santaclawz-workshop-token": publicWorkshopRecipientTicketClaim.payload.workshopAccessToken
+        }
+      }
+    );
+    assert.equal(workshopRecipientEnvelopeInbox.status, 200);
+    assert.equal(workshopRecipientEnvelopeInbox.payload.schemaVersion, "santaclawz-workshop-private-envelope-store/0.1");
+    assert.equal(workshopRecipientEnvelopeInbox.payload.totalEnvelopeCount, 1);
+    assert.equal(workshopRecipientEnvelopeInbox.payload.envelopes[0].envelopeId, encryptedEnvelope.messageId);
+
+    const workshopPublicThread = await requestJson(
+      `${baseUrl}/api/agent-messages?threadId=${encodeURIComponent("eventlog_public_workshop_auth_smoke")}&limit=10`,
+      { method: "GET" }
+    );
+    assert.equal(workshopPublicThread.status, 200);
+    assert.equal(workshopPublicThread.payload.messages.some((message) => message.body.includes("ciphertext:workshop-smoke-private-message")), false);
+    assert.equal(workshopPublicThread.payload.messages.some((message) => message.threadId === "eventlog_public_workshop_auth_smoke"), false);
 
     const publicWorkshopWrongThread = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(workshopAgentId)}/messages`, {
       method: "POST",
@@ -1231,7 +1328,7 @@ async function testProtectedApiAuth() {
       { method: "GET" }
     );
     assert.equal(publicWorkshopTicketClaimedStatus.status, 200);
-    assert.equal(publicWorkshopTicketClaimedStatus.payload.claimedCount, 1);
+    assert.equal(publicWorkshopTicketClaimedStatus.payload.claimedCount, 2);
     assert.ok(publicWorkshopTicketClaimedStatus.payload.claimedAgentsById[workshopAgentId]);
 
     const tokenStateAccess = await requestJson(`${baseUrl}/api/executions/hire_missing/state?token=fake`, {

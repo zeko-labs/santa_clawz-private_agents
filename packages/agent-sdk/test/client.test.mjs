@@ -380,7 +380,7 @@ async function main() {
         threadId: "thread_sdk_coordination",
         swarmId: "sdk_coordination_swarm",
         disclosure: "proof-receipts-only",
-        allowedPublicFields: ["commitmentId", "threadId", "swarmId", "receiptId", "timestamp", "messageDigestSha256"],
+        allowedPublicFields: ["commitmentId", "threadId", "swarmId", "receiptId", "timestamp", "receiptCommitmentSha256"],
         forbiddenPublicFields: ["agentId", "agentName", "participantRoster", "roleAssignment", "taskSummary", "messageBody", "localRef", "artifactUrl", "customerData"]
       },
       org: "SDK test org",
@@ -436,7 +436,8 @@ async function main() {
       envelope: coordinationEnvelope
     });
     assert.equal(coordinationMessage.threadId, "thread_sdk_coordination");
-    assert.equal(coordinationMessage.outputDigestSha256, coordinationEnvelope.envelopeDigestSha256);
+    assert.equal("outputDigestSha256" in coordinationMessage, false);
+    assert.equal(coordinationMessage.body, "Workshop receipt committed.");
     const postedCoordination = await adminClient.postCoordinationEvent({
       manifest: coordinationManifest,
       agentId: pricingUpdate.agentId,
@@ -446,9 +447,14 @@ async function main() {
     });
     assert.equal(postedCoordination.ok, true);
     assert.equal(postedCoordination.postedMessage.threadId, "thread_sdk_coordination");
-    assert.equal(postedCoordination.postedMessage.outputDigestSha256.length, 64);
+    assert.equal("outputDigestSha256" in postedCoordination.postedMessage, false);
     const coordinationThread = await client.readCoordinationThread({ manifest: coordinationManifest, limit: 10 });
-    assert.ok(coordinationThread.messages.some((message) => message.threadId === "thread_sdk_coordination"));
+    assert.equal(coordinationThread.messages.some((message) => message.threadId === "thread_sdk_coordination"), false);
+    const workshopReceiptLedger = await client.readWorkshopReceiptLedger({ manifest: coordinationManifest, limit: 10 });
+    assert.ok(workshopReceiptLedger.receipts.some((receipt) => receipt.threadId === "thread_sdk_coordination"));
+    assert.match(workshopReceiptLedger.receipts[0].receiptCommitmentSha256, /^[a-f0-9]{64}$/);
+    assert.equal("messageDigestSha256" in workshopReceiptLedger.receipts[0], false);
+    assert.equal("outputDigestSha256" in workshopReceiptLedger.receipts[0], false);
 
     const currentBundle = await client.getProofBundle();
     assert.notEqual(currentBundle.bundleDigest.sha256Hex, bundle.bundleDigest.sha256Hex);
