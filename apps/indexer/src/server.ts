@@ -3124,10 +3124,25 @@ async function buildX402PaymentStateResponse(input: {
         }
       }
     : undefined;
+  const stateProjectionUpdatedAtIso = new Date().toISOString();
+  const ledgerUpdatedAtIso = latestLedger?.updatedAtIso;
+  const sourceFreshnessMs = sourceFreshnessMsFromIso(ledgerUpdatedAtIso, stateProjectionUpdatedAtIso);
   return {
     schemaVersion: "santaclawz-x402-payment-state/1.0",
     ok: true,
-    generatedAtIso: new Date().toISOString(),
+    generatedAtIso: stateProjectionUpdatedAtIso,
+    stateProjectionUpdatedAtIso,
+    ...(ledgerUpdatedAtIso ? { ledgerUpdatedAtIso } : {}),
+    ...(sourceFreshnessMs !== undefined ? { sourceFreshnessMs } : {}),
+    sourceFreshness: {
+      stateProjectionUpdatedAtIso,
+      ...(ledgerUpdatedAtIso ? { ledgerUpdatedAtIso } : {}),
+      ...(sourceFreshnessMs !== undefined ? { sourceFreshnessMs } : {}),
+      ...(hireRequest?.submittedAtIso ? { executionSubmittedAtIso: hireRequest.submittedAtIso } : {}),
+      paymentStateCanonicalForRetrySafety: true,
+      expectedConsistency:
+        "payment-state is canonical for retry safety; execution-state can expose buyer delivery or finality first during settlement convergence"
+    },
     lookup: {
       ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
       ...(intentId ? { intentId } : {}),
@@ -3203,6 +3218,18 @@ async function buildX402PaymentStateResponse(input: {
 }
 
 type X402PaymentStateResponse = Awaited<ReturnType<typeof buildX402PaymentStateResponse>>;
+
+function sourceFreshnessMsFromIso(sourceUpdatedAtIso: string | undefined, generatedAtIso: string) {
+  if (!sourceUpdatedAtIso) {
+    return undefined;
+  }
+  const sourceMs = Date.parse(sourceUpdatedAtIso);
+  const generatedMs = Date.parse(generatedAtIso);
+  if (!Number.isFinite(sourceMs) || !Number.isFinite(generatedMs)) {
+    return undefined;
+  }
+  return Math.max(0, generatedMs - sourceMs);
+}
 
 function paymentPayloadRetrySafety(input: {
   paymentPayloadDigestSha256?: string | undefined;
@@ -3394,6 +3421,10 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     schemaVersion: payload.schemaVersion,
     ok: payload.ok,
     generatedAtIso: payload.generatedAtIso,
+    ...(typeof payload.stateProjectionUpdatedAtIso === "string" ? { stateProjectionUpdatedAtIso: payload.stateProjectionUpdatedAtIso } : {}),
+    ...(typeof payload.ledgerUpdatedAtIso === "string" ? { ledgerUpdatedAtIso: payload.ledgerUpdatedAtIso } : {}),
+    ...(typeof payload.sourceFreshnessMs === "number" ? { sourceFreshnessMs: payload.sourceFreshnessMs } : {}),
+    ...(isRecord(payload.sourceFreshness) ? { sourceFreshness: payload.sourceFreshness } : {}),
     lookup: payload.lookup,
     redacted: true,
     ...(protocolLifecycle ? { protocolLifecycle } : {}),
@@ -5441,10 +5472,25 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
       paymentSettled,
       buyerAccepted
     });
+    const stateProjectionUpdatedAtIso = new Date().toISOString();
+    const ledgerUpdatedAtIso = latestLedger?.updatedAtIso;
+    const sourceFreshnessMs = sourceFreshnessMsFromIso(ledgerUpdatedAtIso, stateProjectionUpdatedAtIso);
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
-      generatedAtIso: new Date().toISOString(),
+      generatedAtIso: stateProjectionUpdatedAtIso,
+      stateProjectionUpdatedAtIso,
+      ...(ledgerUpdatedAtIso ? { ledgerUpdatedAtIso } : {}),
+      ...(sourceFreshnessMs !== undefined ? { sourceFreshnessMs } : {}),
+      sourceFreshness: {
+        stateProjectionUpdatedAtIso,
+        ...(ledgerUpdatedAtIso ? { ledgerUpdatedAtIso } : {}),
+        ...(sourceFreshnessMs !== undefined ? { sourceFreshnessMs } : {}),
+        executionSubmittedAtIso: hireRequest.submittedAtIso,
+        paymentStateCanonicalForRetrySafety: true,
+        expectedConsistency:
+          "execution-state exposes buyer delivery and proof progress; payment-state remains canonical for retry safety during settlement convergence"
+      },
       ids: {
         requestedRequestId,
         executionRequestId: requestId,
@@ -5541,7 +5587,8 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         buyerVerified,
         buyerAccepted,
         failed: hasFailure,
-        terminal: buyerAccepted || hasFailure || expiredAuthorizationNoChargeTerminal,
+        terminal: protocolLifecycle.terminal || buyerAccepted || hasFailure || expiredAuthorizationNoChargeTerminal,
+        protocolTerminal: protocolLifecycle.terminal,
         ...(expiredAuthorizationNoChargeTerminal ? { paymentPathTerminal: true } : {})
       },
       ...(acceptedPendingResult

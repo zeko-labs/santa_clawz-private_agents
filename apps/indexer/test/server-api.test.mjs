@@ -3837,7 +3837,8 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
       buyerVerified: true,
       buyerAccepted: true,
       failed: false,
-      terminal: true
+      terminal: true,
+      protocolTerminal: false
     });
     assert.equal(executionState.payload.privacy.jobVisibility, "private");
     assert.equal(executionState.payload.delivery.latestReceipt.deliveryState, "buyer_accepted");
@@ -4259,10 +4260,15 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorActionRequired, true);
+    assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.reconciliationRequired, false);
+    assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorReconciliationRequired, false);
     assert.equal(deliveredPaymentState.payload.paymentFinality, "pending");
     assert.equal(deliveredPaymentState.payload.paymentFinalityPending, true);
     assert.equal(deliveredPaymentState.payload.statePollingRequired, true);
     assert.equal(deliveredPaymentState.payload.recommendedPollAfterMs, 2000);
+    assert.equal(deliveredPaymentState.payload.sourceFreshness.paymentStateCanonicalForRetrySafety, true);
+    assert.equal(typeof deliveredPaymentState.payload.stateProjectionUpdatedAtIso, "string");
     assert.equal(deliveredPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(deliveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
@@ -5915,6 +5921,9 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredAwaitingSettlement.buyerAction, "view_delivery");
   assert.equal(deliveredAwaitingSettlement.sellerOutcome, "completed");
   assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
+  assert.equal(deliveredAwaitingSettlement.operatorAnswer.operatorActionRequired, true);
+  assert.equal(deliveredAwaitingSettlement.operatorAnswer.reconciliationRequired, false);
+  assert.equal(deliveredAwaitingSettlement.operatorAnswer.operatorReconciliationRequired, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canRetrySamePaymentPayload, false);
 
@@ -5938,6 +5947,9 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredSettlementFailed.buyerAction, "view_delivery");
   assert.equal(deliveredSettlementFailed.sellerOutcome, "completed");
   assert.equal(deliveredSettlementFailed.operatorObligation, "reconcile_platform_state");
+  assert.equal(deliveredSettlementFailed.operatorAnswer.operatorActionRequired, true);
+  assert.equal(deliveredSettlementFailed.operatorAnswer.reconciliationRequired, true);
+  assert.equal(deliveredSettlementFailed.operatorAnswer.operatorReconciliationRequired, true);
   assert.equal(deliveredSettlementFailed.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredSettlementFailed.sellerAnswer.reputationImpact, "none");
 
