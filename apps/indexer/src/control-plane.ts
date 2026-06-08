@@ -986,6 +986,13 @@ interface PaymentLedgerSettlementInput {
   settlementRetryable?: boolean;
 }
 
+interface BasePayoutWalletRecord {
+  agentId: string;
+  sessionId: string;
+  agentName: string;
+  payoutWallet: string;
+}
+
 interface PaymentLedgerSettlementReconciliationInput {
   ledgerId: string;
   settlementReference?: string;
@@ -2295,6 +2302,10 @@ function safeUsdAmountAtomic(value: string | undefined): bigint {
     return 0n;
   }
   return usdAmountAtomic(value);
+}
+
+function atomicDifference(left: bigint, right: bigint): bigint {
+  return left > right ? left - right : 0n;
 }
 
 function usdAmountFromAtomic(value: bigint): string {
@@ -5059,7 +5070,7 @@ export class ClawzControlPlane {
     await this.ensureDirs();
     const entries = file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId);
     await writeJsonFile(this.paymentLedgerPath, {
-      entries,
+      entries: entries.slice(0, 2000),
       allTimeStats: this.buildPaymentLedgerAllTimeStats(file.allTimeStats, entries)
     });
   }
@@ -7149,6 +7160,41 @@ export class ClawzControlPlane {
       completedSellerPayoutUsd: stats.completedSellerPayoutUsd,
       completedBaseSellerPayoutUsd: stats.completedBaseSellerPayoutUsd
     };
+  }
+
+  async reconcileBasePaymentLedgerRollup(input: {
+    completedBasePaymentCount: number;
+    completedBaseSellerPayoutUsd: string;
+    countedPaymentKeys: string[];
+  }): Promise<PaymentLedgerAllTimeStats> {
+    const file = await this.loadPaymentLedgerFile();
+    const currentStats = this.buildPaymentLedgerAllTimeStats(file.allTimeStats, []);
+    const nonBasePaymentCount = Math.max(0, currentStats.completedPaymentCount - currentStats.completedBasePaymentCount);
+    const nonBaseSellerPayoutAtomic = atomicDifference(
+      safeUsdAmountAtomic(currentStats.completedSellerPayoutUsd),
+      safeUsdAmountAtomic(currentStats.completedBaseSellerPayoutUsd)
+    );
+    const completedBasePaymentCount = Math.max(0, Math.floor(input.completedBasePaymentCount));
+    const completedBaseSellerPayoutAtomic = safeUsdAmountAtomic(input.completedBaseSellerPayoutUsd);
+    const completedEntryKeys = file.entries
+      .filter((entry) => this.buildPaymentLedgerLifecycleStatus(entry).completionStatus === "completed")
+      .map((entry) => this.paymentLedgerCompletionKey(entry));
+    const allTimeStats: PaymentLedgerAllTimeStats = {
+      completedPaymentCount: nonBasePaymentCount + completedBasePaymentCount,
+      completedBasePaymentCount,
+      completedSellerPayoutUsd: usdAmountFromAtomic(nonBaseSellerPayoutAtomic + completedBaseSellerPayoutAtomic),
+      completedBaseSellerPayoutUsd: usdAmountFromAtomic(completedBaseSellerPayoutAtomic),
+      countedPaymentKeys: [...new Set([
+        ...currentStats.countedPaymentKeys,
+        ...input.countedPaymentKeys.filter((key) => typeof key === "string" && key.length > 0),
+        ...completedEntryKeys
+      ])]
+    };
+    await this.savePaymentLedgerFile({
+      ...file,
+      allTimeStats
+    });
+    return this.buildPaymentLedgerAllTimeStats(allTimeStats, []);
   }
 
   private buildPaymentLedgerLifecycleStatus(entry: PaymentLedgerEntry): NonNullable<PaymentLedgerEntry["lifecycleStatus"]> {
@@ -10741,6 +10787,27 @@ export class ClawzControlPlane {
         }
         return left.agentName.localeCompare(right.agentName);
       });
+  }
+
+  async listBasePayoutWallets(): Promise<BasePayoutWalletRecord[]> {
+    const state = await this.loadState();
+    const events = await this.loadEvents();
+    return this.buildKnownSessionIds(state, events)
+      .map((sessionId) => {
+        const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
+        const profile = this.profileForSession(state, sessionId, trustModeId);
+        const payoutWallet = profile.payoutWallets.base?.trim();
+        if (!payoutWallet || !looksLikeEvmAddress(payoutWallet)) {
+          return undefined;
+        }
+        return {
+          agentId: this.agentIdForSession(state, sessionId, trustModeId),
+          sessionId,
+          agentName: profile.agentName,
+          payoutWallet
+        };
+      })
+      .filter((record): record is BasePayoutWalletRecord => Boolean(record));
   }
 
   private isPrivateProcurementIntent(intent: ProcurementIntentRecord) {

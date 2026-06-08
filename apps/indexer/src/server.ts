@@ -3588,6 +3588,60 @@ async function fetchBaseRelayerTransactions(input: {
   return result.filter(isRecord);
 }
 
+async function fetchBaseTransactionReceipt(txHash: string): Promise<Record<string, unknown> | undefined> {
+  const receipt = await baseRpcCall<Record<string, unknown> | null>("eth_getTransactionReceipt", [txHash]);
+  return isRecord(receipt) ? receipt : undefined;
+}
+
+interface BaseRelayerSellerPayoutTransfer {
+  key: string;
+  transactionHash: string;
+  blockNumber?: number;
+  logIndex?: string;
+  agentId: string;
+  sessionId: string;
+  agentName: string;
+  payoutWallet: string;
+  valueAtomic: string;
+}
+
+function parseBaseRelayerSellerPayoutTransfers(input: {
+  receipt: Record<string, unknown>;
+  payoutWalletsByAddress: Map<string, { agentId: string; sessionId: string; agentName: string; payoutWallet: string }>;
+}): BaseRelayerSellerPayoutTransfer[] {
+  const logs = Array.isArray(input.receipt.logs) ? input.receipt.logs.filter(isRecord) : [];
+  const transfers: BaseRelayerSellerPayoutTransfer[] = [];
+  for (const log of logs) {
+    const address = typeof log.address === "string" ? log.address.toLowerCase() : "";
+    const topics = Array.isArray(log.topics) ? log.topics : [];
+    if (
+      address !== BASE_USDC_ADDRESS.toLowerCase() ||
+      (typeof topics[0] === "string" ? topics[0].toLowerCase() : "") !== EVM_TRANSFER_TOPIC
+    ) {
+      continue;
+    }
+    const to = evmAddressFromTopic(topics[2]);
+    const recipient = to ? input.payoutWalletsByAddress.get(to) : undefined;
+    const data = typeof log.data === "string" ? log.data : "";
+    const transactionHash = typeof log.transactionHash === "string" ? log.transactionHash : "";
+    if (!recipient || !data || !isEvmTransactionHash(transactionHash)) {
+      continue;
+    }
+    const blockHex = typeof log.blockNumber === "string" ? log.blockNumber : "";
+    const logIndex = typeof log.logIndex === "string" ? log.logIndex : undefined;
+    const valueAtomic = BigInt(data).toString();
+    transfers.push({
+      key: `${transactionHash.toLowerCase()}:${to}:${logIndex ?? transfers.length.toString()}`,
+      transactionHash,
+      ...(blockHex ? { blockNumber: Number.parseInt(blockHex, 16) } : {}),
+      ...(logIndex ? { logIndex } : {}),
+      ...recipient,
+      valueAtomic
+    });
+  }
+  return transfers;
+}
+
 interface BaseUsdcTransferLog {
   transactionHash: string;
   blockNumber: number;
@@ -3595,12 +3649,31 @@ interface BaseUsdcTransferLog {
   occurredAtIso: string;
 }
 
+const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const EVM_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
 function evmAddressTopic(address: string | undefined): string | undefined {
   const trimmed = address?.trim().toLowerCase();
   if (!trimmed || !/^0x[a-f0-9]{40}$/.test(trimmed)) {
     return undefined;
   }
   return `0x${trimmed.slice(2).padStart(64, "0")}`;
+}
+
+function evmAddressFromTopic(topic: unknown): string | undefined {
+  if (typeof topic !== "string" || !/^0x[a-fA-F0-9]{64}$/.test(topic)) {
+    return undefined;
+  }
+  return `0x${topic.slice(-40)}`.toLowerCase();
+}
+
+function usdAmountFromUsdcAtomic(value: bigint): string {
+  const whole = value / 1_000_000n;
+  const fraction = value % 1_000_000n;
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+  return `${whole}.${fraction.toString().padStart(6, "0").replace(/0+$/, "")}`;
 }
 
 function remoteVerificationForLedger(entry: PaymentLedgerEntry): Record<string, unknown> | undefined {
@@ -3674,9 +3747,9 @@ async function fetchBaseUsdcTransferLogs(input: {
       {
         fromBlock: `0x${fromBlock.toString(16)}`,
         toBlock: `0x${toBlock.toString(16)}`,
-        address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        address: BASE_USDC_ADDRESS,
         topics: [
-          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          EVM_TRANSFER_TOPIC,
           input.fromTopic,
           input.toTopic
         ]
@@ -3844,6 +3917,94 @@ async function reconcileSponsoredBudgetSettlementFailures(input: {
     matchedCount: matches.filter((match) => match.matched).length,
     reconciledCount: input.commit ? matches.filter((match) => match.matched).length : 0,
     matches
+  };
+}
+
+async function reconcileBaseSellerPayoutRollup(input: {
+  transactions: Record<string, unknown>[];
+  commit: boolean;
+}) {
+  const payoutWallets = await controlPlane.listBasePayoutWallets();
+  const payoutWalletsByAddress = new Map(
+    payoutWallets.map((record) => [record.payoutWallet.toLowerCase(), record])
+  );
+  const transfers: BaseRelayerSellerPayoutTransfer[] = [];
+  const hashes = input.transactions
+    .map((tx) => typeof tx.hash === "string" ? tx.hash : "")
+    .filter(isEvmTransactionHash);
+  const batchSize = 20;
+  for (let index = 0; index < hashes.length; index += batchSize) {
+    const receipts = await Promise.all(
+      hashes.slice(index, index + batchSize).map((hash) => fetchBaseTransactionReceipt(hash))
+    );
+    for (const receipt of receipts) {
+      if (!receipt) {
+        continue;
+      }
+      transfers.push(...parseBaseRelayerSellerPayoutTransfers({
+        receipt,
+        payoutWalletsByAddress
+      }));
+    }
+  }
+  const uniqueTransfers = Array.from(new Map(transfers.map((transfer) => [transfer.key, transfer])).values());
+  const completedBaseSellerPayoutAtomic = uniqueTransfers.reduce(
+    (total, transfer) => total + BigInt(transfer.valueAtomic),
+    0n
+  );
+  const completedBaseSellerPayoutUsd = usdAmountFromUsdcAtomic(completedBaseSellerPayoutAtomic);
+  const allTimeStats = input.commit
+    ? await controlPlane.reconcileBasePaymentLedgerRollup({
+        completedBasePaymentCount: uniqueTransfers.length,
+        completedBaseSellerPayoutUsd,
+        countedPaymentKeys: uniqueTransfers.map((transfer) => transfer.key)
+      })
+    : undefined;
+  const byAgent = Array.from(uniqueTransfers.reduce((agents, transfer) => {
+    const current = agents.get(transfer.agentId) ?? {
+      agentId: transfer.agentId,
+      sessionId: transfer.sessionId,
+      agentName: transfer.agentName,
+      payoutWallet: transfer.payoutWallet,
+      completedBasePaymentCount: 0,
+      completedBaseSellerPayoutAtomic: 0n
+    };
+    current.completedBasePaymentCount += 1;
+    current.completedBaseSellerPayoutAtomic += BigInt(transfer.valueAtomic);
+    agents.set(transfer.agentId, current);
+    return agents;
+  }, new Map<string, {
+    agentId: string;
+    sessionId: string;
+    agentName: string;
+    payoutWallet: string;
+    completedBasePaymentCount: number;
+    completedBaseSellerPayoutAtomic: bigint;
+  }>()).values()).map((agent) => ({
+    agentId: agent.agentId,
+    sessionId: agent.sessionId,
+    agentName: agent.agentName,
+    payoutWallet: agent.payoutWallet,
+    completedBasePaymentCount: agent.completedBasePaymentCount,
+    completedBaseSellerPayoutUsd: usdAmountFromUsdcAtomic(agent.completedBaseSellerPayoutAtomic)
+  })).sort((left, right) => Number.parseFloat(right.completedBaseSellerPayoutUsd) - Number.parseFloat(left.completedBaseSellerPayoutUsd));
+  return {
+    payoutWalletCount: payoutWallets.length,
+    relayerTransactionCount: input.transactions.length,
+    matchedSellerPayoutTransferCount: uniqueTransfers.length,
+    completedBaseSellerPayoutUsd,
+    commit: input.commit,
+    ...(allTimeStats ? { allTimeStats } : {}),
+    byAgent,
+    sampleTransfers: uniqueTransfers.slice(0, 25).map((transfer) => ({
+      transactionHash: transfer.transactionHash,
+      agentId: transfer.agentId,
+      agentName: transfer.agentName,
+      payoutWallet: transfer.payoutWallet,
+      amountUsd: usdAmountFromUsdcAtomic(BigInt(transfer.valueAtomic)),
+      ...(transfer.blockNumber ? { blockNumber: transfer.blockNumber } : {}),
+      ...(transfer.logIndex ? { logIndex: transfer.logIndex } : {})
+    }))
   };
 }
 
@@ -6391,6 +6552,9 @@ const handleX402Reconciliation = route(async (request, response) => {
   const sponsoredBudgetMode =
     queryString(request.query, "sponsoredBudget") === "true" ||
     (isRecord(request.body) && request.body.sponsoredBudget === true);
+  const payoutRollupMode =
+    queryString(request.query, "payoutRollup") === "true" ||
+    (isRecord(request.body) && request.body.payoutRollup === true);
   const requestedLookbackBlocks =
     Number.parseInt(queryString(request.query, "lookbackBlocks") ?? "", 10) ||
     (isRecord(request.body) && typeof request.body.lookbackBlocks === "number" ? request.body.lookbackBlocks : undefined) ||
@@ -6412,13 +6576,14 @@ const handleX402Reconciliation = route(async (request, response) => {
     "";
   const basescanApiKey = process.env.CLAWZ_BASESCAN_API_KEY?.trim() ?? process.env.BASESCAN_API_KEY?.trim() ?? "";
   const backfilledHashes: string[] = [];
+  let relayerTransactions: Record<string, unknown>[] = [];
   if (relayerAddress && basescanApiKey) {
-    const transactions = await fetchBaseRelayerTransactions({
+    relayerTransactions = await fetchBaseRelayerTransactions({
       address: relayerAddress,
       apiKey: basescanApiKey,
       ...(process.env.CLAWZ_BASESCAN_API_URL ? { apiUrl: process.env.CLAWZ_BASESCAN_API_URL } : {})
     });
-    for (const tx of transactions) {
+    for (const tx of relayerTransactions) {
       const hash = tx.hash;
       if (!isEvmTransactionHash(hash) || settledTxHashes.has(hash.toLowerCase())) {
         continue;
@@ -6479,6 +6644,13 @@ const handleX402Reconciliation = route(async (request, response) => {
         matchAfterMs: 10 * 60 * 1000
       })
     : undefined;
+  const basePayoutRollupReconciliation =
+    payoutRollupMode && relayerTransactions.length > 0
+      ? await reconcileBaseSellerPayoutRollup({
+          transactions: relayerTransactions,
+          commit
+        })
+      : undefined;
   response.json({
     ok: true,
     mode: relayerAddress && basescanApiKey ? "basescan-backfill" : "ledger-local-summary",
@@ -6495,6 +6667,7 @@ const handleX402Reconciliation = route(async (request, response) => {
     orphanSettlementCount: orphanEntries.length,
     paidButIncompleteCount: incompleteEntries.length,
     ...(sponsoredBudgetReconciliation ? { sponsoredBudgetReconciliation } : {}),
+    ...(basePayoutRollupReconciliation ? { basePayoutRollupReconciliation } : {}),
     orphanSettlements: orphanEntries.slice(0, 50),
     paidButIncomplete: incompleteEntries.slice(0, 50)
   });

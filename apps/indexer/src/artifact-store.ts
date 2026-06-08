@@ -64,6 +64,13 @@ interface ArtifactReceiptMetadata {
   tokenHashSha256: string;
 }
 
+interface ArtifactReceiptRequestIndex {
+  schemaVersion: "santaclawz-artifact-receipt-request-index/1.0";
+  requestId: string;
+  receiptIds: string[];
+  updatedAtIso: string;
+}
+
 interface ArtifactCreateOptions {
   requestId: string;
   filename?: string;
@@ -854,6 +861,7 @@ export class ArtifactStore {
   private readonly metadataDir: string;
   private readonly dataDir: string;
   private readonly receiptDir: string;
+  private readonly receiptRequestIndexDir: string;
   private readonly encryptionKey: Buffer;
   private readonly retentionDays: number;
   private readonly maxBytes: number;
@@ -865,6 +873,7 @@ export class ArtifactStore {
     this.metadataDir = path.join(baseDir, "metadata");
     this.dataDir = path.join(baseDir, "data");
     this.receiptDir = path.join(baseDir, "receipts");
+    this.receiptRequestIndexDir = path.join(this.receiptDir, "by-request");
     this.encryptionKey = resolveEncryptionKey(baseDir);
     this.retentionDays = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_RETENTION_DAYS, 10, 1, 90);
     this.maxBytes = parsePositiveInteger(process.env.CLAWZ_ARTIFACT_MAX_BYTES, 25 * 1024 * 1024, 1024, 250 * 1024 * 1024);
@@ -882,6 +891,7 @@ export class ArtifactStore {
     await mkdir(this.metadataDir, { recursive: true, mode: 0o700 });
     await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
     await mkdir(this.receiptDir, { recursive: true, mode: 0o700 });
+    await mkdir(this.receiptRequestIndexDir, { recursive: true, mode: 0o700 });
   }
 
   async scannerHealth() {
@@ -1048,6 +1058,7 @@ export class ArtifactStore {
       tokenHashSha256: sha256Hex(token)
     };
     await writeJsonFile(this.receiptPath(receiptId), metadata);
+    await this.addReceiptToRequestIndex(metadata.requestId, receiptId);
     const base = publicArtifactReceiptBase(options.baseUrl, receiptId);
     const tokenQuery = `token=${encodeURIComponent(token)}`;
     const receiptManifestUrl = `${base}?${tokenQuery}`;
@@ -1073,14 +1084,12 @@ export class ArtifactStore {
     if (!trimmed) {
       return [];
     }
-    const names = await readdir(this.receiptDir);
+    const index = await this.readReceiptRequestIndex(trimmed);
+    const receiptIds = index?.receiptIds ?? [];
     const receipts: ArtifactReceiptPublicMetadata[] = [];
-    for (const name of names) {
-      if (!name.endsWith(".json")) {
-        continue;
-      }
+    for (const receiptId of receiptIds) {
       try {
-        const metadata = JSON.parse(await readFile(path.join(this.receiptDir, name), "utf8")) as ArtifactReceiptMetadata;
+        const metadata = JSON.parse(await readFile(this.receiptPath(receiptId), "utf8")) as ArtifactReceiptMetadata;
         if (metadata.requestId === trimmed) {
           receipts.push(this.publicReceipt(metadata));
         }
@@ -1247,6 +1256,45 @@ export class ArtifactStore {
 
   private receiptPath(receiptId: string) {
     return path.join(this.receiptDir, `${receiptId}.json`);
+  }
+
+  private receiptRequestIndexPath(requestId: string) {
+    return path.join(this.receiptRequestIndexDir, `${sha256Hex(requestId)}.json`);
+  }
+
+  private async readReceiptRequestIndex(requestId: string): Promise<ArtifactReceiptRequestIndex | undefined> {
+    try {
+      const parsed = JSON.parse(await readFile(this.receiptRequestIndexPath(requestId), "utf8")) as ArtifactReceiptRequestIndex;
+      if (
+        parsed?.schemaVersion === "santaclawz-artifact-receipt-request-index/1.0" &&
+        parsed.requestId === requestId &&
+        Array.isArray(parsed.receiptIds)
+      ) {
+        return {
+          schemaVersion: parsed.schemaVersion,
+          requestId,
+          receiptIds: parsed.receiptIds.filter((receiptId) => typeof receiptId === "string" && receiptId.length > 0),
+          updatedAtIso: parsed.updatedAtIso
+        };
+      }
+    } catch {
+      // Missing or malformed indexes are treated as no receipts for this request.
+    }
+    return undefined;
+  }
+
+  private async addReceiptToRequestIndex(requestId: string, receiptId: string) {
+    const trimmed = requestId.trim();
+    if (!trimmed || !receiptId.trim()) {
+      return;
+    }
+    const existing = await this.readReceiptRequestIndex(trimmed);
+    await writeJsonFile(this.receiptRequestIndexPath(trimmed), {
+      schemaVersion: "santaclawz-artifact-receipt-request-index/1.0",
+      requestId: trimmed,
+      receiptIds: [...new Set([receiptId.trim(), ...(existing?.receiptIds ?? [])])],
+      updatedAtIso: new Date().toISOString()
+    } satisfies ArtifactReceiptRequestIndex);
   }
 
   private async assertRequestQuota(requestId: string, nextBytes: number) {

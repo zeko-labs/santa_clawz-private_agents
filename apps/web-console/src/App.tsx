@@ -2664,7 +2664,7 @@ export function App() {
     initialized: false
   });
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
-  const exploreAvailabilityAgentIds = (activeSection === "explore" || activeSection === "workshop") && !sharedAgentId
+  const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
     ? registry
       .filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery))
       .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
@@ -2924,7 +2924,7 @@ export function App() {
   }, [activeSection, sharedAgentId, state?.session.sessionId]);
 
   useEffect(() => {
-    if ((activeSection !== "explore" && activeSection !== "workshop") || sharedAgentId) {
+    if (activeSection !== "explore" || sharedAgentId) {
       return;
     }
 
@@ -3088,7 +3088,7 @@ export function App() {
   }, [activeSection, sharedAgentId]);
 
   useEffect(() => {
-    if ((activeSection !== "explore" && activeSection !== "workshop") || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
+    if (activeSection !== "explore" || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
       return;
     }
 

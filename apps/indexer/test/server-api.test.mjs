@@ -12,6 +12,7 @@ import { buildAgentMessageEnvelope } from "@clawz/protocol";
 
 const serverEntry = fileURLToPath(new URL("../dist/apps/indexer/src/server.js", import.meta.url));
 const controlPlaneEntry = fileURLToPath(new URL("../dist/apps/indexer/src/control-plane.js", import.meta.url));
+const artifactStoreEntry = fileURLToPath(new URL("../dist/apps/indexer/src/artifact-store.js", import.meta.url));
 const verifierEntry = fileURLToPath(new URL("../dist/apps/indexer/src/verify-agent-proof.js", import.meta.url));
 const relayEntry = fileURLToPath(new URL("../../../scripts/relay-agent.mjs", import.meta.url));
 const SERVER_READY_TIMEOUT_MS = 30000;
@@ -5383,26 +5384,26 @@ async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
   }
 }
 
-async function testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows() {
-  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-uncapped-"));
+async function testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-rollup-"));
   try {
     const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
     const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
     const nowIso = new Date().toISOString();
     const entries = Array.from({ length: 2001 }, (_, index) => ({
-      ledgerId: `pay_uncapped_${index.toString().padStart(4, "0")}`,
+      ledgerId: `pay_rollup_${index.toString().padStart(4, "0")}`,
       createdAtIso: nowIso,
       updatedAtIso: nowIso,
-      agentId: "agent_uncapped",
-      sessionId: "session_uncapped",
+      agentId: "agent_rollup",
+      sessionId: "session_rollup",
       resource: "http://127.0.0.1/hire",
       pricingMode: "fixed-exact",
       rail: "base-usdc",
       networkId: "eip155:8453",
       assetSymbol: "USDC",
-      amountUsd: "0.25",
-      sellerNetAmountUsd: "0.25",
-      settlementReference: `settlement_uncapped_${index}`,
+      amountUsd: index === 0 ? "1.234567" : "0.000001",
+      sellerNetAmountUsd: index === 0 ? "1.234567" : "0.000001",
+      settlementReference: `settlement_rollup_${index}`,
       transactionHashes: [`0x${(index + 1).toString(16).padStart(64, "0")}`],
       paymentStatus: "settled",
       executionStatus: "completed",
@@ -5413,13 +5414,80 @@ async function testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows() {
 
     const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
     const saved = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
-    assert.equal(saved.entries.length, 2001);
+    assert.equal(saved.entries.length, 2000);
     assert.equal(saved.allTimeStats.completedPaymentCount, 2001);
     assert.equal(saved.allTimeStats.completedBasePaymentCount, 2001);
-    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "500.25");
-    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "500.25");
+    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "1.236567");
+    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "1.236567");
 
-    console.log("ok - payment ledger persistence keeps completed payout rows uncapped");
+    const reconciledStats = await controlPlane.reconcileBasePaymentLedgerRollup({
+      completedBasePaymentCount: 3,
+      completedBaseSellerPayoutUsd: "5.432101",
+      countedPaymentKeys: ["base_tx_one", "base_tx_two", "base_tx_three"]
+    });
+    assert.equal(reconciledStats.completedPaymentCount, 3);
+    assert.equal(reconciledStats.completedBasePaymentCount, 3);
+    assert.equal(reconciledStats.completedSellerPayoutUsd, "5.432101");
+    assert.equal(reconciledStats.completedBaseSellerPayoutUsd, "5.432101");
+    const reconciled = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
+    assert.equal(reconciled.entries.length, 2000);
+    assert.equal(reconciled.allTimeStats.completedPaymentCount, 3);
+    assert.equal(reconciled.allTimeStats.completedBaseSellerPayoutUsd, "5.432101");
+
+    console.log("ok - payment ledger persistence keeps cumulative payout stats when rows are pruned");
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+async function testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-artifact-receipt-index-"));
+  try {
+    const { ArtifactStore } = await import(pathToFileURL(artifactStoreEntry).href);
+    const store = new ArtifactStore(path.join(workspaceDir, "artifacts"));
+    await store.ensureDirs();
+
+    await store.createReceipt({
+      requestId: "hire_indexed_receipts",
+      deliveryMode: "external_reference",
+      filename: "report.md",
+      contentType: "text/markdown",
+      artifactDigestSha256: "a".repeat(64),
+      artifactSizeBytes: 128,
+      artifactUrl: "https://example.com/report.md",
+      baseUrl: "http://127.0.0.1:3000"
+    });
+
+    const legacyReceiptDir = path.join(workspaceDir, "artifacts", "receipts");
+    await writeFile(path.join(legacyReceiptDir, "receipt_legacy_unindexed.json"), JSON.stringify({
+      receiptId: "receipt_legacy_unindexed",
+      requestId: "hire_legacy_only",
+      createdAtIso: new Date().toISOString(),
+      updatedAtIso: new Date().toISOString(),
+      deliveredAtIso: new Date().toISOString(),
+      deliveryMode: "external_reference",
+      transport: "external_url",
+      scanPolicy: "external_unverified",
+      digestRequired: true,
+      buyerAcceptanceRequired: true,
+      buyerAcceptanceStatus: "pending",
+      filename: "legacy.md",
+      contentType: "text/markdown",
+      artifactDigestSha256: "b".repeat(64),
+      artifactSizeBytes: 256,
+      artifactUrl: "https://example.com/legacy.md",
+      manifestDigestSha256: "c".repeat(64),
+      tokenHashSha256: "d".repeat(64)
+    }, null, 2), "utf8");
+
+    const indexed = await store.receiptsForRequest("hire_indexed_receipts");
+    assert.equal(indexed.length, 1);
+    assert.equal(indexed[0].requestId, "hire_indexed_receipts");
+
+    const unindexed = await store.receiptsForRequest("hire_legacy_only");
+    assert.equal(unindexed.length, 0);
+
+    console.log("ok - artifact receipts use request index instead of global scan");
   } finally {
     await rm(workspaceDir, { recursive: true, force: true });
   }
@@ -5844,7 +5912,8 @@ async function main() {
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
-  await testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows();
+  await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
+  await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();
