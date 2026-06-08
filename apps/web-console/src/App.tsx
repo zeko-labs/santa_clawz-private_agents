@@ -4912,7 +4912,9 @@ export function App() {
       : "No success history yet";
   const agentCompletionScoreDetail =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
-      ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
+      ? agentCompletionScore.source === "payment-ledger"
+        ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} verified paid returns`
+        : `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
       : "Waiting for paid job outcomes";
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
@@ -6730,6 +6732,9 @@ export function App() {
                                       <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill payment-status-pill confirmed" : "board-proof-pill payment-status-pill pending"}>
                                         {paymentActivityBadge(payment)}
                                       </span>
+                                    </div>
+                                    <div className="agent-message-proof-row payment-activity-proof-row">
+                                      {paymentHistoryDetail(payment)}
                                     </div>
                                   </article>
                                 );

@@ -655,6 +655,7 @@ export interface AgentCompletionScore {
   failedJobCount: number;
   successRatePct?: number;
   lastEvaluatedAtIso?: string;
+  source?: "payment-ledger" | "hire-requests";
   label: string;
 }
 
