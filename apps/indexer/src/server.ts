@@ -3562,30 +3562,41 @@ async function fetchBaseRelayerTransactions(input: {
   endBlock?: string;
   sort?: "asc" | "desc";
 }) {
-  const url = new URL(input.apiUrl ?? "https://api.basescan.org/api");
-  url.searchParams.set("module", "account");
-  url.searchParams.set("action", "txlist");
-  url.searchParams.set("address", input.address);
-  url.searchParams.set("startblock", input.startBlock ?? "0");
-  url.searchParams.set("endblock", input.endBlock ?? "99999999");
-  url.searchParams.set("sort", input.sort ?? "desc");
-  url.searchParams.set("apikey", input.apiKey);
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(EVM_RECONCILIATION_FETCH_TIMEOUT_MS)
-  });
-  if (!response.ok) {
-    throw new Error(`BaseScan reconciliation request failed with HTTP ${response.status}.`);
+  const transactions: Record<string, unknown>[] = [];
+  const offset = 1000;
+  for (let page = 1; page <= 100; page += 1) {
+    const url = new URL(input.apiUrl ?? "https://api.basescan.org/api");
+    url.searchParams.set("module", "account");
+    url.searchParams.set("action", "txlist");
+    url.searchParams.set("address", input.address);
+    url.searchParams.set("startblock", input.startBlock ?? "0");
+    url.searchParams.set("endblock", input.endBlock ?? "99999999");
+    url.searchParams.set("page", page.toString());
+    url.searchParams.set("offset", offset.toString());
+    url.searchParams.set("sort", input.sort ?? "desc");
+    url.searchParams.set("apikey", input.apiKey);
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(EVM_RECONCILIATION_FETCH_TIMEOUT_MS)
+    });
+    if (!response.ok) {
+      throw new Error(`BaseScan reconciliation request failed with HTTP ${response.status}.`);
+    }
+    const payload = await response.json() as unknown;
+    if (!isRecord(payload)) {
+      throw new Error("BaseScan reconciliation returned an invalid response.");
+    }
+    const result = payload.result;
+    if (!Array.isArray(result)) {
+      const message = typeof payload.message === "string" ? payload.message : "unknown BaseScan response";
+      throw new Error(`BaseScan reconciliation did not return a transaction list: ${message}`);
+    }
+    const pageTransactions = result.filter(isRecord);
+    transactions.push(...pageTransactions);
+    if (pageTransactions.length < offset) {
+      break;
+    }
   }
-  const payload = await response.json() as unknown;
-  if (!isRecord(payload)) {
-    throw new Error("BaseScan reconciliation returned an invalid response.");
-  }
-  const result = payload.result;
-  if (!Array.isArray(result)) {
-    const message = typeof payload.message === "string" ? payload.message : "unknown BaseScan response";
-    throw new Error(`BaseScan reconciliation did not return a transaction list: ${message}`);
-  }
-  return result.filter(isRecord);
+  return transactions;
 }
 
 async function fetchBaseTransactionReceipt(txHash: string): Promise<Record<string, unknown> | undefined> {
