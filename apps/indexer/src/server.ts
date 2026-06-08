@@ -6428,7 +6428,9 @@ app.post("/api/agents/:agentId/messages", route(async (request, response) => {
         : {}),
       ...(typeof body.swarmId === "string" ? { swarmId: body.swarmId } : {}),
       ...(typeof body.outputDigestSha256 === "string" ? { outputDigestSha256: body.outputDigestSha256 } : {}),
-      ...(typeof body.clientMessageId === "string" ? { clientMessageId: body.clientMessageId } : {})
+      ...(typeof body.clientMessageId === "string" ? { clientMessageId: body.clientMessageId } : {}),
+      ...(typeof body.txHash === "string" ? { txHash: body.txHash } : {}),
+      ...(typeof body.batchTxHash === "string" ? { txHash: body.batchTxHash } : {})
     });
     if (result.workshopTrace) {
       response.json({
@@ -10224,7 +10226,9 @@ class AgentRelayHub {
             ? { proofIntent: message.proofIntent as "per_message" | "aggregate" | "agent_chatter" | "display_only" }
             : {}),
           ...(swarmId ? { swarmId } : {}),
-          ...(typeof message.outputDigestSha256 === "string" ? { outputDigestSha256: message.outputDigestSha256 } : {})
+          ...(typeof message.outputDigestSha256 === "string" ? { outputDigestSha256: message.outputDigestSha256 } : {}),
+          ...(typeof message.txHash === "string" ? { txHash: message.txHash } : {}),
+          ...(typeof message.batchTxHash === "string" ? { txHash: message.batchTxHash } : {})
         });
         connection.sendJson({
           type: "post_message_result",

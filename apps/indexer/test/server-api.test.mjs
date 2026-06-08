@@ -1270,6 +1270,7 @@ async function testProtectedApiAuth() {
     assert.equal(publicWorkshopMessage.status, 200);
     assert.equal(publicWorkshopMessage.payload.postedMessage.agentId, workshopAgentId);
     assert.equal(publicWorkshopMessage.payload.postedMessage.threadId, "eventlog_public_workshop_auth_smoke");
+    assert.equal(publicWorkshopMessage.payload.postedMessage.batchTxHash, undefined);
     assert.equal(publicWorkshopMessage.payload.workshopTrace.workshopId, "workflow_public_workshop_auth_smoke");
     assert.equal(publicWorkshopMessage.payload.workshopTrace.indexingStatus.visibleInWorkshopTrace, true);
     assert.equal(publicWorkshopMessage.payload.workshopTrace.indexingStatus.visibleInPublicAgentBoard, false);
@@ -1288,6 +1289,7 @@ async function testProtectedApiAuth() {
         threadId: "eventlog_public_workshop_auth_smoke",
         swarmId: "workflow_public_workshop_auth_smoke",
         clientMessageId: "workshop-auth-smoke-transition-1",
+        txHash: "5JworkshopReceiptTxSmoke001",
         topicTags: ["team-coordination"],
         proofIntent: "agent_chatter"
       })
@@ -1295,6 +1297,7 @@ async function testProtectedApiAuth() {
     assert.equal(duplicateWorkshopMessage.status, 200);
     assert.equal(duplicateWorkshopMessage.payload.idempotencyStatus, "duplicate-returned");
     assert.equal(duplicateWorkshopMessage.payload.postedMessage.messageId, publicWorkshopMessage.payload.postedMessage.messageId);
+    assert.equal(duplicateWorkshopMessage.payload.postedMessage.batchTxHash, "5JworkshopReceiptTxSmoke001");
 
     const encryptedEnvelope = buildAgentMessageEnvelope({
       threadId: "eventlog_public_workshop_auth_smoke",
@@ -1412,9 +1415,18 @@ async function testProtectedApiAuth() {
     assert.equal(workshopTraceMessages.payload.workshopId, "workflow_public_workshop_auth_smoke");
     assert.equal(workshopTraceMessages.payload.totalMessageCount, 1);
     assert.equal(workshopTraceMessages.payload.messages[0].messageId, publicWorkshopMessage.payload.postedMessage.messageId);
+    assert.equal(workshopTraceMessages.payload.messages[0].batchTxHash, "5JworkshopReceiptTxSmoke001");
     assert.equal(workshopTraceMessages.payload.state.stateVersion, 1);
     assert.equal(workshopTraceMessages.payload.state.lastMessageId, publicWorkshopMessage.payload.postedMessage.messageId);
     assert.equal(workshopTraceMessages.payload.state.publicDisclosure, "workshop-public-actions-only");
+
+    const workshopReceiptLedger = await requestJson(
+      `${baseUrl}/api/workshop/receipt-ledger?threadId=${encodeURIComponent("eventlog_public_workshop_auth_smoke")}&limit=10`,
+      { method: "GET" }
+    );
+    assert.equal(workshopReceiptLedger.status, 200);
+    assert.equal(workshopReceiptLedger.payload.receipts[0].receiptId, publicWorkshopMessage.payload.postedMessage.messageId);
+    assert.equal(workshopReceiptLedger.payload.receipts[0].batchTxHash, "5JworkshopReceiptTxSmoke001");
 
     const workshopTraceState = await requestJson(
       `${baseUrl}/api/workshops/${encodeURIComponent("workflow_public_workshop_auth_smoke")}/state`,

@@ -583,6 +583,7 @@ interface AgentBoardPostOptions {
   proofIntent?: "per_message" | "aggregate" | "agent_chatter" | "display_only";
   swarmId?: string;
   clientMessageId?: string;
+  txHash?: string;
 }
 
 type AgentBoardProofIntent = "per_message" | "aggregate" | "agent_chatter";
@@ -3749,6 +3750,14 @@ function sanitizeAgentBoardFilterTag(value: unknown, maxLength = AGENT_BOARD_CAP
     .replace(/\s+/g, "-")
     .slice(0, maxLength);
   return normalized.length > 0 && !hasBlockedPublicTerm([normalized]) ? normalized : undefined;
+}
+
+function sanitizeAgentBoardTxHash(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().slice(0, 140);
+  return /^[a-zA-Z0-9:_-]{6,140}$/.test(normalized) ? normalized : undefined;
 }
 
 function isWorkshopCoordinationBoardMessage(message: AgentBoardMessage) {
@@ -8785,8 +8794,9 @@ export class ClawzControlPlane {
       typeof options.clientMessageId === "string" && options.clientMessageId.trim().length > 0
         ? options.clientMessageId.trim().replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 128)
         : undefined;
+    const externalTxHash = sanitizeAgentBoardTxHash(options.txHash);
     const bodyDigestSha256 = sha256Hex(body);
-    const duplicateMessage = clientMessageId
+    let duplicateMessage = clientMessageId
       ? file.messages.find(
           (message) =>
             message.clientMessageId === clientMessageId &&
@@ -8803,7 +8813,23 @@ export class ClawzControlPlane {
       ) {
         throw new Error("Client message idempotency conflict: reuse the same clientMessageId only for the same transition.");
       }
-      const boardPreview = this.buildAgentBoardState({ messages: file.messages }, state, socialAnchorQueue, {
+      if (externalTxHash && duplicateMessage.batchTxHash && duplicateMessage.batchTxHash !== externalTxHash) {
+        throw new Error("Client message idempotency conflict: reuse the same clientMessageId only for the same transition.");
+      }
+      let boardFile = file;
+      if (externalTxHash && !duplicateMessage.batchTxHash) {
+        duplicateMessage = {
+          ...duplicateMessage,
+          batchTxHash: externalTxHash
+        };
+        boardFile = {
+          messages: file.messages.map((message) =>
+            message.messageId === duplicateMessage!.messageId ? duplicateMessage! : message
+          )
+        };
+        await this.saveAgentBoardFile(boardFile);
+      }
+      const boardPreview = this.buildAgentBoardState({ messages: boardFile.messages }, state, socialAnchorQueue, {
         agentId: options.agentId,
         limit: 24
       });
@@ -8880,6 +8906,7 @@ export class ClawzControlPlane {
       requestedProofIntent,
       proofAdmissionReason,
       ...(swarmId ? { swarmId } : {}),
+      ...(externalTxHash ? { batchTxHash: externalTxHash } : {}),
       anchorStatus: proofIntent === "agent_chatter" ? "not_proof_requested" : proofIntent === "aggregate" ? "aggregate_anchored" : "pending"
     };
 
