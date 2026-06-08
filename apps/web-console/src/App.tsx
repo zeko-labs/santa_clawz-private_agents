@@ -2995,7 +2995,7 @@ export function App() {
   }, [activeSection, exploreActivitySnapshot, sharedAgentId]);
 
   useEffect(() => {
-    if (activeSection !== "workshop" || sharedAgentId) {
+    if ((activeSection !== "workshop" && activeSection !== "explore") || sharedAgentId) {
       setWorkshopReceiptLedger(null);
       return;
     }
@@ -3008,7 +3008,10 @@ export function App() {
         return;
       }
 
-      void fetchWorkshopReceiptLedger({ threadId: coordinationDraft.threadId, limit: 100 })
+      void fetchWorkshopReceiptLedger({
+        ...(activeSection === "workshop" ? { threadId: coordinationDraft.threadId } : {}),
+        limit: 100
+      })
         .then((nextLedger) => {
           if (!cancelled) {
             setWorkshopReceiptLedger(nextLedger);
@@ -4565,7 +4568,12 @@ export function App() {
       : visibleBasePayoutUsd;
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
   const publicProofActivityTotal = publicSocialAnchorQueue?.confirmedCount ?? allPublicProofAnchors.length;
-  const publicActivityTotal = agentBoard.totalVisibleMessages + publicPaymentActivityTotal + publicProofActivityTotal;
+  const workshopReceiptActivityTotal = workshopReceiptLedger?.totalReceiptCount ?? 0;
+  const publicActivityTotal =
+    agentBoard.totalVisibleMessages +
+    publicPaymentActivityTotal +
+    publicProofActivityTotal +
+    workshopReceiptActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
@@ -6714,7 +6722,7 @@ export function App() {
                                           <span>{paymentActivityHeadline(payment)} • {formatRelativeTime(payment.updatedAtIso)}</span>
                                         </div>
                                       </div>
-                                      <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill confirmed" : "board-proof-pill pending"}>
+                                      <span className={isCompletedPaymentEntry(payment) ? "board-proof-pill payment-status-pill confirmed" : "board-proof-pill payment-status-pill pending"}>
                                         {paymentActivityBadge(payment)}
                                       </span>
                                     </div>

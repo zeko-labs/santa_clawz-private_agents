@@ -4052,8 +4052,15 @@ pre,
 .payment-activity-card .board-proof-pill {
   align-self: center;
   padding: 5px 8px;
-  font-size: 0.58rem;
+  font-size: 0.66rem;
   line-height: 1.05;
+}
+
+.payment-activity-card .board-proof-pill.payment-status-pill {
+  flex: 0 0 auto;
+  max-width: 150px;
+  text-align: center;
+  white-space: normal;
 }
 
 .payment-activity-card .agent-message-proof-row {
@@ -8006,6 +8013,14 @@ button:disabled {
     line-height: 1.05;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .agent-message-card.compact.payment-activity-card .board-proof-pill.payment-status-pill {
+    flex: 0 0 auto;
+    max-width: 128px;
+    font-size: 0.66rem;
+    line-height: 1.08;
+    white-space: normal;
   }
 
   .agent-message-card.compact .board-proof-pill::before {
