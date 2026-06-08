@@ -2796,6 +2796,19 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(publicActivationProbeChallenge.includes("2001"), true);
     assert.equal(publicActivationProbeChallenge.includes('"amountUnit":"atomic"'), true);
 
+    const sellerReadinessTestPreflight = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        sellerReadinessTest: true,
+        taskPrompt: "Seller readiness test should use the tiny x402 challenge.",
+        requesterContact: "seller-readiness-test@example.com"
+      })
+    });
+    assert.equal(sellerReadinessTestPreflight.status, 402);
+    const sellerReadinessTestChallenge = JSON.stringify(sellerReadinessTestPreflight.payload);
+    assert.equal(sellerReadinessTestChallenge.includes("2001"), true);
+    assert.equal(sellerReadinessTestChallenge.includes('"amountUnit":"atomic"'), true);
+
     const provenPaidAgentHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
@@ -4192,6 +4205,62 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.partyFinality.paymentTerminal, false);
     assert.equal(deliveredPaymentState.payload.partyFinality.operatorTerminal, false);
 
+    const deliveredSettlementFailedDigest = "f".repeat(64);
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_delivered_settlement_failed_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_delivered_settlement_failed_test",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: deliveredSettlementFailedDigest,
+          transactionHashes: [],
+          paymentStatus: "settlement_failed",
+          executionStatus: "completed",
+          returnStatus: "accepted",
+          errorMessage: "Facilitator settlement attempt timed out after 10000ms.",
+          settlementRecovery: {
+            settlementRetryable: false,
+            canRetrySettlement: false,
+            settlementFailureReason: "Facilitator settlement attempt timed out after 10000ms.",
+            nextSettlementAction: "manual_review"
+          }
+        }
+      ]
+    }, null, 2), "utf8");
+    const deliveredSettlementFailedPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredSettlementFailedDigest}`
+    );
+    assert.equal(deliveredSettlementFailedPaymentState.status, 200);
+    assert.equal(
+      deliveredSettlementFailedPaymentState.payload.protocolState,
+      "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
+    );
+    assert.equal(deliveredSettlementFailedPaymentState.payload.buyerAction, "view_delivery");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.sellerOutcome, "completed");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.operatorObligation, "reconcile_platform_state");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.settlementStatus, "failed");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.execution.operationalStatus.settlementStatus, "failed");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.nextAction, "view_delivery");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.match(deliveredSettlementFailedPaymentState.payload.retryResume.guidance, /Settlement failed/);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.canRetrySettlement, true);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.nextSettlementAction, "retry_settlement");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.buyerTerminal, true);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.sellerTerminal, true);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.paymentTerminal, false);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.operatorTerminal, false);
+
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
     relaySocket?.destroy();
@@ -5183,6 +5252,60 @@ async function testLegacyDemoProfileCanEnableBasePayments() {
   }
 }
 
+async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-rollup-"));
+  const ledgerDir = path.join(workspaceDir, ".clawz-data", "state");
+  await mkdir(ledgerDir, { recursive: true });
+  await writeFile(path.join(ledgerDir, "payment-ledger.json"), JSON.stringify({
+    entries: [
+      {
+        ledgerId: "pay_recent_completed",
+        createdAtIso: "2026-06-07T00:00:00.000Z",
+        updatedAtIso: "2026-06-07T00:01:00.000Z",
+        agentId: "rollup-agent--session_agent_rollup",
+        sessionId: "session_agent_rollup",
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        sellerNetAmountUsd: "0.248",
+        transactionHashes: [],
+        paymentStatus: "execution_completed",
+        executionStatus: "completed",
+        returnStatus: "accepted"
+      }
+    ],
+    allTimeStats: {
+      completedPaymentCount: 812,
+      completedBasePaymentCount: 812,
+      completedSellerPayoutUsd: "219.75",
+      completedBaseSellerPayoutUsd: "219.75",
+      countedPaymentKeys: ["legacy_completed_rollup"]
+    }
+  }, null, 2), "utf8");
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+    const payments = await requestJson(`${baseUrl}/api/payments?limit=1`);
+    assert.equal(payments.status, 200);
+    assert.equal(payments.payload.summary.completedSellerPayoutUsd, "219.998");
+    assert.equal(payments.payload.summary.completedBaseSellerPayoutUsd, "219.998");
+    assert.equal(payments.payload.summary.completedPaymentCount, 813);
+    const publicMarketplaceSnapshot = await requestJson(`${baseUrl}/api/public/marketplace-snapshot`, { method: "GET" });
+    assert.equal(publicMarketplaceSnapshot.status, 200);
+    assert.equal(publicMarketplaceSnapshot.payload.paymentLedger.summary.completedSellerPayoutUsd, "219.998");
+
+    console.log("ok - public payout summary uses all-time payment ledger stats");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-facilitation-floor-test-"));
   const port = await reservePort();
@@ -5493,6 +5616,25 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canRetrySamePaymentPayload, false);
 
+  const deliveredSettlementFailed = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "settlement_failed",
+    settlementStatus: "failed",
+    agentExecutionStatus: "completed",
+    proofStatus: "return_validated",
+    sellerExecutionCompleted: true,
+    buyerDeliveryAvailable: true,
+    buyerComplete: true,
+    paymentAuthorized: true,
+    paymentSettled: false
+  });
+  assert.equal(deliveredSettlementFailed.protocolState, "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION");
+  assert.equal(deliveredSettlementFailed.terminal, false);
+  assert.equal(deliveredSettlementFailed.buyerAction, "view_delivery");
+  assert.equal(deliveredSettlementFailed.sellerOutcome, "completed");
+  assert.equal(deliveredSettlementFailed.operatorObligation, "reconcile_platform_state");
+  assert.equal(deliveredSettlementFailed.buyerAnswer.canCreateFreshPayment, false);
+  assert.equal(deliveredSettlementFailed.sellerAnswer.reputationImpact, "none");
+
   const executionCompletedWithoutSettlement = reduceSantaClawzPaidLifecycle({
     paymentStatus: "execution_completed",
     settlementStatus: "authorized",
@@ -5582,6 +5724,7 @@ async function main() {
   await testMissionAuthVerificationPersists();
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
+  await testPublicPayoutSummaryUsesAllTimeLedgerStats();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();

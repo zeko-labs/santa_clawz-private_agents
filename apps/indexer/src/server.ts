@@ -703,6 +703,8 @@ type HireRequestBody = {
   activation_lane?: unknown;
   activationProbe?: unknown;
   activation_probe?: unknown;
+  sellerReadinessTest?: unknown;
+  seller_readiness_test?: unknown;
 };
 type ArtifactReceiptBody = {
   deliveryMode?: unknown;
@@ -1819,7 +1821,9 @@ function parseHireRequest(body: unknown): HireRequestBody {
         activationLane: body.activationLane,
         activation_lane: body.activation_lane,
         activationProbe: body.activationProbe,
-        activation_probe: body.activation_probe
+        activation_probe: body.activation_probe,
+        sellerReadinessTest: body.sellerReadinessTest,
+        seller_readiness_test: body.seller_readiness_test
       }
     : {};
 }
@@ -2516,6 +2520,14 @@ function paidExecutionProbeRequiredBody(input: {
         purpose:
           "Any funded buyer/operator can run this tiny paid proving job. It is marked as an activation probe, not normal marketplace work."
       },
+      sellerReadinessTest: {
+        available: true,
+        query: "sellerReadinessTest=true",
+        body: { sellerReadinessTest: true },
+        amountUsd: publicProbeAmountUsd,
+        purpose:
+          "After activation, any funded buyer/operator can run this tiny seller practice job to verify the v1.1 paid route and buyer-visible return package without affecting marketplace success score."
+      },
       hostedJobPack: {
         available: true,
         purpose:
@@ -2568,7 +2580,13 @@ function compactPaymentLedgerEntryForPublicSnapshot(entry: PaymentLedgerEntry): 
 
 function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
   const resource = entry.resource ?? "";
-  if (resource.includes("/api/activation-lane/") || resource.includes("activationLane=true") || resource.includes("activationProbe=true")) {
+  if (
+    resource.includes("/api/activation-lane/") ||
+    resource.includes("activationLane=true") ||
+    resource.includes("activationProbe=true") ||
+    resource.includes("sellerReadinessTest=true") ||
+    resource.includes("sellerTest=true")
+  ) {
     return true;
   }
   return parseUsdMicros(entry.amountUsd, "0") === parseUsdMicros(activationLaneAmountUsd(), "0");
@@ -2933,9 +2951,19 @@ async function buildX402PaymentStateResponse(input: {
   const latestLedgerRecord = isRecord(latestLedger) ? latestLedger : undefined;
   const ledgerSettlementStatus = paymentSettled
     ? "settled"
+    : latestLedger?.paymentStatus === "settlement_failed"
+      ? "failed"
     : typeof latestLedgerRecord?.settlementStatus === "string"
       ? latestLedgerRecord.settlementStatus
       : undefined;
+  const paymentStatePaymentStatus = paymentSettled
+    ? "settled"
+    : latestLedger?.paymentStatus === "settlement_failed"
+      ? "settlement_failed"
+      : paymentAuthorized
+        ? "authorized"
+        : latestLedger?.paymentStatus ?? "unknown";
+  const paymentStateSettlementStatus = ledgerSettlementStatus ?? (paymentAuthorized ? "authorized" : "not_attempted");
   const paymentStateProofStatus =
     hireRequest?.returnValidationError || latestLedger?.returnStatus === "rejected"
       ? "return_rejected"
@@ -2967,13 +2995,13 @@ async function buildX402PaymentStateResponse(input: {
   );
   const protocolLifecycle = reduceSantaClawzPaidLifecycle({
     paymentStatus: latestLedger?.paymentStatus,
-    settlementStatus: ledgerSettlementStatus,
+    settlementStatus: paymentStateSettlementStatus,
     relayDeliveryStatus: paymentStateRelayDeliveryStatus,
     agentExecutionStatus: paymentStateAgentExecutionStatus,
     proofStatus: paymentStateProofStatus,
     sellerExecutionCompleted: paymentStateSellerCompleted,
     buyerDeliveryAvailable: paymentStateBuyerDeliveryAvailable,
-    buyerComplete: paymentStateBuyerDeliveryAvailable && paymentSettled,
+    buyerComplete: paymentStateBuyerDeliveryAvailable,
     paymentAuthorized,
     paymentSettled,
     hasFailure: paymentStateSellerFailure,
@@ -3019,6 +3047,16 @@ async function buildX402PaymentStateResponse(input: {
     lifecycle: protocolLifecycle,
     paymentSettled
   });
+  const canonicalExecution = hireRequest
+    ? {
+        ...hireRequest,
+        operationalStatus: {
+          ...(hireRequest.operationalStatus ?? {}),
+          paymentStatus: paymentStatePaymentStatus,
+          settlementStatus: paymentStateSettlementStatus
+        }
+      }
+    : undefined;
   return {
     schemaVersion: "santaclawz-x402-payment-state/1.0",
     ok: true,
@@ -3040,8 +3078,10 @@ async function buildX402PaymentStateResponse(input: {
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
     partyFinality,
+    paymentStatus: paymentStatePaymentStatus,
+    settlementStatus: paymentStateSettlementStatus,
     ...(intent ? { intent } : {}),
-    ...(hireRequest ? { execution: hireRequest } : {}),
+    ...(canonicalExecution ? { execution: canonicalExecution } : {}),
     retryResume: {
       safeToRetrySamePayload: canonicalSafeToRetrySamePayload,
       safeToCreateNewPayment,
@@ -3150,6 +3190,9 @@ function retryResumeGuidanceForLifecycle(input: {
   safeToRetrySamePayload: boolean;
 }) {
   if (input.lifecycle.buyerAction === "view_delivery") {
+    if (input.lifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION") {
+      return "Delivery is available. Do not retry payment and do not create a new payment. Settlement failed and requires SantaClawz reconciliation.";
+    }
     return input.lifecycle.operatorObligation === "settle_payment"
       ? "Delivery is available. Do not retry payment and do not create a new payment. Read the result state while SantaClawz settles or reconciles the authorized payment."
       : "Delivery is available. Read the result state. Do not retry payment and do not create a new payment for this job.";
@@ -3195,6 +3238,18 @@ function lifecyclePartyFinality(input: {
 function redactLatestPaymentLedger(entry: unknown) {
   if (!isRecord(entry)) return undefined;
   const lifecycleStatus = isRecord(entry.lifecycleStatus) ? entry.lifecycleStatus : undefined;
+  const settlementRecovery = isRecord(entry.settlementRecovery) ? entry.settlementRecovery : undefined;
+  const settlementFailureReason =
+    typeof settlementRecovery?.settlementFailureReason === "string"
+      ? settlementRecovery.settlementFailureReason
+      : typeof entry.errorMessage === "string"
+        ? entry.errorMessage
+        : "";
+  const settlementFailureLooksRetryable =
+    /timeout|temporarily unavailable|rate limit|429|502|503|504|nonce|already known|underpriced|settlement_pending/i.test(
+      settlementFailureReason
+    );
+  const settlementRetryable = Boolean(settlementRecovery?.settlementRetryable === true || settlementFailureLooksRetryable);
   return {
     ...(typeof entry.ledgerId === "string" ? { ledgerId: entry.ledgerId } : {}),
     ...(typeof entry.agentId === "string" ? { agentId: entry.agentId } : {}),
@@ -3212,6 +3267,19 @@ function redactLatestPaymentLedger(entry: unknown) {
     ...(typeof entry.executionStatus === "string" ? { executionStatus: entry.executionStatus } : {}),
     ...(typeof entry.returnStatus === "string" ? { returnStatus: entry.returnStatus } : {}),
     ...(typeof entry.settlementStatus === "string" ? { settlementStatus: entry.settlementStatus } : {}),
+    ...(settlementRecovery
+      ? {
+          settlementRecovery: {
+            settlementRetryable,
+            canRetrySettlement: settlementRetryable,
+            ...(settlementFailureReason ? { settlementFailureReason } : {}),
+            nextSettlementAction: settlementRetryable ? "retry_settlement" : (
+              typeof settlementRecovery.nextSettlementAction === "string" ? settlementRecovery.nextSettlementAction : "manual_review"
+            ),
+            ...(typeof settlementRecovery.retryEndpoint === "string" ? { retryEndpoint: settlementRecovery.retryEndpoint } : {})
+          }
+        }
+      : {}),
     ...(lifecycleStatus
       ? {
           lifecycleStatus: {
@@ -3244,6 +3312,8 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
     ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
     ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
+    ...(typeof payload.paymentStatus === "string" ? { paymentStatus: payload.paymentStatus } : {}),
+    ...(typeof payload.settlementStatus === "string" ? { settlementStatus: payload.settlementStatus } : {}),
     ...(isRecord(payload.partyFinality) ? { partyFinality: payload.partyFinality } : {}),
     payment: {
       ledgerEntryCount: typeof payment?.ledgerEntryCount === "number" ? payment.ledgerEntryCount : 0,
@@ -7493,7 +7563,12 @@ const handleAgentHireRequest = route(async (request, response) => {
       queryBoolean(request.query, "activationProbe") === true ||
       bodyRecord.activationProbe === true ||
       bodyRecord.activation_probe === true;
-    const activationProbeRequested = activationLaneRequested || publicActivationProbeRequested;
+    const sellerReadinessTestRequested =
+      queryBoolean(request.query, "sellerReadinessTest") === true ||
+      queryBoolean(request.query, "sellerTest") === true ||
+      bodyRecord.sellerReadinessTest === true ||
+      bodyRecord.seller_readiness_test === true;
+    const activationProbeRequested = activationLaneRequested || publicActivationProbeRequested || sellerReadinessTestRequested;
     if (activationLaneRequested && !requireActivationLaneAccess(request, response)) {
       return;
     }
@@ -7501,7 +7576,9 @@ const handleAgentHireRequest = route(async (request, response) => {
     const taskPrompt =
       typeof body.taskPrompt === "string" && body.taskPrompt.trim().length > 0
         ? body.taskPrompt.trim()
-        : activationProbeRequested
+        : sellerReadinessTestRequested
+          ? "SantaClawz seller readiness test. Return a compact v1.1 buyer-visible package with a short answer, verification manifest, and delivery summary proving paid execution works end-to-end."
+          : activationProbeRequested
           ? "SantaClawz paid activation probe. Return a compact buyer-visible package proving this agent can receive paid work, complete it, and return delivery."
           : "";
     const requesterContact =
@@ -7509,6 +7586,8 @@ const handleAgentHireRequest = route(async (request, response) => {
         ? body.requesterContact.trim()
         : activationLaneRequested
           ? "agent_job_pack@santaclawz.ai"
+          : sellerReadinessTestRequested
+            ? "seller_readiness_test@santaclawz.ai"
           : publicActivationProbeRequested
             ? "buyer_activation_probe@santaclawz.ai"
           : "";
@@ -7563,6 +7642,9 @@ const handleAgentHireRequest = route(async (request, response) => {
           paymentPayloadDigestSha256?: string;
           paymentAuthorizationDigestSha256?: string;
           paymentResponseDigestSha256?: string;
+          activationLane?: boolean;
+          publicActivationProbe?: boolean;
+          sellerReadinessTest?: boolean;
         }
       | undefined;
     let paymentPayloadForDeferredSettlement: Record<string, unknown> | undefined;
@@ -7828,6 +7910,8 @@ const handleAgentHireRequest = route(async (request, response) => {
             ok: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
             code: protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
               ? "paid_execution_delivery_available_settlement_pending"
+              : protocolLifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
+                ? "paid_execution_delivery_available_settlement_reconcile"
               : protocolLifecycle.protocolState === "PLATFORM_FAILED_RECONCILE"
                 ? "paid_execution_delivery_reconciliation_required"
                 : "paid_execution_state_recorded",
@@ -7841,7 +7925,7 @@ const handleAgentHireRequest = route(async (request, response) => {
             sellerOutcome: protocolLifecycle.sellerOutcome,
             operatorObligation: protocolLifecycle.operatorObligation,
             buyerDeliveryAvailable: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
-            buyerComplete: false,
+            buyerComplete: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
             sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,
             safeToCreateNewPayment: protocolLifecycle.buyerAnswer.canCreateFreshPayment,
             safeToRetrySamePayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
@@ -7856,7 +7940,10 @@ const handleAgentHireRequest = route(async (request, response) => {
               ? {
                   ...completedHire.operationalStatus,
                   paymentStatus: "authorized",
-                  settlementStatus: "authorized"
+                  settlementStatus:
+                    protocolLifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
+                      ? "failed"
+                      : "authorized"
                 }
               : completedHire.operationalStatus,
             payment: {
@@ -7872,7 +7959,8 @@ const handleAgentHireRequest = route(async (request, response) => {
       paymentAuthorization = {
         status: "authorized",
         ...(activationProbeRequested ? { activationLane: true } : {}),
-        ...(publicActivationProbeRequested ? { publicActivationProbe: true } : {}),
+        ...(publicActivationProbeRequested || sellerReadinessTestRequested ? { publicActivationProbe: true } : {}),
+        ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : {}),
         rail: verification.rail.rail,
         ...(verification.rail.amountUsd ? { amountUsd: verification.rail.amountUsd } : {}),
         authorizationId: paymentPayloadDigestSha256,
@@ -7946,6 +8034,8 @@ const handleAgentHireRequest = route(async (request, response) => {
         const code =
           protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
             ? "paid_execution_delivery_available_settlement_pending"
+            : protocolLifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
+              ? "paid_execution_delivery_available_settlement_reconcile"
             : protocolLifecycle.protocolState === "PLATFORM_FAILED_RECONCILE"
               ? "paid_execution_delivery_reconciliation_required"
               : "paid_execution_state_recorded";
@@ -7961,7 +8051,7 @@ const handleAgentHireRequest = route(async (request, response) => {
           sellerOutcome: protocolLifecycle.sellerOutcome,
           operatorObligation: protocolLifecycle.operatorObligation,
           buyerDeliveryAvailable: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
-          buyerComplete: protocolLifecycle.protocolState === "DELIVERED_SETTLED",
+          buyerComplete: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
           sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,
           safeToCreateNewPayment: protocolLifecycle.buyerAnswer.canCreateFreshPayment,
           safeToRetrySamePayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
@@ -7975,7 +8065,9 @@ const handleAgentHireRequest = route(async (request, response) => {
             ? {
                 ...hireReceipt.operationalStatus,
                 paymentStatus: "authorized",
-                settlementStatus: "authorized"
+                settlementStatus: protocolLifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
+                  ? "failed"
+                  : "authorized"
               }
             : hireReceipt.operationalStatus,
           payment: {

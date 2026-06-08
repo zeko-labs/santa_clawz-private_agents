@@ -21,7 +21,9 @@ const BOOLEAN_FLAGS = new Set([
   "dry-run",
   "activate-if-needed",
   "activation-probe",
-  "paid-activation-probe"
+  "paid-activation-probe",
+  "seller-readiness-test",
+  "seller-test"
 ]);
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
@@ -84,7 +86,8 @@ Options:
   --service agent_job_pack           Service key when payload file contains multiple payloads.
   --output-dir .clawz-data/buyer-runs
   --payment-requirement-out ./requirement.json
-  --activation-probe                Run a tiny paid proving job for an unproven seller.
+  --activation-probe                 Run a tiny paid proving job for an unproven seller.
+  --seller-readiness-test            Run a tiny post-activation seller practice job that does not affect success score.
   --activate-if-needed               If seller env is provided, run seller readiness/probe before retrying preflight.
   --seller-env-file .env.santaclawz  Seller env for --activate-if-needed.
   --local-hire-url http://127.0.0.1:8797/hire
@@ -896,9 +899,7 @@ function paidExecutionSummary(responseOk, payload) {
     paymentAccepted &&
     ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
     agentExecutionStatus === "completed";
-  const sellerExecutionCompleted =
-    workCompleted &&
-    (settlementStatus === "settled" || settlementStatus === "authorized" || settlementStatus === "not_required");
+  const sellerExecutionCompleted = workCompleted;
   const buyerDelivery = buyerDeliveryProjection(payload);
   const buyerComplete = sellerExecutionCompleted && buyerDelivery.buyerDeliveryAvailable;
   const acceptedPendingResult =
@@ -939,7 +940,7 @@ function paidExecutionSummary(responseOk, payload) {
         : "none",
     retryable: paymentAccepted && agentExecutionStatus !== "completed",
     nextAction: buyerComplete
-      ? "none"
+      ? "view_delivery"
       : outputUnavailable
         ? "inspect_buyer_delivery_or_artifact_state"
         : acceptedPendingResult
@@ -1082,7 +1083,7 @@ function recoveredSummaryFromRecoveryPoll(recoveryPoll, sellerEnvFile = ".env.sa
         code: "paid_execution_buyer_complete",
         completionMode: "recovered_buyer_delivery_available",
         retryable: false,
-        nextAction: "none",
+        nextAction: "view_delivery",
         paymentStatus: recoveryPoll.completion.paymentStatus,
         settlementStatus: recoveryPoll.completion.settlementStatus,
         relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
@@ -1181,6 +1182,9 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
     protocolState === "DELIVERED_SETTLED" ||
     ledgerPaymentSettled(latestLedger) ||
     stringValue(paymentStatePayload, "settlementStatus") === "settled";
+  const settlementFailed =
+    stringValue(paymentStatePayload, "settlementStatus") === "failed" ||
+    stringValue(latestLedger, "paymentStatus") === "settlement_failed";
   return {
     ok: true,
     code: paymentSettled
@@ -1200,7 +1204,9 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
       : stringValue(latestLedger, "paymentStatus") || stringValue(paymentStatePayload, "paymentStatus") || "authorized",
     settlementStatus: paymentSettled
       ? "settled"
-      : stringValue(paymentStatePayload, "settlementStatus") || "authorized",
+      : settlementFailed
+        ? "failed"
+        : stringValue(paymentStatePayload, "settlementStatus") || "authorized",
     relayDeliveryStatus: "forwarded",
     agentExecutionStatus: "completed",
     sellerExecutionCompleted: true,
@@ -1507,7 +1513,8 @@ const agentId = parseAgentId(args.agent ?? args["agent-id"] ?? args["hire-url"])
 const taskPrompt = String(args.prompt ?? args.task ?? "").trim();
 const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local").trim();
 const jobContext = buildJobContext(args);
-const activationProbeRequested = Boolean(args["activation-probe"] || args["paid-activation-probe"]);
+const sellerReadinessTestRequested = Boolean(args["seller-readiness-test"] || args["seller-test"]);
+const activationProbeRequested = Boolean(args["activation-probe"] || args["paid-activation-probe"] || sellerReadinessTestRequested);
 const maxUsd = decimalStringToNumber(args["max-usd"]);
 const outputDir = String(args["output-dir"] ?? DEFAULT_OUTPUT_DIR).trim();
 const dryRun = Boolean(args["dry-run"]) || !args["allow-real-money"];
@@ -1546,7 +1553,7 @@ if (!planResponse.ok) {
     const submitBody = {
       taskPrompt,
       requesterContact,
-      ...(activationProbeRequested ? { activationProbe: true } : {}),
+      ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
       ...(jobContext ? { jobContext } : {}),
       paymentPayload: suppliedPaymentPayload
     };
@@ -1681,7 +1688,7 @@ async function preflightHire() {
   const body = {
     taskPrompt,
     requesterContact,
-    ...(activationProbeRequested ? { activationProbe: true } : {}),
+    ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
     ...(jobContext ? { jobContext } : {})
   };
   const requestBodyBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
@@ -1714,7 +1721,7 @@ const baseOutput = {
   requesterContact,
   prompt: taskPrompt,
   ...(jobContext ? { jobContext } : {}),
-  ...(activationProbeRequested ? { activationProbe: true } : {}),
+  ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
   maxUsd,
   priceUsd: priceUsd === null ? null : formatUsd(priceUsd),
   pricingMode: planResponse.payload?.pricingMode ?? planResponse.payload?.paymentProfile?.pricingMode ?? "unknown",
@@ -1840,7 +1847,7 @@ if (!validation.ok) {
 const submitBody = {
   taskPrompt,
   requesterContact,
-  ...(activationProbeRequested ? { activationProbe: true } : {}),
+  ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
   ...(jobContext ? { jobContext } : {}),
   paymentPayload
 };

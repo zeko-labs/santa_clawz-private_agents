@@ -4,6 +4,7 @@ export type SantaClawzPaidProtocolState =
   | "AWAITING_PAYMENT"
   | "AUTHORIZED_WAITING_FOR_DELIVERY"
   | "DELIVERED_AWAITING_SETTLEMENT"
+  | "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
   | "DELIVERED_SETTLED"
   | "SELLER_FAILED_NO_SETTLEMENT"
   | "PLATFORM_FAILED_RECONCILE"
@@ -97,8 +98,12 @@ export function reduceSantaClawzPaidLifecycle(
   const paymentAuthorized = Boolean(
     input.paymentAuthorized ||
       paymentSettled ||
-      isOneOf(input.paymentStatus, ["authorized", "authorization_verified", "payment_verified"]) ||
+      isOneOf(input.paymentStatus, ["authorized", "authorization_verified", "payment_verified", "execution_completed", "settlement_failed"]) ||
       isOneOf(input.settlementStatus, ["authorized"])
+  );
+  const settlementFailed = Boolean(
+    isOneOf(input.paymentStatus, ["settlement_failed"]) ||
+      isOneOf(input.settlementStatus, ["failed", "settlement_failed"])
   );
   const returnRejected = Boolean(
     input.returnRejected ||
@@ -155,6 +160,24 @@ export function reduceSantaClawzPaidLifecycle(
       completedValidWork: true,
       failedWork: false,
       reputationImpact: "none"
+    });
+  }
+
+  if (buyerDeliveryAvailable && sellerCompleted && settlementFailed) {
+    return paidLifecycleProjection({
+      protocolState: "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION",
+      terminal: false,
+      buyerAction: "view_delivery",
+      sellerOutcome: "completed",
+      operatorObligation: "reconcile_platform_state",
+      canCreateFreshPayment: false,
+      canRetrySamePaymentPayload: false,
+      shouldWait: false,
+      hasBuyerDelivery: true,
+      completedValidWork: true,
+      failedWork: false,
+      reputationImpact: "none",
+      reconciliationReason: "buyer_delivery_recorded_but_settlement_failed"
     });
   }
 

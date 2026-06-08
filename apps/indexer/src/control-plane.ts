@@ -769,6 +769,8 @@ interface QuotePaymentContext {
 interface HirePaymentAuthorization {
   status: "not-required" | "authorized" | "settled";
   activationLane?: boolean;
+  publicActivationProbe?: boolean;
+  sellerReadinessTest?: boolean;
   rail?: string;
   amountUsd?: string;
   authorizationId?: string;
@@ -932,6 +934,11 @@ interface HireRequestRecord {
 
 interface PaymentLedgerFile {
   entries: PaymentLedgerEntry[];
+  allTimeStats?: PaymentLedgerAllTimeStats;
+}
+
+interface PaymentLedgerAllTimeStats extends NonNullable<PaymentLedgerState["summary"]> {
+  countedPaymentKeys: string[];
 }
 
 interface PaymentLedgerSettlementInput {
@@ -2385,7 +2392,18 @@ function buildDefaultJobCollaborationFile(): JobCollaborationFile {
 
 function buildDefaultPaymentLedgerFile(): PaymentLedgerFile {
   return {
-    entries: []
+    entries: [],
+    allTimeStats: buildDefaultPaymentLedgerAllTimeStats()
+  };
+}
+
+function buildDefaultPaymentLedgerAllTimeStats(): PaymentLedgerAllTimeStats {
+  return {
+    completedPaymentCount: 0,
+    completedBasePaymentCount: 0,
+    completedSellerPayoutUsd: "0",
+    completedBaseSellerPayoutUsd: "0",
+    countedPaymentKeys: []
   };
 }
 
@@ -2986,7 +3004,13 @@ function isSameUsdAmount(left: string | undefined, right: string | undefined) {
 }
 
 function isActivationLanePaymentResource(resource: string | undefined) {
-  return Boolean(resource?.includes("/api/activation-lane/") || resource?.includes("activationLane=true"));
+  return Boolean(
+    resource?.includes("/api/activation-lane/") ||
+    resource?.includes("activationLane=true") ||
+    resource?.includes("activationProbe=true") ||
+    resource?.includes("sellerReadinessTest=true") ||
+    resource?.includes("sellerTest=true")
+  );
 }
 
 function isTerminalPaymentLedgerEntry(entry: PaymentLedgerEntry) {
@@ -5003,8 +5027,10 @@ export class ClawzControlPlane {
     await this.ensureDirs();
     const file = await readJsonFile<PaymentLedgerFile>(this.paymentLedgerPath);
     if (file?.entries) {
+      const entries = file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId);
       return {
-        entries: file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId)
+        entries,
+        allTimeStats: this.buildPaymentLedgerAllTimeStats(file.allTimeStats, entries)
       };
     }
 
@@ -5015,7 +5041,11 @@ export class ClawzControlPlane {
 
   private async savePaymentLedgerFile(file: PaymentLedgerFile) {
     await this.ensureDirs();
-    await writeJsonFile(this.paymentLedgerPath, file);
+    const entries = file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId);
+    await writeJsonFile(this.paymentLedgerPath, {
+      entries: entries.slice(0, 2000),
+      allTimeStats: this.buildPaymentLedgerAllTimeStats(file.allTimeStats, entries)
+    });
   }
 
   private async loadExecutionIntentFile(): Promise<ExecutionIntentFile> {
@@ -6988,7 +7018,9 @@ export class ClawzControlPlane {
         }
         return true;
       });
-    const summary = this.buildPaymentLedgerSummary(matchingEntries);
+    const summary = this.paymentLedgerListIsGlobal(options)
+      ? this.publicPaymentLedgerSummary(this.buildPaymentLedgerAllTimeStats(file.allTimeStats, file.entries))
+      : this.buildPaymentLedgerSummary(matchingEntries);
     const entries = matchingEntries
       .sort((left, right) => Date.parse(right.updatedAtIso) - Date.parse(left.updatedAtIso))
       .slice(0, limit)
@@ -7006,6 +7038,15 @@ export class ClawzControlPlane {
       summary,
       entries
     };
+  }
+
+  private paymentLedgerListIsGlobal(options: PaymentLedgerListOptions) {
+    return !options.agentId &&
+      !options.sessionId &&
+      !options.quoteIntentId &&
+      !options.hireRequestId &&
+      !options.x402RequestId &&
+      !options.paymentPayloadDigestSha256;
   }
 
   private buildPaymentLedgerSummary(entries: PaymentLedgerEntry[]): NonNullable<PaymentLedgerState["summary"]> {
@@ -7032,6 +7073,64 @@ export class ClawzControlPlane {
       completedBasePaymentCount,
       completedSellerPayoutUsd: usdAmountFromAtomic(completedSellerPayoutAtomic),
       completedBaseSellerPayoutUsd: usdAmountFromAtomic(completedBaseSellerPayoutAtomic)
+    };
+  }
+
+  private paymentLedgerCompletionKey(entry: PaymentLedgerEntry) {
+    return entry.paymentPayloadDigestSha256 ?? entry.settlementReference ?? entry.ledgerId;
+  }
+
+  private buildPaymentLedgerAllTimeStats(
+    input: PaymentLedgerAllTimeStats | undefined,
+    entries: PaymentLedgerEntry[]
+  ): PaymentLedgerAllTimeStats {
+    const countedPaymentKeys = new Set(
+      Array.isArray(input?.countedPaymentKeys)
+        ? input.countedPaymentKeys.filter((key) => typeof key === "string" && key.length > 0)
+        : []
+    );
+    let completedPaymentCount = Number.isFinite(input?.completedPaymentCount)
+      ? Math.max(0, Math.floor(input!.completedPaymentCount))
+      : 0;
+    let completedBasePaymentCount = Number.isFinite(input?.completedBasePaymentCount)
+      ? Math.max(0, Math.floor(input!.completedBasePaymentCount))
+      : 0;
+    let completedSellerPayoutAtomic = safeUsdAmountAtomic(input?.completedSellerPayoutUsd);
+    let completedBaseSellerPayoutAtomic = safeUsdAmountAtomic(input?.completedBaseSellerPayoutUsd);
+
+    for (const entry of entries) {
+      if (this.buildPaymentLedgerLifecycleStatus(entry).completionStatus !== "completed") {
+        continue;
+      }
+      const completionKey = this.paymentLedgerCompletionKey(entry);
+      if (countedPaymentKeys.has(completionKey)) {
+        continue;
+      }
+      const payoutAtomic = safeUsdAmountAtomic(entry.sellerNetAmountUsd ?? entry.amountUsd);
+      countedPaymentKeys.add(completionKey);
+      completedPaymentCount += 1;
+      completedSellerPayoutAtomic += payoutAtomic;
+      if (entry.rail === "base-usdc") {
+        completedBasePaymentCount += 1;
+        completedBaseSellerPayoutAtomic += payoutAtomic;
+      }
+    }
+
+    return {
+      completedPaymentCount,
+      completedBasePaymentCount,
+      completedSellerPayoutUsd: usdAmountFromAtomic(completedSellerPayoutAtomic),
+      completedBaseSellerPayoutUsd: usdAmountFromAtomic(completedBaseSellerPayoutAtomic),
+      countedPaymentKeys: [...countedPaymentKeys]
+    };
+  }
+
+  private publicPaymentLedgerSummary(stats: PaymentLedgerAllTimeStats): NonNullable<PaymentLedgerState["summary"]> {
+    return {
+      completedPaymentCount: stats.completedPaymentCount,
+      completedBasePaymentCount: stats.completedBasePaymentCount,
+      completedSellerPayoutUsd: stats.completedSellerPayoutUsd,
+      completedBaseSellerPayoutUsd: stats.completedBaseSellerPayoutUsd
     };
   }
 
@@ -7118,25 +7217,39 @@ export class ClawzControlPlane {
   }
 
   private buildPaymentSettlementRecovery(entry: PaymentLedgerEntry): NonNullable<PaymentLedgerEntry["settlementRecovery"]> | undefined {
-    if (entry.settlementRecovery) {
-      return entry.settlementRecovery;
-    }
     const settlementFailed = entry.paymentStatus === "settlement_failed";
     const authorizedWithCompletedWork =
       (entry.paymentStatus === "authorization_verified" || entry.paymentStatus === "payment_verified") &&
       entry.executionStatus === "completed" &&
       entry.returnStatus === "accepted";
     if (!settlementFailed && !authorizedWithCompletedWork) {
-      return undefined;
+      return entry.settlementRecovery;
     }
-    const retryable = settlementFailed || authorizedWithCompletedWork;
+    const retryable =
+      entry.settlementRecovery?.settlementRetryable === true ||
+      settlementFailed ||
+      authorizedWithCompletedWork ||
+      this.paymentSettlementFailureLooksRetryable(entry);
     return {
+      ...entry.settlementRecovery,
       settlementRetryable: retryable,
       canRetrySettlement: retryable,
-      ...(entry.errorMessage ? { settlementFailureReason: entry.errorMessage } : {}),
+      ...(entry.settlementRecovery?.settlementFailureReason
+        ? { settlementFailureReason: entry.settlementRecovery.settlementFailureReason }
+        : entry.errorMessage ? { settlementFailureReason: entry.errorMessage } : {}),
       nextSettlementAction: retryable ? "retry_settlement" : "manual_review",
-      retryEndpoint: entry.quoteIntentId ? "/api/x402/quote-intent" : "/api/agents/:agentId/hire"
+      ...(retryable
+        ? { retryEndpoint: entry.quoteIntentId ? "/api/x402/quote-intent" : `/api/agents/${encodeURIComponent(entry.agentId)}/hire` }
+        : {})
     };
+  }
+
+  private paymentSettlementFailureLooksRetryable(entry: PaymentLedgerEntry) {
+    if (entry.paymentStatus !== "settlement_failed") {
+      return false;
+    }
+    const text = (entry.errorMessage ?? entry.settlementRecovery?.settlementFailureReason ?? "").toLowerCase();
+    return /timeout|temporarily unavailable|rate limit|429|502|503|504|nonce|already known|underpriced|settlement_pending/.test(text);
   }
 
   async listPaymentLedger(options: PaymentLedgerListOptions = {}): Promise<PaymentLedgerState> {
@@ -7292,7 +7405,7 @@ export class ClawzControlPlane {
     const entries = existingIndex >= 0
       ? file.entries.map((entry, index) => index === existingIndex ? nextEntry : entry)
       : [nextEntry, ...file.entries];
-    await this.savePaymentLedgerFile({ entries: entries.slice(0, 2000) });
+    await this.savePaymentLedgerFile({ ...file, entries });
     return nextEntry;
   }
 
@@ -7342,6 +7455,7 @@ export class ClawzControlPlane {
       })
     };
     await this.savePaymentLedgerFile({
+      ...file,
       entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
     });
     return nextEntry;
@@ -7393,6 +7507,7 @@ export class ClawzControlPlane {
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {})
     };
     await this.savePaymentLedgerFile({
+      ...file,
       entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
     });
     return nextEntry;
@@ -7428,6 +7543,7 @@ export class ClawzControlPlane {
       }
     };
     await this.savePaymentLedgerFile({
+      ...file,
       entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
     });
     return nextEntry;
@@ -7454,6 +7570,7 @@ export class ClawzControlPlane {
       errorMessage: input.errorMessage
     };
     await this.savePaymentLedgerFile({
+      ...file,
       entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
     });
     return nextEntry;
