@@ -1091,6 +1091,13 @@ async function testProtectedApiAuth() {
     });
     assert.equal(unauthorized.status, 401);
 
+    const publicSettlementRetryMiss = await requestJson(`${baseUrl}/api/x402/settlement-retry?ledgerId=pay_missing_auth_smoke`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(publicSettlementRetryMiss.status, 404);
+    assert.equal(publicSettlementRetryMiss.payload.code, "settlement_retry_ledger_not_found");
+
     const authorized = await requestJson(`${baseUrl}/api/events/ingest`, {
       method: "POST",
       headers: {
@@ -4332,10 +4339,45 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.status, "pending_settlement");
     assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.requiresOriginalPaymentPayload, true);
     assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.doNotCreateNewPayment, true);
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.freshPaymentForbidden, true);
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.settlementOwner, "platform");
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.settlementQueued, true);
+    assert.equal(deliveredPaymentState.payload.retryResume.settlementRecovery.buyerAction, "view_delivery");
     assert.match(
       deliveredPaymentState.payload.retryResume.settlementRecovery.retryEndpoint,
       /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_awaiting_settlement_test/
     );
+    const deliveredSettlementMissingPayload = await requestJson(
+      `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_delivered_awaiting_settlement_test`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    );
+    assert.equal(deliveredSettlementMissingPayload.status, 400);
+    assert.equal(deliveredSettlementMissingPayload.payload.code, "payment_payload_required_for_settlement_retry");
+    assert.equal(deliveredSettlementMissingPayload.payload.requiresOriginalPaymentPayload, true);
+    assert.equal(deliveredSettlementMissingPayload.payload.doNotCreateNewPayment, true);
+    assert.equal(deliveredSettlementMissingPayload.payload.expectedPaymentPayloadDigestSha256, deliveredAwaitingSettlementDigest);
+    assert.equal("paymentState" in deliveredSettlementMissingPayload.payload, false);
+    const deliveredSettlementWrongPayload = await requestJson(
+      `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_delivered_awaiting_settlement_test`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          paymentPayload: {
+            protocol: "x402",
+            nonce: "wrong-payload-for-delivered-awaiting-settlement-test"
+          }
+        })
+      }
+    );
+    assert.equal(deliveredSettlementWrongPayload.status, 409);
+    assert.equal(deliveredSettlementWrongPayload.payload.code, "settlement_retry_payload_digest_mismatch");
+    assert.equal(deliveredSettlementWrongPayload.payload.requiresOriginalPaymentPayload, true);
+    assert.equal(deliveredSettlementWrongPayload.payload.doNotCreateNewPayment, true);
+    assert.equal(deliveredSettlementWrongPayload.payload.expectedPaymentPayloadDigestSha256, deliveredAwaitingSettlementDigest);
+    assert.equal("paymentState" in deliveredSettlementWrongPayload.payload, false);
     assert.match(deliveredPaymentState.payload.retryResume.guidance, /Delivery is available/);
     assert.doesNotMatch(deliveredPaymentState.payload.retryResume.guidance, /Retry or resume/);
     assert.equal(deliveredPaymentState.payload.partyFinality.buyerTerminal, true);

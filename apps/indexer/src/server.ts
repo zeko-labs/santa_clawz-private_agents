@@ -3229,6 +3229,11 @@ async function buildX402PaymentStateResponse(input: {
               retryEndpoint: settlementActionEndpoint,
               requiresOriginalPaymentPayload: true,
               doNotCreateNewPayment: true,
+              freshPaymentForbidden: true,
+              buyerAction: protocolLifecycle.buyerAction,
+              settlementOwner: "platform",
+              settlementQueued: settlementCompletionRequired,
+              recommendedPollAfterMs: 2000,
               ...(settlementCompletionRequired ? { reason: "buyer_delivery_recorded_before_settlement" } : {})
             }
           }
@@ -7423,13 +7428,16 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       ledgerId: ledgerEntry.ledgerId,
       ...(ledgerEntry.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: ledgerEntry.paymentPayloadDigestSha256 } : {})
     };
-    if (ledgerHasSettledPayment(ledgerEntry)) {
-      response.json({
-        ok: true,
-        idempotent: true,
-        status: "settled",
-        code: "settlement_already_recorded",
-        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
+    if (!paymentPayload) {
+      response.status(400).json({
+        ok: false,
+        code: "payment_payload_required_for_settlement_retry",
+        error: "Settlement retry requires the original signed x402 payment payload. Do not create a new payment.",
+        requiresOriginalPaymentPayload: true,
+        doNotCreateNewPayment: true,
+        ...(ledgerEntry.paymentPayloadDigestSha256
+          ? { expectedPaymentPayloadDigestSha256: ledgerEntry.paymentPayloadDigestSha256 }
+          : {})
       });
       return;
     }
@@ -7452,15 +7460,6 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       });
       return;
     }
-    if (!paymentPayload) {
-      response.status(400).json({
-        ok: false,
-        code: "payment_payload_required_for_settlement_retry",
-        error: "Settlement retry requires the original signed x402 payment payload. Do not create a new payment.",
-        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
-      });
-      return;
-    }
     const retryPayloadDigestSha256 = jsonDigestSha256(paymentPayload);
     if (
       ledgerEntry.paymentPayloadDigestSha256 &&
@@ -7470,8 +7469,20 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
         ok: false,
         code: "settlement_retry_payload_digest_mismatch",
         error: "Settlement retry must use the same signed x402 payment payload as the original authorization.",
+        requiresOriginalPaymentPayload: true,
+        doNotCreateNewPayment: true,
         expectedPaymentPayloadDigestSha256: ledgerEntry.paymentPayloadDigestSha256,
-        actualPaymentPayloadDigestSha256: retryPayloadDigestSha256,
+        actualPaymentPayloadDigestSha256: retryPayloadDigestSha256
+      });
+      return;
+    }
+    if (ledgerHasSettledPayment(ledgerEntry)) {
+      response.json({
+        ok: true,
+        idempotent: true,
+        status: "settled",
+        code: "settlement_already_recorded",
+        doNotCreateNewPayment: true,
         paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
       });
       return;
