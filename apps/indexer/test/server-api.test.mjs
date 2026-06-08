@@ -5831,6 +5831,7 @@ async function main() {
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
+  await testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();
