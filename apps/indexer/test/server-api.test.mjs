@@ -5491,6 +5491,63 @@ async function testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsAre
   }
 }
 
+async function testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-baseline-"));
+  const priorRuntimeEnv = process.env.CLAWZ_RUNTIME_ENV;
+  try {
+    process.env.CLAWZ_RUNTIME_ENV = "production";
+    const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
+    const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
+    const nowIso = new Date().toISOString();
+    await controlPlane.savePaymentLedgerFile({
+      entries: [
+        {
+          ledgerId: "pay_retained_before_verified_snapshot",
+          createdAtIso: nowIso,
+          updatedAtIso: nowIso,
+          agentId: "baseline-agent--session_agent_baseline",
+          sessionId: "session_agent_baseline",
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          sellerNetAmountUsd: "0.248",
+          settlementReference: "baseline-retained-settlement",
+          transactionHashes: [`0x${"1".padStart(64, "0")}`],
+          paymentStatus: "settled",
+          executionStatus: "completed",
+          returnStatus: "accepted"
+        }
+      ],
+      allTimeStats: {
+        completedPaymentCount: 1825,
+        completedBasePaymentCount: 1825,
+        completedSellerPayoutUsd: "499.256003",
+        completedBaseSellerPayoutUsd: "499.256003",
+        countedPaymentKeys: []
+      }
+    });
+
+    const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    const saved = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
+    assert.equal(saved.allTimeStats.completedPaymentCount, 2360);
+    assert.equal(saved.allTimeStats.completedBasePaymentCount, 2360);
+    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "749.385576");
+    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "749.385576");
+    assert.ok(saved.allTimeStats.countedPaymentKeys.includes("baseline-retained-settlement"));
+
+    console.log("ok - production payment ledger uses verified Base payout baseline");
+  } finally {
+    if (priorRuntimeEnv === undefined) {
+      delete process.env.CLAWZ_RUNTIME_ENV;
+    } else {
+      process.env.CLAWZ_RUNTIME_ENV = priorRuntimeEnv;
+    }
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-monotonic-"));
   try {
@@ -6044,6 +6101,7 @@ async function main() {
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
+  await testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline();
   await testPaymentLedgerExecutionUpdatesAreMonotonic();
   await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();

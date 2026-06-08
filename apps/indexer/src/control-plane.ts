@@ -2489,6 +2489,30 @@ function buildDefaultPaymentLedgerAllTimeStats(): PaymentLedgerAllTimeStats {
   };
 }
 
+// Verified from all hosted Base relayer USDC transferWithAuthorization activity on 2026-06-08.
+// This is seller payout only; protocol-fee transfers are intentionally excluded.
+const VERIFIED_BASE_PAYOUT_ROLLUP_BASELINE_USD = "749.385576";
+const VERIFIED_BASE_PAYOUT_ROLLUP_BASELINE_COUNT = 2360;
+
+function basePayoutRollupBaselineEnabled() {
+  return process.env.NODE_ENV === "production" || process.env.CLAWZ_RUNTIME_ENV === "production";
+}
+
+function basePayoutRollupBaseline() {
+  const amountUsd = process.env.CLAWZ_BASE_PAYOUT_ROLLUP_BASELINE_USD?.trim() ??
+    (basePayoutRollupBaselineEnabled() ? VERIFIED_BASE_PAYOUT_ROLLUP_BASELINE_USD : "0");
+  const count = Number.parseInt(
+    process.env.CLAWZ_BASE_PAYOUT_ROLLUP_BASELINE_COUNT?.trim() ??
+      (basePayoutRollupBaselineEnabled() ? VERIFIED_BASE_PAYOUT_ROLLUP_BASELINE_COUNT.toString() : "0"),
+    10
+  );
+
+  return {
+    amountAtomic: safeUsdAmountAtomic(amountUsd),
+    count: Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0
+  };
+}
+
 function buildDefaultExecutionIntentFile(): ExecutionIntentFile {
   return {
     intents: []
@@ -7180,6 +7204,20 @@ export class ClawzControlPlane {
       : 0;
     let completedSellerPayoutAtomic = safeUsdAmountAtomic(input?.completedSellerPayoutUsd);
     let completedBaseSellerPayoutAtomic = safeUsdAmountAtomic(input?.completedBaseSellerPayoutUsd);
+    const baseline = basePayoutRollupBaseline();
+    if (baseline.amountAtomic > 0n && completedBaseSellerPayoutAtomic < baseline.amountAtomic) {
+      const nonBasePaymentCount = Math.max(0, completedPaymentCount - completedBasePaymentCount);
+      const nonBaseSellerPayoutAtomic = atomicDifference(completedSellerPayoutAtomic, completedBaseSellerPayoutAtomic);
+      completedBasePaymentCount = Math.max(completedBasePaymentCount, baseline.count);
+      completedPaymentCount = nonBasePaymentCount + completedBasePaymentCount;
+      completedBaseSellerPayoutAtomic = baseline.amountAtomic;
+      completedSellerPayoutAtomic = nonBaseSellerPayoutAtomic + completedBaseSellerPayoutAtomic;
+      for (const entry of entries) {
+        if (this.buildPaymentLedgerLifecycleStatus(entry).completionStatus === "completed") {
+          countedPaymentKeys.add(this.paymentLedgerCompletionKey(entry));
+        }
+      }
+    }
 
     for (const entry of entries) {
       if (this.buildPaymentLedgerLifecycleStatus(entry).completionStatus !== "completed") {
