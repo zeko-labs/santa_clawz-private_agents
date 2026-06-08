@@ -4205,6 +4205,62 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.partyFinality.paymentTerminal, false);
     assert.equal(deliveredPaymentState.payload.partyFinality.operatorTerminal, false);
 
+    const deliveredSettlementFailedDigest = "f".repeat(64);
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_delivered_settlement_failed_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_delivered_settlement_failed_test",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: deliveredSettlementFailedDigest,
+          transactionHashes: [],
+          paymentStatus: "settlement_failed",
+          executionStatus: "completed",
+          returnStatus: "accepted",
+          errorMessage: "Facilitator settlement attempt timed out after 10000ms.",
+          settlementRecovery: {
+            settlementRetryable: false,
+            canRetrySettlement: false,
+            settlementFailureReason: "Facilitator settlement attempt timed out after 10000ms.",
+            nextSettlementAction: "manual_review"
+          }
+        }
+      ]
+    }, null, 2), "utf8");
+    const deliveredSettlementFailedPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredSettlementFailedDigest}`
+    );
+    assert.equal(deliveredSettlementFailedPaymentState.status, 200);
+    assert.equal(
+      deliveredSettlementFailedPaymentState.payload.protocolState,
+      "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
+    );
+    assert.equal(deliveredSettlementFailedPaymentState.payload.buyerAction, "view_delivery");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.sellerOutcome, "completed");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.operatorObligation, "reconcile_platform_state");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.settlementStatus, "failed");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.execution.operationalStatus.settlementStatus, "failed");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.nextAction, "view_delivery");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.match(deliveredSettlementFailedPaymentState.payload.retryResume.guidance, /Settlement failed/);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.canRetrySettlement, true);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.payment.latestLedger.settlementRecovery.nextSettlementAction, "retry_settlement");
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.buyerTerminal, true);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.sellerTerminal, true);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.paymentTerminal, false);
+    assert.equal(deliveredSettlementFailedPaymentState.payload.partyFinality.operatorTerminal, false);
+
     console.log("ok - relay hire response failures create durable execution records");
   } finally {
     relaySocket?.destroy();
@@ -5559,6 +5615,25 @@ async function testPaidLifecycleReducerInvariants() {
   assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canCreateFreshPayment, false);
   assert.equal(deliveredAwaitingSettlement.buyerAnswer.canRetrySamePaymentPayload, false);
+
+  const deliveredSettlementFailed = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "settlement_failed",
+    settlementStatus: "failed",
+    agentExecutionStatus: "completed",
+    proofStatus: "return_validated",
+    sellerExecutionCompleted: true,
+    buyerDeliveryAvailable: true,
+    buyerComplete: true,
+    paymentAuthorized: true,
+    paymentSettled: false
+  });
+  assert.equal(deliveredSettlementFailed.protocolState, "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION");
+  assert.equal(deliveredSettlementFailed.terminal, false);
+  assert.equal(deliveredSettlementFailed.buyerAction, "view_delivery");
+  assert.equal(deliveredSettlementFailed.sellerOutcome, "completed");
+  assert.equal(deliveredSettlementFailed.operatorObligation, "reconcile_platform_state");
+  assert.equal(deliveredSettlementFailed.buyerAnswer.canCreateFreshPayment, false);
+  assert.equal(deliveredSettlementFailed.sellerAnswer.reputationImpact, "none");
 
   const executionCompletedWithoutSettlement = reduceSantaClawzPaidLifecycle({
     paymentStatus: "execution_completed",

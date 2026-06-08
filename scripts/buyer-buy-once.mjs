@@ -899,9 +899,7 @@ function paidExecutionSummary(responseOk, payload) {
     paymentAccepted &&
     ["forwarded", "recorded", "reconciled_completed"].includes(relayDeliveryStatus) &&
     agentExecutionStatus === "completed";
-  const sellerExecutionCompleted =
-    workCompleted &&
-    (settlementStatus === "settled" || settlementStatus === "authorized" || settlementStatus === "not_required");
+  const sellerExecutionCompleted = workCompleted;
   const buyerDelivery = buyerDeliveryProjection(payload);
   const buyerComplete = sellerExecutionCompleted && buyerDelivery.buyerDeliveryAvailable;
   const acceptedPendingResult =
@@ -942,7 +940,7 @@ function paidExecutionSummary(responseOk, payload) {
         : "none",
     retryable: paymentAccepted && agentExecutionStatus !== "completed",
     nextAction: buyerComplete
-      ? "none"
+      ? "view_delivery"
       : outputUnavailable
         ? "inspect_buyer_delivery_or_artifact_state"
         : acceptedPendingResult
@@ -1085,7 +1083,7 @@ function recoveredSummaryFromRecoveryPoll(recoveryPoll, sellerEnvFile = ".env.sa
         code: "paid_execution_buyer_complete",
         completionMode: "recovered_buyer_delivery_available",
         retryable: false,
-        nextAction: "none",
+        nextAction: "view_delivery",
         paymentStatus: recoveryPoll.completion.paymentStatus,
         settlementStatus: recoveryPoll.completion.settlementStatus,
         relayDeliveryStatus: recoveryPoll.completion.relayDeliveryStatus,
@@ -1184,6 +1182,9 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
     protocolState === "DELIVERED_SETTLED" ||
     ledgerPaymentSettled(latestLedger) ||
     stringValue(paymentStatePayload, "settlementStatus") === "settled";
+  const settlementFailed =
+    stringValue(paymentStatePayload, "settlementStatus") === "failed" ||
+    stringValue(latestLedger, "paymentStatus") === "settlement_failed";
   return {
     ok: true,
     code: paymentSettled
@@ -1203,7 +1204,9 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
       : stringValue(latestLedger, "paymentStatus") || stringValue(paymentStatePayload, "paymentStatus") || "authorized",
     settlementStatus: paymentSettled
       ? "settled"
-      : stringValue(paymentStatePayload, "settlementStatus") || "authorized",
+      : settlementFailed
+        ? "failed"
+        : stringValue(paymentStatePayload, "settlementStatus") || "authorized",
     relayDeliveryStatus: "forwarded",
     agentExecutionStatus: "completed",
     sellerExecutionCompleted: true,

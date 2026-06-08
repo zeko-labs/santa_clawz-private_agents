@@ -7217,25 +7217,39 @@ export class ClawzControlPlane {
   }
 
   private buildPaymentSettlementRecovery(entry: PaymentLedgerEntry): NonNullable<PaymentLedgerEntry["settlementRecovery"]> | undefined {
-    if (entry.settlementRecovery) {
-      return entry.settlementRecovery;
-    }
     const settlementFailed = entry.paymentStatus === "settlement_failed";
     const authorizedWithCompletedWork =
       (entry.paymentStatus === "authorization_verified" || entry.paymentStatus === "payment_verified") &&
       entry.executionStatus === "completed" &&
       entry.returnStatus === "accepted";
     if (!settlementFailed && !authorizedWithCompletedWork) {
-      return undefined;
+      return entry.settlementRecovery;
     }
-    const retryable = settlementFailed || authorizedWithCompletedWork;
+    const retryable =
+      entry.settlementRecovery?.settlementRetryable === true ||
+      settlementFailed ||
+      authorizedWithCompletedWork ||
+      this.paymentSettlementFailureLooksRetryable(entry);
     return {
+      ...entry.settlementRecovery,
       settlementRetryable: retryable,
       canRetrySettlement: retryable,
-      ...(entry.errorMessage ? { settlementFailureReason: entry.errorMessage } : {}),
+      ...(entry.settlementRecovery?.settlementFailureReason
+        ? { settlementFailureReason: entry.settlementRecovery.settlementFailureReason }
+        : entry.errorMessage ? { settlementFailureReason: entry.errorMessage } : {}),
       nextSettlementAction: retryable ? "retry_settlement" : "manual_review",
-      retryEndpoint: entry.quoteIntentId ? "/api/x402/quote-intent" : "/api/agents/:agentId/hire"
+      ...(retryable
+        ? { retryEndpoint: entry.quoteIntentId ? "/api/x402/quote-intent" : `/api/agents/${encodeURIComponent(entry.agentId)}/hire` }
+        : {})
     };
+  }
+
+  private paymentSettlementFailureLooksRetryable(entry: PaymentLedgerEntry) {
+    if (entry.paymentStatus !== "settlement_failed") {
+      return false;
+    }
+    const text = (entry.errorMessage ?? entry.settlementRecovery?.settlementFailureReason ?? "").toLowerCase();
+    return /timeout|temporarily unavailable|rate limit|429|502|503|504|nonce|already known|underpriced|settlement_pending/.test(text);
   }
 
   async listPaymentLedger(options: PaymentLedgerListOptions = {}): Promise<PaymentLedgerState> {
