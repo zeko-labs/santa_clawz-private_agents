@@ -2892,6 +2892,41 @@ function protocolReturnHasBuyerDelivery(protocolReturn: unknown): boolean {
   );
 }
 
+function projectedPaymentStatusForAcceptedReturn(entry: PaymentLedgerEntry): PaymentLedgerEntry["paymentStatus"] {
+  if (entry.paymentStatus === "settlement_failed") {
+    return "settlement_failed";
+  }
+  if (ledgerHasSettledPayment(entry)) {
+    if (
+      entry.paymentStatus === "settled" ||
+      entry.paymentStatus === "already_settled" ||
+      entry.paymentStatus === "seller_settled" ||
+      entry.paymentStatus === "protocol_fee_settled" ||
+      entry.paymentStatus === "partially_settled"
+    ) {
+      return entry.paymentStatus;
+    }
+    return "settled";
+  }
+  return "execution_completed";
+}
+
+function projectPaymentLedgerEntryFromCanonicalExecution(
+  entry: PaymentLedgerEntry | undefined,
+  hireRequest: Awaited<ReturnType<typeof optionalHireRequest>>
+): PaymentLedgerEntry | undefined {
+  if (!entry || !hireRequest || !protocolReturnHasBuyerDelivery(hireRequest.protocolReturn) || hireRequest.returnValidationError) {
+    return entry;
+  }
+  return {
+    ...entry,
+    hireRequestId: hireRequest.requestId,
+    paymentStatus: projectedPaymentStatusForAcceptedReturn(entry),
+    executionStatus: "completed",
+    returnStatus: "accepted"
+  };
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -2912,14 +2947,18 @@ async function buildX402PaymentStateResponse(input: {
         ...paymentLedger.entries.filter((entry) => entry.ledgerId !== ledgerEntry.ledgerId)
       ]
     : paymentLedger.entries;
-  const latestLedger = entries[0];
-  const intentId = input.intentId ?? latestLedger?.quoteIntentId;
-  const requestId = input.requestId ?? latestLedger?.hireRequestId;
+  const rawLatestLedger = entries[0];
+  const intentId = input.intentId ?? rawLatestLedger?.quoteIntentId;
+  const requestId = input.requestId ?? rawLatestLedger?.hireRequestId;
   const intent = await optionalExecutionIntentResult(intentId);
   const hireRequest = await optionalHireRequest(
     requestId ?? (isRecord(intent) && isRecord(intent.latestExecution) && typeof intent.latestExecution.requestId === "string"
       ? intent.latestExecution.requestId
       : undefined)
+  );
+  const latestLedger = projectPaymentLedgerEntryFromCanonicalExecution(rawLatestLedger, hireRequest);
+  const projectedEntries = entries.map((entry) =>
+    latestLedger && entry.ledgerId === latestLedger.ledgerId ? latestLedger : entry
   );
   const resolvedRequestId = hireRequest?.requestId ?? requestId;
   const paymentPayloadDigestSha256 = input.paymentPayloadDigestSha256 ?? latestLedger?.paymentPayloadDigestSha256;
@@ -3096,9 +3135,9 @@ async function buildX402PaymentStateResponse(input: {
       ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
     },
     payment: {
-      entries,
+      entries: projectedEntries,
       ...(latestLedger ? { latestLedger } : {}),
-      ledgerEntryCount: entries.length
+      ledgerEntryCount: projectedEntries.length
     },
     protocolLifecycle,
     protocolState: protocolLifecycle.protocolState,

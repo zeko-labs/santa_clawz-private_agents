@@ -4273,6 +4273,47 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.partyFinality.paymentTerminal, false);
     assert.equal(deliveredPaymentState.payload.partyFinality.operatorTerminal, false);
 
+    const staleLedgerDigest = "a".repeat(64);
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_stale_submitted_after_delivery_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_stale_submitted_after_delivery_test",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: staleLedgerDigest,
+          transactionHashes: [],
+          paymentStatus: "execution_completed",
+          executionStatus: "submitted",
+          returnStatus: "none"
+        }
+      ]
+    }, null, 2), "utf8");
+    const staleLedgerPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${staleLedgerDigest}`
+    );
+    assert.equal(staleLedgerPaymentState.status, 200);
+    assert.equal(staleLedgerPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(staleLedgerPaymentState.payload.buyerAction, "view_delivery");
+    assert.equal(staleLedgerPaymentState.payload.sellerOutcome, "completed");
+    assert.equal(staleLedgerPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(staleLedgerPaymentState.payload.payment.latestLedger.executionStatus, "completed");
+    assert.equal(staleLedgerPaymentState.payload.payment.latestLedger.returnStatus, "accepted");
+    assert.equal(staleLedgerPaymentState.payload.payment.latestLedger.paymentStatus, "execution_completed");
+    assert.equal(staleLedgerPaymentState.payload.execution.operationalStatus.agentExecutionStatus, "completed");
+    assert.equal(staleLedgerPaymentState.payload.retryResume.nextAction, "view_delivery");
+    assert.equal(staleLedgerPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(staleLedgerPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+
     const deliveredSettlementFailedDigest = "f".repeat(64);
     await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
       entries: [
@@ -5444,6 +5485,69 @@ async function testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsAre
   }
 }
 
+async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-monotonic-"));
+  try {
+    const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
+    const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
+    await controlPlane.savePaymentLedgerFile({
+      entries: [
+        {
+          ledgerId: "pay_monotonic_return",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId: "monotonic-agent--session_agent_monotonic",
+          sessionId: "session_agent_monotonic",
+          hireRequestId: "hire_monotonic",
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: "b".repeat(64),
+          transactionHashes: [],
+          paymentStatus: "execution_completed",
+          executionStatus: "completed",
+          returnStatus: "accepted"
+        }
+      ]
+    });
+
+    const staleExecution = await controlPlane.updatePaymentLedgerExecution({
+      ledgerId: "pay_monotonic_return",
+      hireRequestId: "hire_monotonic",
+      executionStatus: "submitted",
+      returnStatus: "none",
+      errorCode: "stale_platform_timeout",
+      errorMessage: "Stale platform timeout arrived after accepted return."
+    });
+    assert.equal(staleExecution.executionStatus, "completed");
+    assert.equal(staleExecution.returnStatus, "accepted");
+    assert.equal(staleExecution.paymentStatus, "execution_completed");
+    assert.equal(staleExecution.errorCode, undefined);
+    assert.equal(staleExecution.errorMessage, undefined);
+
+    const staleAuthorization = await controlPlane.recordPaymentLedgerSettlement({
+      agentId: "monotonic-agent--session_agent_monotonic",
+      sessionId: "session_agent_monotonic",
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      paymentPayloadDigestSha256: "b".repeat(64),
+      paymentStatus: "authorization_verified"
+    });
+    assert.equal(staleAuthorization.executionStatus, "completed");
+    assert.equal(staleAuthorization.returnStatus, "accepted");
+    assert.equal(staleAuthorization.paymentStatus, "execution_completed");
+
+    console.log("ok - payment ledger execution updates are monotonic");
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-artifact-receipt-index-"));
   try {
@@ -5928,6 +6032,7 @@ async function main() {
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
+  await testPaymentLedgerExecutionUpdatesAreMonotonic();
   await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();

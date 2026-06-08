@@ -880,6 +880,7 @@ function writeBuyerOutputFile(runDir, payload) {
     return "";
   }
   const filePath = path.join(runDir, "buyer-output.md");
+  mkdirSync(runDir, { recursive: true });
   writeFileSync(filePath, `${outputs.join("\n\n---\n\n")}\n`, { mode: 0o600 });
   return filePath;
 }

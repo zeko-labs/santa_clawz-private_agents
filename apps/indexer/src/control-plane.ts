@@ -2371,6 +2371,61 @@ function inferPaymentLedgerSettlementStatus(input: {
   return "payment_verified";
 }
 
+function paymentLedgerStatusIsSettlementFinal(status: PaymentLedgerStatus | undefined): boolean {
+  return (
+    status === "settled" ||
+    status === "already_settled" ||
+    status === "seller_settled" ||
+    status === "protocol_fee_settled" ||
+    status === "partially_settled"
+  );
+}
+
+function mergePaymentLedgerStatus(
+  existingStatus: PaymentLedgerStatus | undefined,
+  candidateStatus: PaymentLedgerStatus
+): PaymentLedgerStatus {
+  if (!existingStatus) {
+    return candidateStatus;
+  }
+  if (paymentLedgerStatusIsSettlementFinal(candidateStatus)) {
+    return candidateStatus;
+  }
+  if (paymentLedgerStatusIsSettlementFinal(existingStatus)) {
+    return existingStatus;
+  }
+  if (existingStatus === "settlement_failed" && candidateStatus !== "settled" && candidateStatus !== "already_settled") {
+    return existingStatus;
+  }
+  if (
+    existingStatus === "execution_completed" &&
+    (
+      candidateStatus === "payment_challenged" ||
+      candidateStatus === "payment_submitted" ||
+      candidateStatus === "authorization_verified" ||
+      candidateStatus === "payment_verified" ||
+      candidateStatus === "not_settled" ||
+      candidateStatus === "execution_forwarded"
+    )
+  ) {
+    return existingStatus;
+  }
+  if (
+    (existingStatus === "execution_failed" || existingStatus === "return_rejected") &&
+    (
+      candidateStatus === "payment_challenged" ||
+      candidateStatus === "payment_submitted" ||
+      candidateStatus === "authorization_verified" ||
+      candidateStatus === "payment_verified" ||
+      candidateStatus === "not_settled" ||
+      candidateStatus === "execution_forwarded"
+    )
+  ) {
+    return existingStatus;
+  }
+  return candidateStatus;
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as T;
@@ -7370,6 +7425,12 @@ export class ClawzControlPlane {
     const protocolFeeTxHash = input.protocolFeeTxHash ?? existing?.protocolFeeTxHash;
     const nextTransactionHashes = uniqueTransactionHashes(existing?.transactionHashes, transactionHashes);
     const existingPaymentStatus = input.paymentStatus ?? (nextTransactionHashes.length > 0 ? undefined : existing?.paymentStatus);
+    const inferredPaymentStatus = inferPaymentLedgerSettlementStatus({
+      ...(existingPaymentStatus ? { paymentStatus: existingPaymentStatus } : {}),
+      ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+      ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
+      transactionHashes: nextTransactionHashes
+    });
     const ledgerId = existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const nextEntry: PaymentLedgerEntry = {
       ledgerId,
@@ -7442,12 +7503,7 @@ export class ClawzControlPlane {
         : existing?.facilitatorResponseSummary
           ? { facilitatorResponseSummary: existing.facilitatorResponseSummary }
           : {}),
-      paymentStatus: inferPaymentLedgerSettlementStatus({
-        ...(existingPaymentStatus ? { paymentStatus: existingPaymentStatus } : {}),
-        ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
-        ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
-        transactionHashes: nextTransactionHashes
-      }),
+      paymentStatus: mergePaymentLedgerStatus(existing?.paymentStatus, inferredPaymentStatus),
       executionStatus: existing?.executionStatus ?? "not_started",
       returnStatus: existing?.returnStatus ?? "none",
       ...(input.errorCode ? { errorCode: input.errorCode } : existing?.errorCode ? { errorCode: existing.errorCode } : {}),
@@ -7543,32 +7599,42 @@ export class ClawzControlPlane {
       return undefined;
     }
     const existing = file.entries[index]!;
-    const successfulReturn = input.executionStatus === "completed" && input.returnStatus === "accepted";
-    const paymentStatus: PaymentLedgerStatus =
-      input.returnStatus === "rejected"
+    const existingSuccessfulReturn = existing.executionStatus === "completed" && existing.returnStatus === "accepted";
+    const executionStatus = existingSuccessfulReturn && input.executionStatus !== "completed"
+      ? "completed"
+      : input.executionStatus;
+    const returnStatus = existingSuccessfulReturn && input.returnStatus !== "accepted"
+      ? existing.returnStatus
+      : input.returnStatus ?? existing.returnStatus;
+    const successfulReturn = executionStatus === "completed" && returnStatus === "accepted";
+    const candidatePaymentStatus: PaymentLedgerStatus =
+      returnStatus === "rejected"
         ? "return_rejected"
-        : input.executionStatus === "completed"
+        : executionStatus === "completed"
           ? "execution_completed"
-          : input.executionStatus === "failed"
+          : executionStatus === "failed"
             ? "execution_failed"
-            : input.executionStatus === "forwarded"
+            : executionStatus === "forwarded"
               ? "execution_forwarded"
               : existing.paymentStatus;
+    const paymentStatus = mergePaymentLedgerStatus(existing.paymentStatus, candidatePaymentStatus);
     const {
       errorCode: _staleErrorCode,
       errorMessage: _staleErrorMessage,
       ...existingWithoutStaleExecutionError
     } = existing;
+    const canApplyExecutionError = !successfulReturn && !existingSuccessfulReturn;
+    const canApplyDeliveryReceipt = !existingSuccessfulReturn || input.executionStatus === "completed";
     const nextEntry: PaymentLedgerEntry = {
       ...(successfulReturn ? existingWithoutStaleExecutionError : existing),
       updatedAtIso: new Date().toISOString(),
       hireRequestId: input.hireRequestId,
-      executionStatus: input.executionStatus,
-      ...(input.returnStatus ? { returnStatus: input.returnStatus } : {}),
-      ...(input.deliveryReceipt ? { deliveryReceipt: input.deliveryReceipt } : {}),
+      executionStatus,
+      ...(returnStatus ? { returnStatus } : {}),
+      ...(input.deliveryReceipt && canApplyDeliveryReceipt ? { deliveryReceipt: input.deliveryReceipt } : {}),
       paymentStatus,
-      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {})
+      ...(canApplyExecutionError && input.errorCode ? { errorCode: input.errorCode } : {}),
+      ...(canApplyExecutionError && input.errorMessage ? { errorMessage: input.errorMessage } : {})
     };
     await this.savePaymentLedgerFile({
       ...file,
