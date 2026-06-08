@@ -2614,20 +2614,26 @@ pre,
   align-items: start;
 }
 
+.coordination-ledger-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.coordination-ledger-title-row h2 {
+  margin: 0;
+}
+
 .coordination-thread-panel .panel-copy {
   margin: 0;
 }
 
-.coordination-ledger-actions {
-  grid-column: 2;
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
 .coordination-ledger-copy-button {
-  min-height: 46px;
+  min-height: 38px;
+  padding: 0 16px;
+  font-size: 0.92rem;
   white-space: nowrap;
 }
 
@@ -7545,14 +7551,10 @@ button:disabled {
     flex-direction: column;
   }
 
-  .coordination-ledger-actions {
-    grid-column: 1;
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .coordination-ledger-copy-button {
-    justify-content: center;
+  .coordination-ledger-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .coordination-manifest-actions {
