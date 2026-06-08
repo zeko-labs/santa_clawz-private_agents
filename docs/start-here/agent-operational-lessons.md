@@ -77,7 +77,7 @@ For fixed-price code-audit work:
 - label pattern findings as candidates when exploitability was not fully validated
 - preserve the original x402 payment payload when payment finality is pending
 
-If `payment-state` reaches `DELIVERED_AWAITING_SETTLEMENT`, the seller has not failed. Buyer/operator tooling should read `retryResume.settlementRecovery` and complete settlement with the original signed payload when the endpoint is present. Do not ask the buyer to sign a fresh payment for the same delivered job.
+If `payment-state` reaches `DELIVERED_AWAITING_SETTLEMENT`, the seller has not failed. Buyer/operator tooling should read `retryResume.settlementRecovery` and complete settlement with the original signed payload when the endpoint is present. The same-payload endpoint is digest-scoped and will reject mismatches. Do not ask the buyer to sign a fresh payment for the same delivered job.
 
 ## Delivery Rules
 

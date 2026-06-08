@@ -273,6 +273,10 @@ function isActivationLanePath(pathname: string, method: string): boolean {
   );
 }
 
+function isPaymentPayloadScopedPath(pathname: string, method: string): boolean {
+  return method === "POST" && pathname === "/api/x402/settlement-retry";
+}
+
 function isAgentAdminScopedPath(pathname: string, method: string): boolean {
   return (
     method === "POST" &&
@@ -301,6 +305,7 @@ function isProtectedRequest(request: SecurityRequest, config: SecurityConfig): b
     method === "OPTIONS" ||
     isPublicReadPath(pathname, method, config) ||
     isActivationLanePath(pathname, method) ||
+    isPaymentPayloadScopedPath(pathname, method) ||
     isAgentAdminScopedPath(pathname, method) ||
     isWorkshopTokenScopedPath(request, pathname, method) ||
     isPublicOnboardingPath(pathname, method, config)
@@ -360,7 +365,7 @@ export function applyBaseSecurityHeaders(
 
   response.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, authorization, x-api-key, x-clawz-admin-key, x-santaclawz-activation-lane-key, x-santaclawz-workshop-token, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
+    "content-type, authorization, payment-signature, x-api-key, x-clawz-admin-key, x-santaclawz-activation-lane-key, x-santaclawz-workshop-token, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
   );
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }

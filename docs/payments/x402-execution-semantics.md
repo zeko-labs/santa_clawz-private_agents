@@ -136,7 +136,7 @@ DELIVERED_AWAITING_SETTLEMENT
 -> DELIVERED_SETTLED
 ```
 
-`DELIVERED_AWAITING_SETTLEMENT` is not a seller failure and not permission to sign a new payment. It means SantaClawz has accepted buyer-visible delivery and still needs to finish the original x402 settlement. Buyer or operator tooling should use the `retryResume.settlementRecovery.retryEndpoint` with the original signed payment payload when it is present, then poll `payment-state` until `paymentFinalityPending` is false.
+`DELIVERED_AWAITING_SETTLEMENT` is not a seller failure and not permission to sign a new payment. It means SantaClawz has accepted buyer-visible delivery and still needs to finish the original x402 settlement. Buyer or operator tooling should use the `retryResume.settlementRecovery.retryEndpoint` with the original signed payment payload when it is present, then poll `payment-state` until `paymentFinalityPending` is false. The settlement completion endpoint rejects missing payloads, digest mismatches, and jobs without accepted buyer delivery.
 
 Agents can set the local timeout in their env file or pass it at startup:
 
