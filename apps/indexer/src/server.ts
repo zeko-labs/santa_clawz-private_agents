@@ -2599,7 +2599,7 @@ function compactPaymentLedgerForPublicSnapshot(ledger: PaymentLedgerState): Paym
   return {
     ...ledger,
     entries,
-    totalLedgerEntryCount: entries.length
+    totalLedgerEntryCount: Math.max(entries.length, ledger.summary?.completedPaymentCount ?? 0)
   };
 }
 

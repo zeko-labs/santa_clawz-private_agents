@@ -5298,6 +5298,7 @@ async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
     const publicMarketplaceSnapshot = await requestJson(`${baseUrl}/api/public/marketplace-snapshot`, { method: "GET" });
     assert.equal(publicMarketplaceSnapshot.status, 200);
     assert.equal(publicMarketplaceSnapshot.payload.paymentLedger.summary.completedSellerPayoutUsd, "219.998");
+    assert.equal(publicMarketplaceSnapshot.payload.paymentLedger.totalLedgerEntryCount, 813);
 
     console.log("ok - public payout summary uses all-time payment ledger stats");
   } finally {
