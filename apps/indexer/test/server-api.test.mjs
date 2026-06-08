@@ -5775,7 +5775,7 @@ async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
   }
 }
 
-async function testCompletionScorePrefersVerifiedPaymentLedgerReturns() {
+async function testCompletionScorePrefersPaidDeliveryReliability() {
   const { buildAgentCompletionScore } = await import(pathToFileURL(controlPlaneEntry).href);
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
@@ -5857,19 +5857,43 @@ async function testCompletionScorePrefersVerifiedPaymentLedgerReturns() {
         executionStatus: "failed",
         returnStatus: "none",
         errorCode: "relay_timeout"
+      },
+      {
+        ledgerId: "pay_worker_ack_timeout_counts_against_delivery",
+        createdAtIso: nowIso,
+        updatedAtIso: new Date(nowMs - 4000).toISOString(),
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        transactionHashes: ["0x5"],
+        paymentStatus: "execution_completed",
+        executionStatus: "submitted",
+        returnStatus: "none",
+        deliveryReceipt: {
+          stage: "relay_timeout",
+          target: "santaclawz-relay://agent/reputation-agent--session_agent_reputation",
+          occurredAtIso: new Date(nowMs - 4000).toISOString(),
+          platformRelayTimeoutMs: 120000,
+          errorCode: "relay_return_timeout_after_worker_ack",
+          errorMessage: "Timed out waiting for agent relay response after worker acknowledgement."
+        }
       }
     ]
   };
 
   const score = buildAgentCompletionScore(hireRequests, sessionId, Date.now(), { paymentLedgerFile });
   assert.equal(score.source, "payment-ledger");
-  assert.equal(score.evaluatedJobCount, 2);
+  assert.equal(score.evaluatedJobCount, 3);
   assert.equal(score.completedJobCount, 2);
-  assert.equal(score.failedJobCount, 0);
-  assert.equal(score.successRatePct, 100);
-  assert.equal(score.label, "2/2 verified returns");
+  assert.equal(score.failedJobCount, 1);
+  assert.equal(score.successRatePct, 67);
+  assert.equal(score.label, "2/3 paid deliveries");
 
-  console.log("ok - completion score prefers verified payment ledger returns");
+  console.log("ok - completion score prefers paid delivery reliability");
 }
 
 async function testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan() {
@@ -6376,7 +6400,7 @@ async function main() {
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
   await testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline();
   await testPaymentLedgerExecutionUpdatesAreMonotonic();
-  await testCompletionScorePrefersVerifiedPaymentLedgerReturns();
+  await testCompletionScorePrefersPaidDeliveryReliability();
   await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();

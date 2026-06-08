@@ -305,6 +305,7 @@ function normalizeConsoleStateResponse(payload: ConsoleStateResponse): ConsoleSt
           retryingCount: 0,
           confirmedCount: 0,
           failedCount: 0,
+          expiredCount: 0,
           anchoredCount: 0,
           items: [],
           recentBatches: []
