@@ -9,7 +9,7 @@ function printUsage() {
   pnpm heartbeat:agent -- \\
     --agent-id "agent-id" \\
     --admin-key "sck_..." \\
-    [--env-file .env.santaclawz] \\
+    [--agent-env-file .env.santaclawz] \\
     [--api-base https://api.santaclawz.ai] \\
     [--session-id "session_agent_..."] \\
     [--interval-ms 15000] \\
@@ -165,8 +165,14 @@ if (args.help) {
   printUsage();
   process.exit(0);
 }
-if (typeof args["env-file"] === "string" && args["env-file"].trim().length > 0) {
-  loadEnvFile(args["env-file"].trim());
+const requestedEnvFile =
+  typeof args["agent-env-file"] === "string" && args["agent-env-file"].trim().length > 0
+    ? args["agent-env-file"].trim()
+    : typeof args["env-file"] === "string" && args["env-file"].trim().length > 0
+      ? args["env-file"].trim()
+      : "";
+if (requestedEnvFile) {
+  loadEnvFile(requestedEnvFile);
 }
 
 const config = resolveConfig(args);

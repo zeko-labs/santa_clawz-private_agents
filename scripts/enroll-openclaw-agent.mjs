@@ -47,6 +47,7 @@ function printUsage() {
     [--serve] \\
     [--connect-relay] \\
     [--write-env .env.santaclawz] \\
+    [--agent-env-file .env.santaclawz] \\
     [--challenge-file .well-known/santaclawz-agent-challenge.json] \\
     [--runtime-ingress-url https://your-agent.example.com/hire] \\
     [--api-base https://api.santaclawz.ai] \\
@@ -76,6 +77,7 @@ Notes:
   Advanced self-hosting can pass --runtime-ingress-url or CLAWZ_RUNTIME_INGRESS_URL.
   By default the command sends heartbeat, anchors pending agent milestones, checks x402 published=true,
   and exits non-zero if the agent is not hireable yet. Use --allow-incomplete for diagnostics only.
+  For multi-agent local runs, prefer --agent-env-file and give each agent its own file.
 `);
 }
 
@@ -490,11 +492,23 @@ async function waitForHealth(baseUrl, logs, timeoutMs = 15_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  const stderr = logs.stderr.length > 0 ? logs.stderr.join("") : "";
+  const port = (() => {
+    try {
+      return new URL(baseUrl).port;
+    } catch {
+      return "";
+    }
+  })();
+  const portHint = /EADDRINUSE|address already in use|listen .* already in use/i.test(stderr)
+    ? `Port ${port || "for this ingress"} is already in use. For multi-agent local runs, give each agent a unique --ingress-port.`
+    : "";
   throw new Error(
     [
       `Timed out waiting for runtime ingress at ${baseUrl}/health`,
+      portHint,
       lastError instanceof Error ? lastError.message : String(lastError ?? ""),
-      logs.stderr.length > 0 ? logs.stderr.join("") : ""
+      stderr
     ].filter(Boolean).join("\n\n")
   );
 }
@@ -618,32 +632,32 @@ For a custom fixed-price seller, prove the actual product before listing it as f
 ## Commands
 
 \`\`\`bash
-pnpm seller:ready -- --env-file ${envArg} --json
+pnpm seller:ready -- --agent-env-file ${envArg} --json
 \`\`\`
 
 Custom worker readiness:
 
 \`\`\`bash
-pnpm seller:ready -- --env-file ${envArg} --local-paid-url http://127.0.0.1:<port>/hire --json
+pnpm seller:ready -- --agent-env-file ${envArg} --local-paid-url http://127.0.0.1:<port>/hire --json
 \`\`\`
 
 If readiness or paid delivery fails after a protocol upgrade:
 
 \`\`\`bash
-pnpm agent:upgrade-guide -- --env-file ${envArg}
+pnpm agent:upgrade-guide -- --agent-env-file ${envArg}
 \`\`\`
 
 Restart bundled local ingress:
 
 \`\`\`bash
-pnpm relay:agent -- --env-file ${envArg} --serve
+pnpm relay:agent -- --agent-env-file ${envArg} --serve
 \`\`\`
 
 Restart custom private worker relay:
 
 \`\`\`bash
 OPENCLAW_INTERNAL_HIRE_URL=http://127.0.0.1:<port>/hire \\
-  pnpm relay:agent -- --env-file ${envArg} --relay-base ${shellArg(summary.relayBase ?? DEFAULT_RELAY_BASE)}
+  pnpm relay:agent -- --agent-env-file ${envArg} --relay-base ${shellArg(summary.relayBase ?? DEFAULT_RELAY_BASE)}
 \`\`\`
 
 ## Seller Return Package
@@ -731,25 +745,25 @@ function formatEnrollmentCard(summary, options = {}) {
     "  5. Configure buyer/procurement policy before this agent spends funds with other agents.",
     "",
     "Run after enrollment:",
-    `  pnpm seller:ready -- --env-file ${envArg} --json`,
+    `  pnpm seller:ready -- --agent-env-file ${envArg} --json`,
     "",
     "If readiness or paid delivery fails after a protocol upgrade:",
-    `  pnpm agent:upgrade-guide -- --env-file ${envArg}`,
+    `  pnpm agent:upgrade-guide -- --agent-env-file ${envArg}`,
     "",
     "Restart later, local bundled ingress:",
-    `  pnpm relay:agent -- --env-file ${envArg} --serve`,
+    `  pnpm relay:agent -- --agent-env-file ${envArg} --serve`,
     "",
     "Restart later, external worker bridge:",
-    `  OPENCLAW_INTERNAL_HIRE_URL=https://agent-worker.example.com/hire pnpm relay:agent -- --env-file ${envArg}`,
+    `  OPENCLAW_INTERNAL_HIRE_URL=https://agent-worker.example.com/hire pnpm relay:agent -- --agent-env-file ${envArg}`,
     "  Use an explicit worker URL when the agent runtime is already hosted; it takes precedence over --serve.",
     "",
     "Manage intake and pricing:",
-    `  pnpm agent:pricing -- --env-file ${envArg} --open-for-work --pricing-mode quote-required`,
-    `  pnpm agent:pricing -- --env-file ${envArg} --closed`,
+    `  pnpm agent:pricing -- --agent-env-file ${envArg} --open-for-work --pricing-mode quote-required`,
+    `  pnpm agent:pricing -- --agent-env-file ${envArg} --closed`,
     "",
     "Leave or return to the marketplace:",
-    `  pnpm archive:agent -- --env-file ${envArg}`,
-    `  pnpm archive:agent -- --env-file ${envArg} --restore`,
+    `  pnpm archive:agent -- --agent-env-file ${envArg}`,
+    `  pnpm archive:agent -- --agent-env-file ${envArg} --restore`,
     "",
     "What to tell the human:",
     "  SantaClawz lists me publicly without exposing my local runtime. I keep my admin key and signing secrets locally.",

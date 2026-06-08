@@ -5788,9 +5788,15 @@ async function testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan() {
 async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-facilitation-floor-test-"));
   const port = await reservePort();
+  const hangingRpcPort = await reservePort();
+  const hangingRpcServer = createServer((_request, _response) => {
+    // Intentionally never respond. x402 plan generation must not depend on live RPC by default.
+  });
+  await new Promise((resolve) => hangingRpcServer.listen(hangingRpcPort, "127.0.0.1", resolve));
   const server = startServer(workspaceDir, port, {
     CLAWZ_X402_BASE_FACILITATOR_URL: "https://x402-zeko.example",
     CLAWZ_X402_MIN_NETWORK_FACILITATION_FEE_USD: "0.002",
+    CLAWZ_X402_BASE_RPC_URLS: `http://127.0.0.1:${hangingRpcPort}`,
     CLAWZ_PROTOCOL_OWNER_FEE_ENABLED: "true",
     CLAWZ_PROTOCOL_OWNER_FEE_BPS: "100",
     CLAWZ_PROTOCOL_FEE_BASE_RECIPIENT: "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
@@ -5821,7 +5827,12 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     });
     assert.equal(underFloor.status, 200);
 
+    const underFloorPlanStartedAt = Date.now();
     const underFloorPlan = await requestJson(`${baseUrl}/api/x402/plan?sessionId=session_demo_enterprise`);
+    assert.ok(
+      Date.now() - underFloorPlanStartedAt < 1000,
+      "x402 plan should use the deterministic facilitator floor without waiting on RPC by default"
+    );
     assert.equal(underFloorPlan.status, 200);
     assert.equal(underFloorPlan.payload.rails[0].ready, false);
     assert.match(underFloorPlan.payload.rails[0].missing.join("\n"), /above \$0\.002/);
@@ -5908,6 +5919,7 @@ async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
     console.log("ok - hosted Base payments deduct the higher of percentage fee or minimum network facilitation fee");
   } finally {
     await stopProcess(server.child);
+    await new Promise((resolve) => hangingRpcServer.close(resolve));
     await rm(workspaceDir, { recursive: true, force: true });
   }
 }

@@ -66,10 +66,10 @@ const WORKER_ROUTE_ENV_KEYS = [
 
 function printUsage() {
   console.error(`Usage:
-  pnpm agent:serve -- --env-file .env.santaclawz --serve
+  pnpm agent:serve -- --agent-env-file .env.santaclawz --serve
 
   pnpm relay:agent -- \\
-    --env-file .env.santaclawz \\
+    --agent-env-file .env.santaclawz \\
     [--serve] \\
     [--local-hire-url http://127.0.0.1:8797/hire] \\
     [--local-quote-url http://127.0.0.1:8797/quote] \\
@@ -87,6 +87,8 @@ function printUsage() {
 Notes:
   Use this after one-time enrollment. It reads the private .env.santaclawz file,
   reconnects the SantaClawz outbound relay, and keeps heartbeat status live.
+  --agent-env-file is the preferred env flag for multi-agent local runs; --env-file
+  remains supported for backwards compatibility.
   --serve starts the bundled local public-hire ingress starter, which validates
   quote-paid execution and canonical santaclawz-return/1.0 packages locally.
   --local-hire-url points relay traffic at an already running /hire endpoint.
@@ -133,7 +135,7 @@ function parseArgs(argv) {
 function requireEnv(name) {
   const value = process.env[name]?.trim();
   if (!value) {
-    throw new Error(`Missing ${name}. Pass --env-file .env.santaclawz from a completed enrollment.`);
+    throw new Error(`Missing ${name}. Pass --agent-env-file .env.santaclawz from a completed enrollment.`);
   }
   return value;
 }
@@ -1411,11 +1413,23 @@ async function waitForHealth(baseUrl, logs, timeoutMs = 15_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  const stderr = logs.stderr.length > 0 ? logs.stderr.join("") : "";
+  const port = (() => {
+    try {
+      return new URL(baseUrl).port;
+    } catch {
+      return "";
+    }
+  })();
+  const portHint = /EADDRINUSE|address already in use|listen .* already in use/i.test(stderr)
+    ? `Port ${port || "for this ingress"} is already in use. For multi-agent local runs, give each agent a unique --ingress-port.`
+    : "";
   throw new Error(
     [
       `Timed out waiting for runtime ingress at ${baseUrl}/health`,
+      portHint,
       lastError instanceof Error ? lastError.message : String(lastError ?? ""),
-      logs.stderr.length > 0 ? logs.stderr.join("") : ""
+      stderr
     ].filter(Boolean).join("\n\n")
   );
 }
@@ -1512,7 +1526,12 @@ if (args.help) {
   process.exit(0);
 }
 
-const envFile = typeof args["env-file"] === "string" ? args["env-file"].trim() : DEFAULT_ENV_FILE;
+const envFile =
+  typeof args["agent-env-file"] === "string" && args["agent-env-file"].trim().length > 0
+    ? args["agent-env-file"].trim()
+    : typeof args["env-file"] === "string" && args["env-file"].trim().length > 0
+      ? args["env-file"].trim()
+      : DEFAULT_ENV_FILE;
 const envFileValues = applyEnvFile(envFile);
 CONFIGURED_LOCAL_HIRE_TIMEOUT_MS = parsePositiveInteger(
   typeof args["local-timeout-ms"] === "string" ? args["local-timeout-ms"] : process.env.CLAWZ_AGENT_LOCAL_HIRE_TIMEOUT_MS,
