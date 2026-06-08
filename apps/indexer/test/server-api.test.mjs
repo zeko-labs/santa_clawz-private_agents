@@ -5183,6 +5183,60 @@ async function testLegacyDemoProfileCanEnableBasePayments() {
   }
 }
 
+async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-rollup-"));
+  const ledgerDir = path.join(workspaceDir, ".clawz-data", "state");
+  await mkdir(ledgerDir, { recursive: true });
+  await writeFile(path.join(ledgerDir, "payment-ledger.json"), JSON.stringify({
+    entries: [
+      {
+        ledgerId: "pay_recent_completed",
+        createdAtIso: "2026-06-07T00:00:00.000Z",
+        updatedAtIso: "2026-06-07T00:01:00.000Z",
+        agentId: "rollup-agent--session_agent_rollup",
+        sessionId: "session_agent_rollup",
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        sellerNetAmountUsd: "0.248",
+        transactionHashes: [],
+        paymentStatus: "execution_completed",
+        executionStatus: "completed",
+        returnStatus: "accepted"
+      }
+    ],
+    allTimeStats: {
+      completedPaymentCount: 812,
+      completedBasePaymentCount: 812,
+      completedSellerPayoutUsd: "219.75",
+      completedBaseSellerPayoutUsd: "219.75",
+      countedPaymentKeys: ["legacy_completed_rollup"]
+    }
+  }, null, 2), "utf8");
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+    const payments = await requestJson(`${baseUrl}/api/payments?limit=1`);
+    assert.equal(payments.status, 200);
+    assert.equal(payments.payload.summary.completedSellerPayoutUsd, "219.998");
+    assert.equal(payments.payload.summary.completedBaseSellerPayoutUsd, "219.998");
+    assert.equal(payments.payload.summary.completedPaymentCount, 813);
+    const publicMarketplaceSnapshot = await requestJson(`${baseUrl}/api/public/marketplace-snapshot`, { method: "GET" });
+    assert.equal(publicMarketplaceSnapshot.status, 200);
+    assert.equal(publicMarketplaceSnapshot.payload.paymentLedger.summary.completedSellerPayoutUsd, "219.998");
+
+    console.log("ok - public payout summary uses all-time payment ledger stats");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testHostedBasePaymentsRequireMinimumFacilitationFee() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-facilitation-floor-test-"));
   const port = await reservePort();
@@ -5582,6 +5636,7 @@ async function main() {
   await testMissionAuthVerificationPersists();
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
+  await testPublicPayoutSummaryUsesAllTimeLedgerStats();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();
