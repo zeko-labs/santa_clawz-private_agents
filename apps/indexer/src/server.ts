@@ -199,10 +199,13 @@ function clearConsoleStateCache() {
   paymentLedgerCacheEpoch += 1;
   publicMarketplaceSnapshotCacheEpoch += 1;
   publicReadCacheEpoch += 1;
-  // Keep retained entries available for stale-while-revalidate during write bursts.
+  consoleStateCache.clear();
   consoleStateInflight.clear();
+  paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
+  publicMarketplaceSnapshotCache.clear();
   publicMarketplaceSnapshotInflight.clear();
+  publicReadCache.clear();
   publicReadInflight.clear();
 }
 
@@ -2696,6 +2699,17 @@ async function agentDirectoryEntry(baseUrl: string, agent: Awaited<ReturnType<ty
   };
 }
 
+async function cachedRegisteredAgents() {
+  return cachedPublicRead("agents-registry", () => controlPlane.listRegisteredAgents());
+}
+
+async function cachedAgentDirectoryEntries(baseUrl: string) {
+  return cachedPublicRead(
+    `agent-directory:${baseUrl}`,
+    async () => Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)))
+  );
+}
+
 function setHeaders(response: IndexerResponse, headers: Record<string, string>) {
   for (const [name, value] of Object.entries(headers)) {
     response.set(name, value);
@@ -4152,7 +4166,9 @@ app.get("/api/console/state", route(async (request, response) => {
 }));
 
 app.get("/api/agents", route(async (_request, response) => {
-  response.json(await controlPlane.listRegisteredAgents());
+  const { payload, cacheStatus } = await cachedRegisteredAgents();
+  response.set("x-santaclawz-cache", cacheStatus);
+  response.json(payload);
 }));
 
 app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
@@ -4224,7 +4240,8 @@ app.get("/api/agents/search", route(async (request, response) => {
     const rawLimit = queryString(request.query, "limit");
     const limit = rawLimit ? Math.max(1, Math.min(Number.parseInt(rawLimit, 10), 100)) : 50;
     const baseUrl = getBaseUrl(request);
-    const agents = await Promise.all((await controlPlane.listRegisteredAgents()).map((agent) => agentDirectoryEntry(baseUrl, agent)));
+    const { payload: agents, cacheStatus } = await cachedAgentDirectoryEntries(baseUrl);
+    response.set("x-santaclawz-cache", cacheStatus);
     const filtered = agents.filter((agent) => {
       const tagValues = agentMarketplaceTagValues(agent.marketplaceTags);
       if (q) {
@@ -4282,6 +4299,7 @@ app.get("/api/agents/search", route(async (request, response) => {
       schemaVersion: "santaclawz-agent-directory-search/1.0",
       ok: true,
       generatedAtIso: new Date().toISOString(),
+      cacheStatus,
       totalMatchingAgents: filtered.length,
       agents: filtered.slice(0, limit)
     });
