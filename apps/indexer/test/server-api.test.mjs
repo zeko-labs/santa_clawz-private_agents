@@ -5732,6 +5732,103 @@ async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
   }
 }
 
+async function testCompletionScorePrefersVerifiedPaymentLedgerReturns() {
+  const { buildAgentCompletionScore } = await import(pathToFileURL(controlPlaneEntry).href);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const sessionId = "session_agent_reputation";
+  const hireRequests = {
+    requests: Array.from({ length: 100 }, (_, index) => ({
+      requestId: `hire_raw_failed_${index}`,
+      sessionId,
+      requestType: "paid_execution",
+      submittedAtIso: new Date(nowMs - index * 1000).toISOString(),
+      status: "pending"
+    }))
+  };
+  const paymentLedgerFile = {
+    entries: [
+      {
+        ledgerId: "pay_verified_return",
+        createdAtIso: nowIso,
+        updatedAtIso: nowIso,
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        transactionHashes: ["0x1"],
+        paymentStatus: "settled",
+        executionStatus: "completed",
+        returnStatus: "accepted"
+      },
+      {
+        ledgerId: "pay_verified_return_settlement_retry",
+        createdAtIso: nowIso,
+        updatedAtIso: new Date(nowMs - 1000).toISOString(),
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        transactionHashes: ["0x2"],
+        paymentStatus: "settlement_failed",
+        executionStatus: "completed",
+        returnStatus: "accepted",
+        errorCode: "settlement_retryable"
+      },
+      {
+        ledgerId: "pay_activation_probe_ignored",
+        createdAtIso: nowIso,
+        updatedAtIso: new Date(nowMs - 2000).toISOString(),
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        resource: "https://www.santaclawz.ai/api/activation-lane/probe",
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        transactionHashes: ["0x3"],
+        paymentStatus: "return_rejected",
+        executionStatus: "failed",
+        returnStatus: "rejected"
+      },
+      {
+        ledgerId: "pay_platform_timeout_ignored",
+        createdAtIso: nowIso,
+        updatedAtIso: new Date(nowMs - 3000).toISOString(),
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        transactionHashes: ["0x4"],
+        paymentStatus: "execution_failed",
+        executionStatus: "failed",
+        returnStatus: "none",
+        errorCode: "relay_timeout"
+      }
+    ]
+  };
+
+  const score = buildAgentCompletionScore(hireRequests, sessionId, Date.now(), { paymentLedgerFile });
+  assert.equal(score.source, "payment-ledger");
+  assert.equal(score.evaluatedJobCount, 2);
+  assert.equal(score.completedJobCount, 2);
+  assert.equal(score.failedJobCount, 0);
+  assert.equal(score.successRatePct, 100);
+  assert.equal(score.label, "2/2 verified returns");
+
+  console.log("ok - completion score prefers verified payment ledger returns");
+}
+
 async function testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-artifact-receipt-index-"));
   try {
@@ -6236,6 +6333,7 @@ async function main() {
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
   await testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline();
   await testPaymentLedgerExecutionUpdatesAreMonotonic();
+  await testCompletionScorePrefersVerifiedPaymentLedgerReturns();
   await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();

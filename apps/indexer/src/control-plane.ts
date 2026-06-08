@@ -3280,12 +3280,82 @@ function retainHireRequests(requests: HireRequestRecord[]) {
     .slice(0, HIRE_REQUEST_GLOBAL_SAFETY_RETAIN_LIMIT);
 }
 
-function buildAgentCompletionScore(
+type PaymentLedgerSellerOutcome = "completed" | "failed" | "pending";
+
+function paymentLedgerSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSellerOutcome {
+  if (isActivationLanePaymentResource(entry.resource)) {
+    return "pending";
+  }
+  if (entry.returnStatus === "accepted") {
+    return "completed";
+  }
+  if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
+    return "failed";
+  }
+  if (entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") {
+    const failureText = `${entry.errorCode ?? ""} ${entry.errorMessage ?? ""}`.toLowerCase();
+    const platformFailure =
+      failureText.includes("relay") ||
+      failureText.includes("timeout") ||
+      failureText.includes("settlement") ||
+      failureText.includes("facilitator") ||
+      failureText.includes("payment") ||
+      failureText.includes("authorization") ||
+      failureText.includes("capacity");
+    return platformFailure ? "pending" : "failed";
+  }
+  return "pending";
+}
+
+function buildPaymentLedgerCompletionScore(
+  paymentLedger: PaymentLedgerFile | undefined,
+  sessionId: string
+): AgentCompletionScore | undefined {
+  if (!paymentLedger) {
+    return undefined;
+  }
+  const evaluated = paymentLedger.entries
+    .filter((entry) => entry.sessionId === sessionId)
+    .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
+    .map((entry) => ({
+      entry,
+      outcome: paymentLedgerSellerOutcome(entry)
+    }))
+    .filter((entry) => entry.outcome !== "pending")
+    .slice(0, JOB_COMPLETION_SCORE_WINDOW_SIZE);
+  if (evaluated.length === 0) {
+    return undefined;
+  }
+
+  const completedJobCount = evaluated.filter((entry) => entry.outcome === "completed").length;
+  const failedJobCount = evaluated.filter((entry) => entry.outcome === "failed").length;
+  const evaluatedJobCount = evaluated.length;
+  const successRatePct = Math.round((completedJobCount / evaluatedJobCount) * 100);
+  const lastEvaluatedAtIso = evaluated[0]?.entry.updatedAtIso;
+
+  return {
+    windowSize: JOB_COMPLETION_SCORE_WINDOW_SIZE,
+    evaluatedJobCount,
+    completedJobCount,
+    failedJobCount,
+    successRatePct,
+    ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
+    source: "payment-ledger",
+    label: `${completedJobCount}/${evaluatedJobCount} verified returns`
+  };
+}
+
+export function buildAgentCompletionScore(
   hireRequests: HireRequestFile,
   sessionId: string,
   nowMs = Date.now(),
-  options: { socialAnchorQueueFile?: SocialAnchorQueueFile } = {}
+  options: { socialAnchorQueueFile?: SocialAnchorQueueFile; paymentLedgerFile?: PaymentLedgerFile } = {}
 ): AgentCompletionScore {
+  const ledgerScore = buildPaymentLedgerCompletionScore(options.paymentLedgerFile, sessionId);
+  if (ledgerScore) {
+    return ledgerScore;
+  }
+
   const anchorBudget = {
     remaining: paidExecutionCompletionAnchorsForSession(options.socialAnchorQueueFile, sessionId).length
   };
@@ -3317,6 +3387,7 @@ function buildAgentCompletionScore(
     failedJobCount,
     ...(successRatePct !== undefined ? { successRatePct } : {}),
     ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
+    source: "hire-requests",
     label:
       successRatePct === undefined
         ? "No paid jobs yet"
@@ -10454,6 +10525,7 @@ export class ClawzControlPlane {
       socialAnchorQueueFile,
       hireRequestFile,
       activationLaneAttemptFile,
+      paymentLedgerFile,
       runtimeHeartbeatFile
     ] = await Promise.all([
       this.blobStore.listManifests(state.currentSessionId),
@@ -10463,6 +10535,7 @@ export class ClawzControlPlane {
       this.loadSocialAnchorQueueFile(),
       this.loadHireRequestFile(),
       this.loadActivationLaneAttemptFile(),
+      this.loadPaymentLedgerFile(),
       this.loadRuntimeHeartbeatFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
@@ -10535,7 +10608,8 @@ export class ClawzControlPlane {
       })
     });
     const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId, Date.now(), {
-      socialAnchorQueueFile
+      socialAnchorQueueFile,
+      paymentLedgerFile
     });
     const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId, Date.now(), {
       socialAnchorQueueFile
@@ -10916,13 +10990,14 @@ export class ClawzControlPlane {
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
-    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile, activationLaneAttemptFile] = await Promise.all([
+    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile, activationLaneAttemptFile, paymentLedgerFile] = await Promise.all([
       this.getLiveFlowState(),
       this.getDeploymentState(),
       this.loadSocialAnchorQueueFile(),
       this.loadRuntimeHeartbeatFile(),
       this.loadHireRequestFile(),
-      this.loadActivationLaneAttemptFile()
+      this.loadActivationLaneAttemptFile(),
+      this.loadPaymentLedgerFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const materializer = new ReplayMaterializer(events);
@@ -11000,7 +11075,8 @@ export class ClawzControlPlane {
               readiness.paidExecutionProven === true &&
               readiness.hireable;
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId, Date.now(), {
-          socialAnchorQueueFile
+          socialAnchorQueueFile,
+          paymentLedgerFile
         });
         const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId, Date.now(), {
           socialAnchorQueueFile
