@@ -2623,23 +2623,7 @@ pre,
   justify-self: end;
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: nowrap;
   justify-content: flex-end;
-}
-
-.coordination-ledger-count {
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid rgba(18, 35, 54, 0.09);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.58);
-  color: var(--muted);
-  font-size: 0.86rem;
-  font-weight: 800;
-  white-space: nowrap;
 }
 
 .coordination-ledger-copy-button {
@@ -7564,14 +7548,11 @@ button:disabled {
   .coordination-ledger-actions {
     grid-column: 1;
     width: 100%;
-    justify-content: stretch;
+    justify-content: flex-start;
   }
 
-  .coordination-ledger-count,
   .coordination-ledger-copy-button {
-    flex: 1 1 180px;
     justify-content: center;
-    width: 100%;
   }
 
   .coordination-manifest-actions {

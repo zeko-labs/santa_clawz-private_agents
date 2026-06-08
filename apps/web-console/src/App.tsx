@@ -2062,9 +2062,10 @@ function coordinationThreadKey(receipt: Pick<WorkshopReceipt, "threadId" | "swar
   return receipt.threadId || receipt.swarmId || receipt.receiptId;
 }
 
-function workshopReceiptOrdinal(receipt: WorkshopReceipt, index: number) {
+function workshopReceiptOrdinal(receipt: WorkshopReceipt, visibleIndex: number, totalCount: number) {
   const digest = receipt.receiptCommitmentSha256 || receipt.receiptId;
-  return `Receipt ${index + 1} - ${shorten(digest, 8, 6)}`;
+  const receiptNumber = Math.max(totalCount - visibleIndex, 1);
+  return `Receipt ${receiptNumber} - ${shorten(digest, 8, 6)}`;
 }
 
 function extractAgentIdFromCoordinationInput(value: string): string {
@@ -5274,7 +5275,6 @@ export function App() {
                 <p className="panel-copy">Proof-only public commitments</p>
               </div>
               <div className="coordination-ledger-actions">
-                <span className="coordination-ledger-count">{coordinationReceiptCount} receipts total</span>
                 <button
                   type="button"
                   className="secondary-button coordination-ledger-copy-button"
@@ -5302,7 +5302,7 @@ export function App() {
                       {thread.receipts.slice(0, 12).map((receipt, receiptIndex) => (
                         <div key={receipt.receiptId} className="coordination-message-row">
                           <div>
-                            <strong>{workshopReceiptOrdinal(receipt, receiptIndex)}</strong>
+                            <strong>{workshopReceiptOrdinal(receipt, receiptIndex, coordinationReceiptCount)}</strong>
                             <p>Private workshop event committed. Public ledger shows proof metadata only.</p>
                             <small className="coordination-receipt-metadata">
                               <WorkshopReceiptMetadata receipt={receipt} />
