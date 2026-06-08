@@ -986,6 +986,13 @@ interface PaymentLedgerSettlementInput {
   settlementRetryable?: boolean;
 }
 
+interface BasePayoutWalletRecord {
+  agentId: string;
+  sessionId: string;
+  agentName: string;
+  payoutWallet: string;
+}
+
 interface PaymentLedgerSettlementReconciliationInput {
   ledgerId: string;
   settlementReference?: string;
@@ -2297,6 +2304,10 @@ function safeUsdAmountAtomic(value: string | undefined): bigint {
   return usdAmountAtomic(value);
 }
 
+function atomicDifference(left: bigint, right: bigint): bigint {
+  return left > right ? left - right : 0n;
+}
+
 function usdAmountFromAtomic(value: bigint): string {
   const whole = value / 1_000_000n;
   const fraction = value % 1_000_000n;
@@ -2358,6 +2369,61 @@ function inferPaymentLedgerSettlementStatus(input: {
     return "settled";
   }
   return "payment_verified";
+}
+
+function paymentLedgerStatusIsSettlementFinal(status: PaymentLedgerStatus | undefined): boolean {
+  return (
+    status === "settled" ||
+    status === "already_settled" ||
+    status === "seller_settled" ||
+    status === "protocol_fee_settled" ||
+    status === "partially_settled"
+  );
+}
+
+function mergePaymentLedgerStatus(
+  existingStatus: PaymentLedgerStatus | undefined,
+  candidateStatus: PaymentLedgerStatus
+): PaymentLedgerStatus {
+  if (!existingStatus) {
+    return candidateStatus;
+  }
+  if (paymentLedgerStatusIsSettlementFinal(candidateStatus)) {
+    return candidateStatus;
+  }
+  if (paymentLedgerStatusIsSettlementFinal(existingStatus)) {
+    return existingStatus;
+  }
+  if (existingStatus === "settlement_failed" && candidateStatus !== "settled" && candidateStatus !== "already_settled") {
+    return existingStatus;
+  }
+  if (
+    existingStatus === "execution_completed" &&
+    (
+      candidateStatus === "payment_challenged" ||
+      candidateStatus === "payment_submitted" ||
+      candidateStatus === "authorization_verified" ||
+      candidateStatus === "payment_verified" ||
+      candidateStatus === "not_settled" ||
+      candidateStatus === "execution_forwarded"
+    )
+  ) {
+    return existingStatus;
+  }
+  if (
+    (existingStatus === "execution_failed" || existingStatus === "return_rejected") &&
+    (
+      candidateStatus === "payment_challenged" ||
+      candidateStatus === "payment_submitted" ||
+      candidateStatus === "authorization_verified" ||
+      candidateStatus === "payment_verified" ||
+      candidateStatus === "not_settled" ||
+      candidateStatus === "execution_forwarded"
+    )
+  ) {
+    return existingStatus;
+  }
+  return candidateStatus;
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
@@ -5059,7 +5125,7 @@ export class ClawzControlPlane {
     await this.ensureDirs();
     const entries = file.entries.filter((entry) => entry.ledgerId && entry.agentId && entry.sessionId);
     await writeJsonFile(this.paymentLedgerPath, {
-      entries,
+      entries: entries.slice(0, 2000),
       allTimeStats: this.buildPaymentLedgerAllTimeStats(file.allTimeStats, entries)
     });
   }
@@ -7151,6 +7217,41 @@ export class ClawzControlPlane {
     };
   }
 
+  async reconcileBasePaymentLedgerRollup(input: {
+    completedBasePaymentCount: number;
+    completedBaseSellerPayoutUsd: string;
+    countedPaymentKeys: string[];
+  }): Promise<PaymentLedgerAllTimeStats> {
+    const file = await this.loadPaymentLedgerFile();
+    const currentStats = this.buildPaymentLedgerAllTimeStats(file.allTimeStats, []);
+    const nonBasePaymentCount = Math.max(0, currentStats.completedPaymentCount - currentStats.completedBasePaymentCount);
+    const nonBaseSellerPayoutAtomic = atomicDifference(
+      safeUsdAmountAtomic(currentStats.completedSellerPayoutUsd),
+      safeUsdAmountAtomic(currentStats.completedBaseSellerPayoutUsd)
+    );
+    const completedBasePaymentCount = Math.max(0, Math.floor(input.completedBasePaymentCount));
+    const completedBaseSellerPayoutAtomic = safeUsdAmountAtomic(input.completedBaseSellerPayoutUsd);
+    const completedEntryKeys = file.entries
+      .filter((entry) => this.buildPaymentLedgerLifecycleStatus(entry).completionStatus === "completed")
+      .map((entry) => this.paymentLedgerCompletionKey(entry));
+    const allTimeStats: PaymentLedgerAllTimeStats = {
+      completedPaymentCount: nonBasePaymentCount + completedBasePaymentCount,
+      completedBasePaymentCount,
+      completedSellerPayoutUsd: usdAmountFromAtomic(nonBaseSellerPayoutAtomic + completedBaseSellerPayoutAtomic),
+      completedBaseSellerPayoutUsd: usdAmountFromAtomic(completedBaseSellerPayoutAtomic),
+      countedPaymentKeys: [...new Set([
+        ...currentStats.countedPaymentKeys,
+        ...input.countedPaymentKeys.filter((key) => typeof key === "string" && key.length > 0),
+        ...completedEntryKeys
+      ])]
+    };
+    await this.savePaymentLedgerFile({
+      ...file,
+      allTimeStats
+    });
+    return this.buildPaymentLedgerAllTimeStats(allTimeStats, []);
+  }
+
   private buildPaymentLedgerLifecycleStatus(entry: PaymentLedgerEntry): NonNullable<PaymentLedgerEntry["lifecycleStatus"]> {
     const completed =
       entry.executionStatus === "completed" ||
@@ -7324,6 +7425,12 @@ export class ClawzControlPlane {
     const protocolFeeTxHash = input.protocolFeeTxHash ?? existing?.protocolFeeTxHash;
     const nextTransactionHashes = uniqueTransactionHashes(existing?.transactionHashes, transactionHashes);
     const existingPaymentStatus = input.paymentStatus ?? (nextTransactionHashes.length > 0 ? undefined : existing?.paymentStatus);
+    const inferredPaymentStatus = inferPaymentLedgerSettlementStatus({
+      ...(existingPaymentStatus ? { paymentStatus: existingPaymentStatus } : {}),
+      ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
+      ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
+      transactionHashes: nextTransactionHashes
+    });
     const ledgerId = existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const nextEntry: PaymentLedgerEntry = {
       ledgerId,
@@ -7396,12 +7503,7 @@ export class ClawzControlPlane {
         : existing?.facilitatorResponseSummary
           ? { facilitatorResponseSummary: existing.facilitatorResponseSummary }
           : {}),
-      paymentStatus: inferPaymentLedgerSettlementStatus({
-        ...(existingPaymentStatus ? { paymentStatus: existingPaymentStatus } : {}),
-        ...(sellerSettlementTxHash ? { sellerSettlementTxHash } : {}),
-        ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
-        transactionHashes: nextTransactionHashes
-      }),
+      paymentStatus: mergePaymentLedgerStatus(existing?.paymentStatus, inferredPaymentStatus),
       executionStatus: existing?.executionStatus ?? "not_started",
       returnStatus: existing?.returnStatus ?? "none",
       ...(input.errorCode ? { errorCode: input.errorCode } : existing?.errorCode ? { errorCode: existing.errorCode } : {}),
@@ -7497,32 +7599,42 @@ export class ClawzControlPlane {
       return undefined;
     }
     const existing = file.entries[index]!;
-    const successfulReturn = input.executionStatus === "completed" && input.returnStatus === "accepted";
-    const paymentStatus: PaymentLedgerStatus =
-      input.returnStatus === "rejected"
+    const existingSuccessfulReturn = existing.executionStatus === "completed" && existing.returnStatus === "accepted";
+    const executionStatus = existingSuccessfulReturn && input.executionStatus !== "completed"
+      ? "completed"
+      : input.executionStatus;
+    const returnStatus = existingSuccessfulReturn && input.returnStatus !== "accepted"
+      ? existing.returnStatus
+      : input.returnStatus ?? existing.returnStatus;
+    const successfulReturn = executionStatus === "completed" && returnStatus === "accepted";
+    const candidatePaymentStatus: PaymentLedgerStatus =
+      returnStatus === "rejected"
         ? "return_rejected"
-        : input.executionStatus === "completed"
+        : executionStatus === "completed"
           ? "execution_completed"
-          : input.executionStatus === "failed"
+          : executionStatus === "failed"
             ? "execution_failed"
-            : input.executionStatus === "forwarded"
+            : executionStatus === "forwarded"
               ? "execution_forwarded"
               : existing.paymentStatus;
+    const paymentStatus = mergePaymentLedgerStatus(existing.paymentStatus, candidatePaymentStatus);
     const {
       errorCode: _staleErrorCode,
       errorMessage: _staleErrorMessage,
       ...existingWithoutStaleExecutionError
     } = existing;
+    const canApplyExecutionError = !successfulReturn && !existingSuccessfulReturn;
+    const canApplyDeliveryReceipt = !existingSuccessfulReturn || input.executionStatus === "completed";
     const nextEntry: PaymentLedgerEntry = {
       ...(successfulReturn ? existingWithoutStaleExecutionError : existing),
       updatedAtIso: new Date().toISOString(),
       hireRequestId: input.hireRequestId,
-      executionStatus: input.executionStatus,
-      ...(input.returnStatus ? { returnStatus: input.returnStatus } : {}),
-      ...(input.deliveryReceipt ? { deliveryReceipt: input.deliveryReceipt } : {}),
+      executionStatus,
+      ...(returnStatus ? { returnStatus } : {}),
+      ...(input.deliveryReceipt && canApplyDeliveryReceipt ? { deliveryReceipt: input.deliveryReceipt } : {}),
       paymentStatus,
-      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {})
+      ...(canApplyExecutionError && input.errorCode ? { errorCode: input.errorCode } : {}),
+      ...(canApplyExecutionError && input.errorMessage ? { errorMessage: input.errorMessage } : {})
     };
     await this.savePaymentLedgerFile({
       ...file,
@@ -10741,6 +10853,27 @@ export class ClawzControlPlane {
         }
         return left.agentName.localeCompare(right.agentName);
       });
+  }
+
+  async listBasePayoutWallets(): Promise<BasePayoutWalletRecord[]> {
+    const state = await this.loadState();
+    const events = await this.loadEvents();
+    return this.buildKnownSessionIds(state, events)
+      .map((sessionId) => {
+        const trustModeId = this.resolveSessionTrustMode(events, sessionId, state.activeMode);
+        const profile = this.profileForSession(state, sessionId, trustModeId);
+        const payoutWallet = profile.payoutWallets.base?.trim();
+        if (!payoutWallet || !looksLikeEvmAddress(payoutWallet)) {
+          return undefined;
+        }
+        return {
+          agentId: this.agentIdForSession(state, sessionId, trustModeId),
+          sessionId,
+          agentName: profile.agentName,
+          payoutWallet
+        };
+      })
+      .filter((record): record is BasePayoutWalletRecord => Boolean(record));
   }
 
   private isPrivateProcurementIntent(intent: ProcurementIntentRecord) {

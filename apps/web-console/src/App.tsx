@@ -688,12 +688,12 @@ function buildPublicAgentHireUrl(agentId: string) {
   return `${buildPublicAgentUrl(agentId)}/hire`;
 }
 
-function buildPublicWorkshopLedgerUrl() {
-  const path = "/workshop#workshop-ledger";
-  if (typeof window !== "undefined") {
-    return new URL(path, window.location.origin).toString();
+function buildPublicWorkshopLedgerApiUrl(threadId?: string) {
+  const params = new URLSearchParams({ limit: "100" });
+  if (threadId) {
+    params.set("threadId", threadId);
   }
-  return `https://www.santaclawz.ai${path}`;
+  return `${getApiBase().replace(/\/+$/, "")}/api/workshop/receipt-ledger?${params.toString()}`;
 }
 
 function buildProgrammaticAgentHireUrl(agentId: string) {
@@ -2664,7 +2664,7 @@ export function App() {
     initialized: false
   });
   const normalizedExploreQuery = exploreQuery.trim().toLowerCase();
-  const exploreAvailabilityAgentIds = (activeSection === "explore" || activeSection === "workshop") && !sharedAgentId
+  const exploreAvailabilityAgentIds = activeSection === "explore" && !sharedAgentId
     ? registry
       .filter((agent) => matchesExploreQuery(agent, normalizedExploreQuery))
       .sort((left, right) => timestampValue(right.lastUpdatedAtIso) - timestampValue(left.lastUpdatedAtIso))
@@ -2924,7 +2924,7 @@ export function App() {
   }, [activeSection, sharedAgentId, state?.session.sessionId]);
 
   useEffect(() => {
-    if ((activeSection !== "explore" && activeSection !== "workshop") || sharedAgentId) {
+    if (activeSection !== "explore" || sharedAgentId) {
       return;
     }
 
@@ -3088,7 +3088,7 @@ export function App() {
   }, [activeSection, sharedAgentId]);
 
   useEffect(() => {
-    if ((activeSection !== "explore" && activeSection !== "workshop") || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
+    if (activeSection !== "explore" || sharedAgentId || exploreAvailabilityAgentIds.length === 0) {
       return;
     }
 
@@ -4680,7 +4680,7 @@ export function App() {
     apiBase
   });
   const bridgeManifestPayload = JSON.parse(bridgeManifest) as Record<string, unknown>;
-  const publicCoordinationThreadUrl = buildPublicWorkshopLedgerUrl();
+  const publicCoordinationThreadUrl = buildPublicWorkshopLedgerApiUrl(coordinationDraft.threadId);
   const selectedCoordinationRoles = selectedCoordinationAgents.map((agent, index) => (
     coordinationAgentRoles[agent.agentId] ?? (index === 0 ? "admin" : "member")
   ));
@@ -5271,19 +5271,19 @@ export function App() {
           <section id="workshop-ledger" className="panel coordination-thread-panel">
             <div className="section-head compact-head">
               <div>
-                <h2>Workshop receipt ledger</h2>
+                <div className="coordination-ledger-title-row">
+                  <h2>Workshop receipt ledger</h2>
+                  <button
+                    type="button"
+                    className="secondary-button coordination-ledger-copy-button"
+                    onClick={() => {
+                      void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
+                    }}
+                  >
+                    {copiedKey === "coordination-thread-url" ? "Copied" : "Copy API URL"}
+                  </button>
+                </div>
                 <p className="panel-copy">Proof-only public commitments</p>
-              </div>
-              <div className="coordination-ledger-actions">
-                <button
-                  type="button"
-                  className="secondary-button coordination-ledger-copy-button"
-                  onClick={() => {
-                    void copyValue("coordination-thread-url", publicCoordinationThreadUrl);
-                  }}
-                >
-                  {copiedKey === "coordination-thread-url" ? "Copied" : "Copy ledger URL"}
-                </button>
               </div>
             </div>
 

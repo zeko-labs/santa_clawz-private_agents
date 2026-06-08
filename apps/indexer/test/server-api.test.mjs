@@ -12,6 +12,7 @@ import { buildAgentMessageEnvelope } from "@clawz/protocol";
 
 const serverEntry = fileURLToPath(new URL("../dist/apps/indexer/src/server.js", import.meta.url));
 const controlPlaneEntry = fileURLToPath(new URL("../dist/apps/indexer/src/control-plane.js", import.meta.url));
+const artifactStoreEntry = fileURLToPath(new URL("../dist/apps/indexer/src/artifact-store.js", import.meta.url));
 const verifierEntry = fileURLToPath(new URL("../dist/apps/indexer/src/verify-agent-proof.js", import.meta.url));
 const relayEntry = fileURLToPath(new URL("../../../scripts/relay-agent.mjs", import.meta.url));
 const SERVER_READY_TIMEOUT_MS = 30000;
@@ -4258,6 +4259,10 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(deliveredPaymentState.payload.paymentFinality, "pending");
+    assert.equal(deliveredPaymentState.payload.paymentFinalityPending, true);
+    assert.equal(deliveredPaymentState.payload.statePollingRequired, true);
+    assert.equal(deliveredPaymentState.payload.recommendedPollAfterMs, 2000);
     assert.equal(deliveredPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(deliveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
@@ -4267,6 +4272,47 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.partyFinality.sellerTerminal, true);
     assert.equal(deliveredPaymentState.payload.partyFinality.paymentTerminal, false);
     assert.equal(deliveredPaymentState.payload.partyFinality.operatorTerminal, false);
+
+    const staleLedgerDigest = "a".repeat(64);
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_stale_submitted_after_delivery_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_stale_submitted_after_delivery_test",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: staleLedgerDigest,
+          transactionHashes: [],
+          paymentStatus: "execution_completed",
+          executionStatus: "submitted",
+          returnStatus: "none"
+        }
+      ]
+    }, null, 2), "utf8");
+    const staleLedgerPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${staleLedgerDigest}`
+    );
+    assert.equal(staleLedgerPaymentState.status, 200);
+    assert.equal(staleLedgerPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(staleLedgerPaymentState.payload.buyerAction, "view_delivery");
+    assert.equal(staleLedgerPaymentState.payload.sellerOutcome, "completed");
+    assert.equal(staleLedgerPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(staleLedgerPaymentState.payload.payment.latestLedger.executionStatus, "completed");
+    assert.equal(staleLedgerPaymentState.payload.payment.latestLedger.returnStatus, "accepted");
+    assert.equal(staleLedgerPaymentState.payload.payment.latestLedger.paymentStatus, "execution_completed");
+    assert.equal(staleLedgerPaymentState.payload.execution.operationalStatus.agentExecutionStatus, "completed");
+    assert.equal(staleLedgerPaymentState.payload.retryResume.nextAction, "view_delivery");
+    assert.equal(staleLedgerPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(staleLedgerPaymentState.payload.retryResume.safeToCreateNewPayment, false);
 
     const deliveredSettlementFailedDigest = "f".repeat(64);
     await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
@@ -5383,26 +5429,26 @@ async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
   }
 }
 
-async function testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows() {
-  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-uncapped-"));
+async function testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-rollup-"));
   try {
     const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
     const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
     const nowIso = new Date().toISOString();
     const entries = Array.from({ length: 2001 }, (_, index) => ({
-      ledgerId: `pay_uncapped_${index.toString().padStart(4, "0")}`,
+      ledgerId: `pay_rollup_${index.toString().padStart(4, "0")}`,
       createdAtIso: nowIso,
       updatedAtIso: nowIso,
-      agentId: "agent_uncapped",
-      sessionId: "session_uncapped",
+      agentId: "agent_rollup",
+      sessionId: "session_rollup",
       resource: "http://127.0.0.1/hire",
       pricingMode: "fixed-exact",
       rail: "base-usdc",
       networkId: "eip155:8453",
       assetSymbol: "USDC",
-      amountUsd: "0.25",
-      sellerNetAmountUsd: "0.25",
-      settlementReference: `settlement_uncapped_${index}`,
+      amountUsd: index === 0 ? "1.234567" : "0.000001",
+      sellerNetAmountUsd: index === 0 ? "1.234567" : "0.000001",
+      settlementReference: `settlement_rollup_${index}`,
       transactionHashes: [`0x${(index + 1).toString(16).padStart(64, "0")}`],
       paymentStatus: "settled",
       executionStatus: "completed",
@@ -5413,13 +5459,143 @@ async function testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows() {
 
     const paymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
     const saved = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
-    assert.equal(saved.entries.length, 2001);
+    assert.equal(saved.entries.length, 2000);
     assert.equal(saved.allTimeStats.completedPaymentCount, 2001);
     assert.equal(saved.allTimeStats.completedBasePaymentCount, 2001);
-    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "500.25");
-    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "500.25");
+    assert.equal(saved.allTimeStats.completedSellerPayoutUsd, "1.236567");
+    assert.equal(saved.allTimeStats.completedBaseSellerPayoutUsd, "1.236567");
 
-    console.log("ok - payment ledger persistence keeps completed payout rows uncapped");
+    const reconciledStats = await controlPlane.reconcileBasePaymentLedgerRollup({
+      completedBasePaymentCount: 3,
+      completedBaseSellerPayoutUsd: "5.432101",
+      countedPaymentKeys: ["base_tx_one", "base_tx_two", "base_tx_three"]
+    });
+    assert.equal(reconciledStats.completedPaymentCount, 3);
+    assert.equal(reconciledStats.completedBasePaymentCount, 3);
+    assert.equal(reconciledStats.completedSellerPayoutUsd, "5.432101");
+    assert.equal(reconciledStats.completedBaseSellerPayoutUsd, "5.432101");
+    const reconciled = JSON.parse(await readFile(paymentLedgerPath, "utf8"));
+    assert.equal(reconciled.entries.length, 2000);
+    assert.equal(reconciled.allTimeStats.completedPaymentCount, 3);
+    assert.equal(reconciled.allTimeStats.completedBaseSellerPayoutUsd, "5.432101");
+
+    console.log("ok - payment ledger persistence keeps cumulative payout stats when rows are pruned");
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-monotonic-"));
+  try {
+    const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
+    const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
+    await controlPlane.savePaymentLedgerFile({
+      entries: [
+        {
+          ledgerId: "pay_monotonic_return",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId: "monotonic-agent--session_agent_monotonic",
+          sessionId: "session_agent_monotonic",
+          hireRequestId: "hire_monotonic",
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: "b".repeat(64),
+          transactionHashes: [],
+          paymentStatus: "execution_completed",
+          executionStatus: "completed",
+          returnStatus: "accepted"
+        }
+      ]
+    });
+
+    const staleExecution = await controlPlane.updatePaymentLedgerExecution({
+      ledgerId: "pay_monotonic_return",
+      hireRequestId: "hire_monotonic",
+      executionStatus: "submitted",
+      returnStatus: "none",
+      errorCode: "stale_platform_timeout",
+      errorMessage: "Stale platform timeout arrived after accepted return."
+    });
+    assert.equal(staleExecution.executionStatus, "completed");
+    assert.equal(staleExecution.returnStatus, "accepted");
+    assert.equal(staleExecution.paymentStatus, "execution_completed");
+    assert.equal(staleExecution.errorCode, undefined);
+    assert.equal(staleExecution.errorMessage, undefined);
+
+    const staleAuthorization = await controlPlane.recordPaymentLedgerSettlement({
+      agentId: "monotonic-agent--session_agent_monotonic",
+      sessionId: "session_agent_monotonic",
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      paymentPayloadDigestSha256: "b".repeat(64),
+      paymentStatus: "authorization_verified"
+    });
+    assert.equal(staleAuthorization.executionStatus, "completed");
+    assert.equal(staleAuthorization.returnStatus, "accepted");
+    assert.equal(staleAuthorization.paymentStatus, "execution_completed");
+
+    console.log("ok - payment ledger execution updates are monotonic");
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+async function testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-artifact-receipt-index-"));
+  try {
+    const { ArtifactStore } = await import(pathToFileURL(artifactStoreEntry).href);
+    const store = new ArtifactStore(path.join(workspaceDir, "artifacts"));
+    await store.ensureDirs();
+
+    await store.createReceipt({
+      requestId: "hire_indexed_receipts",
+      deliveryMode: "external_reference",
+      filename: "report.md",
+      contentType: "text/markdown",
+      artifactDigestSha256: "a".repeat(64),
+      artifactSizeBytes: 128,
+      artifactUrl: "https://example.com/report.md",
+      baseUrl: "http://127.0.0.1:3000"
+    });
+
+    const legacyReceiptDir = path.join(workspaceDir, "artifacts", "receipts");
+    await writeFile(path.join(legacyReceiptDir, "receipt_legacy_unindexed.json"), JSON.stringify({
+      receiptId: "receipt_legacy_unindexed",
+      requestId: "hire_legacy_only",
+      createdAtIso: new Date().toISOString(),
+      updatedAtIso: new Date().toISOString(),
+      deliveredAtIso: new Date().toISOString(),
+      deliveryMode: "external_reference",
+      transport: "external_url",
+      scanPolicy: "external_unverified",
+      digestRequired: true,
+      buyerAcceptanceRequired: true,
+      buyerAcceptanceStatus: "pending",
+      filename: "legacy.md",
+      contentType: "text/markdown",
+      artifactDigestSha256: "b".repeat(64),
+      artifactSizeBytes: 256,
+      artifactUrl: "https://example.com/legacy.md",
+      manifestDigestSha256: "c".repeat(64),
+      tokenHashSha256: "d".repeat(64)
+    }, null, 2), "utf8");
+
+    const indexed = await store.receiptsForRequest("hire_indexed_receipts");
+    assert.equal(indexed.length, 1);
+    assert.equal(indexed[0].requestId, "hire_indexed_receipts");
+
+    const unindexed = await store.receiptsForRequest("hire_legacy_only");
+    assert.equal(unindexed.length, 0);
+
+    console.log("ok - artifact receipts use request index instead of global scan");
   } finally {
     await rm(workspaceDir, { recursive: true, force: true });
   }
@@ -5712,6 +5888,9 @@ async function testPaidLifecycleReducerInvariants() {
   });
   assert.equal(deliveredSettled.protocolState, "DELIVERED_SETTLED");
   assert.equal(deliveredSettled.terminal, true);
+  assert.equal(deliveredSettled.paymentFinality, "settled");
+  assert.equal(deliveredSettled.paymentFinalityPending, false);
+  assert.equal(deliveredSettled.statePollingRequired, false);
   assert.equal(deliveredSettled.buyerAction, "view_delivery");
   assert.equal(deliveredSettled.sellerOutcome, "completed");
   assert.equal(deliveredSettled.operatorObligation, "none");
@@ -5729,6 +5908,10 @@ async function testPaidLifecycleReducerInvariants() {
   });
   assert.equal(deliveredAwaitingSettlement.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
   assert.equal(deliveredAwaitingSettlement.terminal, false);
+  assert.equal(deliveredAwaitingSettlement.paymentFinality, "pending");
+  assert.equal(deliveredAwaitingSettlement.paymentFinalityPending, true);
+  assert.equal(deliveredAwaitingSettlement.statePollingRequired, true);
+  assert.equal(deliveredAwaitingSettlement.recommendedPollAfterMs, 2000);
   assert.equal(deliveredAwaitingSettlement.buyerAction, "view_delivery");
   assert.equal(deliveredAwaitingSettlement.sellerOutcome, "completed");
   assert.equal(deliveredAwaitingSettlement.operatorObligation, "settle_payment");
@@ -5748,6 +5931,10 @@ async function testPaidLifecycleReducerInvariants() {
   });
   assert.equal(deliveredSettlementFailed.protocolState, "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION");
   assert.equal(deliveredSettlementFailed.terminal, false);
+  assert.equal(deliveredSettlementFailed.paymentFinality, "requires_reconciliation");
+  assert.equal(deliveredSettlementFailed.paymentFinalityPending, false);
+  assert.equal(deliveredSettlementFailed.statePollingRequired, true);
+  assert.equal(deliveredSettlementFailed.recommendedPollAfterMs, 5000);
   assert.equal(deliveredSettlementFailed.buyerAction, "view_delivery");
   assert.equal(deliveredSettlementFailed.sellerOutcome, "completed");
   assert.equal(deliveredSettlementFailed.operatorObligation, "reconcile_platform_state");
@@ -5844,7 +6031,9 @@ async function main() {
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
-  await testPaymentLedgerPersistenceDoesNotCapCompletedPayoutRows();
+  await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
+  await testPaymentLedgerExecutionUpdatesAreMonotonic();
+  await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
   await testHostedExactFeeSplitPaymentRequirementCarriesSplitAmounts();
   await testSellerReputationRequiresBuyerDeliveryContract();

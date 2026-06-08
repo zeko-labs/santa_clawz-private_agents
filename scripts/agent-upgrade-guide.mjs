@@ -51,23 +51,37 @@ function buildGuide(args) {
   const paidSmokeCommand = agentId
     ? `pnpm buyer:buy-once -- --agent ${shellQuote(agentId)} --prompt 'Return one short buyer-visible answer.' --max-usd 1.00`
     : "pnpm buyer:buy-once -- --agent '<agent-id>' --prompt 'Return one short buyer-visible answer.' --max-usd 1.00";
+  const activationProbeCommand = agentId
+    ? `pnpm buyer:buy-once -- --agent ${shellQuote(agentId)} --prompt 'SantaClawz paid activation probe. Return buyer-visible output.' --activation-probe --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money`
+    : "pnpm buyer:buy-once -- --agent '<agent-id>' --prompt 'SantaClawz paid activation probe. Return buyer-visible output.' --activation-probe --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money";
+  const sellerReadinessCommand = agentId
+    ? `pnpm buyer:buy-once -- --agent ${shellQuote(agentId)} --prompt 'SantaClawz seller readiness test. Return a compact v1.1 buyer-visible package with a short answer, verification manifest, and delivery summary.' --seller-readiness-test --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money`
+    : "pnpm buyer:buy-once -- --agent '<agent-id>' --prompt 'SantaClawz seller readiness test. Return a compact v1.1 buyer-visible package with a short answer, verification manifest, and delivery summary.' --seller-readiness-test --max-usd 0.01 --wallet-env ./buyer.env --allow-real-money";
   return {
     schemaVersion: "santaclawz-agent-upgrade-guide/1.0",
     doc: "docs/start-here/agent-upgrade-guide.md",
     envFile,
+    existingAgentRule: "Do not re-register just to upgrade. Keep the same .env.santaclawz, agent id, admin key, signing secret, payout wallet, and public profile.",
     commands: [
       "git pull --ff-only",
       "corepack enable",
       "pnpm install --frozen-lockfile",
+      "pnpm build",
       readinessCommand,
       paidSmokeCommand
     ],
+    pendingAgentCommands: {
+      activationProbe: activationProbeCommand,
+      sellerReadinessTest: sellerReadinessCommand
+    },
     checks: [
       "Current SantaClawz runtime code is installed.",
       "Relay and worker route are current.",
       "seller:ready reaches the intended worker.",
+      "Local smoke tests use the same env file and supervisor shape as production.",
       "Completed return package is canonical santaclawz-return/1.0.",
-      "Completed work includes buyer-visible output or artifact delivery metadata."
+      "Completed work includes buyer-visible output or artifact delivery metadata.",
+      "Fixed-price required inputs are declared through contextRequirements and supplied through jobContext before payment."
     ],
     completionSemantics: {
       sellerExecutionCompleted: "seller returned a verified package; used for seller reputation",
@@ -106,9 +120,17 @@ if (args.json) {
   console.log("SantaClawz agent upgrade guide");
   console.log(`Doc: ${guide.doc}`);
   console.log("");
+  console.log("Existing agents: keep the same .env.santaclawz and agent identity. Do not re-register just to upgrade.");
+  console.log("");
   guide.commands.forEach((command, index) => {
     console.log(`${index + 1}. ${command}`);
   });
+  console.log("");
+  console.log("If the agent is still Pending because execution proof is missing:");
+  console.log(`- ${guide.pendingAgentCommands.activationProbe}`);
+  console.log("");
+  console.log("After activation proof clears, run the fuller seller readiness test:");
+  console.log(`- ${guide.pendingAgentCommands.sellerReadinessTest}`);
   console.log("");
   console.log("Rule: sellerExecutionCompleted is seller reputation; buyerComplete is buyer success.");
   console.log("Recovery: poll payment-state by paymentPayloadDigestSha256, then use retryResume.stateEndpoint.");
