@@ -6858,7 +6858,7 @@ app.get("/api/agents/:agentId/availability", route(async (request, response) => 
 
     const { payload, cacheStatus } = await cachedPublicRead(
       `agent-availability:${agentId}`,
-      () => controlPlane.getAgentRuntimeAvailability({ agentId })
+      () => controlPlane.getAgentRuntimeLeaseAvailability({ agentId })
     );
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
