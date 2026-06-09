@@ -4691,6 +4691,7 @@ export class ClawzControlPlane {
   private readonly sharedSocialAnchorIntervalMs: number;
   private readonly prioritySocialAnchorRuns = new Map<string, Promise<void>>();
   private agentBoardMutationLock: Promise<void> = Promise.resolve();
+  private socialAnchorQueueMutationLock: Promise<void> = Promise.resolve();
   private relayRuntimeStatusProvider: RelayRuntimeStatusProvider | undefined;
   private relayHireDeliveryHandler: RelayHireDeliveryHandler | undefined;
 
@@ -5389,8 +5390,43 @@ export class ClawzControlPlane {
   }
 
   private async saveSocialAnchorQueueFile(file: SocialAnchorQueueFile) {
-    await this.ensureDirs();
-    await writeJsonFile(this.socialAnchorQueuePath, socialAnchorQueueWithArchive(file));
+    return this.withSocialAnchorQueueMutationLock(async () => {
+      await this.ensureDirs();
+      const current = await readJsonFile<SocialAnchorQueueFile>(this.socialAnchorQueuePath);
+      const itemById = new Map<string, SocialAnchorCandidate>();
+      for (const item of file.items) {
+        itemById.set(item.candidateId, item);
+      }
+      for (const item of current?.items ?? []) {
+        if (activeSocialAnchorStatus(item.status) && !itemById.has(item.candidateId)) {
+          itemById.set(item.candidateId, item);
+        }
+      }
+
+      const batchById = new Map<string, SocialAnchorBatch>();
+      for (const batch of current?.batches ?? []) {
+        batchById.set(batch.batchId, batch);
+      }
+      for (const batch of file.batches) {
+        batchById.set(batch.batchId, batch);
+      }
+
+      await writeJsonFile(
+        this.socialAnchorQueuePath,
+        socialAnchorQueueWithArchive({
+          ...file,
+          items: [...itemById.values()],
+          archivedItems: [
+            ...(file.archivedItems ?? []),
+            ...(current?.archivedItems ?? []),
+            ...(current?.items ?? [])
+          ],
+          batches: [...batchById.values()]
+            .sort((left, right) => right.settledAtIso.localeCompare(left.settledAtIso))
+            .slice(0, 80)
+        })
+      );
+    });
   }
 
   private async loadAgentBoardFile(): Promise<AgentBoardFile> {
@@ -5416,6 +5452,20 @@ export class ClawzControlPlane {
     const previous = this.agentBoardMutationLock;
     let release: () => void = () => {};
     this.agentBoardMutationLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await mutation();
+    } finally {
+      release();
+    }
+  }
+
+  private async withSocialAnchorQueueMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
+    const previous = this.socialAnchorQueueMutationLock;
+    let release: () => void = () => {};
+    this.socialAnchorQueueMutationLock = new Promise<void>((resolve) => {
       release = resolve;
     });
     await previous;
