@@ -110,6 +110,8 @@ const PAYMENT_LEDGER_CACHE_MAX_ENTRIES = Math.max(
   10,
   Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_MAX_ENTRIES ?? "80"))
 );
+const ARTIFACT_DOWNLOAD_READ_BUDGET_MS = 5000;
+const X402_PLAN_COLD_READ_BUDGET_MS = 3000;
 const X402_PAYMENT_STATE_COLD_READ_BUDGET_MS = 3000;
 const PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS = Math.max(
   0,
@@ -2238,26 +2240,39 @@ async function buyerPaymentSafetyForPlan(input: {
   if (!input.lookup) {
     return undefined;
   }
-  const paymentState = await buildX402PaymentStateResponse({
-    apiBase: input.apiBase,
-    ...input.lookup
+  const lookupRecord = Object.fromEntries(
+    Object.entries(input.lookup).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+  );
+  const cacheKey = `payment-safety:${input.apiBase}:${lookupRecord.ledgerId ?? ""}:${lookupRecord.intentId ?? ""}:${lookupRecord.requestId ?? ""}:${lookupRecord.paymentPayloadDigestSha256 ?? ""}`;
+  const { payload: paymentState } = await cachedX402PaymentState({
+    cacheKey,
+    lookup: lookupRecord,
+    producer: () =>
+      buildX402PaymentStateResponse({
+        apiBase: input.apiBase,
+        ...input.lookup
+      })
   });
-  const latestLedger = isRecord(paymentState.payment) && isRecord(paymentState.payment.latestLedger)
-    ? paymentState.payment.latestLedger
+  const paymentStateRecord = paymentState as Record<string, unknown>;
+  const paymentBlock = isRecord(paymentStateRecord.payment) ? paymentStateRecord.payment : undefined;
+  const latestLedger = isRecord(paymentBlock?.latestLedger)
+    ? paymentBlock.latestLedger
     : undefined;
-  const retryResume: Record<string, unknown> = isRecord(paymentState.retryResume) ? paymentState.retryResume : {};
+  const retryResume: Record<string, unknown> = isRecord(paymentStateRecord.retryResume)
+    ? paymentStateRecord.retryResume
+    : {};
   const terminal = retryResume.terminal === true;
   const safeToRetrySamePayload = retryResume.safeToRetrySamePayload === true;
   const paymentPayloadRetryRejected = retryResume.paymentPayloadRetryRejected === true;
   const unresolved = !terminal;
   const blockingPaymentPayloadDigestSha256 =
-    typeof paymentState.lookup.paymentPayloadDigestSha256 === "string"
+    typeof paymentState.lookup?.paymentPayloadDigestSha256 === "string"
       ? paymentState.lookup.paymentPayloadDigestSha256
       : typeof latestLedger?.paymentPayloadDigestSha256 === "string"
         ? latestLedger.paymentPayloadDigestSha256
         : undefined;
   const blockingRequestId =
-    typeof paymentState.lookup.requestId === "string"
+    typeof paymentState.lookup?.requestId === "string"
       ? paymentState.lookup.requestId
       : typeof latestLedger?.hireRequestId === "string"
         ? latestLedger.hireRequestId
@@ -2274,7 +2289,7 @@ async function buyerPaymentSafetyForPlan(input: {
     typeof retryResume.refundOrNoChargeStatus === "string" ? retryResume.refundOrNoChargeStatus : undefined;
   const paymentStateUrl = paymentStateRetryEndpoint({
     apiBase: input.apiBase,
-    ...(paymentState.lookup.intentId ? { intentId: paymentState.lookup.intentId } : {}),
+    ...(paymentState.lookup?.intentId ? { intentId: paymentState.lookup.intentId } : {}),
     ...(blockingRequestId ? { requestId: blockingRequestId } : {}),
     ...(typeof latestLedger?.agentId === "string" ? { agentId: latestLedger.agentId } : {}),
     ...(blockingPaymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: blockingPaymentPayloadDigestSha256 } : {})
@@ -2319,6 +2334,55 @@ async function attachBuyerPaymentSafetyToPlan(input: {
     lookup: paymentStateLookupFromQuery(input.query)
   });
   return buyerPaymentSafety ? { ...input.plan, buyerPaymentSafety } : input.plan;
+}
+
+type X402PlanResponse = Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"];
+
+function decorateX402PlanResponse(
+  payload: X402PlanResponse,
+  cacheStatus: HotReadCacheStatus
+): X402PlanResponse & {
+  stateFreshness: "fresh" | "stale";
+  projectionSource: HotReadCacheStatus;
+  planProjectionPending: boolean;
+} {
+  const stale = cacheStatus === "stale" || cacheStatus === "refreshing";
+  return {
+    ...payload,
+    stateFreshness: stale ? "stale" : "fresh",
+    projectionSource: cacheStatus,
+    planProjectionPending: stale
+  };
+}
+
+function x402PlanTemporarilyUnavailable(input: {
+  apiBase: string;
+  cacheKey: string;
+  agentId?: string | undefined;
+  sessionId?: string | undefined;
+  error?: unknown;
+}) {
+  return {
+    schemaVersion: "santaclawz-x402-plan/1.0",
+    ok: false,
+    code: "x402_plan_temporarily_unavailable",
+    retryable: true,
+    generatedAtIso: new Date().toISOString(),
+    apiBase: input.apiBase,
+    ...(input.agentId ? { agentId: input.agentId } : {}),
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    cacheKey: input.cacheKey,
+    stateFreshness: "unavailable",
+    projectionSource: "temporarily_unavailable",
+    planProjectionPending: true,
+    paymentRequested: false,
+    safeToCreateNewPayment: false,
+    safeToRetrySamePayload: false,
+    recommendedPollAfterMs: 2000,
+    guidance:
+      "The x402 payment plan is temporarily unavailable. Do not sign or submit payment from this response; retry the same plan request after service recovery.",
+    error: errorMessage(input.error, "x402 plan read exceeded the protocol read budget.")
+  };
 }
 
 function commaSet(value: string | undefined) {
@@ -3325,10 +3389,14 @@ type X402PaymentStateResponse = Awaited<ReturnType<typeof buildX402PaymentStateR
 
 type X402PaymentStateCacheStatus = HotReadCacheStatus | "temporarily_unavailable";
 
-function withColdReadBudget<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withColdReadBudget<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutErrorCode = "x402_payment_state_cold_read_timeout"
+): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error("x402_payment_state_cold_read_timeout")), timeoutMs);
+    timeout = setTimeout(() => reject(new Error(timeoutErrorCode)), timeoutMs);
   });
   return Promise.race([promise, timeoutPromise]).finally(() => {
     if (timeout) {
@@ -6413,20 +6481,49 @@ app.get("/api/artifacts/:artifactId/download", route(async (request, response) =
     return;
   }
 
-  const manifest = await artifactStore.manifest(artifactId, token);
-  if (manifest.safety.status === "buyer_scan_required" && !queryFlag(request, "acceptRisk")) {
+  const artifactRead = await withColdReadBudget((async () => {
+    const manifest = await artifactStore.manifest(artifactId, token);
+    if (manifest.safety.status === "buyer_scan_required" && !queryFlag(request, "acceptRisk")) {
+      return { kind: "buyer_scan_required" as const, manifest };
+    }
+    return {
+      kind: "artifact" as const,
+      artifact: await artifactStore.read(artifactId, token)
+    };
+  })(), ARTIFACT_DOWNLOAD_READ_BUDGET_MS, "artifact_download_read_timeout").catch((error) => ({
+    kind: "temporarily_unavailable" as const,
+    error
+  }));
+
+  if (artifactRead.kind === "temporarily_unavailable") {
+    response.status(503).json({
+      ok: false,
+      code: "artifact_download_temporarily_unavailable",
+      retryable: true,
+      artifactId,
+      stateFreshness: "unavailable",
+      deliveryProjectionPending: true,
+      recommendedPollAfterMs: 2000,
+      buyerMessage:
+        "SantaClawz could not prepare this artifact download within the protocol read budget. Retry the same artifact URL; do not request or pay for duplicate work.",
+      error: errorMessage(artifactRead.error, "Artifact download read exceeded the protocol read budget.")
+    });
+    return;
+  }
+
+  if (artifactRead.kind === "buyer_scan_required") {
     response.status(409).json({
       ok: false,
       code: "buyer_scan_required",
       retryable: false,
-      artifact: manifest,
+      artifact: artifactRead.manifest,
       buyerMessage:
         "This artifact was delivered in private encrypted mode. Add acceptRisk=true only after the buyer agrees to decrypt and scan locally before opening."
     });
     return;
   }
 
-  const artifact = await artifactStore.read(artifactId, token);
+  const artifact = artifactRead.artifact;
   response
     .set("content-type", artifact.metadata.contentType)
     .set("content-disposition", contentDispositionAttachment(artifact.metadata.filename))
@@ -6787,15 +6884,30 @@ app.get("/api/x402/plan", route(async (request, response) => {
   try {
     const sessionId = queryString(request.query, "sessionId") ?? "";
     const agentId = queryString(request.query, "agentId") ?? "";
-    const cacheKey = `x402-plan:${getBaseUrl(request)}:session:${sessionId}:agent:${agentId}`;
-    const { payload: basePlan, cacheStatus } = await cachedPublicRead(
-      cacheKey,
-      async () => (await buildX402PlanFromQuery(request)).plan
-    );
+    const apiBase = getBaseUrl(request);
+    const cacheKey = `x402-plan:${apiBase}:session:${sessionId}:agent:${agentId}`;
+    const planRead = await withColdReadBudget(
+      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromQuery(request)).plan),
+      X402_PLAN_COLD_READ_BUDGET_MS,
+      "x402_plan_cold_read_timeout"
+    ).catch((error) => ({ error }));
+    if ("error" in planRead) {
+      response.set("x-santaclawz-cache", "temporarily_unavailable");
+      response.status(503).json(x402PlanTemporarilyUnavailable({
+        apiBase,
+        cacheKey,
+        ...(agentId ? { agentId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        error: planRead.error
+      }));
+      return;
+    }
+    const cacheStatus = planRead.cacheStatus;
+    const basePlan = decorateX402PlanResponse(planRead.payload, cacheStatus);
     const plan = await attachBuyerPaymentSafetyToPlan({
-      apiBase: getBaseUrl(request),
+      apiBase,
       query: request.query,
-      plan: basePlan
+      plan: basePlan as X402PlanResponse
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
@@ -6814,15 +6926,29 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
       return;
     }
 
-    const cacheKey = `agent-x402-plan:${getBaseUrl(request)}:${agentId}`;
-    const { payload: basePlan, cacheStatus } = await cachedPublicRead(
-      cacheKey,
-      async () => (await buildX402PlanFromOptions(getBaseUrl(request), { agentId })).plan
-    );
+    const apiBase = getBaseUrl(request);
+    const cacheKey = `agent-x402-plan:${apiBase}:${agentId}`;
+    const planRead = await withColdReadBudget(
+      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromOptions(apiBase, { agentId })).plan),
+      X402_PLAN_COLD_READ_BUDGET_MS,
+      "x402_plan_cold_read_timeout"
+    ).catch((error) => ({ error }));
+    if ("error" in planRead) {
+      response.set("x-santaclawz-cache", "temporarily_unavailable");
+      response.status(503).json(x402PlanTemporarilyUnavailable({
+        apiBase,
+        cacheKey,
+        agentId,
+        error: planRead.error
+      }));
+      return;
+    }
+    const cacheStatus = planRead.cacheStatus;
+    const basePlan = decorateX402PlanResponse(planRead.payload, cacheStatus);
     const plan = await attachBuyerPaymentSafetyToPlan({
-      apiBase: getBaseUrl(request),
+      apiBase,
       query: request.query,
-      plan: basePlan
+      plan: basePlan as X402PlanResponse
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
