@@ -2677,11 +2677,19 @@ export function App() {
   const exploreAvailabilityKey = exploreAvailabilityAgentIds.join("|");
 
   function reportBackgroundError(nextError: Error, fallback: string) {
+    if (isPublicReadRateLimitError(nextError)) {
+      clearBackgroundError();
+      return;
+    }
     setBackgroundError(nextError.message || fallback);
   }
 
   function clearBackgroundError() {
     setBackgroundError(null);
+  }
+
+  function isPublicReadRateLimitError(error: unknown) {
+    return error instanceof ApiError && error.data?.code === "public_read_rate_limited";
   }
 
   function publishExploreActivity(
