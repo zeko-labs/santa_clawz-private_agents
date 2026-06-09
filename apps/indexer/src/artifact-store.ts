@@ -159,6 +159,31 @@ interface ArtifactReadResult {
 
 type ArtifactDeliveryMode = "platform_scanned" | "buyer_encrypted";
 type ArtifactSafetyStatus = "clean" | "blocked" | "buyer_scan_required" | "scan_unavailable";
+type ArtifactDownloadStatus =
+  | "available"
+  | "buyer_scan_required"
+  | "blocked"
+  | "temporarily_unavailable"
+  | "expired";
+
+interface ArtifactTransportState {
+  state:
+    | "artifact_manifest_available"
+    | "artifact_download_available"
+    | "artifact_buyer_scan_required"
+    | "artifact_rejected";
+  manifestAvailable: true;
+  scanStatus: ArtifactSafetyStatus;
+  scanPassed: boolean;
+  downloadStatus: ArtifactDownloadStatus;
+  downloadAvailable: boolean;
+  downloadRetryable: boolean;
+  artifactSafeToOpen: boolean;
+  buyerDigestVerificationRequired: true;
+  recommendedPollAfterMs?: number;
+  expectedDigestSha256: string;
+  expectedBytes: number;
+}
 
 interface ArtifactSafetyReport {
   status: ArtifactSafetyStatus;
@@ -1206,6 +1231,7 @@ export class ArtifactStore {
   private publicMetadata(metadata: ArtifactMetadata) {
     const safety = this.resolveSafety(metadata);
     const deliveryMode = metadata.deliveryMode ?? "platform_scanned";
+    const artifactState = this.artifactTransportState(metadata, safety);
     return {
       artifactId: metadata.artifactId,
       requestId: metadata.requestId,
@@ -1219,7 +1245,64 @@ export class ArtifactStore {
       digestSha256: metadata.digestSha256,
       deliveryMode,
       requiresBuyerDownloadAcceptance: safety.status === "buyer_scan_required",
-      safety
+      safety,
+      artifactState,
+      transport: {
+        manifestAvailable: true,
+        downloadStatus: artifactState.downloadStatus,
+        downloadAvailable: artifactState.downloadAvailable,
+        retryable: artifactState.downloadRetryable,
+        recommendedPollAfterMs: artifactState.recommendedPollAfterMs,
+        expectedDigestSha256: metadata.digestSha256,
+        expectedBytes: metadata.plaintextBytes
+      }
+    };
+  }
+
+  private artifactTransportState(metadata: ArtifactMetadata, safety: ArtifactSafetyReport): ArtifactTransportState {
+    if (safety.status === "blocked" || safety.status === "scan_unavailable") {
+      return {
+        state: "artifact_rejected",
+        manifestAvailable: true,
+        scanStatus: safety.status,
+        scanPassed: false,
+        downloadStatus: safety.status === "scan_unavailable" ? "temporarily_unavailable" : "blocked",
+        downloadAvailable: false,
+        downloadRetryable: safety.status === "scan_unavailable",
+        artifactSafeToOpen: false,
+        buyerDigestVerificationRequired: true,
+        ...(safety.status === "scan_unavailable" ? { recommendedPollAfterMs: 2000 } : {}),
+        expectedDigestSha256: metadata.digestSha256,
+        expectedBytes: metadata.plaintextBytes
+      };
+    }
+    if (safety.status === "buyer_scan_required") {
+      return {
+        state: "artifact_buyer_scan_required",
+        manifestAvailable: true,
+        scanStatus: safety.status,
+        scanPassed: false,
+        downloadStatus: "buyer_scan_required",
+        downloadAvailable: true,
+        downloadRetryable: false,
+        artifactSafeToOpen: false,
+        buyerDigestVerificationRequired: true,
+        expectedDigestSha256: metadata.digestSha256,
+        expectedBytes: metadata.plaintextBytes
+      };
+    }
+    return {
+      state: "artifact_download_available",
+      manifestAvailable: true,
+      scanStatus: safety.status,
+      scanPassed: safety.status === "clean",
+      downloadStatus: "available",
+      downloadAvailable: true,
+      downloadRetryable: false,
+      artifactSafeToOpen: false,
+      buyerDigestVerificationRequired: true,
+      expectedDigestSha256: metadata.digestSha256,
+      expectedBytes: metadata.plaintextBytes
     };
   }
 

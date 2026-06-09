@@ -3793,10 +3793,38 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(artifactManifest.payload.artifact.digestSha256, artifactUpload.payload.artifact.artifactBundleDigestSha256);
     assert.equal(artifactManifest.payload.artifact.plaintextBytes, artifactBody.length);
     assert.equal(artifactManifest.payload.artifact.safety.status, "clean");
+    assert.equal(artifactManifest.payload.artifactState.downloadStatus, "available");
+    assert.equal(artifactManifest.payload.artifactState.buyerDigestVerificationRequired, true);
+    assert.equal(artifactManifest.payload.artifact.transport.expectedDigestSha256, artifactUpload.payload.artifact.artifactBundleDigestSha256);
+    assert.equal(artifactManifest.payload.artifact.transport.expectedBytes, artifactBody.length);
+
+    const artifactStatus = await requestJson(
+      artifactUpload.payload.artifact.artifactManifestUrl.replace("/manifest?", "/status?"),
+      { method: "GET" }
+    );
+    assert.equal(artifactStatus.status, 200);
+    assert.equal(artifactStatus.payload.artifactState.downloadStatus, "available");
+    assert.equal(artifactStatus.payload.expectedDigestSha256, artifactUpload.payload.artifact.artifactBundleDigestSha256);
+    assert.equal(artifactStatus.payload.expectedBytes, artifactBody.length);
+
+    const artifactHead = await requestBytes(artifactUpload.payload.artifact.artifactDownloadUrl, { method: "HEAD" });
+    assert.equal(artifactHead.status, 200);
+    assert.equal(artifactHead.headers.get("content-length"), String(artifactBody.length));
+    assert.equal(artifactHead.headers.get("accept-ranges"), "bytes");
+    assert.equal(artifactHead.headers.get("x-santaclawz-artifact-digest-sha256"), artifactUpload.payload.artifact.artifactBundleDigestSha256);
+
+    const artifactRange = await requestBytes(artifactUpload.payload.artifact.artifactDownloadUrl, {
+      method: "GET",
+      headers: { range: "bytes=0-2" }
+    });
+    assert.equal(artifactRange.status, 206);
+    assert.equal(artifactRange.headers.get("content-range"), `bytes 0-2/${artifactBody.length}`);
+    assert.deepEqual(artifactRange.body, artifactBody.subarray(0, 3));
 
     const artifactDownload = await requestBytes(artifactUpload.payload.artifact.artifactDownloadUrl, { method: "GET" });
     assert.equal(artifactDownload.status, 200);
     assert.equal(artifactDownload.headers.get("x-santaclawz-artifact-digest-sha256"), artifactUpload.payload.artifact.artifactBundleDigestSha256);
+    assert.equal(artifactDownload.headers.get("x-santaclawz-artifact-bytes"), String(artifactBody.length));
     assert.deepEqual(artifactDownload.body, artifactBody);
 
     const encryptedBody = Buffer.from("ciphertext-only-for-buyer-local-decrypt-and-scan", "utf8");
@@ -3836,6 +3864,9 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     const privateDownloadBlocked = await requestJson(privateArtifactUpload.payload.artifact.artifactDownloadUrl, { method: "GET" });
     assert.equal(privateDownloadBlocked.status, 409);
     assert.equal(privateDownloadBlocked.payload.code, "buyer_scan_required");
+    assert.equal(privateDownloadBlocked.payload.expectedDigestSha256, privateArtifactUpload.payload.artifact.artifactBundleDigestSha256);
+    assert.equal(privateDownloadBlocked.payload.expectedBytes, encryptedBody.length);
+    assert.equal(privateDownloadBlocked.payload.artifactState.downloadStatus, "buyer_scan_required");
 
     const privateDownloadAccepted = await requestBytes(`${privateArtifactUpload.payload.artifact.artifactDownloadUrl}&acceptRisk=true`, { method: "GET" });
     assert.equal(privateDownloadAccepted.status, 200);

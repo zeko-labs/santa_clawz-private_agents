@@ -82,7 +82,10 @@ import {
 
 const app = express();
 const expressRaw = (express as unknown as { raw(options?: unknown): unknown }).raw;
-const appWithRouteMiddleware = app as unknown as { post(path: string, ...handlers: unknown[]): void };
+const appWithRouteMiddleware = app as unknown as {
+  head(path: string, ...handlers: unknown[]): void;
+  post(path: string, ...handlers: unknown[]): void;
+};
 const securityConfig = resolveSecurityConfig();
 const HIRE_REQUEST_BODY_MAX_BYTES = 32 * 1024;
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
@@ -656,6 +659,7 @@ interface IndexerRequest<
 > {
   body: ReqBody;
   ip?: string;
+  method: string;
   params: Params;
   query: ReqQuery;
   header(name: string): string | undefined;
@@ -665,7 +669,7 @@ interface IndexerResponse<ResBody = unknown> {
   end(): IndexerResponse<ResBody>;
   json(body: ResBody | unknown): IndexerResponse<ResBody>;
   set(name: string, value: string): IndexerResponse<ResBody>;
-  send(body: string | Buffer): IndexerResponse<ResBody>;
+  send(body?: string | Buffer): IndexerResponse<ResBody>;
   status(code: number): IndexerResponse<ResBody>;
   type(contentType: string): IndexerResponse<ResBody>;
 }
@@ -1330,6 +1334,59 @@ function requestBaseUrl(request: IndexerRequest) {
 function contentDispositionAttachment(filename: string) {
   const safe = filename.replace(/["\\\r\n]/g, "_");
   return `attachment; filename="${safe}"`;
+}
+
+function artifactDigestHeader(digestSha256: string) {
+  return `sha-256=${Buffer.from(digestSha256, "hex").toString("base64")}`;
+}
+
+function artifactAccessFailurePayload(artifactId: string, error: unknown) {
+  const message = errorMessage(error, "Artifact is not available.");
+  const expired = /expired/i.test(message);
+  return {
+    ok: false,
+    code: expired ? "artifact_expired" : "artifact_not_found_or_unauthorized",
+    retryable: false,
+    artifactId,
+    buyerMessage: expired
+      ? "This artifact link has expired. Ask the seller for a fresh artifact receipt or manifest."
+      : "SantaClawz could not authorize this artifact link. Check the artifact URL and token.",
+    error: message
+  };
+}
+
+function parseArtifactRangeHeader(rangeHeader: string | undefined, totalBytes: number) {
+  if (!rangeHeader) {
+    return undefined;
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match) {
+    return null;
+  }
+  const [, startRaw = "", endRaw = ""] = match;
+  if (!startRaw && !endRaw) {
+    return null;
+  }
+  let start: number;
+  let end: number;
+  if (!startRaw) {
+    const suffixLength = Number.parseInt(endRaw, 10);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+      return null;
+    }
+    start = Math.max(0, totalBytes - suffixLength);
+    end = totalBytes - 1;
+  } else {
+    start = Number.parseInt(startRaw, 10);
+    end = endRaw ? Number.parseInt(endRaw, 10) : totalBytes - 1;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= totalBytes) {
+    return null;
+  }
+  return {
+    start,
+    end: Math.min(end, totalBytes - 1)
+  };
 }
 
 function requestIdentity(request: IndexerRequest) {
@@ -6542,13 +6599,53 @@ app.get("/api/artifacts/:artifactId/manifest", route(async (request, response) =
     response.status(400).json({ error: "artifactId and token are required." });
     return;
   }
+  let artifact;
+  try {
+    artifact = await artifactStore.manifest(artifactId, token);
+  } catch (error) {
+    response.status(/expired/i.test(errorMessage(error, "")) ? 410 : 404).json(artifactAccessFailurePayload(artifactId, error));
+    return;
+  }
+  response
+    .set("cache-control", "private, max-age=30")
+    .set("x-santaclawz-artifact-digest-sha256", artifact.digestSha256)
+    .set("x-santaclawz-artifact-bytes", String(artifact.plaintextBytes))
+    .json({
+      ok: true,
+      artifact,
+      artifactState: artifact.artifactState,
+      recommendedPollAfterMs: artifact.transport?.recommendedPollAfterMs ?? 2000
+    });
+}));
+
+app.get("/api/artifacts/:artifactId/status", route(async (request, response) => {
+  const artifactId = request.params.artifactId;
+  const token = tokenQuery(request);
+  if (!artifactId || !token) {
+    response.status(400).json({ error: "artifactId and token are required." });
+    return;
+  }
+  let artifact;
+  try {
+    artifact = await artifactStore.manifest(artifactId, token);
+  } catch (error) {
+    response.status(/expired/i.test(errorMessage(error, "")) ? 410 : 404).json(artifactAccessFailurePayload(artifactId, error));
+    return;
+  }
   response.json({
     ok: true,
-    artifact: await artifactStore.manifest(artifactId, token)
+    artifactId,
+    requestId: artifact.requestId,
+    artifactState: artifact.artifactState,
+    transport: artifact.transport,
+    scanStatus: artifact.safety.status,
+    expectedDigestSha256: artifact.digestSha256,
+    expectedBytes: artifact.plaintextBytes,
+    recommendedPollAfterMs: artifact.transport?.recommendedPollAfterMs ?? 2000
   });
 }));
 
-app.get("/api/artifacts/:artifactId/download", route(async (request, response) => {
+const artifactDownloadHandler = route(async (request, response) => {
   const artifactId = request.params.artifactId;
   const token = tokenQuery(request);
   if (!artifactId || !token) {
@@ -6556,11 +6653,29 @@ app.get("/api/artifacts/:artifactId/download", route(async (request, response) =
     return;
   }
 
+  let manifest;
+  try {
+    manifest = await artifactStore.manifest(artifactId, token);
+  } catch (error) {
+    response.status(/expired/i.test(errorMessage(error, "")) ? 410 : 404).json(artifactAccessFailurePayload(artifactId, error));
+    return;
+  }
+  if (manifest.safety.status === "buyer_scan_required" && !queryFlag(request, "acceptRisk")) {
+    response.status(409).json({
+      ok: false,
+      code: "buyer_scan_required",
+      retryable: false,
+      artifact: manifest,
+      artifactState: manifest.artifactState,
+      expectedDigestSha256: manifest.digestSha256,
+      expectedBytes: manifest.plaintextBytes,
+      buyerMessage:
+        "This artifact was delivered in private encrypted mode. Add acceptRisk=true only after the buyer agrees to decrypt and scan locally before opening."
+    });
+    return;
+  }
+
   const artifactRead = await withColdReadBudget((async () => {
-    const manifest = await artifactStore.manifest(artifactId, token);
-    if (manifest.safety.status === "buyer_scan_required" && !queryFlag(request, "acceptRisk")) {
-      return { kind: "buyer_scan_required" as const, manifest };
-    }
     return {
       kind: "artifact" as const,
       artifact: await artifactStore.read(artifactId, token)
@@ -6578,6 +6693,15 @@ app.get("/api/artifacts/:artifactId/download", route(async (request, response) =
       artifactId,
       stateFreshness: "unavailable",
       deliveryProjectionPending: true,
+      artifactState: {
+        ...manifest.artifactState,
+        downloadStatus: "temporarily_unavailable",
+        downloadAvailable: false,
+        downloadRetryable: true,
+        recommendedPollAfterMs: 2000
+      },
+      expectedDigestSha256: manifest.digestSha256,
+      expectedBytes: manifest.plaintextBytes,
       recommendedPollAfterMs: 2000,
       buyerMessage:
         "SantaClawz could not prepare this artifact download within the protocol read budget. Retry the same artifact URL; do not request or pay for duplicate work.",
@@ -6586,25 +6710,42 @@ app.get("/api/artifacts/:artifactId/download", route(async (request, response) =
     return;
   }
 
-  if (artifactRead.kind === "buyer_scan_required") {
-    response.status(409).json({
-      ok: false,
-      code: "buyer_scan_required",
-      retryable: false,
-      artifact: artifactRead.manifest,
-      buyerMessage:
-        "This artifact was delivered in private encrypted mode. Add acceptRisk=true only after the buyer agrees to decrypt and scan locally before opening."
-    });
+  const artifact = artifactRead.artifact;
+  const range = parseArtifactRangeHeader(optionalString(request.header("range")), artifact.body.length);
+  if (range === null) {
+    response
+      .status(416)
+      .set("accept-ranges", "bytes")
+      .set("content-range", `bytes */${artifact.body.length}`)
+      .json({
+        ok: false,
+        code: "artifact_range_not_satisfiable",
+        retryable: false,
+        artifactId,
+        expectedDigestSha256: artifact.metadata.digestSha256,
+        expectedBytes: artifact.body.length
+      });
     return;
   }
-
-  const artifact = artifactRead.artifact;
+  const body = range ? artifact.body.subarray(range.start, range.end + 1) : artifact.body;
+  const statusCode = range ? 206 : 200;
   response
+    .status(statusCode)
     .set("content-type", artifact.metadata.contentType)
     .set("content-disposition", contentDispositionAttachment(artifact.metadata.filename))
+    .set("content-length", String(body.length))
+    .set("accept-ranges", "bytes")
+    .set("digest", artifactDigestHeader(artifact.metadata.digestSha256))
     .set("x-santaclawz-artifact-digest-sha256", artifact.metadata.digestSha256)
-    .send(artifact.body);
-}));
+    .set("x-santaclawz-artifact-bytes", String(artifact.metadata.plaintextBytes));
+  if (range) {
+    response.set("content-range", `bytes ${range.start}-${range.end}/${artifact.body.length}`);
+  }
+  response.send(request.method === "HEAD" ? undefined : body);
+});
+
+app.get("/api/artifacts/:artifactId/download", artifactDownloadHandler);
+appWithRouteMiddleware.head("/api/artifacts/:artifactId/download", artifactDownloadHandler);
 
 app.get("/api/artifact-receipts/:receiptId", route(async (request, response) => {
   const receiptId = request.params.receiptId;
