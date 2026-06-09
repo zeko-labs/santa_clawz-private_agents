@@ -113,6 +113,10 @@ function isOriginAllowed(origin: string, config: SecurityConfig): boolean {
 }
 
 function isPublicReadPath(pathname: string, method: string, config: SecurityConfig): boolean {
+  if (pathname === "/" && (method === "GET" || method === "HEAD")) {
+    return true;
+  }
+
   if (pathname === "/health" || pathname === "/ready") {
     return true;
   }
