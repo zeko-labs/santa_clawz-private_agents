@@ -110,6 +110,7 @@ const PAYMENT_LEDGER_CACHE_MAX_ENTRIES = Math.max(
   10,
   Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_MAX_ENTRIES ?? "80"))
 );
+const X402_PAYMENT_STATE_COLD_READ_BUDGET_MS = 3000;
 const PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS = Math.max(
   0,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS ?? "10000"))
@@ -182,6 +183,8 @@ const consoleStateCache = new Map<string, HotReadCacheEntry>();
 const consoleStateInflight = new Map<string, HotReadInflightEntry>();
 const paymentLedgerCache = new Map<string, HotReadCacheEntry>();
 const paymentLedgerInflight = new Map<string, HotReadInflightEntry>();
+const x402PaymentStateCache = new Map<string, HotReadCacheEntry>();
+const x402PaymentStateInflight = new Map<string, HotReadInflightEntry>();
 const publicMarketplaceSnapshotCache = new Map<string, HotReadCacheEntry>();
 const publicMarketplaceSnapshotInflight = new Map<string, HotReadInflightEntry>();
 const publicReadCache = new Map<string, HotReadCacheEntry>();
@@ -204,6 +207,8 @@ function clearConsoleStateCache() {
   consoleStateInflight.clear();
   paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
+  x402PaymentStateCache.clear();
+  x402PaymentStateInflight.clear();
   publicMarketplaceSnapshotCache.clear();
   publicMarketplaceSnapshotInflight.clear();
   publicReadCache.clear();
@@ -343,6 +348,21 @@ function prunePaymentLedgerCache(nowMs = Date.now()) {
       break;
     }
     paymentLedgerCache.delete(oldest.value);
+  }
+}
+
+function pruneX402PaymentStateCache(nowMs = Date.now()) {
+  for (const [key, entry] of x402PaymentStateCache.entries()) {
+    if (entry.retainedUntilMs <= nowMs) {
+      x402PaymentStateCache.delete(key);
+    }
+  }
+  while (x402PaymentStateCache.size > PAYMENT_LEDGER_CACHE_MAX_ENTRIES) {
+    const oldest = x402PaymentStateCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    x402PaymentStateCache.delete(oldest.value);
   }
 }
 
@@ -2931,6 +2951,21 @@ function projectPaymentLedgerEntryFromCanonicalExecution(
   };
 }
 
+function paymentLedgerEntryHasAcceptedBuyerDelivery(
+  entry: PaymentLedgerEntry | undefined,
+  hireRequest: Awaited<ReturnType<typeof optionalHireRequest>>
+): boolean {
+  return Boolean(
+    entry?.hireRequestId &&
+      entry.executionStatus === "completed" &&
+      entry.returnStatus === "accepted" &&
+      (
+        protocolReturnHasBuyerDelivery(hireRequest?.protocolReturn) ||
+        isRecord(entry.deliveryReceipt)
+      )
+  );
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -3249,6 +3284,142 @@ async function buildX402PaymentStateResponse(input: {
 
 type X402PaymentStateResponse = Awaited<ReturnType<typeof buildX402PaymentStateResponse>>;
 
+type X402PaymentStateCacheStatus = HotReadCacheStatus | "temporarily_unavailable";
+
+function withColdReadBudget<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error("x402_payment_state_cold_read_timeout")), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
+
+function decorateX402PaymentStateResponse(
+  payload: X402PaymentStateResponse,
+  cacheStatus: X402PaymentStateCacheStatus
+): X402PaymentStateResponse & {
+  stateFreshness: "fresh" | "stale";
+  projectionSource: X402PaymentStateCacheStatus;
+  stateProjectionPending: boolean;
+} {
+  const stale = cacheStatus === "stale" || cacheStatus === "refreshing";
+  return {
+    ...payload,
+    stateFreshness: stale ? "stale" : "fresh",
+    projectionSource: cacheStatus,
+    stateProjectionPending: stale || payload.statePollingRequired === true
+  };
+}
+
+function x402PaymentStateTemporarilyUnavailable(input: {
+  lookup: Record<string, string>;
+  cacheKey: string;
+  error?: unknown;
+}) {
+  const generatedAtIso = new Date().toISOString();
+  return {
+    schemaVersion: "santaclawz-x402-payment-state/1.0",
+    ok: false,
+    code: "payment_state_temporarily_unavailable",
+    retryable: true,
+    generatedAtIso,
+    stateFreshness: "unavailable",
+    projectionSource: "temporarily_unavailable",
+    stateProjectionPending: true,
+    lookup: input.lookup,
+    cacheKey: input.cacheKey,
+    safeToCreateNewPayment: false,
+    safeToRetrySamePayload: false,
+    retryResume: {
+      nextAction: "poll_payment_state",
+      terminal: false,
+      safeToCreateNewPayment: false,
+      safeToRetrySamePayload: false,
+      doNotCreateNewPayment: true,
+      recommendedPollAfterMs: 2000,
+      guidance:
+        "Payment state is temporarily unavailable. Do not create a fresh payment; poll this endpoint again or recover with the same saved payment payload after service recovery."
+    },
+    error: errorMessage(input.error, "Payment state read exceeded the protocol read budget.")
+  };
+}
+
+async function cachedX402PaymentState(input: {
+  cacheKey: string;
+  lookup: Record<string, string>;
+  producer: () => Promise<X402PaymentStateResponse>;
+}): Promise<{
+  payload: ReturnType<typeof x402PaymentStateTemporarilyUnavailable> | ReturnType<typeof decorateX402PaymentStateResponse>;
+  cacheStatus: X402PaymentStateCacheStatus;
+  statusCode?: number;
+}> {
+  const nowMs = Date.now();
+  const cached = PAYMENT_LEDGER_CACHE_TTL_MS > 0 ? x402PaymentStateCache.get(input.cacheKey) : undefined;
+  if (cached && cached.expiresAtMs > nowMs) {
+    return {
+      payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "hit"),
+      cacheStatus: "hit"
+    };
+  }
+  const inflight = x402PaymentStateInflight.get(input.cacheKey);
+  if (cached && cached.retainedUntilMs > nowMs) {
+    if (!inflight || inflight.epoch !== paymentLedgerCacheEpoch) {
+      launchHotReadRefresh({
+        cacheKey: input.cacheKey,
+        cacheEpoch: paymentLedgerCacheEpoch,
+        cache: x402PaymentStateCache,
+        inflight: x402PaymentStateInflight,
+        ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
+        producer: input.producer,
+        currentCacheEpoch: () => paymentLedgerCacheEpoch,
+        prune: pruneX402PaymentStateCache
+      });
+      return {
+        payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "refreshing"),
+        cacheStatus: "refreshing"
+      };
+    }
+    return {
+      payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "stale"),
+      cacheStatus: "stale"
+    };
+  }
+  const coldRead =
+    inflight && inflight.epoch === paymentLedgerCacheEpoch
+      ? inflight.promise as Promise<X402PaymentStateResponse>
+      : launchHotReadRefresh({
+          cacheKey: input.cacheKey,
+          cacheEpoch: paymentLedgerCacheEpoch,
+          cache: x402PaymentStateCache,
+          inflight: x402PaymentStateInflight,
+          ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
+          producer: input.producer,
+          currentCacheEpoch: () => paymentLedgerCacheEpoch,
+          prune: pruneX402PaymentStateCache
+        });
+  try {
+    const payload = await withColdReadBudget(coldRead, X402_PAYMENT_STATE_COLD_READ_BUDGET_MS);
+    return {
+      payload: decorateX402PaymentStateResponse(payload, inflight ? "inflight" : "miss"),
+      cacheStatus: inflight ? "inflight" : "miss"
+    };
+  } catch (error) {
+    return {
+      payload: x402PaymentStateTemporarilyUnavailable({
+        lookup: input.lookup,
+        cacheKey: input.cacheKey,
+        error
+      }),
+      cacheStatus: "temporarily_unavailable",
+      statusCode: 503
+    };
+  }
+}
+
 function sourceFreshnessMsFromIso(sourceUpdatedAtIso: string | undefined, generatedAtIso: string) {
   if (!sourceUpdatedAtIso) {
     return undefined;
@@ -3442,6 +3613,7 @@ function redactLatestPaymentLedger(entry: unknown) {
 }
 
 function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
+  const payloadRecord = payload as Record<string, unknown>;
   const payment = isRecord(payload.payment) ? payload.payment : undefined;
   const latestLedger = redactLatestPaymentLedger(payment?.latestLedger);
   const execution = isRecord(payload.execution) ? payload.execution : undefined;
@@ -3455,6 +3627,9 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payload.ledgerUpdatedAtIso === "string" ? { ledgerUpdatedAtIso: payload.ledgerUpdatedAtIso } : {}),
     ...(typeof payload.sourceFreshnessMs === "number" ? { sourceFreshnessMs: payload.sourceFreshnessMs } : {}),
     ...(isRecord(payload.sourceFreshness) ? { sourceFreshness: payload.sourceFreshness } : {}),
+    ...(typeof payloadRecord.stateFreshness === "string" ? { stateFreshness: payloadRecord.stateFreshness } : {}),
+    ...(typeof payloadRecord.projectionSource === "string" ? { projectionSource: payloadRecord.projectionSource } : {}),
+    ...(typeof payloadRecord.stateProjectionPending === "boolean" ? { stateProjectionPending: payloadRecord.stateProjectionPending } : {}),
     lookup: payload.lookup,
     redacted: true,
     ...(protocolLifecycle ? { protocolLifecycle } : {}),
@@ -6678,14 +6853,38 @@ app.get("/api/x402/payment-state", route(async (request, response) => {
       });
       return;
     }
-    const payload = await buildX402PaymentStateResponse({
+    const lookup = {
+      ...(ledgerId ? { ledgerId } : {}),
+      ...(intentId ? { intentId } : {}),
+      ...(requestId ? { requestId } : {}),
+      ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+    };
+    const cacheKey = [
+      "x402-payment-state",
+      ledgerId ? `ledger:${ledgerId}` : "",
+      intentId ? `intent:${intentId}` : "",
+      requestId ? `request:${requestId}` : "",
+      paymentPayloadDigestSha256 ? `digest:${paymentPayloadDigestSha256}` : ""
+    ].join("|");
+    const { payload, cacheStatus, statusCode } = await cachedX402PaymentState({
+      cacheKey,
+      lookup,
+      producer: () => buildX402PaymentStateResponse({
       apiBase: getBaseUrl(request),
       ...(ledgerId ? { ledgerId } : {}),
       ...(intentId ? { intentId } : {}),
       ...(requestId ? { requestId } : {}),
       ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+      })
     });
-    response.json(isPlatformApiKeyAuthorized(request) ? payload : redactX402PaymentStateResponse(payload));
+    response.set("x-santaclawz-cache", cacheStatus);
+    const publicPayload =
+      isRecord(payload) && payload.ok === false
+        ? payload
+        : isPlatformApiKeyAuthorized(request)
+          ? payload
+          : redactX402PaymentStateResponse(payload as X402PaymentStateResponse);
+    response.status(statusCode ?? 200).json(publicPayload);
   } catch (error) {
     response.status(400).json({
       error: error instanceof Error ? error.message : "Unable to load x402 payment state."
@@ -7454,14 +7653,9 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
     const completedHire = ledgerEntry.hireRequestId
       ? await optionalHireRequest(ledgerEntry.hireRequestId)
       : undefined;
-    const sellerReturnAccepted =
-      ledgerEntry.executionStatus === "completed" &&
-      ledgerEntry.returnStatus === "accepted" &&
-      (
-        protocolReturnHasBuyerDelivery(completedHire?.protocolReturn) ||
-        isRecord(ledgerEntry.deliveryReceipt)
-      );
-    if (!sellerReturnAccepted || !ledgerEntry.hireRequestId) {
+    const canonicalLedgerEntry = projectPaymentLedgerEntryFromCanonicalExecution(ledgerEntry, completedHire) ?? ledgerEntry;
+    const sellerReturnAccepted = paymentLedgerEntryHasAcceptedBuyerDelivery(canonicalLedgerEntry, completedHire);
+    if (!sellerReturnAccepted || !canonicalLedgerEntry.hireRequestId) {
       response.status(409).json({
         ok: false,
         code: "settlement_retry_requires_accepted_delivery",
@@ -7486,7 +7680,7 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       });
       return;
     }
-    if (ledgerHasSettledPayment(ledgerEntry)) {
+    if (ledgerHasSettledPayment(canonicalLedgerEntry)) {
       response.json({
         ok: true,
         idempotent: true,
@@ -7519,7 +7713,7 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       pricingMode: ledgerEntry.pricingMode,
       runtime,
       paymentPayload,
-      requestId: ledgerEntry.hireRequestId,
+      requestId: canonicalLedgerEntry.hireRequestId,
       authorizationId: ledgerEntry.authorizationId ?? retryPayloadDigestSha256,
       ledgerId: ledgerEntry.ledgerId,
       amountUsd: ledgerEntry.amountUsd,

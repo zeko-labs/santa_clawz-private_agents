@@ -4346,6 +4346,8 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
     );
     assert.equal(deliveredPaymentState.status, 200);
+    assert.equal(deliveredPaymentState.payload.stateFreshness, "fresh");
+    assert.equal(deliveredPaymentState.payload.projectionSource, "miss");
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
@@ -4373,6 +4375,14 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       deliveredPaymentState.payload.retryResume.settlementRecovery.retryEndpoint,
       /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_awaiting_settlement_test/
     );
+    const deliveredPaymentStateCached = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
+    );
+    assert.equal(deliveredPaymentStateCached.status, 200);
+    assert.equal(deliveredPaymentStateCached.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(deliveredPaymentStateCached.payload.stateFreshness, "fresh");
+    assert.ok(["hit", "miss"].includes(deliveredPaymentStateCached.payload.projectionSource));
+    assert.equal(deliveredPaymentStateCached.payload.retryResume.safeToCreateNewPayment, false);
     const deliveredSettlementMissingPayload = await requestJson(
       `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_delivered_awaiting_settlement_test`,
       {
@@ -4451,6 +4461,24 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(staleLedgerPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(staleLedgerPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(staleLedgerPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    const staleLedgerSettlementWrongPayload = await requestJson(
+      `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_stale_submitted_after_delivery_test`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          paymentPayload: {
+            protocol: "x402",
+            nonce: "wrong-payload-for-stale-delivered-awaiting-settlement-test"
+          }
+        })
+      }
+    );
+    assert.equal(staleLedgerSettlementWrongPayload.status, 409);
+    assert.equal(staleLedgerSettlementWrongPayload.payload.code, "settlement_retry_payload_digest_mismatch");
+    assert.equal(staleLedgerSettlementWrongPayload.payload.requiresOriginalPaymentPayload, true);
+    assert.equal(staleLedgerSettlementWrongPayload.payload.doNotCreateNewPayment, true);
+    assert.equal(staleLedgerSettlementWrongPayload.payload.expectedPaymentPayloadDigestSha256, staleLedgerDigest);
+    assert.equal("paymentState" in staleLedgerSettlementWrongPayload.payload, false);
 
     const deliveredSettlementFailedDigest = "f".repeat(64);
     await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
@@ -4536,7 +4564,8 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-relay-post-ack-timeout-test-"));
   const port = await reservePort();
   const server = startServer(workspaceDir, port, {
-    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "500"
+    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "500",
+    CLAWZ_PAYMENT_LEDGER_CACHE_TTL_MS: "0"
   });
   let relaySocket;
 
