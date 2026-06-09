@@ -26,6 +26,8 @@ function startServer(workspaceDir, port, extraEnv = {}) {
       ...process.env,
       HOST: "127.0.0.1",
       PORT: String(port),
+      CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST: "100000",
+      CLAWZ_PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST: "100000",
       ...extraEnv
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -1653,6 +1655,46 @@ async function testPublicOnboardingApiAuth() {
     assert.equal(protectedApproval.status, 401);
 
     console.log("ok - public onboarding mode exposes only the intended browser onboarding routes");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
+async function testPublicBrowseLimitsDoNotStarveX402Preflight() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-public-read-class-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_REQUIRE_API_AUTH: "false",
+    CLAWZ_PUBLIC_ONBOARDING: "true",
+    CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST: "60",
+    CLAWZ_PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST: "60",
+    CLAWZ_PUBLIC_READ_CACHE_TTL_MS: "0",
+    CLAWZ_PAYMENT_LEDGER_CACHE_TTL_MS: "0"
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+    const headers = {
+      "x-forwarded-for": "203.0.113.44",
+      "user-agent": "node"
+    };
+
+    const browseOne = await requestJson(`${baseUrl}/api/console/state`, { headers });
+    assert.equal(browseOne.status, 200);
+    const browseTwo = await requestJson(`${baseUrl}/api/console/state`, { headers });
+    assert.equal(browseTwo.status, 200);
+    const browseLimited = await requestJson(`${baseUrl}/api/console/state`, { headers });
+    assert.equal(browseLimited.status, 429);
+    assert.equal(browseLimited.payload.code, "public_read_rate_limited");
+    assert.equal(browseLimited.payload.rateLimitClass, "browse");
+
+    const x402Plan = await requestJson(`${baseUrl}/api/agents/not-yet-registered/x402-plan`, { headers });
+    assert.notEqual(x402Plan.status, 429);
+    assert.notEqual(x402Plan.payload?.code, "public_read_rate_limited");
+
+    console.log("ok - public browse limits do not starve x402 preflight reads");
   } finally {
     await stopProcess(server.child);
     await rm(workspaceDir, { recursive: true, force: true });
@@ -4310,6 +4352,46 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(executionLookup.payload.request.relayTrace.at(-1).step, "state_updated");
     assert.match(hire.payload.jobWorkspace.statePath, /\/api\/executions\/hire_/);
 
+    const relayFailureDigest = "9".repeat(64);
+    const relayFailurePaymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    await writeFile(relayFailurePaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_relay_failed_before_worker_ack",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          x402RequestId: "req_relay_failed_before_worker_ack",
+          hireRequestId: hire.payload.requestId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.25",
+          paymentPayloadDigestSha256: relayFailureDigest,
+          transactionHashes: [],
+          paymentStatus: "authorization_verified",
+          executionStatus: "failed",
+          returnStatus: "none",
+          errorCode: "relay_delivery_failed_before_worker_ack"
+        }
+      ]
+    }, null, 2), "utf8");
+    const relayFailurePaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${relayFailureDigest}`
+    );
+    assert.equal(relayFailurePaymentState.status, 200);
+    assert.equal(relayFailurePaymentState.payload.protocolState, "PLATFORM_FAILED_RECONCILE");
+    assert.equal(relayFailurePaymentState.payload.buyerAction, "stop_and_contact_operator");
+    assert.equal(relayFailurePaymentState.payload.sellerOutcome, "not_at_fault");
+    assert.equal(relayFailurePaymentState.payload.operatorObligation, "reconcile_platform_state");
+    assert.equal(relayFailurePaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(relayFailurePaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.match(relayFailurePaymentState.payload.retryResume.guidance, /Do not retry payment and do not create a new payment/);
+    await writeFile(relayFailurePaymentLedgerPath, JSON.stringify({ entries: [] }, null, 2), "utf8");
+
     const lateReturn = {
       schema_version: "santaclawz-return/1.0",
       request_id: hire.payload.requestId,
@@ -6447,6 +6529,7 @@ async function main() {
   await testFocusedInteropSessionFlow();
   await testProtectedApiAuth();
   await testPublicOnboardingApiAuth();
+  await testPublicBrowseLimitsDoNotStarveX402Preflight();
   await testOperatorCanDeleteLostKeyRegistration();
   await testMarketplaceTagsExposeDiscoveryAndSearch();
   await testZekoSocialAnchorHealthAndMembershipState();
