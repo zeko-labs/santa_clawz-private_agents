@@ -395,6 +395,7 @@ function publicReadRouteCost(pathname: string, method: string): number {
     pathname === "/api/agent-messages" ||
     pathname === "/api/workshop/receipt-ledger" ||
     /^\/api\/workshops\/[^/]+\/(messages|state)(\/[^/]+)?$/.test(pathname) ||
+    /^\/api\/social\/anchors\/anchor_[^/]+$/.test(pathname) ||
     pathname === "/api/social/anchors/public"
   ) {
     return 2;
@@ -4829,6 +4830,11 @@ function buildWorkshopReceiptLedger(messages: AgentBoardState): WorkshopReceiptL
     receiptCommitmentSha256: buildWorkshopReceiptCommitment(message),
     ...(message.anchorCandidateId ? { anchorCandidateId: message.anchorCandidateId } : {}),
     ...(message.anchorStatus ? { anchorStatus: message.anchorStatus } : {}),
+    ...(message.anchorFailureCode ? { anchorFailureCode: message.anchorFailureCode } : {}),
+    ...(message.anchorFailureReason ? { anchorFailureReason: message.anchorFailureReason } : {}),
+    ...(message.anchorExpiredAtIso ? { anchorExpiredAtIso: message.anchorExpiredAtIso } : {}),
+    ...(message.anchorLastAttemptAtIso ? { anchorLastAttemptAtIso: message.anchorLastAttemptAtIso } : {}),
+    ...(typeof message.anchorRetryCount === "number" ? { anchorRetryCount: message.anchorRetryCount } : {}),
     ...(message.proofIntent ? { proofIntent: message.proofIntent } : {}),
     ...(message.requestedProofIntent ? { requestedProofIntent: message.requestedProofIntent } : {}),
     ...(message.proofAdmissionReason ? { proofAdmissionReason: message.proofAdmissionReason } : {}),
@@ -9023,6 +9029,27 @@ app.get("/api/social/anchors/export", route(async (request, response) => {
   } catch (error) {
     response.status(error instanceof SelfServeSocialAnchoringDisabledError ? 403 : 400).json({
       error: error instanceof Error ? error.message : "Unable to export social anchor batch."
+    });
+  }
+}));
+
+app.get("/api/social/anchors/:anchorCandidateId", route(async (request, response) => {
+  const anchorCandidateId = request.params.anchorCandidateId;
+  if (!anchorCandidateId) {
+    response.status(400).json({ error: "anchorCandidateId is required." });
+    return;
+  }
+
+  try {
+    const { payload, cacheStatus } = await cachedPublicRead(
+      `social-anchor-candidate:${anchorCandidateId}`,
+      () => controlPlane.getSocialAnchorCandidate(anchorCandidateId)
+    );
+    response.set("x-santaclawz-cache", cacheStatus);
+    response.json(payload);
+  } catch (error) {
+    response.status(404).json({
+      error: error instanceof Error ? error.message : "Unable to load social anchor candidate."
     });
   }
 }));

@@ -2672,6 +2672,11 @@ function normalizeSocialAnchorCandidate(item: SocialAnchorCandidate): SocialAnch
   return {
     ...item,
     status,
+    ...(item.expiredAtIso ? { expiredAtIso: item.expiredAtIso } : {}),
+    ...(item.failureCode ? { failureCode: item.failureCode } : {}),
+    ...(item.failureReason ? { failureReason: item.failureReason } : {}),
+    ...(item.lastAttemptAtIso ? { lastAttemptAtIso: item.lastAttemptAtIso } : {}),
+    ...(typeof item.retryCount === "number" ? { retryCount: item.retryCount } : {}),
     ...(status === "confirmed" && item.anchoredAtIso && !item.confirmedAtIso ? { confirmedAtIso: item.anchoredAtIso } : {})
   };
 }
@@ -2695,7 +2700,8 @@ function socialAnchorStatusCounts(items: SocialAnchorCandidate[]) {
     submittedCount: items.filter((item) => item.status === "submitted").length,
     retryingCount: items.filter((item) => item.status === "retrying").length,
     confirmedCount: items.filter((item) => item.status === "confirmed").length,
-    failedCount: items.filter((item) => item.status === "failed").length
+    failedCount: items.filter((item) => item.status === "failed").length,
+    expiredCount: items.filter((item) => item.status === "expired_not_anchored").length
   };
 }
 
@@ -3280,12 +3286,82 @@ function retainHireRequests(requests: HireRequestRecord[]) {
     .slice(0, HIRE_REQUEST_GLOBAL_SAFETY_RETAIN_LIMIT);
 }
 
-function buildAgentCompletionScore(
+type PaymentLedgerSellerOutcome = "completed" | "failed" | "pending";
+
+function paymentLedgerSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSellerOutcome {
+  if (isActivationLanePaymentResource(entry.resource)) {
+    return "pending";
+  }
+  if (entry.returnStatus === "accepted") {
+    return "completed";
+  }
+  if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
+    return "failed";
+  }
+  if (entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") {
+    const failureText = `${entry.errorCode ?? ""} ${entry.errorMessage ?? ""}`.toLowerCase();
+    const platformFailure =
+      failureText.includes("relay") ||
+      failureText.includes("timeout") ||
+      failureText.includes("settlement") ||
+      failureText.includes("facilitator") ||
+      failureText.includes("payment") ||
+      failureText.includes("authorization") ||
+      failureText.includes("capacity");
+    return platformFailure ? "pending" : "failed";
+  }
+  return "pending";
+}
+
+function buildPaymentLedgerCompletionScore(
+  paymentLedger: PaymentLedgerFile | undefined,
+  sessionId: string
+): AgentCompletionScore | undefined {
+  if (!paymentLedger) {
+    return undefined;
+  }
+  const evaluated = paymentLedger.entries
+    .filter((entry) => entry.sessionId === sessionId)
+    .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
+    .map((entry) => ({
+      entry,
+      outcome: paymentLedgerSellerOutcome(entry)
+    }))
+    .filter((entry) => entry.outcome !== "pending")
+    .slice(0, JOB_COMPLETION_SCORE_WINDOW_SIZE);
+  if (evaluated.length === 0) {
+    return undefined;
+  }
+
+  const completedJobCount = evaluated.filter((entry) => entry.outcome === "completed").length;
+  const failedJobCount = evaluated.filter((entry) => entry.outcome === "failed").length;
+  const evaluatedJobCount = evaluated.length;
+  const successRatePct = Math.round((completedJobCount / evaluatedJobCount) * 100);
+  const lastEvaluatedAtIso = evaluated[0]?.entry.updatedAtIso;
+
+  return {
+    windowSize: JOB_COMPLETION_SCORE_WINDOW_SIZE,
+    evaluatedJobCount,
+    completedJobCount,
+    failedJobCount,
+    successRatePct,
+    ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
+    source: "payment-ledger",
+    label: `${completedJobCount}/${evaluatedJobCount} verified returns`
+  };
+}
+
+export function buildAgentCompletionScore(
   hireRequests: HireRequestFile,
   sessionId: string,
   nowMs = Date.now(),
-  options: { socialAnchorQueueFile?: SocialAnchorQueueFile } = {}
+  options: { socialAnchorQueueFile?: SocialAnchorQueueFile; paymentLedgerFile?: PaymentLedgerFile } = {}
 ): AgentCompletionScore {
+  const ledgerScore = buildPaymentLedgerCompletionScore(options.paymentLedgerFile, sessionId);
+  if (ledgerScore) {
+    return ledgerScore;
+  }
+
   const anchorBudget = {
     remaining: paidExecutionCompletionAnchorsForSession(options.socialAnchorQueueFile, sessionId).length
   };
@@ -3317,6 +3393,7 @@ function buildAgentCompletionScore(
     failedJobCount,
     ...(successRatePct !== undefined ? { successRatePct } : {}),
     ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
+    source: "hire-requests",
     label:
       successRatePct === undefined
         ? "No paid jobs yet"
@@ -8257,6 +8334,19 @@ export class ClawzControlPlane {
     return this.buildSocialAnchorQueueState(queue, sessionId, options);
   }
 
+  async getSocialAnchorCandidate(candidateId: string): Promise<SocialAnchorCandidate> {
+    const normalizedCandidateId = candidateId.trim();
+    if (!/^anchor_[a-zA-Z0-9]+$/.test(normalizedCandidateId)) {
+      throw new Error("anchorCandidateId is invalid.");
+    }
+    const queue = await this.loadSocialAnchorQueueFile();
+    const candidate = queue.items.find((item) => item.candidateId === normalizedCandidateId);
+    if (!candidate) {
+      throw new Error("Social anchor candidate was not found.");
+    }
+    return candidate;
+  }
+
   async getOwnedSocialAnchorQueueState(options: OwnershipActionOptions = {}): Promise<SocialAnchorQueueState> {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, options);
@@ -8358,11 +8448,26 @@ export class ClawzControlPlane {
           : message.anchorStatus === "aggregate_anchored" || message.anchorStatus === "not_proof_requested"
             ? message.anchorStatus
             : "not_proof_requested");
+      const missingAnchorFailure =
+        !anchorCandidate && (message.anchorCandidateId || message.proofIntent === "per_message");
       return {
         ...message,
         agentName: profile.agentName || message.agentName,
         ...(representedPrincipal ? { representedPrincipal } : {}),
         anchorStatus,
+        ...(anchorCandidate?.failureCode
+          ? { anchorFailureCode: anchorCandidate.failureCode }
+          : missingAnchorFailure
+            ? { anchorFailureCode: "anchor_candidate_missing" as const }
+            : {}),
+        ...(anchorCandidate?.failureReason
+          ? { anchorFailureReason: anchorCandidate.failureReason }
+          : missingAnchorFailure
+            ? { anchorFailureReason: "Anchor candidate was not found in the retained proof queue." }
+            : {}),
+        ...(anchorCandidate?.expiredAtIso ? { anchorExpiredAtIso: anchorCandidate.expiredAtIso } : {}),
+        ...(anchorCandidate?.lastAttemptAtIso ? { anchorLastAttemptAtIso: anchorCandidate.lastAttemptAtIso } : {}),
+        ...(typeof anchorCandidate?.retryCount === "number" ? { anchorRetryCount: anchorCandidate.retryCount } : {}),
         ...(anchorCandidate?.batchRootDigestSha256 ? { batchRootDigestSha256: anchorCandidate.batchRootDigestSha256 } : {}),
         ...(anchorBatch?.txHash ? { batchTxHash: anchorBatch.txHash } : {})
       };
@@ -8513,6 +8618,16 @@ export class ClawzControlPlane {
     board: AgentBoardState;
   }): WorkshopStateCursor {
     const latest = input.board.messages[0];
+    const proofCheckpoints = input.board.messages.filter((message) => message.anchorCandidateId || message.proofIntent === "per_message");
+    const confirmedCheckpointCount = proofCheckpoints.filter((message) => message.anchorStatus === "confirmed").length;
+    const pendingCheckpointCount = proofCheckpoints.filter((message) =>
+      message.anchorStatus === "pending" || message.anchorStatus === "submitted" || message.anchorStatus === "retrying"
+    ).length;
+    const expiredCheckpointCount = proofCheckpoints.filter((message) => message.anchorStatus === "expired_not_anchored").length;
+    const failedCheckpointCount = proofCheckpoints.filter((message) => message.anchorStatus === "failed").length;
+    const missingCandidateIds = proofCheckpoints
+      .filter((message) => message.anchorFailureCode === "anchor_candidate_missing")
+      .map((message) => message.anchorCandidateId ?? message.messageId);
     const lastAction = latest?.body.trim();
     const normalizedAction = lastAction?.toLowerCase() ?? "";
     const completionStatus: WorkshopStateCursor["completionStatus"] = !latest
@@ -8539,6 +8654,15 @@ export class ClawzControlPlane {
         ? { lastTransitionDigest: latest.outputDigestSha256 ?? latest.messageDigestSha256 }
         : {}),
       ...(latest?.anchorStatus ? { lastAnchorStatus: latest.anchorStatus } : {}),
+      anchorCompleteness: {
+        expectedCheckpointCount: proofCheckpoints.length,
+        confirmedCheckpointCount,
+        pendingCheckpointCount,
+        expiredCheckpointCount,
+        failedCheckpointCount,
+        missingCandidateIds,
+        allConfirmed: proofCheckpoints.length > 0 && confirmedCheckpointCount === proofCheckpoints.length
+      },
       publicDisclosure: "workshop-public-actions-only"
     };
   }
@@ -9216,13 +9340,14 @@ export class ClawzControlPlane {
     });
   }
 
-  private releaseFailedSocialAnchorBatchToPending(
+  private markSocialAnchorBatchExpired(
     queue: SocialAnchorQueueFile,
     batch: SocialAnchorBatch,
     error: unknown,
     failedAtIso: string
   ): SocialAnchorQueueFile {
     const lastAnchorError = socialAnchorErrorMessage(error).slice(0, 500);
+    const retryCount = batch.retryCount ?? 0;
     return {
       items: queue.items.map((item) => {
         if (item.batchId !== batch.batchId) {
@@ -9231,9 +9356,15 @@ export class ClawzControlPlane {
         const { nextRetryAtIso: _nextRetryAtIso, ...cleanItem } = item;
         return {
               ...cleanItem,
-              status: "pending",
+              status: "expired_not_anchored",
               failedAtIso,
-              lastAnchorError
+              expiredAtIso: failedAtIso,
+              lastAnchorError,
+              failureCode: "anchor_retry_exhausted",
+              failureReason: lastAnchorError,
+              lastAttemptAtIso: failedAtIso,
+              retryCount,
+              submitAttemptCount: Math.max(cleanItem.submitAttemptCount ?? 0, batch.submitAttemptCount ?? retryCount)
             };
       }),
       batches: queue.batches.map((candidate) =>
@@ -9339,7 +9470,7 @@ export class ClawzControlPlane {
     const retryConfig = this.socialAnchorRetryConfig();
     const retryCount = activeBatch.retryCount ?? 0;
     if (retryCount >= retryConfig.maxAttempts) {
-      const nextQueue = this.releaseFailedSocialAnchorBatchToPending(
+      const nextQueue = this.markSocialAnchorBatchExpired(
         queue,
         activeBatch,
         `Expected root was not observed after ${retryCount} retry attempt${retryCount === 1 ? "" : "s"}.`,
@@ -9436,7 +9567,7 @@ export class ClawzControlPlane {
     } catch (error) {
       const nextQueue =
         retryCount + 1 >= retryConfig.maxAttempts
-          ? this.releaseFailedSocialAnchorBatchToPending(queue, activeBatch, error, checkedAtIso)
+          ? this.markSocialAnchorBatchExpired(queue, activeBatch, error, checkedAtIso)
           : this.markSocialAnchorBatchRetrying(queue, activeBatch, error, checkedAtIso);
       await this.saveSocialAnchorQueueFile(nextQueue);
       return nextQueue;
@@ -10454,6 +10585,7 @@ export class ClawzControlPlane {
       socialAnchorQueueFile,
       hireRequestFile,
       activationLaneAttemptFile,
+      paymentLedgerFile,
       runtimeHeartbeatFile
     ] = await Promise.all([
       this.blobStore.listManifests(state.currentSessionId),
@@ -10463,6 +10595,7 @@ export class ClawzControlPlane {
       this.loadSocialAnchorQueueFile(),
       this.loadHireRequestFile(),
       this.loadActivationLaneAttemptFile(),
+      this.loadPaymentLedgerFile(),
       this.loadRuntimeHeartbeatFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
@@ -10535,7 +10668,8 @@ export class ClawzControlPlane {
       })
     });
     const completionScore = buildAgentCompletionScore(hireRequestFile, focus.sessionId, Date.now(), {
-      socialAnchorQueueFile
+      socialAnchorQueueFile,
+      paymentLedgerFile
     });
     const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, focus.sessionId, Date.now(), {
       socialAnchorQueueFile
@@ -10916,13 +11050,14 @@ export class ClawzControlPlane {
   async listRegisteredAgents(): Promise<AgentRegistryEntry[]> {
     const state = await this.loadState();
     const events = await this.loadEvents();
-    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile, activationLaneAttemptFile] = await Promise.all([
+    const [liveFlow, deployment, socialAnchorQueueFile, runtimeHeartbeatFile, hireRequestFile, activationLaneAttemptFile, paymentLedgerFile] = await Promise.all([
       this.getLiveFlowState(),
       this.getDeploymentState(),
       this.loadSocialAnchorQueueFile(),
       this.loadRuntimeHeartbeatFile(),
       this.loadHireRequestFile(),
-      this.loadActivationLaneAttemptFile()
+      this.loadActivationLaneAttemptFile(),
+      this.loadPaymentLedgerFile()
     ]);
     const liveFlowTargets = this.buildLiveFlowTargets(events, liveFlow);
     const materializer = new ReplayMaterializer(events);
@@ -11000,7 +11135,8 @@ export class ClawzControlPlane {
               readiness.paidExecutionProven === true &&
               readiness.hireable;
         const completionScore = buildAgentCompletionScore(hireRequestFile, sessionId, Date.now(), {
-          socialAnchorQueueFile
+          socialAnchorQueueFile,
+          paymentLedgerFile
         });
         const jobActivityStats = buildAgentJobActivityStats(hireRequestFile, sessionId, Date.now(), {
           socialAnchorQueueFile
