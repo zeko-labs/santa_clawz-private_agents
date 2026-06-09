@@ -46,7 +46,9 @@ export interface SubmitSocialAnchorBatchOnZekoResult {
   anchorField: string;
   digestField: string;
   confirmed: boolean;
+  confirmationSource?: "latest-state" | "event-log";
   observedAtIso?: string;
+  observedBlockHeight?: string;
   submitFeeRaw: string;
   submitFee: string;
   submitFeeSource: string;
@@ -66,6 +68,14 @@ export interface SocialAnchorKernelObservedState {
   latestBatchRoot?: string;
   latestBatchDigest?: string;
   anchoredBatchCount?: string;
+  recentAnchoredBatches?: SocialAnchorKernelAnchoredBatchEvent[];
+  observedAtIso: string;
+}
+
+export interface SocialAnchorKernelAnchoredBatchEvent {
+  anchorField: string;
+  txHash?: string;
+  blockHeight?: string;
   observedAtIso: string;
 }
 
@@ -239,6 +249,90 @@ function latestBatchRootFromAppState(appState: string[]): string | undefined {
   return typeof appState[0] === "string" && appState[0].length > 0 ? appState[0] : undefined;
 }
 
+function fieldLikeToString(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (value && typeof value === "object" && "toString" in value && typeof value.toString === "function") {
+    const serialized = value.toString();
+    return serialized && serialized !== "[object Object]" ? serialized : undefined;
+  }
+  if (Array.isArray(value)) {
+    return fieldLikeToString(value[0]);
+  }
+  return undefined;
+}
+
+function socialAnchorEventFieldValue(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") {
+    return undefined;
+  }
+  const record = event as {
+    type?: unknown;
+    event?: {
+      data?: unknown;
+      transactionInfo?: {
+        transactionHash?: unknown;
+      };
+    };
+    blockHeight?: unknown;
+  };
+  if (record.type !== "socialBatchAnchored") {
+    return undefined;
+  }
+  return fieldLikeToString(record.event?.data);
+}
+
+function socialAnchorEventTxHash(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") {
+    return undefined;
+  }
+  const txHash = (event as { event?: { transactionInfo?: { transactionHash?: unknown } } }).event?.transactionInfo?.transactionHash;
+  return typeof txHash === "string" && txHash.length > 0 ? txHash : undefined;
+}
+
+function socialAnchorEventBlockHeight(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") {
+    return undefined;
+  }
+  return fieldLikeToString((event as { blockHeight?: unknown }).blockHeight);
+}
+
+async function readRecentSocialAnchorEvents(contractAddress: PublicKey): Promise<SocialAnchorKernelAnchoredBatchEvent[]> {
+  const kernel = new SocialAnchorKernel(contractAddress);
+  const events = await (kernel as unknown as { fetchEvents: () => Promise<unknown[]> }).fetchEvents();
+  return events
+    .map((event: unknown) => {
+      const anchorField = socialAnchorEventFieldValue(event);
+      if (!anchorField) {
+        return undefined;
+      }
+      return {
+        anchorField,
+        ...(socialAnchorEventTxHash(event) ? { txHash: socialAnchorEventTxHash(event)! } : {}),
+        ...(socialAnchorEventBlockHeight(event) ? { blockHeight: socialAnchorEventBlockHeight(event)! } : {}),
+        observedAtIso: new Date().toISOString()
+      };
+    })
+    .filter((event: SocialAnchorKernelAnchoredBatchEvent | undefined): event is SocialAnchorKernelAnchoredBatchEvent => Boolean(event))
+    .slice(-200);
+}
+
+async function findAnchoredBatchEvent(
+  contractAddress: PublicKey,
+  expectedAnchorField: string
+): Promise<SocialAnchorKernelAnchoredBatchEvent | undefined> {
+  try {
+    const events = await readRecentSocialAnchorEvents(contractAddress);
+    return events.find((event) => event.anchorField === expectedAnchorField);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function readSocialAnchorKernelStateOnZeko(input: {
   socialAnchorPublicKey: string;
   networkId?: string;
@@ -257,13 +351,17 @@ export async function readSocialAnchorKernelStateOnZeko(input: {
   );
 
   const publicKey = PublicKey.fromBase58(input.socialAnchorPublicKey);
-  const appState = await readSocialAnchorAppState(publicKey);
+  const [appState, recentAnchoredBatches] = await Promise.all([
+    readSocialAnchorAppState(publicKey),
+    readRecentSocialAnchorEvents(publicKey).catch(() => [])
+  ]);
   return {
     networkId,
     contractAddress: publicKey.toBase58(),
     ...(typeof appState[0] === "string" ? { latestBatchRoot: appState[0] } : {}),
     ...(typeof appState[1] === "string" ? { latestBatchDigest: appState[1] } : {}),
     ...(typeof appState[2] === "string" ? { anchoredBatchCount: appState[2] } : {}),
+    ...(recentAnchoredBatches.length > 0 ? { recentAnchoredBatches } : {}),
     observedAtIso: new Date().toISOString()
   };
 }
@@ -273,18 +371,23 @@ async function waitForAnchoredBatchRoot(
   expectedAnchorField: string,
   timeoutMs: number,
   pollIntervalMs = DEFAULT_SOCIAL_ANCHOR_CONFIRMATION_POLL_MS
-): Promise<boolean> {
+): Promise<{ confirmed: boolean; source?: "latest-state" | "event-log"; event?: SocialAnchorKernelAnchoredBatchEvent }> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const appState = await readSocialAnchorAppState(contractAddress);
       if (latestBatchRootFromAppState(appState) === expectedAnchorField) {
-        return true;
+        return { confirmed: true, source: "latest-state" };
+      }
+      const event = await findAnchoredBatchEvent(contractAddress, expectedAnchorField);
+      if (event) {
+        return { confirmed: true, source: "event-log", event };
       }
     } catch {}
     await sleep(pollIntervalMs);
   }
-  return false;
+  const lateEvent = await findAnchoredBatchEvent(contractAddress, expectedAnchorField);
+  return lateEvent ? { confirmed: true, source: "event-log", event: lateEvent } : { confirmed: false };
 }
 
 export async function submitSocialAnchorBatchOnZeko(
@@ -352,35 +455,41 @@ export async function submitSocialAnchorBatchOnZeko(
           ? ((pending as { hash: string }).hash)
           : undefined;
 
-      const confirmed = await waitForAnchoredBatchRoot(contractAddress, expectedAnchorField, confirmationWaitMs);
+      const confirmation = await waitForAnchoredBatchRoot(contractAddress, expectedAnchorField, confirmationWaitMs);
+      const observedTxHash = confirmation.event?.txHash ?? txHash;
       return {
         networkId,
         contractAddress: contractAddressBase58,
         anchorField: expectedAnchorField,
         digestField: batchDigestField.toString(),
-        confirmed,
-        ...(confirmed ? { observedAtIso: new Date().toISOString() } : {}),
+        confirmed: confirmation.confirmed,
+        ...(confirmation.source ? { confirmationSource: confirmation.source } : {}),
+        ...(confirmation.confirmed ? { observedAtIso: confirmation.event?.observedAtIso ?? new Date().toISOString() } : {}),
+        ...(confirmation.event?.blockHeight ? { observedBlockHeight: confirmation.event.blockHeight } : {}),
         submitFeeRaw,
         submitFee: rawNanoToMinaString(parseRawFee(submitFeeRaw) ?? DEFAULT_SOCIAL_ANCHOR_FEE_RAW),
         submitFeeSource: attempt === 1 ? feeQuote.source : "retry-bump",
         attemptCount: attempt,
-        ...(txHash ? { txHash } : {})
+        ...(observedTxHash ? { txHash: observedTxHash } : {})
       };
     } catch (error) {
       lastError = error;
-      const anchorObserved = await waitForAnchoredBatchRoot(contractAddress, expectedAnchorField, Math.min(confirmationWaitMs, 6_000));
-      if (anchorObserved) {
+      const confirmation = await waitForAnchoredBatchRoot(contractAddress, expectedAnchorField, Math.min(confirmationWaitMs, 6_000));
+      if (confirmation.confirmed) {
         return {
           networkId,
           contractAddress: contractAddressBase58,
           anchorField: expectedAnchorField,
           digestField: batchDigestField.toString(),
           confirmed: true,
-          observedAtIso: new Date().toISOString(),
+          ...(confirmation.source ? { confirmationSource: confirmation.source } : {}),
+          observedAtIso: confirmation.event?.observedAtIso ?? new Date().toISOString(),
+          ...(confirmation.event?.blockHeight ? { observedBlockHeight: confirmation.event.blockHeight } : {}),
           submitFeeRaw,
           submitFee: rawNanoToMinaString(parseRawFee(submitFeeRaw) ?? DEFAULT_SOCIAL_ANCHOR_FEE_RAW),
           submitFeeSource: attempt === 1 ? feeQuote.source : "retry-bump",
-          attemptCount: attempt
+          attemptCount: attempt,
+          ...(confirmation.event?.txHash ? { txHash: confirmation.event.txHash } : {})
         };
       }
       if (!isRetryableSocialAnchorError(error) || attempt === feeAttempts.length) {

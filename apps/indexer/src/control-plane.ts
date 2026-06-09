@@ -2677,6 +2677,8 @@ function normalizeSocialAnchorCandidate(item: SocialAnchorCandidate): SocialAnch
     ...(item.failureReason ? { failureReason: item.failureReason } : {}),
     ...(item.lastAttemptAtIso ? { lastAttemptAtIso: item.lastAttemptAtIso } : {}),
     ...(typeof item.retryCount === "number" ? { retryCount: item.retryCount } : {}),
+    ...(item.confirmationSource ? { confirmationSource: item.confirmationSource } : {}),
+    ...(item.observedBlockHeight ? { observedBlockHeight: item.observedBlockHeight } : {}),
     ...(status === "confirmed" && item.anchoredAtIso && !item.confirmedAtIso ? { confirmedAtIso: item.anchoredAtIso } : {})
   };
 }
@@ -2690,6 +2692,8 @@ function normalizeSocialAnchorBatch(batch: SocialAnchorBatch): SocialAnchorBatch
     status,
     settledAtIso,
     submittedAtIso: batch.submittedAtIso ?? batch.createdAtIso ?? settledAtIso,
+    ...(batch.confirmationSource ? { confirmationSource: batch.confirmationSource } : {}),
+    ...(batch.observedBlockHeight ? { observedBlockHeight: batch.observedBlockHeight } : {}),
     ...(status === "confirmed" && !batch.confirmedAtIso ? { confirmedAtIso: settledAtIso } : {})
   };
 }
@@ -8608,7 +8612,7 @@ export class ClawzControlPlane {
   }): Promise<WorkshopStateCursor> {
     const messages = await this.listWorkshopMessages({
       ...options,
-      limit: 1
+      limit: 500
     });
     return messages.state;
   }
@@ -9225,6 +9229,8 @@ export class ClawzControlPlane {
       ...(typeof chainResult?.attemptCount === "number" ? { submitAttemptCount: chainResult.attemptCount } : {}),
       retryCount: chainResult ? 1 : 0,
       ...(chainResult?.observedAtIso ? { observedAtIso: chainResult.observedAtIso } : {}),
+      ...(chainResult?.confirmationSource ? { confirmationSource: chainResult.confirmationSource } : {}),
+      ...(chainResult?.observedBlockHeight ? { observedBlockHeight: chainResult.observedBlockHeight } : {}),
       ...(batchStatus === "confirmed" ? { observedAnchorField: chainResult?.anchorField ?? batchExport.anchorField } : {}),
       ...(nextRetryAtIso ? { nextRetryAtIso } : {}),
       candidateIds: batchCandidateIds,
@@ -9254,6 +9260,8 @@ export class ClawzControlPlane {
               ...(batchStatus === "confirmed" ? { anchoredAtIso: nextBatch.confirmedAtIso ?? settledAtIso } : {}),
               ...(nextBatch.contractAddress ? { contractAddress: nextBatch.contractAddress } : {}),
               ...(nextBatch.txHash ? { txHash: nextBatch.txHash } : {}),
+              ...(nextBatch.confirmationSource ? { confirmationSource: nextBatch.confirmationSource } : {}),
+              ...(nextBatch.observedBlockHeight ? { observedBlockHeight: nextBatch.observedBlockHeight } : {}),
               ...(nextBatch.submitAttemptCount ? { submitAttemptCount: nextBatch.submitAttemptCount } : {}),
               ...(nextRetryAtIso ? { nextRetryAtIso } : {})
             }
@@ -9298,6 +9306,9 @@ export class ClawzControlPlane {
     options: {
       observedAtIso: string;
       observedAnchorField?: string;
+      txHash?: string;
+      confirmationSource?: SocialAnchorBatch["confirmationSource"];
+      observedBlockHeight?: string;
     }
   ): SocialAnchorQueueFile {
     const confirmedAtIso = options.observedAtIso;
@@ -9306,7 +9317,14 @@ export class ClawzControlPlane {
         if (item.batchId !== batch.batchId) {
           return item;
         }
-        const { lastAnchorError: _lastAnchorError, nextRetryAtIso: _nextRetryAtIso, ...cleanItem } = item;
+        const {
+          lastAnchorError: _lastAnchorError,
+          nextRetryAtIso: _nextRetryAtIso,
+          failureCode: _failureCode,
+          failureReason: _failureReason,
+          expiredAtIso: _expiredAtIso,
+          ...cleanItem
+        } = item;
         return {
               ...cleanItem,
               status: "confirmed",
@@ -9317,7 +9335,13 @@ export class ClawzControlPlane {
                 : {}),
               ...(batch.rootDigestSha256 ? { batchRootDigestSha256: batch.rootDigestSha256 } : {}),
               ...(batch.contractAddress ? { contractAddress: batch.contractAddress } : {}),
-              ...(batch.txHash ? { txHash: batch.txHash } : {})
+              ...(options.txHash ?? batch.txHash ? { txHash: options.txHash ?? batch.txHash } : {}),
+              ...(options.confirmationSource ?? batch.confirmationSource
+                ? { confirmationSource: options.confirmationSource ?? batch.confirmationSource }
+                : {}),
+              ...(options.observedBlockHeight ?? batch.observedBlockHeight
+                ? { observedBlockHeight: options.observedBlockHeight ?? batch.observedBlockHeight }
+                : {})
             };
       }),
       batches: queue.batches.map((candidate) => {
@@ -9334,6 +9358,13 @@ export class ClawzControlPlane {
               observedAtIso: confirmedAtIso,
               ...(options.observedAnchorField ?? candidate.anchorField
                 ? { observedAnchorField: options.observedAnchorField ?? candidate.anchorField }
+                : {}),
+              ...(options.txHash ?? candidate.txHash ? { txHash: options.txHash ?? candidate.txHash } : {}),
+              ...(options.confirmationSource ?? candidate.confirmationSource
+                ? { confirmationSource: options.confirmationSource ?? candidate.confirmationSource }
+                : {}),
+              ...(options.observedBlockHeight ?? candidate.observedBlockHeight
+                ? { observedBlockHeight: options.observedBlockHeight ?? candidate.observedBlockHeight }
                 : {})
             };
       })
@@ -9426,45 +9457,132 @@ export class ClawzControlPlane {
     };
   }
 
+  private socialAnchorObservedConfirmation(
+    observed: {
+      latestBatchRoot?: string;
+      observedAtIso: string;
+      recentAnchoredBatches?: Array<{
+        anchorField: string;
+        txHash?: string;
+        blockHeight?: string;
+        observedAtIso: string;
+      }>;
+    } | undefined,
+    batch: SocialAnchorBatch
+  ):
+    | {
+        observedAtIso: string;
+        observedAnchorField: string;
+        confirmationSource: "latest-state" | "event-log";
+        txHash?: string;
+        observedBlockHeight?: string;
+      }
+    | undefined {
+    if (!batch.anchorField) {
+      return undefined;
+    }
+    if (observed?.latestBatchRoot === batch.anchorField) {
+      return {
+        observedAtIso: observed.observedAtIso,
+        observedAnchorField: observed.latestBatchRoot,
+        confirmationSource: "latest-state"
+      };
+    }
+    const event = observed?.recentAnchoredBatches?.find((candidate) => candidate.anchorField === batch.anchorField);
+    if (!event) {
+      return undefined;
+    }
+    return {
+      observedAtIso: event.observedAtIso,
+      observedAnchorField: event.anchorField,
+      confirmationSource: "event-log",
+      ...(event.txHash ? { txHash: event.txHash } : {}),
+      ...(event.blockHeight ? { observedBlockHeight: event.blockHeight } : {})
+    };
+  }
+
   private async reconcileSocialAnchorQueue(
     queue: SocialAnchorQueueFile,
     deployment: Pick<ZekoDeploymentState, "networkId" | "graphqlEndpoint" | "archiveEndpoint" | "contracts">
   ): Promise<SocialAnchorQueueFile> {
-    const activeBatch = queue.batches
-      .filter((batch) => batch.status === "submitted" || batch.status === "retrying")
-      .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso))[0];
-    if (!activeBatch) {
-      return queue;
-    }
-
     const checkedAtIso = new Date().toISOString();
-    try {
-      const observed = await this.observeSocialAnchorKernel(deployment);
-      if (observed?.latestBatchRoot && activeBatch.anchorField && observed.latestBatchRoot === activeBatch.anchorField) {
-        const nextQueue = this.markSocialAnchorBatchConfirmed(queue, activeBatch, {
-          observedAtIso: observed.observedAtIso,
-          observedAnchorField: observed.latestBatchRoot
-        });
-        await this.saveSocialAnchorQueueFile(nextQueue);
-        if (this.socialAnchorBatchPublishesAgent(activeBatch)) {
-          await this.markSessionPublished({
-            sessionId: activeBatch.sessionId,
-            publishedAtIso: observed.observedAtIso,
-            source: "social-anchor",
-            batchId: activeBatch.batchId,
-            rootDigestSha256: activeBatch.rootDigestSha256
-          });
+    let observed:
+      | {
+          latestBatchRoot?: string;
+          observedAtIso: string;
+          recentAnchoredBatches?: Array<{
+            anchorField: string;
+            txHash?: string;
+            blockHeight?: string;
+            observedAtIso: string;
+          }>;
         }
-        return nextQueue;
-      }
+      | undefined;
+    try {
+      observed = await this.observeSocialAnchorKernel(deployment);
     } catch (error) {
+      const activeBatch = queue.batches
+        .filter((batch) => batch.status === "submitted" || batch.status === "retrying")
+        .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso))[0];
+      if (!activeBatch) {
+        return queue;
+      }
       const nextQueue = this.markSocialAnchorBatchRetrying(queue, activeBatch, error, checkedAtIso);
       await this.saveSocialAnchorQueueFile(nextQueue);
       return nextQueue;
     }
 
+    let recoveredQueue = queue;
+    let recoveredAny = false;
+    for (const expiredBatch of queue.batches
+      .filter((batch) => batch.status === "failed")
+      .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso))) {
+      const confirmation = this.socialAnchorObservedConfirmation(observed, expiredBatch);
+      if (!confirmation) {
+        continue;
+      }
+      recoveredQueue = this.markSocialAnchorBatchConfirmed(recoveredQueue, expiredBatch, confirmation);
+      recoveredAny = true;
+      if (this.socialAnchorBatchPublishesAgent(expiredBatch)) {
+        await this.markSessionPublished({
+          sessionId: expiredBatch.sessionId,
+          publishedAtIso: confirmation.observedAtIso,
+          source: "social-anchor",
+          batchId: expiredBatch.batchId,
+          rootDigestSha256: expiredBatch.rootDigestSha256
+        });
+      }
+    }
+    if (recoveredAny) {
+      await this.saveSocialAnchorQueueFile(recoveredQueue);
+      return recoveredQueue;
+    }
+
+    const activeBatch = recoveredQueue.batches
+      .filter((batch) => batch.status === "submitted" || batch.status === "retrying")
+      .sort((left, right) => left.createdAtIso.localeCompare(right.createdAtIso))[0];
+    if (!activeBatch) {
+      return recoveredQueue;
+    }
+
+    const activeConfirmation = this.socialAnchorObservedConfirmation(observed, activeBatch);
+    if (activeConfirmation) {
+      const nextQueue = this.markSocialAnchorBatchConfirmed(recoveredQueue, activeBatch, activeConfirmation);
+      await this.saveSocialAnchorQueueFile(nextQueue);
+      if (this.socialAnchorBatchPublishesAgent(activeBatch)) {
+        await this.markSessionPublished({
+          sessionId: activeBatch.sessionId,
+          publishedAtIso: activeConfirmation.observedAtIso,
+          source: "social-anchor",
+          batchId: activeBatch.batchId,
+          rootDigestSha256: activeBatch.rootDigestSha256
+        });
+      }
+      return nextQueue;
+    }
+
     if (!isSocialAnchorBatchRetryDue(activeBatch)) {
-      return queue;
+      return recoveredQueue;
     }
 
     const retryConfig = this.socialAnchorRetryConfig();
@@ -9490,8 +9608,8 @@ export class ClawzControlPlane {
       if (chainResult.confirmed) {
         const nextQueue = this.markSocialAnchorBatchConfirmed(
           {
-            ...queue,
-            batches: queue.batches.map((batch) =>
+            ...recoveredQueue,
+            batches: recoveredQueue.batches.map((batch) =>
               batch.batchId === activeBatch.batchId
                 ? {
                     ...batch,
@@ -9502,6 +9620,8 @@ export class ClawzControlPlane {
                     retryCount: retryCount + 1,
                     contractAddress: chainResult.contractAddress,
                     anchorField: chainResult.anchorField,
+                    ...(chainResult.confirmationSource ? { confirmationSource: chainResult.confirmationSource } : {}),
+                    ...(chainResult.observedBlockHeight ? { observedBlockHeight: chainResult.observedBlockHeight } : {}),
                     ...(chainResult.txHash ?? batch.txHash ? { txHash: chainResult.txHash ?? batch.txHash } : {})
                   }
                 : batch
@@ -9510,7 +9630,10 @@ export class ClawzControlPlane {
           activeBatch,
           {
             observedAtIso: chainResult.observedAtIso ?? new Date().toISOString(),
-            observedAnchorField: chainResult.anchorField
+            observedAnchorField: chainResult.anchorField,
+            ...(chainResult.confirmationSource ? { confirmationSource: chainResult.confirmationSource } : {}),
+            ...(chainResult.observedBlockHeight ? { observedBlockHeight: chainResult.observedBlockHeight } : {}),
+            ...(chainResult.txHash ? { txHash: chainResult.txHash } : {})
           }
         );
         await this.saveSocialAnchorQueueFile(nextQueue);
@@ -9528,7 +9651,7 @@ export class ClawzControlPlane {
 
       const nextRetryAtIso = new Date(Date.now() + retryConfig.retryDelayMs).toISOString();
       const nextQueue = {
-        items: queue.items.map((item) =>
+        items: recoveredQueue.items.map((item) =>
           item.batchId === activeBatch.batchId
             ? {
                 ...item,
@@ -9537,11 +9660,13 @@ export class ClawzControlPlane {
                 nextRetryAtIso,
                 ...(chainResult.txHash ? { txHash: chainResult.txHash } : {}),
                 contractAddress: chainResult.contractAddress,
+                ...(chainResult.confirmationSource ? { confirmationSource: chainResult.confirmationSource } : {}),
+                ...(chainResult.observedBlockHeight ? { observedBlockHeight: chainResult.observedBlockHeight } : {}),
                 submitAttemptCount: (item.submitAttemptCount ?? 0) + chainResult.attemptCount
               }
             : item
         ),
-        batches: queue.batches.map((batch) =>
+        batches: recoveredQueue.batches.map((batch) =>
           batch.batchId === activeBatch.batchId
             ? {
                 ...batch,
@@ -9556,6 +9681,8 @@ export class ClawzControlPlane {
                 submitFeeRaw: chainResult.submitFeeRaw,
                 submitFee: chainResult.submitFee,
                 submitFeeSource: chainResult.submitFeeSource,
+                ...(chainResult.confirmationSource ? { confirmationSource: chainResult.confirmationSource } : {}),
+                ...(chainResult.observedBlockHeight ? { observedBlockHeight: chainResult.observedBlockHeight } : {}),
                 ...(chainResult.txHash ? { txHash: chainResult.txHash } : {}),
                 nextRetryAtIso
               }
@@ -9567,8 +9694,8 @@ export class ClawzControlPlane {
     } catch (error) {
       const nextQueue =
         retryCount + 1 >= retryConfig.maxAttempts
-          ? this.markSocialAnchorBatchExpired(queue, activeBatch, error, checkedAtIso)
-          : this.markSocialAnchorBatchRetrying(queue, activeBatch, error, checkedAtIso);
+          ? this.markSocialAnchorBatchExpired(recoveredQueue, activeBatch, error, checkedAtIso)
+          : this.markSocialAnchorBatchRetrying(recoveredQueue, activeBatch, error, checkedAtIso);
       await this.saveSocialAnchorQueueFile(nextQueue);
       return nextQueue;
     }

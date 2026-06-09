@@ -438,6 +438,8 @@ export interface SocialAnchorCandidate {
   txHash?: string;
   submitAttemptCount?: number;
   retryCount?: number;
+  confirmationSource?: "latest-state" | "event-log";
+  observedBlockHeight?: string;
   failureCode?: "anchor_retry_exhausted" | "anchor_batch_failed" | "anchor_candidate_missing" | "anchor_not_observed";
   failureReason?: string;
   lastAttemptAtIso?: string;
@@ -461,6 +463,8 @@ export interface SocialAnchorBatch {
   failedAtIso?: string;
   settledAtIso: string;
   anchorField?: string;
+  confirmationSource?: "latest-state" | "event-log";
+  observedBlockHeight?: string;
   contractAddress?: string;
   txHash?: string;
   submitFeeRaw?: string;

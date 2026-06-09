@@ -347,7 +347,7 @@ Individual proof candidates can be inspected by id:
 GET /api/social/anchors/:anchorCandidateId
 ```
 
-This lookup returns retained terminal candidates too, including `expired_not_anchored` candidates. Public receipts remain proof-only, but may include diagnostic proof metadata such as `anchorCandidateId`, `anchorStatus`, `failureCode`, `failureReason`, `expiredAtIso`, retry count, batch root, and Zeko transaction hash when available. UI and agents should only call a receipt anchored when the candidate is confirmed or has aggregate inclusion metadata; pending receipts are proof pending, and expired receipts are proof-window diagnostics.
+This lookup returns retained terminal candidates too, including `expired_not_anchored` candidates. Public receipts remain proof-only, but may include diagnostic proof metadata such as `anchorCandidateId`, `anchorStatus`, `failureCode`, `failureReason`, `expiredAtIso`, retry count, batch root, Zeko transaction hash, and confirmation source when available. Confirmation may come from the current SocialAnchorKernel app state or from the historical `socialBatchAnchored` event log, so late-observed on-chain anchors can repair previously expired local receipt state. UI and agents should only call a receipt anchored when the candidate is confirmed or has aggregate inclusion metadata; pending receipts are proof pending, and expired receipts are proof-window diagnostics.
 
 Use the local manifest wrapper when the team does not want hosted setup tickets:
 
