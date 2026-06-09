@@ -130,17 +130,29 @@ const HOT_READ_PRODUCER_CONCURRENCY = Math.max(
   1,
   Math.trunc(Number(process.env.CLAWZ_HOT_READ_PRODUCER_CONCURRENCY ?? "2"))
 );
+const HOT_READ_PRODUCER_QUEUE_MAX = Math.max(
+  4,
+  Math.trunc(Number(process.env.CLAWZ_HOT_READ_PRODUCER_QUEUE_MAX ?? "24"))
+);
+const CRITICAL_HOT_READ_PRODUCER_CONCURRENCY = Math.max(
+  1,
+  Math.trunc(Number(process.env.CLAWZ_CRITICAL_HOT_READ_PRODUCER_CONCURRENCY ?? "2"))
+);
+const CRITICAL_HOT_READ_PRODUCER_QUEUE_MAX = Math.max(
+  4,
+  Math.trunc(Number(process.env.CLAWZ_CRITICAL_HOT_READ_PRODUCER_QUEUE_MAX ?? "24"))
+);
 const PUBLIC_READ_RATE_LIMIT_WINDOW_MS = Math.max(
   10_000,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_WINDOW_MS ?? "60000"))
 );
 const PUBLIC_READ_RATE_LIMIT_MAX_COST = Math.max(
   60,
-  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST ?? "2400"))
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_MAX_COST ?? "240"))
 );
 const PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST = Math.max(
   PUBLIC_READ_RATE_LIMIT_MAX_COST,
-  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST ?? "12000"))
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST ?? "1200"))
 );
 const PUBLIC_READ_FIRST_PARTY_ORIGINS = new Set(
   (process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_ORIGINS ?? "https://www.santaclawz.ai,https://santaclawz.ai")
@@ -185,6 +197,14 @@ type HotReadInflightEntry = {
   promise: Promise<unknown>;
 };
 type HotReadProducerTask = () => void;
+type HotReadProducerLane = "public" | "critical";
+type HotReadProducerQueueState = {
+  active: number;
+  queued: HotReadProducerTask[];
+  concurrency: number;
+  maxQueued: number;
+  label: HotReadProducerLane;
+};
 
 const consoleStateCache = new Map<string, HotReadCacheEntry>();
 const consoleStateInflight = new Map<string, HotReadInflightEntry>();
@@ -204,12 +224,28 @@ let consoleStateCacheEpoch = 0;
 let paymentLedgerCacheEpoch = 0;
 let publicMarketplaceSnapshotCacheEpoch = 0;
 let publicReadCacheEpoch = 0;
-let activeHotReadProducers = 0;
-const queuedHotReadProducers: HotReadProducerTask[] = [];
+const publicHotReadProducerQueue: HotReadProducerQueueState = {
+  active: 0,
+  queued: [],
+  concurrency: HOT_READ_PRODUCER_CONCURRENCY,
+  maxQueued: HOT_READ_PRODUCER_QUEUE_MAX,
+  label: "public"
+};
+const criticalHotReadProducerQueue: HotReadProducerQueueState = {
+  active: 0,
+  queued: [],
+  concurrency: CRITICAL_HOT_READ_PRODUCER_CONCURRENCY,
+  maxQueued: CRITICAL_HOT_READ_PRODUCER_QUEUE_MAX,
+  label: "critical"
+};
 
-function drainHotReadProducerQueue() {
-  while (activeHotReadProducers < HOT_READ_PRODUCER_CONCURRENCY) {
-    const task = queuedHotReadProducers.shift();
+function hotReadQueueForLane(lane: HotReadProducerLane): HotReadProducerQueueState {
+  return lane === "critical" ? criticalHotReadProducerQueue : publicHotReadProducerQueue;
+}
+
+function drainHotReadProducerQueue(queue: HotReadProducerQueueState) {
+  while (queue.active < queue.concurrency) {
+    const task = queue.queued.shift();
     if (!task) {
       return;
     }
@@ -217,25 +253,34 @@ function drainHotReadProducerQueue() {
   }
 }
 
-function runBoundedHotReadProducer<T>(producer: () => Promise<T>): Promise<T> {
+function runBoundedHotReadProducer<T>(
+  producer: () => Promise<T>,
+  lane: HotReadProducerLane = "public"
+): Promise<T> {
+  const queue = hotReadQueueForLane(lane);
   return new Promise((resolve, reject) => {
     const run = () => {
-      activeHotReadProducers += 1;
+      queue.active += 1;
       Promise.resolve()
         .then(producer)
         .then(resolve, reject)
         .finally(() => {
-          activeHotReadProducers = Math.max(0, activeHotReadProducers - 1);
-          drainHotReadProducerQueue();
+          queue.active = Math.max(0, queue.active - 1);
+          drainHotReadProducerQueue(queue);
         });
     };
 
-    if (activeHotReadProducers < HOT_READ_PRODUCER_CONCURRENCY) {
+    if (queue.active < queue.concurrency) {
       run();
       return;
     }
 
-    queuedHotReadProducers.push(run);
+    if (queue.queued.length >= queue.maxQueued) {
+      reject(new Error(`${queue.label}_hot_read_queue_saturated`));
+      return;
+    }
+
+    queue.queued.push(run);
   });
 }
 
@@ -307,8 +352,9 @@ function launchHotReadRefresh<T>(input: {
   producer: () => Promise<T>;
   currentCacheEpoch: () => number;
   prune: () => void;
+  lane?: HotReadProducerLane;
 }) {
-  const payloadPromise = runBoundedHotReadProducer(input.producer)
+  const payloadPromise = runBoundedHotReadProducer(input.producer, input.lane)
     .then((payload) => {
       if (input.ttlMs > 0 && input.cacheEpoch === input.currentCacheEpoch()) {
         setHotReadCacheEntry(input.cache, input.cacheKey, input.ttlMs, payload);
@@ -341,6 +387,7 @@ async function cachedHotRead<T>(input: {
   producer: () => Promise<T>;
   currentCacheEpoch: () => number;
   prune: () => void;
+  lane?: HotReadProducerLane;
 }): Promise<{ payload: T; cacheStatus: HotReadCacheStatus }> {
   const nowMs = Date.now();
   const cached = input.ttlMs > 0 ? input.cache.get(input.cacheKey) : undefined;
@@ -422,7 +469,11 @@ function prunePublicReadCache(nowMs = Date.now()) {
   }
 }
 
-async function cachedPublicRead<T>(cacheKey: string, producer: () => Promise<T>): Promise<{ payload: T; cacheStatus: HotReadCacheStatus }> {
+async function cachedPublicRead<T>(
+  cacheKey: string,
+  producer: () => Promise<T>,
+  lane: HotReadProducerLane = "public"
+): Promise<{ payload: T; cacheStatus: HotReadCacheStatus }> {
   return cachedHotRead({
     cacheKey,
     cacheEpoch: publicReadCacheEpoch,
@@ -431,7 +482,8 @@ async function cachedPublicRead<T>(cacheKey: string, producer: () => Promise<T>)
     ttlMs: PUBLIC_READ_CACHE_TTL_MS,
     producer,
     currentCacheEpoch: () => publicReadCacheEpoch,
-    prune: prunePublicReadCache
+    prune: prunePublicReadCache,
+    lane
   });
 }
 
@@ -443,13 +495,13 @@ function publicReadRouteCost(pathname: string, method: string): number {
     return 0;
   }
   if (pathname === "/api/public/marketplace-snapshot") {
-    return 1;
+    return 20;
   }
   if (pathname === "/api/payments") {
-    return 4;
+    return 20;
   }
   if (pathname === "/api/console/state") {
-    return 3;
+    return 30;
   }
   if (
     pathname === "/api/agents" ||
@@ -459,22 +511,22 @@ function publicReadRouteCost(pathname: string, method: string): number {
     /^\/api\/social\/anchors\/anchor_[^/]+$/.test(pathname) ||
     pathname === "/api/social/anchors/public"
   ) {
-    return 2;
+    return 10;
   }
   if (pathname === "/api/agents/search") {
-    return 2;
+    return 5;
   }
   if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
-    return 1;
+    return 3;
   }
   if (/^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
-    return 1;
+    return 3;
   }
   if (/^\/api\/agents\/[^/]+\/x402-plan$/.test(pathname) || pathname === "/api/x402/plan") {
-    return 1;
+    return 2;
   }
   if (/^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
-    return 3;
+    return 20;
   }
   return 0;
 }
@@ -651,8 +703,17 @@ function route<
         }
         return;
       }
-      typedResponse.status(400).json({
-        error: error instanceof Error ? error.message : "Request failed."
+      const hotReadQueueSaturated = isHotReadQueueSaturationError(error);
+      typedResponse.status(hotReadQueueSaturated ? 503 : 400).json({
+        ...(hotReadQueueSaturated
+          ? {
+              ok: false,
+              code: "read_capacity_temporarily_unavailable",
+              retryable: true,
+              recommendedPollAfterMs: 2000
+            }
+          : {}),
+        error: errorMessage(error, "Request failed.")
       });
     });
   };
@@ -1610,6 +1671,10 @@ function parseExecutionIntentCreateRequest(value: unknown): CreateExecutionInten
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function isHotReadQueueSaturationError(error: unknown): boolean {
+  return error instanceof Error && /hot_read_queue_saturated/.test(error.message);
 }
 
 function isRetryableSettlementError(error: unknown): boolean {
@@ -3483,7 +3548,8 @@ async function cachedX402PaymentState(input: {
         ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
         producer: input.producer,
         currentCacheEpoch: () => paymentLedgerCacheEpoch,
-        prune: pruneX402PaymentStateCache
+        prune: pruneX402PaymentStateCache,
+        lane: "critical"
       });
       return {
         payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "refreshing"),
@@ -3506,7 +3572,8 @@ async function cachedX402PaymentState(input: {
           ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
           producer: input.producer,
           currentCacheEpoch: () => paymentLedgerCacheEpoch,
-          prune: pruneX402PaymentStateCache
+          prune: pruneX402PaymentStateCache,
+          lane: "critical"
         });
   try {
     const payload = await withColdReadBudget(coldRead, X402_PAYMENT_STATE_COLD_READ_BUDGET_MS);
@@ -4617,6 +4684,14 @@ async function verifyInteropProof(
 }
 
 app.get("/health", route((_request, response) => {
+  response.json({
+    ok: true,
+    service: "clawz-indexer",
+    version: deploymentVersion()
+  });
+}));
+
+app.get("/", route((_request, response) => {
   response.json({
     ok: true,
     service: "clawz-indexer",
@@ -6887,7 +6962,7 @@ app.get("/api/x402/plan", route(async (request, response) => {
     const apiBase = getBaseUrl(request);
     const cacheKey = `x402-plan:${apiBase}:session:${sessionId}:agent:${agentId}`;
     const planRead = await withColdReadBudget(
-      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromQuery(request)).plan),
+      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromQuery(request)).plan, "critical"),
       X402_PLAN_COLD_READ_BUDGET_MS,
       "x402_plan_cold_read_timeout"
     ).catch((error) => ({ error }));
@@ -6929,7 +7004,7 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
     const apiBase = getBaseUrl(request);
     const cacheKey = `agent-x402-plan:${apiBase}:${agentId}`;
     const planRead = await withColdReadBudget(
-      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromOptions(apiBase, { agentId })).plan),
+      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromOptions(apiBase, { agentId })).plan, "critical"),
       X402_PLAN_COLD_READ_BUDGET_MS,
       "x402_plan_cold_read_timeout"
     ).catch((error) => ({ error }));
