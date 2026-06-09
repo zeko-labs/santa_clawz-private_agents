@@ -2931,6 +2931,21 @@ function projectPaymentLedgerEntryFromCanonicalExecution(
   };
 }
 
+function paymentLedgerEntryHasAcceptedBuyerDelivery(
+  entry: PaymentLedgerEntry | undefined,
+  hireRequest: Awaited<ReturnType<typeof optionalHireRequest>>
+): boolean {
+  return Boolean(
+    entry?.hireRequestId &&
+      entry.executionStatus === "completed" &&
+      entry.returnStatus === "accepted" &&
+      (
+        protocolReturnHasBuyerDelivery(hireRequest?.protocolReturn) ||
+        isRecord(entry.deliveryReceipt)
+      )
+  );
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -7454,14 +7469,9 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
     const completedHire = ledgerEntry.hireRequestId
       ? await optionalHireRequest(ledgerEntry.hireRequestId)
       : undefined;
-    const sellerReturnAccepted =
-      ledgerEntry.executionStatus === "completed" &&
-      ledgerEntry.returnStatus === "accepted" &&
-      (
-        protocolReturnHasBuyerDelivery(completedHire?.protocolReturn) ||
-        isRecord(ledgerEntry.deliveryReceipt)
-      );
-    if (!sellerReturnAccepted || !ledgerEntry.hireRequestId) {
+    const canonicalLedgerEntry = projectPaymentLedgerEntryFromCanonicalExecution(ledgerEntry, completedHire) ?? ledgerEntry;
+    const sellerReturnAccepted = paymentLedgerEntryHasAcceptedBuyerDelivery(canonicalLedgerEntry, completedHire);
+    if (!sellerReturnAccepted || !canonicalLedgerEntry.hireRequestId) {
       response.status(409).json({
         ok: false,
         code: "settlement_retry_requires_accepted_delivery",
@@ -7486,7 +7496,7 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       });
       return;
     }
-    if (ledgerHasSettledPayment(ledgerEntry)) {
+    if (ledgerHasSettledPayment(canonicalLedgerEntry)) {
       response.json({
         ok: true,
         idempotent: true,
@@ -7519,7 +7529,7 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       pricingMode: ledgerEntry.pricingMode,
       runtime,
       paymentPayload,
-      requestId: ledgerEntry.hireRequestId,
+      requestId: canonicalLedgerEntry.hireRequestId,
       authorizationId: ledgerEntry.authorizationId ?? retryPayloadDigestSha256,
       ledgerId: ledgerEntry.ledgerId,
       amountUsd: ledgerEntry.amountUsd,

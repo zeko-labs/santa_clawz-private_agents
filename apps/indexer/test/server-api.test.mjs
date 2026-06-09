@@ -4451,6 +4451,24 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(staleLedgerPaymentState.payload.retryResume.nextAction, "view_delivery");
     assert.equal(staleLedgerPaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(staleLedgerPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    const staleLedgerSettlementWrongPayload = await requestJson(
+      `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_stale_submitted_after_delivery_test`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          paymentPayload: {
+            protocol: "x402",
+            nonce: "wrong-payload-for-stale-delivered-awaiting-settlement-test"
+          }
+        })
+      }
+    );
+    assert.equal(staleLedgerSettlementWrongPayload.status, 409);
+    assert.equal(staleLedgerSettlementWrongPayload.payload.code, "settlement_retry_payload_digest_mismatch");
+    assert.equal(staleLedgerSettlementWrongPayload.payload.requiresOriginalPaymentPayload, true);
+    assert.equal(staleLedgerSettlementWrongPayload.payload.doNotCreateNewPayment, true);
+    assert.equal(staleLedgerSettlementWrongPayload.payload.expectedPaymentPayloadDigestSha256, staleLedgerDigest);
+    assert.equal("paymentState" in staleLedgerSettlementWrongPayload.payload, false);
 
     const deliveredSettlementFailedDigest = "f".repeat(64);
     await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
