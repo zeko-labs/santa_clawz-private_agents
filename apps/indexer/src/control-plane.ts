@@ -3302,6 +3302,15 @@ function paymentLedgerSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSel
   if (entry.returnStatus === "rejected" || entry.paymentStatus === "return_rejected") {
     return "failed";
   }
+  if (
+    entry.deliveryReceipt?.errorCode === "relay_return_timeout_after_worker_ack" ||
+    entry.deliveryReceipt?.stage === "return_rejected" ||
+    ((entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") &&
+      (entry.deliveryReceipt?.stage === "runtime_responded" ||
+        typeof entry.deliveryReceipt?.workerStatusCode === "number"))
+  ) {
+    return "failed";
+  }
   if (entry.executionStatus === "failed" || entry.paymentStatus === "execution_failed") {
     const failureText = `${entry.errorCode ?? ""} ${entry.errorMessage ?? ""}`.toLowerCase();
     const platformFailure =
@@ -3351,7 +3360,7 @@ function buildPaymentLedgerCompletionScore(
     successRatePct,
     ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
     source: "payment-ledger",
-    label: `${completedJobCount}/${evaluatedJobCount} verified returns`
+    label: `${completedJobCount}/${evaluatedJobCount} paid deliveries`
   };
 }
 

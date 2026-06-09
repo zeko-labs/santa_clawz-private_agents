@@ -970,6 +970,7 @@ function emptySocialAnchorQueueState(): SocialAnchorQueueState {
     retryingCount: 0,
     confirmedCount: 0,
     failedCount: 0,
+    expiredCount: 0,
     anchoredCount: 0,
     items: [],
     recentBatches: []
@@ -4908,14 +4909,16 @@ export function App() {
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
   const agentCompletionScoreLabel =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
-      ? `${agentCompletionScore.successRatePct ?? 0}% success`
-      : "No success history yet";
+      ? agentCompletionScore.source === "payment-ledger"
+        ? `${agentCompletionScore.successRatePct ?? 0}% delivery`
+        : `${agentCompletionScore.successRatePct ?? 0}% success`
+      : "No delivery history yet";
   const agentCompletionScoreDetail =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
       ? agentCompletionScore.source === "payment-ledger"
-        ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} verified paid returns`
+        ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} paid deliveries`
         : `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
-      : "Waiting for paid job outcomes";
+      : "Waiting for paid delivery outcomes";
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
   const paidOutcomeFallbackCount = agentCompletionScore?.evaluatedJobCount ?? 0;
