@@ -2144,15 +2144,52 @@ async function testProofBackedAgentMessageBoard() {
 
     const queuePath = path.join(workspaceDir, ".clawz-data", "state", "social-anchor-queue.json");
     const queueFile = JSON.parse(await readFile(queuePath, "utf8"));
+    const originalAnchorCandidate = queueFile.items.find((item) => item.candidateId === postedMessage.anchorCandidateId);
+    assert.ok(originalAnchorCandidate);
     queueFile.items = queueFile.items.filter((item) => item.candidateId !== postedMessage.anchorCandidateId);
     await writeFile(queuePath, JSON.stringify(queueFile, null, 2));
     const reconciledBoard = await requestJson(
       `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&outputDigest=${"a".repeat(64)}`
     );
     assert.equal(reconciledBoard.status, 200);
-    assert.equal(reconciledBoard.payload.messages[0].anchorStatus, "expired_not_anchored");
-    assert.equal(reconciledBoard.payload.messages[0].anchorFailureCode, "anchor_candidate_missing");
-    assert.match(reconciledBoard.payload.messages[0].anchorFailureReason, /not found/i);
+    assert.equal(reconciledBoard.payload.messages[0].anchorStatus, "pending");
+    assert.equal(reconciledBoard.payload.messages[0].anchorFailureCode, undefined);
+
+    const queueWithoutArchivedCandidate = JSON.parse(await readFile(queuePath, "utf8"));
+    const recoveredBatchTime = new Date().toISOString();
+    queueWithoutArchivedCandidate.archivedItems = (queueWithoutArchivedCandidate.archivedItems ?? []).filter(
+      (item) => item.candidateId !== postedMessage.anchorCandidateId
+    );
+    queueWithoutArchivedCandidate.batches = [
+      {
+        batchId: "batch_recovered_from_candidate_ids",
+        sessionId,
+        agentId,
+        anchorMode: "shared-batched",
+        networkId: "zeko:testnet",
+        itemCount: 1,
+        candidateKinds: ["agent-message-posted"],
+        rootDigestSha256: "c".repeat(64),
+        status: "confirmed",
+        createdAtIso: recoveredBatchTime,
+        submittedAtIso: recoveredBatchTime,
+        settledAtIso: recoveredBatchTime,
+        confirmedAtIso: recoveredBatchTime,
+        anchorField: "123",
+        txHash: "5JrecoveredCandidateBatchTx",
+        candidateIds: [postedMessage.anchorCandidateId]
+      },
+      ...queueWithoutArchivedCandidate.batches
+    ];
+    await writeFile(queuePath, JSON.stringify(queueWithoutArchivedCandidate, null, 2));
+    const batchRecoveredBoard = await requestJson(
+      `${baseUrl}/api/agent-messages?agentId=${encodeURIComponent(agentId)}&outputDigest=${"a".repeat(64)}&limit=2`
+    );
+    assert.equal(batchRecoveredBoard.status, 200);
+    assert.equal(batchRecoveredBoard.payload.messages[0].anchorStatus, "confirmed");
+    assert.equal(batchRecoveredBoard.payload.messages[0].anchorFailureCode, undefined);
+    assert.equal(batchRecoveredBoard.payload.messages[0].batchRootDigestSha256, "c".repeat(64));
+    assert.equal(batchRecoveredBoard.payload.messages[0].batchTxHash, "5JrecoveredCandidateBatchTx");
 
     console.log("ok - proof-backed agent message board supports admin and relay-authenticated posting with Zeko anchors");
   } finally {

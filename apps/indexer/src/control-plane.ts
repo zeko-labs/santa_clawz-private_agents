@@ -517,6 +517,7 @@ interface SponsorWalletOptions {
 
 interface SocialAnchorQueueFile {
   items: SocialAnchorCandidate[];
+  archivedItems?: SocialAnchorCandidate[];
   batches: SocialAnchorBatch[];
   lastError?: string;
   lastErrorAtIso?: string;
@@ -2534,6 +2535,7 @@ function buildDefaultProcurementIntentFile(): ProcurementIntentFile {
 function buildDefaultSocialAnchorQueueFile(): SocialAnchorQueueFile {
   return {
     items: [],
+    archivedItems: [],
     batches: []
   };
 }
@@ -2566,6 +2568,27 @@ function retainSocialAnchorItems(items: SocialAnchorCandidate[]) {
   const active = sorted.filter((item) => activeSocialAnchorStatus(item.status));
   const terminal = sorted.filter((item) => !activeSocialAnchorStatus(item.status)).slice(0, 2000);
   return [...active, ...terminal];
+}
+
+function retainSocialAnchorArchive(items: SocialAnchorCandidate[]) {
+  return [...items]
+    .sort((left, right) => right.occurredAtIso.localeCompare(left.occurredAtIso))
+    .slice(0, 20_000);
+}
+
+function socialAnchorQueueWithArchive(file: SocialAnchorQueueFile): SocialAnchorQueueFile {
+  const archivedById = new Map<string, SocialAnchorCandidate>();
+  for (const item of file.archivedItems ?? []) {
+    archivedById.set(item.candidateId, item);
+  }
+  for (const item of file.items) {
+    archivedById.set(item.candidateId, item);
+  }
+  return {
+    ...file,
+    items: retainSocialAnchorItems(file.items),
+    archivedItems: retainSocialAnchorArchive([...archivedById.values()])
+  };
 }
 
 function integerEnv(name: string, fallback: number) {
@@ -5329,13 +5352,14 @@ export class ClawzControlPlane {
     await this.ensureDirs();
     const file = await readJsonFile<SocialAnchorQueueFile>(this.socialAnchorQueuePath);
     if (file?.items && file?.batches) {
+      const normalizeItem = (item: SocialAnchorCandidate) =>
+        normalizeSocialAnchorCandidate({
+          ...item,
+          anchorMode: item.anchorMode ?? "shared-batched"
+        });
       return {
-        items: file.items.map((item) =>
-          normalizeSocialAnchorCandidate({
-            ...item,
-            anchorMode: item.anchorMode ?? "shared-batched"
-          })
-        ),
+        items: file.items.map(normalizeItem),
+        archivedItems: (file.archivedItems ?? file.items).map(normalizeItem),
         batches: file.batches.map((batch) =>
           normalizeSocialAnchorBatch({
             ...batch,
@@ -5357,7 +5381,7 @@ export class ClawzControlPlane {
 
   private async saveSocialAnchorQueueFile(file: SocialAnchorQueueFile) {
     await this.ensureDirs();
-    await writeJsonFile(this.socialAnchorQueuePath, file);
+    await writeJsonFile(this.socialAnchorQueuePath, socialAnchorQueueWithArchive(file));
   }
 
   private async loadAgentBoardFile(): Promise<AgentBoardFile> {
@@ -8344,7 +8368,9 @@ export class ClawzControlPlane {
       throw new Error("anchorCandidateId is invalid.");
     }
     const queue = await this.loadSocialAnchorQueueFile();
-    const candidate = queue.items.find((item) => item.candidateId === normalizedCandidateId);
+    const candidate = [...queue.items, ...(queue.archivedItems ?? [])].find(
+      (item) => item.candidateId === normalizedCandidateId
+    );
     if (!candidate) {
       throw new Error("Social anchor candidate was not found.");
     }
@@ -8435,25 +8461,41 @@ export class ClawzControlPlane {
       })
       .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso));
 
+    const candidateById = new Map<string, SocialAnchorCandidate>();
+    for (const item of [...(queue.archivedItems ?? []), ...queue.items]) {
+      candidateById.set(item.candidateId, item);
+    }
+
     const enrichedMessages = visibleMessages.slice(0, limit).map((message) => {
       const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId) ?? message.sessionId;
       const profile = this.profileForSession(state, sessionId);
       const anchorCandidate = message.anchorCandidateId
-        ? queue.items.find((item) => item.candidateId === message.anchorCandidateId)
+        ? candidateById.get(message.anchorCandidateId)
         : undefined;
       const anchorBatch = anchorCandidate?.batchId
         ? queue.batches.find((batch) => batch.batchId === anchorCandidate.batchId)
+        : message.anchorCandidateId
+          ? queue.batches.find((batch) => batch.candidateIds?.includes(message.anchorCandidateId!))
+          : undefined;
+      const recoveredBatchAnchorStatus: SocialAnchorCandidate["status"] | undefined = anchorBatch
+        ? anchorBatch.status === "failed"
+          ? "expired_not_anchored"
+          : anchorBatch.status
         : undefined;
+      const candidateStatus = anchorCandidate?.status;
       const representedPrincipal = profile.representedPrincipal || message.representedPrincipal;
       const anchorStatus: SocialAnchorCandidate["status"] =
-        anchorCandidate?.status ??
+        (candidateStatus === "pending" ? recoveredBatchAnchorStatus : undefined) ??
+        candidateStatus ??
+        recoveredBatchAnchorStatus ??
         (message.anchorCandidateId || message.proofIntent === "per_message"
           ? "expired_not_anchored"
           : message.anchorStatus === "aggregate_anchored" || message.anchorStatus === "not_proof_requested"
             ? message.anchorStatus
             : "not_proof_requested");
       const missingAnchorFailure =
-        !anchorCandidate && (message.anchorCandidateId || message.proofIntent === "per_message");
+        !anchorCandidate && !anchorBatch && (message.anchorCandidateId || message.proofIntent === "per_message");
+      const recoveredBatchFailure = !anchorCandidate && anchorBatch?.status === "failed";
       return {
         ...message,
         agentName: profile.agentName || message.agentName,
@@ -8461,11 +8503,15 @@ export class ClawzControlPlane {
         anchorStatus,
         ...(anchorCandidate?.failureCode
           ? { anchorFailureCode: anchorCandidate.failureCode }
+          : recoveredBatchFailure
+            ? { anchorFailureCode: "anchor_retry_exhausted" as const }
           : missingAnchorFailure
             ? { anchorFailureCode: "anchor_candidate_missing" as const }
             : {}),
         ...(anchorCandidate?.failureReason
           ? { anchorFailureReason: anchorCandidate.failureReason }
+          : recoveredBatchFailure
+            ? { anchorFailureReason: anchorBatch.lastAnchorError ?? "Anchor batch failed before confirmation." }
           : missingAnchorFailure
             ? { anchorFailureReason: "Anchor candidate was not found in the retained proof queue." }
             : {}),
@@ -8473,6 +8519,9 @@ export class ClawzControlPlane {
         ...(anchorCandidate?.lastAttemptAtIso ? { anchorLastAttemptAtIso: anchorCandidate.lastAttemptAtIso } : {}),
         ...(typeof anchorCandidate?.retryCount === "number" ? { anchorRetryCount: anchorCandidate.retryCount } : {}),
         ...(anchorCandidate?.batchRootDigestSha256 ? { batchRootDigestSha256: anchorCandidate.batchRootDigestSha256 } : {}),
+        ...(anchorBatch?.rootDigestSha256 && !anchorCandidate?.batchRootDigestSha256
+          ? { batchRootDigestSha256: anchorBatch.rootDigestSha256 }
+          : {}),
         ...(anchorBatch?.txHash ? { batchTxHash: anchorBatch.txHash } : {})
       };
     });
@@ -9289,6 +9338,7 @@ export class ClawzControlPlane {
         socialAnchorBatchId: batchExport.batchId,
         socialAnchorRootDigestSha256: batchExport.rootDigestSha256,
         socialAnchorItemCount: batchExport.itemCount,
+        socialAnchorCandidateIds: batchCandidateIds,
         socialAnchorAnchorField: nextBatch.anchorField,
         socialAnchorMode: batchExport.anchorMode,
         ...(nextBatch.contractAddress ? { socialAnchorContractAddress: nextBatch.contractAddress } : {}),
@@ -9834,6 +9884,19 @@ export class ClawzControlPlane {
       ...queue,
       items: retainSocialAnchorItems([nextItem, ...queue.items])
     });
+    await this.appendEvent(
+      "SessionCheckpointed",
+      {
+        sessionId: input.sessionId,
+        socialAnchorCandidateAdmitted: true,
+        socialAnchorCandidateId: nextItem.candidateId,
+        socialAnchorCandidateKind: nextItem.kind,
+        socialAnchorCandidateStatus: nextItem.status,
+        socialAnchorMode: nextItem.anchorMode,
+        socialAnchorPayloadDigestSha256: nextItem.payloadDigestSha256
+      },
+      occurredAtIso
+    );
 
     if (anchorMode === "priority-self-funded") {
       queueMicrotask(() => {
