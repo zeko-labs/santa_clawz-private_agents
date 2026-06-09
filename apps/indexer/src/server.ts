@@ -124,6 +124,10 @@ const PUBLIC_READ_CACHE_MAX_ENTRIES = Math.max(
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_MAX_ENTRIES ?? "120"))
 );
 const HOT_READ_STALE_WHILE_REVALIDATE_MS = 60_000;
+const HOT_READ_PRODUCER_CONCURRENCY = Math.max(
+  1,
+  Math.trunc(Number(process.env.CLAWZ_HOT_READ_PRODUCER_CONCURRENCY ?? "2"))
+);
 const PUBLIC_READ_RATE_LIMIT_WINDOW_MS = Math.max(
   10_000,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_RATE_LIMIT_WINDOW_MS ?? "60000"))
@@ -178,6 +182,7 @@ type HotReadInflightEntry = {
   epoch: number;
   promise: Promise<unknown>;
 };
+type HotReadProducerTask = () => void;
 
 const consoleStateCache = new Map<string, HotReadCacheEntry>();
 const consoleStateInflight = new Map<string, HotReadInflightEntry>();
@@ -197,6 +202,40 @@ let consoleStateCacheEpoch = 0;
 let paymentLedgerCacheEpoch = 0;
 let publicMarketplaceSnapshotCacheEpoch = 0;
 let publicReadCacheEpoch = 0;
+let activeHotReadProducers = 0;
+const queuedHotReadProducers: HotReadProducerTask[] = [];
+
+function drainHotReadProducerQueue() {
+  while (activeHotReadProducers < HOT_READ_PRODUCER_CONCURRENCY) {
+    const task = queuedHotReadProducers.shift();
+    if (!task) {
+      return;
+    }
+    task();
+  }
+}
+
+function runBoundedHotReadProducer<T>(producer: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      activeHotReadProducers += 1;
+      Promise.resolve()
+        .then(producer)
+        .then(resolve, reject)
+        .finally(() => {
+          activeHotReadProducers = Math.max(0, activeHotReadProducers - 1);
+          drainHotReadProducerQueue();
+        });
+    };
+
+    if (activeHotReadProducers < HOT_READ_PRODUCER_CONCURRENCY) {
+      run();
+      return;
+    }
+
+    queuedHotReadProducers.push(run);
+  });
+}
 
 function clearConsoleStateCache() {
   consoleStateCacheEpoch += 1;
@@ -267,7 +306,7 @@ function launchHotReadRefresh<T>(input: {
   currentCacheEpoch: () => number;
   prune: () => void;
 }) {
-  const payloadPromise = input.producer()
+  const payloadPromise = runBoundedHotReadProducer(input.producer)
     .then((payload) => {
       if (input.ttlMs > 0 && input.cacheEpoch === input.currentCacheEpoch()) {
         setHotReadCacheEntry(input.cache, input.cacheKey, input.ttlMs, payload);
