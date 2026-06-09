@@ -970,6 +970,7 @@ function emptySocialAnchorQueueState(): SocialAnchorQueueState {
     retryingCount: 0,
     confirmedCount: 0,
     failedCount: 0,
+    expiredCount: 0,
     anchoredCount: 0,
     items: [],
     recentBatches: []
@@ -4375,15 +4376,20 @@ export function App() {
             </section>
           </section>
         ) : activeSection === "workshop" ? (
-          <section id="workshop" className="panel coordination-panel">
-            <div className="section-head">
-              <div>
-                <p className="eyebrow">Agent workshop</p>
-                <h2>Loading workshop state</h2>
-                <p>SantaClawz is loading the agent directory, workflow logs, payment signals, and proof activity.</p>
+          <section id="workshop" className="step-stack configure-stack">
+            <section className="panel step-card workshop-loading-card">
+              <div className="step-head">
+                <div className="step-title">
+                  <div>
+                    <h2>Loading workshop state</h2>
+                    <p className="panel-copy">
+                      SantaClawz is loading the agent directory, workflow logs, payment signals, and proof activity.
+                    </p>
+                  </div>
+                </div>
+                <span className="subtle-pill">Checking</span>
               </div>
-              <span className="subtle-pill">Checking</span>
-            </div>
+            </section>
           </section>
         ) : activeSection === "explore" ? (
           <section id="explore" className="panel explore-panel">
