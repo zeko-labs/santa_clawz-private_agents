@@ -154,6 +154,8 @@ const PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST = Math.max(
   PUBLIC_READ_RATE_LIMIT_MAX_COST,
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST ?? "1200"))
 );
+const PROTOCOL_READ_RATE_LIMIT_MAX_COST = 1200;
+const RUNTIME_READ_RATE_LIMIT_MAX_COST = 600;
 const PUBLIC_READ_FIRST_PARTY_ORIGINS = new Set(
   (process.env.CLAWZ_PUBLIC_READ_FIRST_PARTY_ORIGINS ?? "https://www.santaclawz.ai,https://santaclawz.ai")
     .split(",")
@@ -487,21 +489,42 @@ async function cachedPublicRead<T>(
   });
 }
 
-function publicReadRouteCost(pathname: string, method: string): number {
+type PublicReadRouteClass = "browse" | "protocol" | "runtime";
+
+function publicReadRoutePolicy(pathname: string, method: string): { cost: number; routeClass: PublicReadRouteClass } {
+  const browse = (cost: number) => ({ cost, routeClass: "browse" as const });
+  const protocol = (cost: number) => ({ cost, routeClass: "protocol" as const });
+  const runtime = (cost: number) => ({ cost, routeClass: "runtime" as const });
   if (method !== "GET") {
-    return 0;
+    return browse(0);
   }
   if (pathname === "/health" || pathname === "/ready" || pathname === "/version") {
-    return 0;
+    return browse(0);
+  }
+  if (
+    pathname === "/api/x402/plan" ||
+    pathname === "/api/x402/payment-state" ||
+    pathname === "/api/x402/proof" ||
+    pathname === "/.well-known/x402.json" ||
+    /^\/api\/agents\/[^/]+\/x402-plan$/.test(pathname)
+  ) {
+    return protocol(1);
+  }
+  if (
+    /^\/api\/agents\/[^/]+\/ready$/.test(pathname) ||
+    /^\/api\/agents\/[^/]+\/availability$/.test(pathname) ||
+    /^\/api\/agents\/[^/]+\/relay-status$/.test(pathname)
+  ) {
+    return runtime(1);
   }
   if (pathname === "/api/public/marketplace-snapshot") {
-    return 20;
+    return browse(2);
   }
   if (pathname === "/api/payments") {
-    return 20;
+    return browse(20);
   }
   if (pathname === "/api/console/state") {
-    return 30;
+    return browse(30);
   }
   if (
     pathname === "/api/agents" ||
@@ -511,24 +534,27 @@ function publicReadRouteCost(pathname: string, method: string): number {
     /^\/api\/social\/anchors\/anchor_[^/]+$/.test(pathname) ||
     pathname === "/api/social/anchors/public"
   ) {
-    return 10;
+    return browse(10);
   }
   if (pathname === "/api/agents/search") {
-    return 5;
-  }
-  if (/^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
-    return 3;
-  }
-  if (/^\/api\/agents\/[^/]+\/availability$/.test(pathname)) {
-    return 3;
-  }
-  if (/^\/api\/agents\/[^/]+\/x402-plan$/.test(pathname) || pathname === "/api/x402/plan") {
-    return 2;
+    return browse(5);
   }
   if (/^\/api\/agents\/[^/]+\/payments$/.test(pathname)) {
-    return 20;
+    return browse(20);
   }
-  return 0;
+  return browse(0);
+}
+
+function publicReadRateLimitMaxCost(routeClass: PublicReadRouteClass, request: Pick<IndexerRequest, "header">): number {
+  if (routeClass === "protocol") {
+    return PROTOCOL_READ_RATE_LIMIT_MAX_COST;
+  }
+  if (routeClass === "runtime") {
+    return RUNTIME_READ_RATE_LIMIT_MAX_COST;
+  }
+  return isFirstPartyBrowserRead(request)
+    ? PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST
+    : PUBLIC_READ_RATE_LIMIT_MAX_COST;
 }
 
 function hasApiCredential(request: Pick<IndexerRequest, "header">): boolean {
@@ -589,7 +615,7 @@ function publicReadRateLimitMiddleware(request: unknown, response: unknown, next
   const typedRequest = request as PublicReadRateLimitRequest;
   const typedResponse = response as PublicReadRateLimitResponse;
   const pathname = typedRequest.path ?? typedRequest.originalUrl?.split("?")[0] ?? "";
-  const cost = publicReadRouteCost(pathname, typedRequest.method);
+  const { cost, routeClass } = publicReadRoutePolicy(pathname, typedRequest.method);
   if (cost <= 0 || hasApiCredential(typedRequest)) {
     next();
     return;
@@ -597,16 +623,14 @@ function publicReadRateLimitMiddleware(request: unknown, response: unknown, next
 
   const nowMs = Date.now();
   prunePublicReadRateLimitBuckets(nowMs);
-  const key = publicReadClientKey(typedRequest);
+  const key = `${routeClass}:${publicReadClientKey(typedRequest)}`;
   const existing = publicReadRateLimitBuckets.get(key);
   const bucket = existing && existing.resetAtMs > nowMs
     ? existing
     : { resetAtMs: nowMs + PUBLIC_READ_RATE_LIMIT_WINDOW_MS, cost: 0 };
   bucket.cost += cost;
   publicReadRateLimitBuckets.set(key, bucket);
-  const maxCost = isFirstPartyBrowserRead(typedRequest)
-    ? PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST
-    : PUBLIC_READ_RATE_LIMIT_MAX_COST;
+  const maxCost = publicReadRateLimitMaxCost(routeClass, typedRequest);
   if (bucket.cost <= maxCost) {
     next();
     return;
@@ -615,11 +639,13 @@ function publicReadRateLimitMiddleware(request: unknown, response: unknown, next
   const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAtMs - nowMs) / 1000));
   typedResponse.set?.("Retry-After", String(retryAfterSeconds));
   typedResponse.set?.("X-SantaClawz-RateLimit-Cost", String(cost));
+  typedResponse.set?.("X-SantaClawz-RateLimit-Class", routeClass);
   typedResponse.set?.("X-SantaClawz-RateLimit-Limit", String(maxCost));
   typedResponse.set?.("X-SantaClawz-RateLimit-Remaining", "0");
   typedResponse.status(429).json({
     ok: false,
     code: "public_read_rate_limited",
+    rateLimitClass: routeClass,
     retryable: true,
     retryAfterSeconds,
     error: "SantaClawz public read capacity is busy. Please retry shortly."
@@ -3049,6 +3075,20 @@ function hireRequestHasPostAckRelayTimeout(hireRequest: Awaited<ReturnType<typeo
   );
 }
 
+function hireRequestRelayReachedWorker(hireRequest: Awaited<ReturnType<typeof optionalHireRequest>>): boolean {
+  return Boolean(
+    hireRequest?.relayTrace?.some((entry) =>
+      entry.status === "completed" &&
+        (
+          entry.step === "received_by_worker" ||
+          entry.step === "worker_ack" ||
+          entry.step === "worker_completed" ||
+          entry.step === "hire_response_prepared"
+        )
+    )
+  );
+}
+
 function ledgerHasSettledPayment(entry: PaymentLedgerEntry | undefined): boolean {
   return Boolean(
     entry &&
@@ -3241,6 +3281,10 @@ async function buildX402PaymentStateResponse(input: {
     latestLedger?.executionStatus ??
     hireRequest?.status ??
     "not_started";
+  const paymentStateWorkerReached = hireRequestRelayReachedWorker(hireRequest);
+  const paymentStateRelayFailedBeforeWorkerAck = Boolean(
+    paymentStateRelayDeliveryStatus === "failed" && !paymentStateWorkerReached
+  );
   const paymentStateBuyerDeliveryAvailable = protocolReturnHasBuyerDelivery(hireRequest?.protocolReturn);
   const paymentStateSellerCompleted = Boolean(
     paymentStateBuyerDeliveryAvailable ||
@@ -3252,10 +3296,13 @@ async function buildX402PaymentStateResponse(input: {
       )
   );
   const paymentStateSellerFailure = Boolean(
-    paymentStateProofStatus === "return_rejected" ||
-      latestLedger?.executionStatus === "failed" ||
-      paymentStateAgentExecutionStatus === "failed" ||
-      paymentStateAgentExecutionStatus === "worker_completed_return_rejected"
+    !paymentStateRelayFailedBeforeWorkerAck &&
+      (
+        paymentStateProofStatus === "return_rejected" ||
+        latestLedger?.executionStatus === "failed" ||
+        paymentStateAgentExecutionStatus === "failed" ||
+        paymentStateAgentExecutionStatus === "worker_completed_return_rejected"
+      )
   );
   const protocolLifecycle = reduceSantaClawzPaidLifecycle({
     paymentStatus: latestLedger?.paymentStatus,
@@ -3277,7 +3324,7 @@ async function buildX402PaymentStateResponse(input: {
     platformFailure: Boolean(
       paymentAuthorized &&
         !postAckPending &&
-        paymentStateRelayDeliveryStatus === "failed" &&
+        (paymentStateRelayFailedBeforeWorkerAck || paymentStateRelayDeliveryStatus === "failed") &&
         !paymentStateSellerCompleted &&
         !paymentStateSellerFailure
     )
