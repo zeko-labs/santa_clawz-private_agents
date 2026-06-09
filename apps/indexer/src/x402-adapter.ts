@@ -1404,18 +1404,27 @@ export function buildAgentX402Plan(input: {
   const agentId = consoleState.agentId;
   const profile = consoleState.profile;
   const protocolOwnerFeePolicy = consoleState.protocolOwnerFeePolicy;
+  const networkFacilitationFeeByRail: Partial<Record<AgentPaymentRail, NetworkFacilitationFeeEstimate>> = {
+    ...(input.networkFacilitationFeeByRail ?? {})
+  };
+  const deterministicFee = deterministicNetworkFacilitationFee();
+  for (const rail of profile.paymentProfile.supportedRails) {
+    if ((rail === "base-usdc" || rail === "ethereum-usdc") && deterministicFee && !networkFacilitationFeeByRail[rail]) {
+      networkFacilitationFeeByRail[rail] = deterministicFee;
+    }
+  }
   const feePreviewByRail = buildProtocolOwnerFeePreviews({
     policy: protocolOwnerFeePolicy,
     profile,
-    ...(input.networkFacilitationFeeByRail ? { networkFacilitationFeeByRail: input.networkFacilitationFeeByRail } : {})
+    networkFacilitationFeeByRail
   });
   const query = toQueryString(sessionId);
   const rails = profile.paymentProfile.supportedRails.map((rail) => {
     if (rail === "base-usdc") {
-      return buildBaseRailPlan(consoleState, input.networkFacilitationFeeByRail?.[rail]);
+      return buildBaseRailPlan(consoleState, networkFacilitationFeeByRail[rail]);
     }
     if (rail === "ethereum-usdc") {
-      return buildEthereumRailPlan(consoleState, input.networkFacilitationFeeByRail?.[rail]);
+      return buildEthereumRailPlan(consoleState, networkFacilitationFeeByRail[rail]);
     }
     return buildZekoRailPlan(consoleState);
   });
