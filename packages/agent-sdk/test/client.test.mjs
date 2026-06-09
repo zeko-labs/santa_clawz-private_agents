@@ -156,12 +156,60 @@ async function main() {
       createCoordinationAgentSetup,
       parseCoordinationAgentSetup,
       parseCoordinationBridgeManifest,
+      verifyWorkshopRunReceipts,
       validateClawzFeeCompatibility,
       withClawzPlatformRetry
     } = await import(
       pathToFileURL(sdkEntry).href
     );
     const client = createClawzAgentClient({ baseUrl });
+    const syntheticWorkshopVerification = verifyWorkshopRunReceipts({
+      ledger: {
+        schemaVersion: "santaclawz-workshop-receipt-ledger/1.0",
+        generatedAtIso: "2026-01-01T00:00:00.000Z",
+        publicDisclosure: "proof-receipts-only",
+        totalReceiptCount: 3,
+        receipts: [
+          {
+            schemaVersion: "santaclawz-workshop-receipt/1.0",
+            receiptId: "receipt_confirmed",
+            receiptType: "dispatch",
+            createdAtIso: "2026-01-01T00:00:00.000Z",
+            updatedAtIso: "2026-01-01T00:00:00.000Z",
+            receiptCommitmentSha256: "a".repeat(64),
+            anchorStatus: "confirmed",
+            batchTxHash: "5JtestTx"
+          },
+          {
+            schemaVersion: "santaclawz-workshop-receipt/1.0",
+            receiptId: "receipt_pending",
+            receiptType: "dispatch",
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            updatedAtIso: "2026-01-01T00:00:01.000Z",
+            receiptCommitmentSha256: "b".repeat(64),
+            anchorStatus: "pending"
+          },
+          {
+            schemaVersion: "santaclawz-workshop-receipt/1.0",
+            receiptId: "receipt_expired",
+            receiptType: "dispatch",
+            createdAtIso: "2026-01-01T00:00:02.000Z",
+            updatedAtIso: "2026-01-01T00:00:02.000Z",
+            receiptCommitmentSha256: "c".repeat(64),
+            anchorStatus: "expired_not_anchored"
+          }
+        ]
+      },
+      messageIds: ["receipt_confirmed", "receipt_pending", "receipt_expired", "receipt_missing"],
+      expectedCount: 4
+    });
+    assert.equal(syntheticWorkshopVerification.expected, 4);
+    assert.equal(syntheticWorkshopVerification.confirmed, 1);
+    assert.equal(syntheticWorkshopVerification.pending, 1);
+    assert.equal(syntheticWorkshopVerification.expired, 1);
+    assert.equal(syntheticWorkshopVerification.missing, 1);
+    assert.deepEqual(syntheticWorkshopVerification.txHashes, ["5JtestTx"]);
+    assert.equal(syntheticWorkshopVerification.allConfirmed, false);
     const retryableHtmlFetch = async () =>
       new Response("<html><body>Bad Gateway</body></html>", {
         status: 502,
@@ -441,6 +489,7 @@ async function main() {
     const postedCoordination = await adminClient.postCoordinationEvent({
       manifest: coordinationManifest,
       agentId: pricingUpdate.agentId,
+      messageId: "sdk-run-message-001",
       body: "Private packet stored locally.",
       uri: "local://sdk/private-packet",
       proofIntent: "aggregate"
@@ -462,6 +511,32 @@ async function main() {
     assert.match(workshopReceiptLedger.receipts[0].receiptCommitmentSha256, /^[a-f0-9]{64}$/);
     assert.equal("messageDigestSha256" in workshopReceiptLedger.receipts[0], false);
     assert.equal("outputDigestSha256" in workshopReceiptLedger.receipts[0], false);
+    const workshopRunByMessage = await client.verifyWorkshopRun({
+      manifest: coordinationManifest,
+      messageIds: [postedCoordination.postedMessage.messageId],
+      expectedCount: 1,
+      limit: 10
+    });
+    assert.equal(workshopRunByMessage.expected, 1);
+    assert.equal(workshopRunByMessage.missing, 0);
+    assert.equal(workshopRunByMessage.confirmed + workshopRunByMessage.pending + workshopRunByMessage.expired, 1);
+    const workshopRunByPrefix = await client.verifyWorkshopRun({
+      manifest: coordinationManifest,
+      clientMessageIdPrefix: "sdk-run-",
+      expectedCount: 1,
+      limit: 10
+    });
+    assert.equal(workshopRunByPrefix.expected, 1);
+    assert.equal(workshopRunByPrefix.missing, 0);
+    assert.deepEqual(workshopRunByPrefix.receiptIds, [postedCoordination.postedMessage.messageId]);
+    const waitedWorkshopRun = await client.waitForWorkshopRunConfirmed({
+      manifest: coordinationManifest,
+      messageIds: [postedCoordination.postedMessage.messageId],
+      expectedCount: 1,
+      timeoutMs: 0,
+      limit: 10
+    });
+    assert.equal(waitedWorkshopRun.expected, 1);
 
     const currentBundle = await client.getProofBundle();
     assert.notEqual(currentBundle.bundleDigest.sha256Hex, bundle.bundleDigest.sha256Hex);

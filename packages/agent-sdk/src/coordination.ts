@@ -5,7 +5,8 @@ import {
   type AgentMessageEnvelope,
   type AgentMessageEnvelopeKind,
   type AgentMessageEnvelopePayload,
-  type AgentMessageEnvelopeVisibility
+  type AgentMessageEnvelopeVisibility,
+  type WorkshopReceiptLedgerState
 } from "@clawz/protocol";
 
 export type ClawzCoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
@@ -163,6 +164,71 @@ export interface ClawzCoordinationPublicMessageInput {
   swarmId: string;
   proofIntent: ClawzCoordinationProofIntent;
   clientMessageId: string;
+}
+
+export interface ClawzWorkshopRunVerificationInput {
+  ledger: WorkshopReceiptLedgerState;
+  messageIds?: string[];
+  expectedCount?: number;
+}
+
+export interface ClawzWorkshopRunVerification {
+  expected: number;
+  confirmed: number;
+  pending: number;
+  expired: number;
+  missing: number;
+  txHashes: string[];
+  allConfirmed: boolean;
+  receiptIds: string[];
+  missingReceiptIds: string[];
+  generatedAtIso: string;
+}
+
+function uniqueTrimmed(values: string[] | undefined): string[] {
+  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
+}
+
+function isConfirmedAnchorStatus(status: string | undefined): boolean {
+  return status === "confirmed" || status === "aggregate_anchored";
+}
+
+function isExpiredAnchorStatus(status: string | undefined): boolean {
+  return status === "expired_not_anchored" || status === "failed";
+}
+
+export function verifyWorkshopRunReceipts(input: ClawzWorkshopRunVerificationInput): ClawzWorkshopRunVerification {
+  const expectedIds = uniqueTrimmed(input.messageIds);
+  const expectedIdSet = new Set(expectedIds);
+  const matchedReceipts = expectedIds.length > 0
+    ? input.ledger.receipts.filter((receipt) => expectedIdSet.has(receipt.receiptId))
+    : input.ledger.receipts;
+  const matchedIdSet = new Set(matchedReceipts.map((receipt) => receipt.receiptId));
+  const explicitExpected = typeof input.expectedCount === "number" && input.expectedCount >= 0
+    ? Math.floor(input.expectedCount)
+    : undefined;
+  const expected = explicitExpected ?? (expectedIds.length || matchedReceipts.length);
+  const confirmed = matchedReceipts.filter((receipt) => isConfirmedAnchorStatus(receipt.anchorStatus)).length;
+  const expired = matchedReceipts.filter((receipt) => isExpiredAnchorStatus(receipt.anchorStatus)).length;
+  const pending = matchedReceipts.length - confirmed - expired;
+  const missingReceiptIds = expectedIds.filter((receiptId) => !matchedIdSet.has(receiptId));
+  const missing = expectedIds.length > 0
+    ? missingReceiptIds.length
+    : Math.max(0, expected - matchedReceipts.length);
+  const txHashes = Array.from(new Set(matchedReceipts.map((receipt) => receipt.batchTxHash?.trim()).filter((txHash): txHash is string => Boolean(txHash))));
+
+  return {
+    expected,
+    confirmed,
+    pending,
+    expired,
+    missing,
+    txHashes,
+    allConfirmed: expected > 0 && confirmed === expected && pending === 0 && expired === 0 && missing === 0,
+    receiptIds: matchedReceipts.map((receipt) => receipt.receiptId),
+    missingReceiptIds,
+    generatedAtIso: input.ledger.generatedAtIso
+  };
 }
 
 function assertHex64(value: string | undefined, label: string) {

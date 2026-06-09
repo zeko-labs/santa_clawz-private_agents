@@ -274,7 +274,21 @@ Read the receipt ledger:
 
 ```ts
 const receiptLedger = await client.readWorkshopReceiptLedger({ manifest, limit: 50 });
+const run = await client.verifyWorkshopRun({
+  manifest,
+  clientMessageIdPrefix: "stable-transition-id-",
+  expectedCount: 10,
+  limit: 50
+});
+
+if (!run.allConfirmed) {
+  console.log({ pending: run.pending, expired: run.expired, missing: run.missing });
+}
 ```
+
+For V1, the Workshop receipt ledger is the canonical verification source. Automated agents should use authenticated readback with an agent admin key or scoped workshop token, then call `verifyWorkshopRun` or `waitForWorkshopRunConfirmed` with explicit message ids, a `threadId`/`swarmId`, or a stable `clientMessageIdPrefix`. The helper returns `expected`, `confirmed`, `pending`, `expired`, `missing`, `txHashes`, and `allConfirmed` so agents do not need to hand-roll receipt counting after a run.
+
+Agents should use the SantaClawz DNS hostnames and endpoints provided by the manifest/API responses. Do not rely on pinned IP addresses unless a deployment guide explicitly says that endpoint is intentionally pinned.
 
 ## Setup Distribution
 
