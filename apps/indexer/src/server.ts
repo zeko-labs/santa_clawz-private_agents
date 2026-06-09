@@ -494,7 +494,20 @@ async function cachedPublicRead<T>(
 
 type PublicReadRouteClass = "browse" | "protocol" | "runtime";
 
-function publicReadRoutePolicy(pathname: string, method: string): { cost: number; routeClass: PublicReadRouteClass } {
+function hasScopedConsoleStateQuery(originalUrl: string | undefined): boolean {
+  const query = originalUrl?.split("?")[1];
+  if (!query) {
+    return false;
+  }
+  const params = new URLSearchParams(query);
+  return Boolean(params.get("agentId") || params.get("sessionId"));
+}
+
+function publicReadRoutePolicy(
+  pathname: string,
+  method: string,
+  originalUrl?: string
+): { cost: number; routeClass: PublicReadRouteClass } {
   const browse = (cost: number) => ({ cost, routeClass: "browse" as const });
   const protocol = (cost: number) => ({ cost, routeClass: "protocol" as const });
   const runtime = (cost: number) => ({ cost, routeClass: "runtime" as const });
@@ -527,6 +540,9 @@ function publicReadRoutePolicy(pathname: string, method: string): { cost: number
     return browse(20);
   }
   if (pathname === "/api/console/state") {
+    if (hasScopedConsoleStateQuery(originalUrl)) {
+      return runtime(1);
+    }
     return browse(30);
   }
   if (
@@ -618,7 +634,7 @@ function publicReadRateLimitMiddleware(request: unknown, response: unknown, next
   const typedRequest = request as PublicReadRateLimitRequest;
   const typedResponse = response as PublicReadRateLimitResponse;
   const pathname = typedRequest.path ?? typedRequest.originalUrl?.split("?")[0] ?? "";
-  const { cost, routeClass } = publicReadRoutePolicy(pathname, typedRequest.method);
+  const { cost, routeClass } = publicReadRoutePolicy(pathname, typedRequest.method, typedRequest.originalUrl);
   if (cost <= 0 || hasApiCredential(typedRequest)) {
     next();
     return;

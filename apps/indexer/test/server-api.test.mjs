@@ -1694,6 +1694,10 @@ async function testPublicBrowseLimitsDoNotStarveX402Preflight() {
     assert.notEqual(x402Plan.status, 429);
     assert.notEqual(x402Plan.payload?.code, "public_read_rate_limited");
 
+    const scopedConsoleState = await requestJson(`${baseUrl}/api/console/state?agentId=not-yet-registered`, { headers });
+    assert.notEqual(scopedConsoleState.status, 429);
+    assert.notEqual(scopedConsoleState.payload?.code, "public_read_rate_limited");
+
     console.log("ok - public browse limits do not starve x402 preflight reads");
   } finally {
     await stopProcess(server.child);
