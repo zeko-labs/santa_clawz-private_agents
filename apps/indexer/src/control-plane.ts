@@ -10979,6 +10979,43 @@ export class ClawzControlPlane {
     };
   }
 
+  async getAgentRuntimeLeaseAvailability(options: AgentRuntimeAvailabilityOptions): Promise<AgentRuntimeAvailabilityState> {
+    const state = await this.loadState();
+    const sessionId = this.resolveOwnedSessionId(state, options);
+    const profile = this.profileForSession(state, sessionId);
+    const agentId = this.agentIdForSession(state, sessionId);
+    const heartbeatFile = await this.loadRuntimeHeartbeatFile();
+    const heartbeatRecord = heartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
+    const heartbeat = this.buildAgentRuntimeHeartbeatState({
+      state,
+      sessionId,
+      ...(heartbeatRecord ? { record: heartbeatRecord } : {})
+    });
+    const relayProfile = isRelayDeliveryProfile(profile);
+    const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+    const heartbeatLive = heartbeat.status === "live";
+    const reachable = relayProfile ? relayConnected : heartbeatLive;
+    const runtimeStatus: AgentRuntimeStatus = reachable ? "live" : "offline";
+    const reason = relayProfile
+      ? relayConnected
+        ? "SantaClawz relay has an active outbound agent connection."
+        : "SantaClawz relay is waiting for this agent to connect."
+      : heartbeat.reason ?? "Runtime status is based on the latest heartbeat.";
+
+    return {
+      agentId,
+      sessionId,
+      openClawUrl: profile.openClawUrl.trim(),
+      runtimeDeliveryMode: profile.runtimeDelivery.mode,
+      checkedAtIso: new Date().toISOString(),
+      reachable,
+      status: reachable ? "online" : "offline",
+      runtimeStatus,
+      heartbeat,
+      reason
+    };
+  }
+
   async recordAgentRuntimeHeartbeat(options: AgentRuntimeHeartbeatOptions): Promise<AgentRuntimeHeartbeatState> {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, options);

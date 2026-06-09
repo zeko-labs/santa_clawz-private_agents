@@ -4101,8 +4101,7 @@ async function testStaleRelayDoesNotStayLive() {
     assert.equal(liveAvailability.status, 200);
     assert.equal(liveAvailability.payload.reachable, true);
     assert.equal(liveAvailability.payload.runtimeStatus, "live");
-    assert.equal(liveAvailability.payload.readiness.relayConnected, true);
-    assert.equal(liveAvailability.payload.readiness.runtimeReachable, true);
+    assert.equal(liveAvailability.payload.readiness, undefined);
 
     const relayPricingUpdate = await requestJson(`${baseUrl}/api/console/profile?agentId=${encodeURIComponent(agentId)}`, {
       method: "POST",
@@ -4137,8 +4136,7 @@ async function testStaleRelayDoesNotStayLive() {
     assert.equal(staleAvailability.status, 200);
     assert.equal(staleAvailability.payload.reachable, false);
     assert.equal(staleAvailability.payload.runtimeStatus, "offline");
-    assert.equal(staleAvailability.payload.readiness.relayConnected, false);
-    assert.equal(staleAvailability.payload.readiness.hireable, false);
+    assert.equal(staleAvailability.payload.readiness, undefined);
     assert.match(staleAvailability.payload.reason, /waiting/i);
 
     const staleRegistry = await requestJson(`${baseUrl}/api/agents`);
@@ -5309,7 +5307,7 @@ async function testMissionAuthVerificationPersists() {
     assert.equal(availability.payload.heartbeat.status, "live");
     assert.equal(availability.payload.heartbeat.relayAgentBuild, "test-build-123");
     assert.deepEqual(availability.payload.heartbeat.relayAgentFeatures, ["worker_progress", "node_http_worker_forwarding"]);
-    assert.equal(availability.payload.readiness.heartbeatLive, true);
+    assert.equal(availability.payload.readiness, undefined);
 
     const registry = await requestJson(`${baseUrl}/api/agents`);
     assert.equal(registry.status, 200);
