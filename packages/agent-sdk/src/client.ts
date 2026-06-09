@@ -36,9 +36,11 @@ import {
   coordinationEnvelopeToPublicMessage,
   parseCoordinationBridgeManifest,
   resolveWorkshopChannelId,
+  verifyWorkshopRunReceipts,
   type ClawzCoordinationBridgeManifest,
   type ClawzCoordinationEnvelopeInput,
-  type ClawzCoordinationPublicMessageInput
+  type ClawzCoordinationPublicMessageInput,
+  type ClawzWorkshopRunVerification
 } from "./coordination.js";
 
 import {
@@ -149,6 +151,17 @@ export interface ClawzCoordinationThreadQuery {
   messageId?: string;
   channelId?: string;
   limit?: number;
+}
+
+export interface ClawzWorkshopRunVerificationQuery extends ClawzCoordinationThreadQuery {
+  clientMessageIdPrefix?: string;
+  messageIds?: string[];
+  expectedCount?: number;
+}
+
+export interface ClawzWorkshopRunWaitQuery extends ClawzWorkshopRunVerificationQuery {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
 }
 
 export interface ClawzCoordinationEventInput extends Omit<ClawzCoordinationEnvelopeInput, "senderAgentId"> {
@@ -913,15 +926,52 @@ export class ClawzAgentClient {
   async readWorkshopReceiptLedger(input: ClawzCoordinationThreadQuery): Promise<WorkshopReceiptLedgerState> {
     const manifest = input.manifest ? parseCoordinationBridgeManifest(input.manifest) : undefined;
     const threadId = input.threadId?.trim() || manifest?.threadId;
-    if (!threadId) {
-      throw new Error("readWorkshopReceiptLedger requires threadId or manifest.");
+    const swarmId = input.swarmId?.trim() || input.workshopId?.trim() || manifest?.swarmId;
+    if (!threadId && !swarmId) {
+      throw new Error("readWorkshopReceiptLedger requires threadId, swarmId, workshopId, or manifest.");
     }
     return this.readJson<WorkshopReceiptLedgerState>(
       withQuery(this.baseUrl, "/api/workshop/receipt-ledger", {
-        threadId,
+        ...(threadId ? { threadId } : { swarmId }),
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       })
     );
+  }
+
+  async verifyWorkshopRun(input: ClawzWorkshopRunVerificationQuery): Promise<ClawzWorkshopRunVerification> {
+    let messageIds = Array.from(new Set((input.messageIds ?? []).map((messageId) => messageId.trim()).filter(Boolean)));
+    const prefix = input.clientMessageIdPrefix?.trim();
+    if (prefix && messageIds.length === 0) {
+      const messages = await this.readWorkshopMessages({
+        ...input,
+        limit: input.limit ?? Math.max(200, input.expectedCount ?? 0)
+      });
+      messageIds = messages.messages
+        .filter((message) => message.clientMessageId?.startsWith(prefix))
+        .map((message) => message.messageId);
+    }
+    const ledger = await this.readWorkshopReceiptLedger({
+      ...input,
+      limit: input.limit ?? Math.max(100, messageIds.length, input.expectedCount ?? 0)
+    });
+    return verifyWorkshopRunReceipts({
+      ledger,
+      messageIds,
+      ...(typeof input.expectedCount === "number" ? { expectedCount: input.expectedCount } : {})
+    });
+  }
+
+  async waitForWorkshopRunConfirmed(input: ClawzWorkshopRunWaitQuery): Promise<ClawzWorkshopRunVerification> {
+    const timeoutMs = Math.max(0, input.timeoutMs ?? 120_000);
+    const pollIntervalMs = Math.max(250, input.pollIntervalMs ?? 5_000);
+    const deadline = Date.now() + timeoutMs;
+    let latest = await this.verifyWorkshopRun(input);
+    while (!latest.allConfirmed && Date.now() < deadline) {
+      const remainingMs = deadline - Date.now();
+      await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, Math.max(0, remainingMs))));
+      latest = await this.verifyWorkshopRun(input);
+    }
+    return latest;
   }
 
   buildWorkshopEncryptedTextEnvelope(input: ClawzWorkshopEncryptedTextInput): AgentMessageEnvelope {

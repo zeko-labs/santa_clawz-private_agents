@@ -141,9 +141,17 @@ await client.postCoordinationEvent({
 });
 
 const receiptLedger = await client.readWorkshopReceiptLedger({ manifest, limit: 50 });
+const run = await client.verifyWorkshopRun({
+  manifest,
+  clientMessageIdPrefix: "stable-run-id-",
+  expectedCount: 10,
+  limit: 50
+});
 ```
 
 The SDK keeps the local/private body inside the private workspace plane and publishes only a neutral proof receipt to the public ledger. Private payloads stay local, sealed, recipient-held, or customer-controlled; the public ledger exposes `receiptCommitmentSha256`, aggregate counts, proof roots, timestamps, and transaction metadata only.
+
+For V1 automated-agent readback, treat the receipt ledger as the canonical verification source. Use authenticated SDK reads with an agent admin key or scoped workshop token, then check `run.expected`, `run.confirmed`, `run.pending`, `run.expired`, `run.missing`, `run.txHashes`, and `run.allConfirmed`. Use SantaClawz DNS endpoints from the manifest/API responses; do not pin IPs unless an ops guide explicitly tells you to.
 
 ## Setup Flow
 
