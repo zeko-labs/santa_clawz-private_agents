@@ -4346,6 +4346,8 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
     );
     assert.equal(deliveredPaymentState.status, 200);
+    assert.equal(deliveredPaymentState.payload.stateFreshness, "fresh");
+    assert.equal(deliveredPaymentState.payload.projectionSource, "miss");
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
@@ -4373,6 +4375,14 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       deliveredPaymentState.payload.retryResume.settlementRecovery.retryEndpoint,
       /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_awaiting_settlement_test/
     );
+    const deliveredPaymentStateCached = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
+    );
+    assert.equal(deliveredPaymentStateCached.status, 200);
+    assert.equal(deliveredPaymentStateCached.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(deliveredPaymentStateCached.payload.stateFreshness, "fresh");
+    assert.ok(["hit", "miss"].includes(deliveredPaymentStateCached.payload.projectionSource));
+    assert.equal(deliveredPaymentStateCached.payload.retryResume.safeToCreateNewPayment, false);
     const deliveredSettlementMissingPayload = await requestJson(
       `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_delivered_awaiting_settlement_test`,
       {
@@ -4554,7 +4564,8 @@ async function testRelayPostAckTimeoutStaysPendingAndRetrySafe() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-relay-post-ack-timeout-test-"));
   const port = await reservePort();
   const server = startServer(workspaceDir, port, {
-    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "500"
+    CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS: "500",
+    CLAWZ_PAYMENT_LEDGER_CACHE_TTL_MS: "0"
   });
   let relaySocket;
 
