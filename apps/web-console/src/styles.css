@@ -4053,10 +4053,10 @@ pre,
   align-self: center;
   justify-content: center;
   box-sizing: border-box;
-  min-height: 24px;
-  padding: 5px 8px;
+  min-height: 28px;
+  padding: 6px 9px;
   font-size: 0.66rem;
-  line-height: 1;
+  line-height: 1.05;
 }
 
 .payment-activity-card .board-proof-pill.payment-status-pill {
@@ -8019,11 +8019,12 @@ button:disabled {
     flex: 0 1 auto;
     max-width: 96px;
     gap: 5px;
-    padding: 5px 7px;
+    min-height: 28px;
+    padding: 6px 8px;
     overflow: hidden;
     font-size: 0.58rem;
     letter-spacing: 0.04em;
-    line-height: 1.05;
+    line-height: 1;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -8033,7 +8034,7 @@ button:disabled {
     max-width: 128px;
     font-size: 0.66rem;
     line-height: 1;
-    min-height: 24px;
+    min-height: 28px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
