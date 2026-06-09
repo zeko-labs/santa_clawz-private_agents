@@ -3067,6 +3067,69 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.provenBy, "heartbeat_probe");
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.lastProvenBuild, "server-api-test-build");
 
+    const runtimeHeartbeatPath = path.join(workspaceDir, ".clawz-data", "state", "agent-runtime-heartbeats.json");
+    const heartbeatProbe = {
+      attempted: true,
+      ok: true,
+      checkedAtIso: new Date().toISOString(),
+      provenAtIso: new Date().toISOString(),
+      provenBy: "heartbeat_probe",
+      lastProvenBuild: "server-api-test-build",
+      requestId: "probe_server_api_paid_ready",
+      packageVerified: true,
+      buyerDeliveryVerified: true,
+      returnStatus: "completed"
+    };
+    await writeFile(runtimeHeartbeatPath, JSON.stringify({
+      heartbeats: [
+        {
+          agentId,
+          sessionId,
+          status: "live",
+          receivedAtIso: new Date(Date.now() - 8000).toISOString(),
+          ttlSeconds: 10,
+          note: "Near-stale heartbeat for paid preflight safety test.",
+          paidExecutionProbe: heartbeatProbe
+        }
+      ]
+    }, null, 2));
+    const nearStalePlan = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`);
+    assert.equal(nearStalePlan.status, 200);
+    assert.equal(nearStalePlan.payload.heartbeatSafety.status, "stale_soon");
+    assert.equal(nearStalePlan.payload.heartbeatSafety.paidPreflightSafe, false);
+    assert.equal(nearStalePlan.payload.buyerPaymentState, "NO_PAYMENT_CREATED");
+    assert.equal(nearStalePlan.payload.paymentRequested, false);
+    assert.equal(nearStalePlan.payload.readiness.hireable, false);
+    assert.equal(nearStalePlan.payload.readiness.blockers.includes("heartbeat-stale-soon"), true);
+    assert.equal(nearStalePlan.payload.activationDecision.recommendedBuyerAction, "retry_plan_after_heartbeat");
+    const nearStaleHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        taskPrompt: "Should not request payment while heartbeat is near stale.",
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(nearStaleHire.status, 503);
+    assert.equal(nearStaleHire.payload.code, "agent_runtime_unavailable_retryable");
+    assert.equal(nearStaleHire.payload.buyerPaymentState, "NO_PAYMENT_CREATED");
+    assert.equal(nearStaleHire.payload.paymentRequested, false);
+    assert.equal(nearStaleHire.payload.safeToCreateNewPayment, false);
+    assert.equal(nearStaleHire.payload.safeToRetryFreshPreflight, true);
+    assert.equal(nearStaleHire.payload.heartbeatSafety.status, "stale_soon");
+    await writeFile(runtimeHeartbeatPath, JSON.stringify({
+      heartbeats: [
+        {
+          agentId,
+          sessionId,
+          status: "live",
+          receivedAtIso: new Date().toISOString(),
+          ttlSeconds: 60,
+          note: "Fresh heartbeat restored after paid preflight safety test.",
+          paidExecutionProbe: heartbeatProbe
+        }
+      ]
+    }, null, 2));
+
     const activationDiagnostics = await requestJson(
       `${baseUrl}/api/activation-lane/candidates?agentId=${encodeURIComponent(agentId)}&includeDiagnostics=true`,
       {

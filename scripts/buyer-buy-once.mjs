@@ -721,6 +721,7 @@ function boundedIntegerEnv(name, fallback, min, max) {
 
 const API_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_API_FETCH_TIMEOUT_MS", 10_000, 1_000, 120_000);
 const PAID_SUBMIT_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS", 20_000, 5_000, 120_000);
+const PRE_PAYMENT_RETRY_DELAYS_MS = [1000, 2500, 5000];
 
 async function requestJson(url, init = {}, options = {}) {
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
@@ -765,6 +766,65 @@ async function requestJson(url, init = {}, options = {}) {
 
 function paidSubmitJson(url, init) {
   return requestJson(url, init, { timeoutMs: PAID_SUBMIT_FETCH_TIMEOUT_MS });
+}
+
+function payloadCode(response) {
+  return typeof response?.payload?.code === "string" ? response.payload.code : "";
+}
+
+function retryDelayFromResponse(response, fallbackMs) {
+  const suggested = Number(response?.payload?.recommendedPollAfterMs ?? response?.payload?.heartbeatSafety?.recommendedPollAfterMs);
+  return Number.isFinite(suggested) && suggested > 0
+    ? Math.max(500, Math.min(suggested, 10_000))
+    : fallbackMs;
+}
+
+function isRetryablePrePaymentRead(response) {
+  const code = payloadCode(response);
+  return (
+    response?.status === 0 ||
+    response?.status === 429 ||
+    response?.status === 503 ||
+    response?.payload?.retryable === true ||
+    code === "platform_unavailable_retryable" ||
+    code === "x402_plan_temporarily_unavailable" ||
+    code === "public_read_rate_limited"
+  );
+}
+
+function isRetryablePrePaymentHirePreflight(response) {
+  const code = payloadCode(response);
+  if (findPaymentRequirement(response?.payload) || firstX402Accept(response?.payload)) {
+    return false;
+  }
+  if (response?.payload?.paymentRequested === true) {
+    return false;
+  }
+  return (
+    isRetryablePrePaymentRead(response) ||
+    code === "agent_runtime_unavailable_retryable" ||
+    response?.payload?.buyerPaymentState === "NO_PAYMENT_CREATED" ||
+    response?.payload?.safeToRetryFreshPreflight === true
+  );
+}
+
+async function requestJsonWithPrePaymentRetries(label, producer, isRetryable) {
+  let response = await producer();
+  for (let attempt = 0; attempt < PRE_PAYMENT_RETRY_DELAYS_MS.length && isRetryable(response); attempt += 1) {
+    const delayMs = retryDelayFromResponse(response, PRE_PAYMENT_RETRY_DELAYS_MS[attempt]);
+    console.warn(JSON.stringify({
+      event: "buyer_pre_payment_retry",
+      label,
+      attempt: attempt + 1,
+      delayMs,
+      status: response.status,
+      code: payloadCode(response) || null,
+      buyerPaymentState: response?.payload?.buyerPaymentState ?? null
+    }));
+    await sleep(delayMs);
+    response = await producer();
+  }
+  return response;
 }
 
 function firstRecord(...values) {
@@ -1532,7 +1592,11 @@ const suppliedPaymentStateUrl = suppliedPaymentPayloadDigestSha256
   : "";
 let suppliedPaymentState = null;
 
-const planResponse = await requestJson(planUrl);
+const planResponse = await requestJsonWithPrePaymentRetries(
+  "x402-plan",
+  () => requestJson(planUrl),
+  isRetryablePrePaymentRead
+);
 if (!planResponse.ok) {
   if (suppliedPaymentPayload && !dryRun) {
     suppliedPaymentState = await requestJson(suppliedPaymentStateUrl);
@@ -1690,12 +1754,20 @@ async function preflightHire() {
   });
 }
 
-let preflight = await preflightHire();
+let preflight = await requestJsonWithPrePaymentRetries(
+  "hire-preflight",
+  preflightHire,
+  isRetryablePrePaymentHirePreflight
+);
 let activationProbe = null;
 if (preflight.status === 409 && preflight.payload?.code === "paid_execution_probe_required" && args["activate-if-needed"]) {
   activationProbe = runSellerReadiness(args, apiBase);
   if (activationProbe.ok) {
-    preflight = await preflightHire();
+    preflight = await requestJsonWithPrePaymentRetries(
+      "hire-preflight-after-activation",
+      preflightHire,
+      isRetryablePrePaymentHirePreflight
+    );
   }
 }
 
