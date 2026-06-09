@@ -4442,7 +4442,8 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
           paymentStatus: "authorization_verified",
           executionStatus: "failed",
           returnStatus: "none",
-          errorCode: "relay_delivery_failed_before_worker_ack"
+          errorCode: "relay_delivery_failed_before_worker_ack",
+          errorMessage: "Relay delivery failed before worker acknowledgement."
         }
       ]
     }, null, 2), "utf8");
@@ -4450,13 +4451,13 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${relayFailureDigest}`
     );
     assert.equal(relayFailurePaymentState.status, 200);
-    assert.equal(relayFailurePaymentState.payload.protocolState, "PLATFORM_FAILED_RECONCILE");
-    assert.equal(relayFailurePaymentState.payload.buyerAction, "stop_and_contact_operator");
+    assert.equal(relayFailurePaymentState.payload.protocolState, "PLATFORM_FAILED_NO_SETTLEMENT");
+    assert.equal(relayFailurePaymentState.payload.buyerAction, "create_fresh_payment");
     assert.equal(relayFailurePaymentState.payload.sellerOutcome, "not_at_fault");
-    assert.equal(relayFailurePaymentState.payload.operatorObligation, "reconcile_platform_state");
+    assert.equal(relayFailurePaymentState.payload.operatorObligation, "none");
     assert.equal(relayFailurePaymentState.payload.retryResume.safeToRetrySamePayload, false);
-    assert.equal(relayFailurePaymentState.payload.retryResume.safeToCreateNewPayment, false);
-    assert.match(relayFailurePaymentState.payload.retryResume.guidance, /Do not retry payment and do not create a new payment/);
+    assert.equal(relayFailurePaymentState.payload.retryResume.safeToCreateNewPayment, true);
+    assert.match(relayFailurePaymentState.payload.retryResume.guidance, /terminal no-charge/);
     await writeFile(relayFailurePaymentLedgerPath, JSON.stringify({ entries: [] }, null, 2), "utf8");
 
     const lateReturn = {
@@ -6558,10 +6559,26 @@ async function testPaidLifecycleReducerInvariants() {
     paymentAuthorized: true,
     platformFailure: true
   });
-  assert.equal(platformFailure.protocolState, "PLATFORM_FAILED_RECONCILE");
+  assert.equal(platformFailure.protocolState, "PLATFORM_FAILED_NO_SETTLEMENT");
+  assert.equal(platformFailure.terminal, true);
   assert.equal(platformFailure.sellerOutcome, "not_at_fault");
   assert.equal(platformFailure.sellerAnswer.reputationImpact, "none");
-  assert.equal(platformFailure.buyerAnswer.canCreateFreshPayment, false);
+  assert.equal(platformFailure.operatorObligation, "none");
+  assert.equal(platformFailure.buyerAnswer.canCreateFreshPayment, true);
+
+  const platformFailureAfterSettlement = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "settled",
+    settlementStatus: "settled",
+    relayDeliveryStatus: "failed",
+    agentExecutionStatus: "submitted",
+    paymentAuthorized: true,
+    paymentSettled: true,
+    platformFailure: true
+  });
+  assert.equal(platformFailureAfterSettlement.protocolState, "PLATFORM_FAILED_RECONCILE");
+  assert.equal(platformFailureAfterSettlement.terminal, false);
+  assert.equal(platformFailureAfterSettlement.operatorObligation, "reconcile_platform_state");
+  assert.equal(platformFailureAfterSettlement.buyerAnswer.canCreateFreshPayment, false);
 
   const sellerFailed = reduceSantaClawzPaidLifecycle({
     paymentStatus: "authorization_verified",

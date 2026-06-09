@@ -1,4 +1,4 @@
-export const SANTACLAWZ_PAID_LIFECYCLE_REDUCER_SCHEMA_VERSION = "santaclawz-paid-lifecycle-reducer/0.4" as const;
+export const SANTACLAWZ_PAID_LIFECYCLE_REDUCER_SCHEMA_VERSION = "santaclawz-paid-lifecycle-reducer/1.1" as const;
 
 export type SantaClawzPaidProtocolState =
   | "AWAITING_PAYMENT"
@@ -7,6 +7,7 @@ export type SantaClawzPaidProtocolState =
   | "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION"
   | "DELIVERED_SETTLED"
   | "SELLER_FAILED_NO_SETTLEMENT"
+  | "PLATFORM_FAILED_NO_SETTLEMENT"
   | "PLATFORM_FAILED_RECONCILE"
   | "EXPIRED_NO_CHARGE";
 
@@ -242,6 +243,23 @@ export function reduceSantaClawzPaidLifecycle(
   }
 
   if (platformFailure) {
+    if (!paymentSettled && !settlementFailed) {
+      return paidLifecycleProjection({
+        protocolState: "PLATFORM_FAILED_NO_SETTLEMENT",
+        terminal: true,
+        buyerAction: "create_fresh_payment",
+        sellerOutcome: "not_at_fault",
+        operatorObligation: "none",
+        canCreateFreshPayment: true,
+        canRetrySamePaymentPayload: false,
+        shouldWait: false,
+        hasBuyerDelivery: false,
+        completedValidWork: false,
+        failedWork: false,
+        reputationImpact: "none",
+        reconciliationReason: "platform_failed_before_worker_ack_no_settlement"
+      });
+    }
     return paidLifecycleProjection({
       protocolState: "PLATFORM_FAILED_RECONCILE",
       terminal: false,
@@ -318,6 +336,7 @@ function paidLifecycleProjection(input: {
             input.protocolState === "PLATFORM_FAILED_RECONCILE"
           ? "requires_reconciliation"
           : input.protocolState === "SELLER_FAILED_NO_SETTLEMENT" ||
+              input.protocolState === "PLATFORM_FAILED_NO_SETTLEMENT" ||
               input.protocolState === "EXPIRED_NO_CHARGE"
             ? "not_settled"
             : "not_started";

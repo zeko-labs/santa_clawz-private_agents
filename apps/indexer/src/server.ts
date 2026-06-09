@@ -70,6 +70,7 @@ import {
   buildAgentX402Catalog,
   buildAgentX402CatalogPreview,
   buildActivationLaneX402RuntimeContext,
+  buildAgentX402Plan,
   buildAgentX402Headers,
   parseAgentX402PaymentPayload,
   buildAgentX402RuntimeContext,
@@ -565,18 +566,6 @@ function publicReadRoutePolicy(
   return browse(0);
 }
 
-function publicReadRateLimitMaxCost(routeClass: PublicReadRouteClass, request: Pick<IndexerRequest, "header">): number {
-  if (routeClass === "protocol") {
-    return PROTOCOL_READ_RATE_LIMIT_MAX_COST;
-  }
-  if (routeClass === "runtime") {
-    return RUNTIME_READ_RATE_LIMIT_MAX_COST;
-  }
-  return isFirstPartyBrowserRead(request)
-    ? PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST
-    : PUBLIC_READ_RATE_LIMIT_MAX_COST;
-}
-
 function hasApiCredential(request: Pick<IndexerRequest, "header">): boolean {
   return Boolean(
     request.header("authorization") ||
@@ -590,6 +579,18 @@ function publicReadClientKey(request: Pick<IndexerRequest, "header" | "ip">): st
   const forwardedFor = request.header("x-forwarded-for")?.split(",")[0]?.trim();
   const realIp = request.header("x-real-ip")?.trim();
   return forwardedFor || realIp || request.ip || "unknown";
+}
+
+function publicReadRateLimitMaxCost(routeClass: PublicReadRouteClass, request: Pick<IndexerRequest, "header">): number {
+  if (routeClass === "protocol") {
+    return PROTOCOL_READ_RATE_LIMIT_MAX_COST;
+  }
+  if (routeClass === "runtime") {
+    return RUNTIME_READ_RATE_LIMIT_MAX_COST;
+  }
+  return isFirstPartyBrowserRead(request)
+    ? PUBLIC_READ_FIRST_PARTY_RATE_LIMIT_MAX_COST
+    : PUBLIC_READ_RATE_LIMIT_MAX_COST;
 }
 
 function originFromHeader(value: string | undefined): string {
@@ -2370,7 +2371,7 @@ async function buildX402PlanFromOptions(
   } = {}
 ) {
   const consoleState = await controlPlane.getConsoleState(options);
-  const plan = await buildAgentX402PlanWithNetworkQuotes({
+  const plan = buildAgentX402Plan({
     baseUrl,
     consoleState
   });
@@ -3898,6 +3899,9 @@ function retryResumeGuidanceForLifecycle(input: {
   if (input.expiredAuthorizationNoChargeTerminal) {
     return "The signed x402 authorization expired before settlement and no accepted buyer delivery is recorded. Treat this payment path as no-charge terminal; a buyer may create a fresh payment for a new attempt.";
   }
+  if (input.lifecycle.protocolState === "PLATFORM_FAILED_NO_SETTLEMENT") {
+    return "SantaClawz could not deliver this payment path to the seller worker, and no settlement or buyer delivery is recorded. Treat this path as terminal no-charge; a buyer may create a fresh payment for a new attempt.";
+  }
   if (input.lifecycle.buyerAction === "stop_and_contact_operator") {
     return "This payment path needs platform reconciliation. Do not retry payment and do not create a new payment until canonical state changes.";
   }
@@ -3927,6 +3931,7 @@ function lifecyclePartyFinality(input: {
     paymentTerminal:
       input.paymentSettled ||
       input.lifecycle.protocolState === "EXPIRED_NO_CHARGE" ||
+      input.lifecycle.protocolState === "PLATFORM_FAILED_NO_SETTLEMENT" ||
       input.lifecycle.protocolState === "SELLER_FAILED_NO_SETTLEMENT",
     operatorTerminal: input.lifecycle.operatorObligation === "none",
     ...(typeof input.buyerAccepted === "boolean" ? { buyerAccepted: input.buyerAccepted } : {})
@@ -5056,7 +5061,16 @@ app.get("/api/console/state", route(async (request, response) => {
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
   } catch (error) {
-    response.status(400).json({
+    const saturated = isHotReadQueueSaturationError(error);
+    response.status(saturated ? 503 : 400).json({
+      ...(saturated
+        ? {
+            ok: false,
+            code: "console_state_temporarily_unavailable",
+            retryable: true,
+            recommendedPollAfterMs: 2000
+          }
+        : {}),
       error: error instanceof Error ? error.message : "Unable to load console state."
     });
   }
@@ -5115,7 +5129,16 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
   } catch (error) {
-    response.status(400).json({
+    const saturated = isHotReadQueueSaturationError(error);
+    response.status(saturated ? 503 : 400).json({
+      ...(saturated
+        ? {
+            ok: false,
+            code: "marketplace_snapshot_temporarily_unavailable",
+            retryable: true,
+            recommendedPollAfterMs: 2000
+          }
+        : {}),
       error: error instanceof Error ? error.message : "Unable to load public marketplace snapshot."
     });
   }
@@ -7172,7 +7195,16 @@ app.get("/api/agents/:agentId/availability", route(async (request, response) => 
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
   } catch (error) {
-    response.status(400).json({
+    const saturated = isHotReadQueueSaturationError(error);
+    response.status(saturated ? 503 : 400).json({
+      ...(saturated
+        ? {
+            ok: false,
+            code: "agent_availability_temporarily_unavailable",
+            retryable: true,
+            recommendedPollAfterMs: 2000
+          }
+        : {}),
       error: error instanceof Error ? error.message : "Unable to check agent availability."
     });
   }
@@ -9112,6 +9144,16 @@ const handleAgentHireRequest = route(async (request, response) => {
         ));
         return;
       }
+    }
+    if (
+      consoleState.paymentsEnabled &&
+      consoleState.paidJobsEnabled &&
+      !activationProbeRequested &&
+      !quoteRequestMode &&
+      !paidExecutionProvenFromReadiness(consoleState.readiness)
+    ) {
+      response.status(409).json(paidExecutionProbeRequiredBody({ agentId, plan }));
+      return;
     }
 
     if (consoleState.paymentsEnabled && (!quoteRequestMode || activationProbeRequested)) {
