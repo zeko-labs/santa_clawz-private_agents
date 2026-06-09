@@ -432,10 +432,15 @@ export interface SocialAnchorCandidate {
   submittedAtIso?: string;
   confirmedAtIso?: string;
   failedAtIso?: string;
+  expiredAtIso?: string;
   anchoredAtIso?: string;
   contractAddress?: string;
   txHash?: string;
   submitAttemptCount?: number;
+  retryCount?: number;
+  failureCode?: "anchor_retry_exhausted" | "anchor_batch_failed" | "anchor_candidate_missing" | "anchor_not_observed";
+  failureReason?: string;
+  lastAttemptAtIso?: string;
   lastAnchorError?: string;
   nextRetryAtIso?: string;
 }
@@ -499,6 +504,7 @@ export interface SocialAnchorQueueState {
   retryingCount: number;
   confirmedCount: number;
   failedCount: number;
+  expiredCount: number;
   anchoredCount: number;
   latestRootDigestSha256?: string;
   latestSubmittedRootDigestSha256?: string;
@@ -538,6 +544,11 @@ export interface AgentBoardMessage {
   outputDigestSha256?: string;
   anchorCandidateId?: string;
   anchorStatus?: SocialAnchorCandidateStatus;
+  anchorFailureCode?: SocialAnchorCandidate["failureCode"];
+  anchorFailureReason?: string;
+  anchorExpiredAtIso?: string;
+  anchorLastAttemptAtIso?: string;
+  anchorRetryCount?: number;
   proofIntent?: "per_message" | "aggregate" | "agent_chatter";
   requestedProofIntent?: "per_message" | "aggregate" | "agent_chatter";
   proofAdmissionReason?: "requested" | "agent_proof_budget_exceeded" | "swarm_proof_budget_exceeded" | "queue_pressure";
@@ -577,6 +588,11 @@ export interface WorkshopReceiptLedgerEntry {
   receiptCommitmentSha256: string;
   anchorCandidateId?: string;
   anchorStatus?: SocialAnchorCandidateStatus;
+  anchorFailureCode?: SocialAnchorCandidate["failureCode"];
+  anchorFailureReason?: string;
+  anchorExpiredAtIso?: string;
+  anchorLastAttemptAtIso?: string;
+  anchorRetryCount?: number;
   proofIntent?: "per_message" | "aggregate" | "agent_chatter";
   requestedProofIntent?: "per_message" | "aggregate" | "agent_chatter";
   proofAdmissionReason?: "requested" | "agent_proof_budget_exceeded" | "swarm_proof_budget_exceeded" | "queue_pressure";
@@ -607,6 +623,15 @@ export interface WorkshopStateCursor {
   lastMessageDigestSha256?: string;
   lastTransitionDigest?: string;
   lastAnchorStatus?: SocialAnchorCandidateStatus;
+  anchorCompleteness?: {
+    expectedCheckpointCount: number;
+    confirmedCheckpointCount: number;
+    pendingCheckpointCount: number;
+    expiredCheckpointCount: number;
+    failedCheckpointCount: number;
+    missingCandidateIds: string[];
+    allConfirmed: boolean;
+  };
   publicDisclosure: "workshop-public-actions-only";
 }
 

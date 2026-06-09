@@ -2672,6 +2672,11 @@ function normalizeSocialAnchorCandidate(item: SocialAnchorCandidate): SocialAnch
   return {
     ...item,
     status,
+    ...(item.expiredAtIso ? { expiredAtIso: item.expiredAtIso } : {}),
+    ...(item.failureCode ? { failureCode: item.failureCode } : {}),
+    ...(item.failureReason ? { failureReason: item.failureReason } : {}),
+    ...(item.lastAttemptAtIso ? { lastAttemptAtIso: item.lastAttemptAtIso } : {}),
+    ...(typeof item.retryCount === "number" ? { retryCount: item.retryCount } : {}),
     ...(status === "confirmed" && item.anchoredAtIso && !item.confirmedAtIso ? { confirmedAtIso: item.anchoredAtIso } : {})
   };
 }
@@ -2695,7 +2700,8 @@ function socialAnchorStatusCounts(items: SocialAnchorCandidate[]) {
     submittedCount: items.filter((item) => item.status === "submitted").length,
     retryingCount: items.filter((item) => item.status === "retrying").length,
     confirmedCount: items.filter((item) => item.status === "confirmed").length,
-    failedCount: items.filter((item) => item.status === "failed").length
+    failedCount: items.filter((item) => item.status === "failed").length,
+    expiredCount: items.filter((item) => item.status === "expired_not_anchored").length
   };
 }
 
@@ -8328,6 +8334,19 @@ export class ClawzControlPlane {
     return this.buildSocialAnchorQueueState(queue, sessionId, options);
   }
 
+  async getSocialAnchorCandidate(candidateId: string): Promise<SocialAnchorCandidate> {
+    const normalizedCandidateId = candidateId.trim();
+    if (!/^anchor_[a-zA-Z0-9]+$/.test(normalizedCandidateId)) {
+      throw new Error("anchorCandidateId is invalid.");
+    }
+    const queue = await this.loadSocialAnchorQueueFile();
+    const candidate = queue.items.find((item) => item.candidateId === normalizedCandidateId);
+    if (!candidate) {
+      throw new Error("Social anchor candidate was not found.");
+    }
+    return candidate;
+  }
+
   async getOwnedSocialAnchorQueueState(options: OwnershipActionOptions = {}): Promise<SocialAnchorQueueState> {
     const state = await this.loadState();
     const sessionId = this.resolveOwnedSessionId(state, options);
@@ -8429,11 +8448,26 @@ export class ClawzControlPlane {
           : message.anchorStatus === "aggregate_anchored" || message.anchorStatus === "not_proof_requested"
             ? message.anchorStatus
             : "not_proof_requested");
+      const missingAnchorFailure =
+        !anchorCandidate && (message.anchorCandidateId || message.proofIntent === "per_message");
       return {
         ...message,
         agentName: profile.agentName || message.agentName,
         ...(representedPrincipal ? { representedPrincipal } : {}),
         anchorStatus,
+        ...(anchorCandidate?.failureCode
+          ? { anchorFailureCode: anchorCandidate.failureCode }
+          : missingAnchorFailure
+            ? { anchorFailureCode: "anchor_candidate_missing" as const }
+            : {}),
+        ...(anchorCandidate?.failureReason
+          ? { anchorFailureReason: anchorCandidate.failureReason }
+          : missingAnchorFailure
+            ? { anchorFailureReason: "Anchor candidate was not found in the retained proof queue." }
+            : {}),
+        ...(anchorCandidate?.expiredAtIso ? { anchorExpiredAtIso: anchorCandidate.expiredAtIso } : {}),
+        ...(anchorCandidate?.lastAttemptAtIso ? { anchorLastAttemptAtIso: anchorCandidate.lastAttemptAtIso } : {}),
+        ...(typeof anchorCandidate?.retryCount === "number" ? { anchorRetryCount: anchorCandidate.retryCount } : {}),
         ...(anchorCandidate?.batchRootDigestSha256 ? { batchRootDigestSha256: anchorCandidate.batchRootDigestSha256 } : {}),
         ...(anchorBatch?.txHash ? { batchTxHash: anchorBatch.txHash } : {})
       };
@@ -8584,6 +8618,16 @@ export class ClawzControlPlane {
     board: AgentBoardState;
   }): WorkshopStateCursor {
     const latest = input.board.messages[0];
+    const proofCheckpoints = input.board.messages.filter((message) => message.anchorCandidateId || message.proofIntent === "per_message");
+    const confirmedCheckpointCount = proofCheckpoints.filter((message) => message.anchorStatus === "confirmed").length;
+    const pendingCheckpointCount = proofCheckpoints.filter((message) =>
+      message.anchorStatus === "pending" || message.anchorStatus === "submitted" || message.anchorStatus === "retrying"
+    ).length;
+    const expiredCheckpointCount = proofCheckpoints.filter((message) => message.anchorStatus === "expired_not_anchored").length;
+    const failedCheckpointCount = proofCheckpoints.filter((message) => message.anchorStatus === "failed").length;
+    const missingCandidateIds = proofCheckpoints
+      .filter((message) => message.anchorFailureCode === "anchor_candidate_missing")
+      .map((message) => message.anchorCandidateId ?? message.messageId);
     const lastAction = latest?.body.trim();
     const normalizedAction = lastAction?.toLowerCase() ?? "";
     const completionStatus: WorkshopStateCursor["completionStatus"] = !latest
@@ -8610,6 +8654,15 @@ export class ClawzControlPlane {
         ? { lastTransitionDigest: latest.outputDigestSha256 ?? latest.messageDigestSha256 }
         : {}),
       ...(latest?.anchorStatus ? { lastAnchorStatus: latest.anchorStatus } : {}),
+      anchorCompleteness: {
+        expectedCheckpointCount: proofCheckpoints.length,
+        confirmedCheckpointCount,
+        pendingCheckpointCount,
+        expiredCheckpointCount,
+        failedCheckpointCount,
+        missingCandidateIds,
+        allConfirmed: proofCheckpoints.length > 0 && confirmedCheckpointCount === proofCheckpoints.length
+      },
       publicDisclosure: "workshop-public-actions-only"
     };
   }
@@ -9287,13 +9340,14 @@ export class ClawzControlPlane {
     });
   }
 
-  private releaseFailedSocialAnchorBatchToPending(
+  private markSocialAnchorBatchExpired(
     queue: SocialAnchorQueueFile,
     batch: SocialAnchorBatch,
     error: unknown,
     failedAtIso: string
   ): SocialAnchorQueueFile {
     const lastAnchorError = socialAnchorErrorMessage(error).slice(0, 500);
+    const retryCount = batch.retryCount ?? 0;
     return {
       items: queue.items.map((item) => {
         if (item.batchId !== batch.batchId) {
@@ -9302,9 +9356,15 @@ export class ClawzControlPlane {
         const { nextRetryAtIso: _nextRetryAtIso, ...cleanItem } = item;
         return {
               ...cleanItem,
-              status: "pending",
+              status: "expired_not_anchored",
               failedAtIso,
-              lastAnchorError
+              expiredAtIso: failedAtIso,
+              lastAnchorError,
+              failureCode: "anchor_retry_exhausted",
+              failureReason: lastAnchorError,
+              lastAttemptAtIso: failedAtIso,
+              retryCount,
+              submitAttemptCount: Math.max(cleanItem.submitAttemptCount ?? 0, batch.submitAttemptCount ?? retryCount)
             };
       }),
       batches: queue.batches.map((candidate) =>
@@ -9410,7 +9470,7 @@ export class ClawzControlPlane {
     const retryConfig = this.socialAnchorRetryConfig();
     const retryCount = activeBatch.retryCount ?? 0;
     if (retryCount >= retryConfig.maxAttempts) {
-      const nextQueue = this.releaseFailedSocialAnchorBatchToPending(
+      const nextQueue = this.markSocialAnchorBatchExpired(
         queue,
         activeBatch,
         `Expected root was not observed after ${retryCount} retry attempt${retryCount === 1 ? "" : "s"}.`,
@@ -9507,7 +9567,7 @@ export class ClawzControlPlane {
     } catch (error) {
       const nextQueue =
         retryCount + 1 >= retryConfig.maxAttempts
-          ? this.releaseFailedSocialAnchorBatchToPending(queue, activeBatch, error, checkedAtIso)
+          ? this.markSocialAnchorBatchExpired(queue, activeBatch, error, checkedAtIso)
           : this.markSocialAnchorBatchRetrying(queue, activeBatch, error, checkedAtIso);
       await this.saveSocialAnchorQueueFile(nextQueue);
       return nextQueue;

@@ -1419,6 +1419,8 @@ async function testProtectedApiAuth() {
     assert.equal(workshopTraceMessages.payload.state.stateVersion, 1);
     assert.equal(workshopTraceMessages.payload.state.lastMessageId, publicWorkshopMessage.payload.postedMessage.messageId);
     assert.equal(workshopTraceMessages.payload.state.publicDisclosure, "workshop-public-actions-only");
+    assert.equal(workshopTraceMessages.payload.state.anchorCompleteness.expectedCheckpointCount, 0);
+    assert.equal(workshopTraceMessages.payload.state.anchorCompleteness.allConfirmed, false);
 
     const workshopReceiptLedger = await requestJson(
       `${baseUrl}/api/workshop/receipt-ledger?threadId=${encodeURIComponent("eventlog_public_workshop_auth_smoke")}&limit=10`,
@@ -1436,6 +1438,8 @@ async function testProtectedApiAuth() {
     assert.equal(workshopTraceState.payload.schemaVersion, "santaclawz-workshop-state/0.1");
     assert.equal(workshopTraceState.payload.stateVersion, 1);
     assert.equal(workshopTraceState.payload.lastTransitionDigest, publicWorkshopMessage.payload.postedMessage.messageDigestSha256);
+    assert.equal(workshopTraceState.payload.anchorCompleteness.expectedCheckpointCount, 0);
+    assert.deepEqual(workshopTraceState.payload.anchorCompleteness.missingCandidateIds, []);
 
     const directWorkshopMessage = await requestJson(
       `${baseUrl}/api/workshops/${encodeURIComponent("workflow_public_workshop_auth_smoke")}/messages/${encodeURIComponent(publicWorkshopMessage.payload.postedMessage.messageId)}`,
@@ -1955,6 +1959,14 @@ async function testProofBackedAgentMessageBoard() {
     assert.equal(posted.payload.boardPreview.totalVisibleMessages, 1);
     assert.deepEqual(posted.payload.boardPreview.threads[0].capabilityTags, ["research.summary", "quote-builder"]);
     assert.equal(posted.payload.boardPreview.threads[0].messageCount, 1);
+    const publicAnchorCandidate = await requestJson(
+      `${baseUrl}/api/social/anchors/${encodeURIComponent(postedMessage.anchorCandidateId)}`,
+      { method: "GET" }
+    );
+    assert.equal(publicAnchorCandidate.status, 200);
+    assert.equal(publicAnchorCandidate.payload.candidateId, postedMessage.anchorCandidateId);
+    assert.equal(publicAnchorCandidate.payload.status, "pending");
+    assert.equal(publicAnchorCandidate.payload.payloadDigestSha256.length, 64);
 
     const agentChatterPost = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/messages`, {
       method: "POST",
@@ -2139,6 +2151,8 @@ async function testProofBackedAgentMessageBoard() {
     );
     assert.equal(reconciledBoard.status, 200);
     assert.equal(reconciledBoard.payload.messages[0].anchorStatus, "expired_not_anchored");
+    assert.equal(reconciledBoard.payload.messages[0].anchorFailureCode, "anchor_candidate_missing");
+    assert.match(reconciledBoard.payload.messages[0].anchorFailureReason, /not found/i);
 
     console.log("ok - proof-backed agent message board supports admin and relay-authenticated posting with Zeko anchors");
   } finally {

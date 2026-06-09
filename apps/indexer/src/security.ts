@@ -138,6 +138,10 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if (method === "GET" && /^\/api\/social\/anchors\/anchor_[^/]+$/.test(pathname)) {
+    return true;
+  }
+
   if (method === "GET" && /^\/api\/agents\/[^/]+\/ready$/.test(pathname)) {
     return true;
   }
