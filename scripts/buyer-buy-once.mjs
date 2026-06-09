@@ -1487,20 +1487,7 @@ function nextCommandBase(args, agentId, taskPrompt) {
 }
 
 function normalizeBuyerApiBase(value) {
-  const normalized = normalizeBaseUrl(value);
-  try {
-    const url = new URL(normalized);
-    if (
-      url.hostname === "santaclawz.ai" ||
-      url.hostname === "www.santaclawz.ai" ||
-      url.hostname === "santaclawz-web.vercel.app"
-    ) {
-      return "https://api.santaclawz.ai";
-    }
-  } catch {
-    return normalized;
-  }
-  return normalized;
+  return normalizeBaseUrl(value);
 }
 
 const args = parseArgs(process.argv.slice(2));
