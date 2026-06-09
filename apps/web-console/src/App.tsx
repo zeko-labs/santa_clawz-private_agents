@@ -77,6 +77,7 @@ type SiteAnnouncement = {
   actionLabel: string;
 };
 const WORKSHOP_PRIVATE_PRIVACY_MODE: CoordinationPrivacyMode = "digest-only";
+const WORKSHOP_RECEIPT_LEDGER_VISIBLE_LIMIT = 50;
 type CoordinationDraft = {
   orgName: string;
   workspaceDomain: string;
@@ -2062,10 +2063,6 @@ function clearStoredCoordinationDraft() {
   } catch (_error) {
     // Ignore storage failures; the visible form reset still completes.
   }
-}
-
-function coordinationThreadKey(receipt: Pick<WorkshopReceipt, "threadId" | "swarmId" | "receiptId">) {
-  return receipt.threadId || receipt.swarmId || receipt.receiptId;
 }
 
 function workshopReceiptOrdinal(receipt: WorkshopReceipt, visibleIndex: number, totalCount: number) {
@@ -4666,32 +4663,7 @@ export function App() {
     : "";
   const coordinationReceipts = workshopReceiptLedger?.receipts ?? [];
   const coordinationReceiptCount = workshopReceiptLedger?.totalReceiptCount ?? 0;
-  const coordinationThreads = Array.from(
-    coordinationReceipts
-      .reduce((groups, receipt) => {
-        const key = coordinationThreadKey(receipt);
-        const existing = groups.get(key) ?? {
-          key,
-          ...(receipt.threadId ? { threadId: receipt.threadId } : {}),
-          ...(receipt.swarmId ? { swarmId: receipt.swarmId } : {}),
-          receipts: [] as WorkshopReceipt[],
-          latestAtIso: receipt.createdAtIso
-        };
-        existing.receipts.push(receipt);
-        if (timestampValue(receipt.createdAtIso) > timestampValue(existing.latestAtIso)) {
-          existing.latestAtIso = receipt.createdAtIso;
-        }
-        groups.set(key, existing);
-        return groups;
-      }, new Map<string, {
-        key: string;
-        threadId?: string;
-        swarmId?: string;
-        receipts: WorkshopReceipt[];
-        latestAtIso: string;
-      }>())
-      .values()
-  ).sort((left, right) => timestampValue(right.latestAtIso) - timestampValue(left.latestAtIso));
+  const visibleCoordinationReceipts = coordinationReceipts.slice(0, WORKSHOP_RECEIPT_LEDGER_VISIBLE_LIMIT);
   const bridgeManifest = buildBridgeManifest({
     draft: coordinationDraft,
     agents: selectedCoordinationAgents,
@@ -5309,7 +5281,7 @@ export function App() {
             </div>
 
             <div className="coordination-thread-list">
-              {coordinationThreads.length === 0 ? (
+              {visibleCoordinationReceipts.length === 0 ? (
                 <article className="coordination-empty-card">
                   <strong>No workshop receipts yet</strong>
                   <p className="panel-copy">
@@ -5317,20 +5289,18 @@ export function App() {
                   </p>
                 </article>
               ) : (
-                coordinationThreads.slice(0, 12).map((thread) => (
-                  <article key={thread.key} className="coordination-thread-card">
+                visibleCoordinationReceipts.map((receipt, receiptIndex) => (
+                  <article key={receipt.receiptId} className="coordination-thread-card">
                     <div className="coordination-message-stack">
-                      {thread.receipts.slice(0, 12).map((receipt, receiptIndex) => (
-                        <div key={receipt.receiptId} className="coordination-message-row">
-                          <div>
-                            <strong>{workshopReceiptOrdinal(receipt, receiptIndex, coordinationReceiptCount)}</strong>
-                            <p>Private workshop event committed. Public ledger shows proof metadata only.</p>
-                            <small className="coordination-receipt-metadata">
-                              <WorkshopReceiptMetadata receipt={receipt} />
-                            </small>
-                          </div>
+                      <div className="coordination-message-row">
+                        <div>
+                          <strong>{workshopReceiptOrdinal(receipt, receiptIndex, coordinationReceiptCount)}</strong>
+                          <p>Private workshop event committed. Public ledger shows proof metadata only.</p>
+                          <small className="coordination-receipt-metadata">
+                            <WorkshopReceiptMetadata receipt={receipt} />
+                          </small>
                         </div>
-                      ))}
+                      </div>
                     </div>
                   </article>
                 ))
