@@ -116,6 +116,7 @@ const AGENT_RUNTIME_CHECK_TIMEOUT_MS = 5000;
 const AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS = 30;
 const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
 const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
+export const PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS = 5000;
 const AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS = integerEnv("CLAWZ_AGENT_HEARTBEAT_WRITE_MIN_INTERVAL_MS", 5000);
 const HIRE_REQUEST_SCHEMA_VERSION = SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION;
 const HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0";
@@ -13397,7 +13398,7 @@ export class ClawzControlPlane {
         ...(heartbeatRecord ? { record: heartbeatRecord } : {})
       });
       const staleAtMs = heartbeat.staleAtIso ? Date.parse(heartbeat.staleAtIso) : NaN;
-      const nearStale = Number.isFinite(staleAtMs) && staleAtMs - Date.now() < 5000;
+      const nearStale = Number.isFinite(staleAtMs) && staleAtMs - Date.now() < PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS;
       if (heartbeat.status !== "live" || nearStale) {
         throw new Error(
           [

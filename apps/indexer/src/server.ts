@@ -48,6 +48,7 @@ import {
 import {
   ClawzControlPlane,
   DuplicatePublicClawzUrlError,
+  PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS,
   SelfServeSocialAnchoringDisabledError,
   type CreateBuyerRouterPlanOptions,
   type CreateExecutionIntentOptions,
@@ -2312,12 +2313,109 @@ async function buildX402PlanFromOptions(
   } = {}
 ) {
   const consoleState = await controlPlane.getConsoleState(options);
+  const plan = await buildAgentX402PlanWithNetworkQuotes({
+    baseUrl,
+    consoleState
+  });
+  const runtimeLease = await controlPlane.getAgentRuntimeLeaseAvailability({
+    sessionId: consoleState.session.sessionId
+  }).catch(() => undefined);
   return {
     consoleState,
-    plan: await buildAgentX402PlanWithNetworkQuotes({
-      baseUrl,
-      consoleState
-    })
+    plan: applyHeartbeatPaymentSafetyToX402Plan(plan, runtimeLease)
+  };
+}
+
+function heartbeatPaymentSafety(input: {
+  reachable?: boolean;
+  heartbeat?: unknown;
+  nowMs?: number;
+}) {
+  const nowMs = input.nowMs ?? Date.now();
+  const heartbeat = isRecord(input.heartbeat) ? input.heartbeat : {};
+  const status = typeof heartbeat.status === "string" ? heartbeat.status : "unknown";
+  const staleAtIso = typeof heartbeat.staleAtIso === "string" ? heartbeat.staleAtIso : undefined;
+  const staleAtMs = staleAtIso ? Date.parse(staleAtIso) : NaN;
+  const msUntilStale = Number.isFinite(staleAtMs) ? staleAtMs - nowMs : undefined;
+  const heartbeatLive = status === "live";
+  const reachable = input.reachable === true;
+  const stale = heartbeatLive && typeof msUntilStale === "number" && msUntilStale <= 0;
+  const staleSoon =
+    heartbeatLive &&
+    typeof msUntilStale === "number" &&
+    msUntilStale > 0 &&
+    msUntilStale < PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS;
+  const paidPreflightSafe = reachable && heartbeatLive && !stale && !staleSoon;
+  return {
+    schemaVersion: "santaclawz-heartbeat-payment-safety/1.0" as const,
+    status: paidPreflightSafe
+      ? "fresh"
+      : stale
+        ? "stale"
+        : staleSoon
+          ? "stale_soon"
+          : heartbeatLive
+            ? "unreachable"
+            : "not_live",
+    paidPreflightSafe,
+    minimumFreshMs: PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS,
+    ...(staleAtIso ? { staleAtIso } : {}),
+    ...(typeof msUntilStale === "number" ? { msUntilStale } : {}),
+    recommendedPollAfterMs: paidPreflightSafe ? 0 : Math.max(1000, Math.min(5000, PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS)),
+    guidance: paidPreflightSafe
+      ? "Agent heartbeat is fresh enough for paid preflight."
+      : "No payment has been created. Retry the x402 plan after the next fresh agent heartbeat before signing."
+  };
+}
+
+function uniqueStrings(values: unknown[]) {
+  return Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0)));
+}
+
+function applyHeartbeatPaymentSafetyToX402Plan<T extends object>(
+  plan: T,
+  runtimeLease: unknown
+): T & { heartbeatSafety: ReturnType<typeof heartbeatPaymentSafety> } {
+  const lease = isRecord(runtimeLease) ? runtimeLease : {};
+  const planRecord = plan as Record<string, unknown>;
+  const safety = heartbeatPaymentSafety({
+    reachable: lease.reachable === true,
+    heartbeat: lease.heartbeat
+  });
+  if (safety.paidPreflightSafe) {
+    return {
+      ...plan,
+      heartbeatSafety: safety
+    };
+  }
+
+  const readiness = isRecord(planRecord.readiness) ? planRecord.readiness : undefined;
+  const blockers = uniqueStrings([...(Array.isArray(readiness?.blockers) ? readiness.blockers : []), "heartbeat-stale-soon"]);
+  const activationDecision = isRecord(planRecord.activationDecision) ? planRecord.activationDecision : undefined;
+  return {
+    ...plan,
+    readiness: {
+      ...(readiness ?? {}),
+      hireable: false,
+      blockers
+    },
+    activationDecision: {
+      ...(activationDecision ?? {
+        schemaVersion: "santaclawz-activation-decision/1.0",
+        activationRequiredNow: false,
+        activationBlockingReason: null,
+        activationHistoryAffectsHireability: false
+      }),
+      recommendedBuyerAction: "retry_plan_after_heartbeat",
+      paymentReadinessBlockingReason: "heartbeat-stale-soon"
+    },
+    heartbeatSafety: safety,
+    buyerPaymentState: "NO_PAYMENT_CREATED",
+    paymentRequested: false,
+    safeToCreateNewPayment: false,
+    safeToRetrySamePayload: false,
+    recommendedPollAfterMs: safety.recommendedPollAfterMs,
+    guidance: safety.guidance
   };
 }
 
@@ -4560,11 +4658,12 @@ async function ensureAgentOnlineForPayment(response: IndexerResponse, consoleSta
   const agentAvailability = await controlPlane.getAgentRuntimeAvailability({
     sessionId: consoleState.session.sessionId
   });
-  const heartbeatLive = agentAvailability.readiness?.heartbeatLive === true || agentAvailability.heartbeat.status === "live";
-  const staleAtMs = agentAvailability.heartbeat.staleAtIso ? Date.parse(agentAvailability.heartbeat.staleAtIso) : NaN;
-  const heartbeatNearStale = Number.isFinite(staleAtMs) && staleAtMs - Date.now() < 5000;
+  const safety = heartbeatPaymentSafety({
+    reachable: agentAvailability.reachable,
+    heartbeat: agentAvailability.heartbeat
+  });
 
-  if (agentAvailability.reachable && heartbeatLive && !heartbeatNearStale) {
+  if (safety.paidPreflightSafe) {
     return true;
   }
 
@@ -4572,11 +4671,17 @@ async function ensureAgentOnlineForPayment(response: IndexerResponse, consoleSta
     ok: false,
     code: "agent_runtime_unavailable_retryable",
     retryable: true,
+    buyerPaymentState: "NO_PAYMENT_CREATED",
     paymentRequested: false,
-    paymentStatus: "unknown",
-    settlementStatus: "unknown",
+    paymentStatus: "not_requested",
+    settlementStatus: "not_attempted",
     relayDeliveryStatus: "not_confirmed",
     agentExecutionStatus: "not_confirmed",
+    safeToCreateNewPayment: false,
+    safeToRetryFreshPreflight: true,
+    safeToRetrySamePayload: false,
+    recommendedPollAfterMs: safety.recommendedPollAfterMs,
+    heartbeatSafety: safety,
     error: "Agent runtime is unavailable or heartbeat is stale; payment not requested.",
     agentAvailability
   });
