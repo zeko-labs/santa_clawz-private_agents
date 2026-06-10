@@ -32,6 +32,24 @@ const DEFAULT_OUTPUT_DIR = ".clawz-data/buyer-runs";
 const DEFAULT_RECOVERY_POLL_MS = 120_000;
 const RECOVERY_POLL_INTERVAL_MS = 3_000;
 const UPGRADE_GUIDE_DOC = "docs/start-here/agent-upgrade-guide.md";
+const clientStartedAtMs = Date.now();
+const clientTiming = {};
+
+async function timedClientStep(name, fn) {
+  const startedAtMs = Date.now();
+  try {
+    return await fn();
+  } finally {
+    clientTiming[name] = (clientTiming[name] ?? 0) + (Date.now() - startedAtMs);
+  }
+}
+
+function clientTimingSnapshot() {
+  return {
+    ...clientTiming,
+    totalMs: Date.now() - clientStartedAtMs
+  };
+}
 
 function printCliError(error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -1225,6 +1243,37 @@ function stateUrlFromPaymentState(payload, paymentPayloadDigestSha256) {
   return `${apiBase}/api/executions/${encodeURIComponent(requestId)}/state${query}`;
 }
 
+function paymentPayloadExpiresAtMs(paymentPayload) {
+  const expiresAtIso = typeof paymentPayload?.expiresAtIso === "string" ? paymentPayload.expiresAtIso : "";
+  const expiresAtMs = expiresAtIso ? Date.parse(expiresAtIso) : NaN;
+  return Number.isFinite(expiresAtMs) ? expiresAtMs : null;
+}
+
+function paymentPayloadAuthorizationFresh(paymentPayload, minFreshMs = 5_000) {
+  const expiresAtMs = paymentPayloadExpiresAtMs(paymentPayload);
+  return expiresAtMs === null || expiresAtMs > Date.now() + minFreshMs;
+}
+
+function settlementRecoveryFromPaymentState(payload) {
+  const retryResume = retryResumeFromPaymentState(payload);
+  const settlementRecovery = isRecord(retryResume.settlementRecovery) ? retryResume.settlementRecovery : {};
+  const action = stringValue(settlementRecovery, "action") || stringValue(settlementRecovery, "nextSettlementAction");
+  const retryEndpoint = stringValue(settlementRecovery, "retryEndpoint");
+  if (action !== "complete_settlement_same_payload" || !retryEndpoint) {
+    return null;
+  }
+  if (settlementRecovery.doNotCreateNewPayment === false || settlementRecovery.freshPaymentForbidden === false) {
+    return null;
+  }
+  return {
+    action,
+    retryEndpoint: retryEndpoint.startsWith("http") ? retryEndpoint : `${apiBase}${retryEndpoint}`,
+    requiresOriginalPaymentPayload: settlementRecovery.requiresOriginalPaymentPayload !== false,
+    status: stringValue(settlementRecovery, "status") || "pending_settlement",
+    settlementOwner: stringValue(settlementRecovery, "settlementOwner") || "platform"
+  };
+}
+
 function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDigestSha256) {
   const lifecycle = firstRecord(paymentStatePayload?.protocolLifecycle, paymentStatePayload);
   const buyerAnswer = firstRecord(lifecycle.buyerAnswer, paymentStatePayload?.buyerAnswer);
@@ -1320,7 +1369,7 @@ async function enrichRecoveredSummaryFromExecutionState(recovered) {
 }
 
 function recoveredPaymentStateOutput(input) {
-  return {
+  return attachBuyerFinalSummary({
     ...input.recovered,
     paid: true,
     status: input.paymentStateResponse.status,
@@ -1354,7 +1403,130 @@ function recoveredPaymentStateOutput(input) {
             }
           }
         : {}),
+    ...(input.settlementRecovery ? { settlementRecovery: input.settlementRecovery } : {}),
     response: input.response
+  });
+}
+
+function finalOutcomeFromOutput(output) {
+  const paymentState = isRecord(output.paymentState) ? output.paymentState : {};
+  const protocolLifecycle = firstRecord(output.protocolLifecycle, paymentState.protocolLifecycle, paymentState);
+  const protocolState =
+    stringValue(output, "protocolState") ||
+    stringValue(protocolLifecycle, "protocolState") ||
+    stringValue(paymentState, "protocolState") ||
+    "";
+  const buyerDeliveryAvailable =
+    output.buyerDeliveryAvailable === true ||
+    firstRecord(protocolLifecycle.buyerAnswer, paymentState.buyerAnswer).hasBuyerDelivery === true;
+  const settlementStatus =
+    stringValue(output, "settlementStatus") ||
+    stringValue(paymentState, "settlementStatus") ||
+    (protocolState === "DELIVERED_SETTLED" ? "settled" : "");
+  const paymentFinality =
+    stringValue(output, "paymentFinality") ||
+    stringValue(protocolLifecycle, "paymentFinality") ||
+    stringValue(paymentState, "paymentFinality") ||
+    (settlementStatus === "settled" ? "settled" : "");
+  return {
+    ok: output.ok === true,
+    code: stringValue(output, "code") || (output.ok === true ? "ok" : "not_ok"),
+    ...(protocolState ? { protocolState } : {}),
+    buyerDeliveryAvailable,
+    paymentTerminal: protocolState === "DELIVERED_SETTLED" || paymentFinality === "settled",
+    paymentFinality: paymentFinality || (settlementStatus === "settled" ? "settled" : "unknown"),
+    settlementStatus: settlementStatus || "unknown",
+    safeToCreateNewPayment:
+      output.safeToCreateNewPayment === true ||
+      (output.ok === true && (protocolState === "DELIVERED_SETTLED" || paymentFinality === "settled")),
+    safeToRetrySamePayload: output.safeToRetrySamePayload === true || output.safeToRetrySamePaymentPayload === true,
+    nextAction: stringValue(output, "nextAction") || (output.ok === true ? "view_delivery" : "inspect_payment_or_execution_state")
+  };
+}
+
+function compactSettlementRecovery(settlementRecovery) {
+  if (!isRecord(settlementRecovery)) {
+    return null;
+  }
+  const recovery = isRecord(settlementRecovery.recovery) ? settlementRecovery.recovery : {};
+  const retryResponse = isRecord(settlementRecovery.retryResponse) ? settlementRecovery.retryResponse : {};
+  const finalPaymentStateResponse = isRecord(settlementRecovery.finalPaymentStateResponse)
+    ? settlementRecovery.finalPaymentStateResponse
+    : {};
+  const finalPaymentStatePayload = isRecord(finalPaymentStateResponse.payload) ? finalPaymentStateResponse.payload : {};
+  const finalLifecycle = firstRecord(finalPaymentStatePayload.protocolLifecycle, finalPaymentStatePayload);
+  return {
+    attempted: settlementRecovery.attempted === true,
+    ...(stringValue(settlementRecovery, "reason") ? { reason: stringValue(settlementRecovery, "reason") } : {}),
+    ...(stringValue(settlementRecovery, "expiresAtIso") ? { expiresAtIso: stringValue(settlementRecovery, "expiresAtIso") } : {}),
+    ...(stringValue(recovery, "action") ? { action: stringValue(recovery, "action") } : {}),
+    ...(stringValue(recovery, "status") ? { status: stringValue(recovery, "status") } : {}),
+    ...(stringValue(recovery, "settlementOwner") ? { settlementOwner: stringValue(recovery, "settlementOwner") } : {}),
+    ...(typeof retryResponse.status === "number"
+      ? {
+          retry: {
+            ok: retryResponse.ok === true,
+            status: retryResponse.status,
+            ...(stringValue(retryResponse.payload, "code") ? { code: stringValue(retryResponse.payload, "code") } : {})
+          }
+        }
+      : {}),
+    ...(typeof finalPaymentStateResponse.status === "number"
+      ? {
+          finalPaymentState: {
+            ok: finalPaymentStateResponse.ok === true,
+            status: finalPaymentStateResponse.status,
+            ...(stringValue(finalLifecycle, "protocolState")
+              ? { protocolState: stringValue(finalLifecycle, "protocolState") }
+              : {}),
+            ...(stringValue(finalLifecycle, "paymentFinality")
+              ? { paymentFinality: stringValue(finalLifecycle, "paymentFinality") }
+              : {}),
+            ...(stringValue(finalPaymentStatePayload, "settlementStatus")
+              ? { settlementStatus: stringValue(finalPaymentStatePayload, "settlementStatus") }
+              : {})
+          }
+        }
+      : {})
+  };
+}
+
+function originalSubmitAttemptFromResponse(response) {
+  if (!isRecord(response)) {
+    return undefined;
+  }
+  const ok = response.ok === true;
+  const code = stringValue(response, "code");
+  if (ok) {
+    return undefined;
+  }
+  return {
+    ok,
+    ...(code ? { code } : {}),
+    ...(typeof response.status === "number" ? { status: response.status } : {}),
+    retryable: response.retryable === true,
+    ...(stringValue(response, "responsePreview") ? { responsePreview: stringValue(response, "responsePreview") } : {}),
+    ...(stringValue(response, "error") ? { error: stringValue(response, "error") } : {})
+  };
+}
+
+function attachBuyerFinalSummary(output) {
+  const originalSubmitAttempt = originalSubmitAttemptFromResponse(output.response);
+  const compactRecovery = compactSettlementRecovery(output.settlementRecovery);
+  const recovery = output.recoveryMode || compactRecovery
+    ? {
+        ...(output.recoveryMode ? { mode: output.recoveryMode } : {}),
+        ...(compactRecovery ? compactRecovery : {})
+      }
+    : undefined;
+  const { settlementRecovery: _rawSettlementRecovery, ...sanitizedOutput } = output;
+  return {
+    ...sanitizedOutput,
+    ...(compactRecovery ? { settlementRecovery: compactRecovery } : {}),
+    finalOutcome: finalOutcomeFromOutput(output),
+    ...(originalSubmitAttempt ? { originalSubmitAttempt } : {}),
+    ...(recovery ? { recovery } : {}),
+    clientTiming: clientTimingSnapshot()
   };
 }
 
@@ -1402,6 +1574,51 @@ async function pollRecoverablePaymentState(paymentStateUrl, paymentPayloadDigest
   };
 }
 
+async function attemptSamePayloadSettlementRecovery(input) {
+  const recovery = settlementRecoveryFromPaymentState(input.paymentStateResponse?.payload);
+  if (!recovery) {
+    return {
+      attempted: false,
+      reason: "settlement_recovery_not_available"
+    };
+  }
+  if (!input.paymentPayload) {
+    return {
+      attempted: false,
+      reason: "missing_original_payment_payload",
+      recovery
+    };
+  }
+  if (!paymentPayloadAuthorizationFresh(input.paymentPayload)) {
+    return {
+      attempted: false,
+      reason: "payment_payload_authorization_expired_or_near_expiry",
+      recovery,
+      expiresAtIso: input.paymentPayload.expiresAtIso
+    };
+  }
+
+  const retryResponse = await paidSubmitJson(recovery.retryEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ paymentPayload: input.paymentPayload })
+  });
+  const embeddedPaymentState = isRecord(retryResponse.payload?.paymentState)
+    ? { ok: true, status: 200, payload: retryResponse.payload.paymentState }
+    : null;
+  const finalPaymentStateResponse = embeddedPaymentState ?? await requestJson(input.paymentStateUrl);
+  const finalRecoveredSummary = finalPaymentStateResponse.ok
+    ? recoveredSummaryFromPaymentState(finalPaymentStateResponse.payload, input.paymentPayloadDigestSha256)
+    : null;
+  return {
+    attempted: true,
+    recovery,
+    retryResponse,
+    finalPaymentStateResponse,
+    finalRecoveredSummary
+  };
+}
+
 function writePaymentRecoveryInstructions(input) {
   return writeJson(path.join(input.runDir, "recovery-next-steps.json"), {
     schemaVersion: "santaclawz-buyer-recovery/1.0",
@@ -1420,14 +1637,68 @@ function writePaymentRecoveryInstructions(input) {
   });
 }
 
+async function finalizeDeliveredSummaryWithSettlement(input) {
+  if (!input.summary?.ok || input.summary.settlementStatus === "settled") {
+    return {
+      summary: input.summary,
+      settlementRecovery: null,
+      paymentStateResponse: null
+    };
+  }
+  const paymentStateResponse = await requestJson(input.paymentStateUrl);
+  if (!paymentStateResponse.ok) {
+    return {
+      summary: input.summary,
+      settlementRecovery: {
+        attempted: false,
+        reason: "payment_state_unavailable_before_settlement_recovery",
+        paymentStateStatus: paymentStateResponse.status,
+        paymentState: paymentStateResponse.payload
+      },
+      paymentStateResponse
+    };
+  }
+  const settlementRecovery = await attemptSamePayloadSettlementRecovery({
+    paymentStateResponse,
+    paymentStateUrl: input.paymentStateUrl,
+    paymentPayload: input.paymentPayload,
+    paymentPayloadDigestSha256: input.paymentPayloadDigestSha256
+  });
+  if (settlementRecovery.finalRecoveredSummary?.ok === true) {
+    return {
+      summary: settlementRecovery.finalRecoveredSummary,
+      settlementRecovery,
+      paymentStateResponse: settlementRecovery.finalPaymentStateResponse ?? paymentStateResponse
+    };
+  }
+  return {
+    summary: input.summary,
+    settlementRecovery,
+    paymentStateResponse
+  };
+}
+
 async function recoverRetryablePaidSubmitFailure(input) {
   const paymentStatePoll = await pollRecoverablePaymentState(
     input.paymentStateUrl,
     input.paymentPayloadDigestSha256
   );
-  const postSubmitPaymentState = paymentStatePoll.paymentStateResponse;
+  let postSubmitPaymentState = paymentStatePoll.paymentStateResponse;
+  let settlementRecovery = null;
   if (paymentStatePoll.recovered === true && paymentStatePoll.recoveredSummary?.ok === true) {
-    const enrichedRecovery = await enrichRecoveredSummaryFromExecutionState(paymentStatePoll.recoveredSummary);
+    settlementRecovery = await attemptSamePayloadSettlementRecovery({
+      paymentStateResponse: postSubmitPaymentState,
+      paymentStateUrl: input.paymentStateUrl,
+      paymentPayload: input.paymentPayload,
+      paymentPayloadDigestSha256: input.paymentPayloadDigestSha256
+    });
+    if (settlementRecovery.attempted && settlementRecovery.finalPaymentStateResponse) {
+      postSubmitPaymentState = settlementRecovery.finalPaymentStateResponse;
+    }
+    const recoveredSummary = settlementRecovery?.finalRecoveredSummary?.ok
+      ? settlementRecovery.finalRecoveredSummary
+      : paymentStatePoll.recoveredSummary;
+    const enrichedRecovery = await enrichRecoveredSummaryFromExecutionState(recoveredSummary);
     const buyerOutputPath = enrichedRecovery.executionStateResponse?.ok
       ? writeBuyerOutputFile(input.runDir, enrichedRecovery.executionStateResponse.payload) ||
         writeBuyerOutputFile(input.runDir, postSubmitPaymentState.payload)
@@ -1445,7 +1716,8 @@ async function recoverRetryablePaidSubmitFailure(input) {
       paymentStateUrl: input.paymentStateUrl,
       resultStateUrl: input.resultStateUrl,
       buyerOutputPath,
-      response: input.submit.payload
+      response: input.submit.payload,
+      settlementRecovery
     });
     return { exitCode: 0, output };
   }
@@ -1592,14 +1864,14 @@ const suppliedPaymentStateUrl = suppliedPaymentPayloadDigestSha256
   : "";
 let suppliedPaymentState = null;
 
-const planResponse = await requestJsonWithPrePaymentRetries(
+const planResponse = await timedClientStep("planMs", () => requestJsonWithPrePaymentRetries(
   "x402-plan",
   () => requestJson(planUrl),
   isRetryablePrePaymentRead
-);
+));
 if (!planResponse.ok) {
   if (suppliedPaymentPayload && !dryRun) {
-    suppliedPaymentState = await requestJson(suppliedPaymentStateUrl);
+    suppliedPaymentState = await timedClientStep("paymentStateMs", () => requestJson(suppliedPaymentStateUrl));
   }
   if (suppliedPaymentPayload && !dryRun && paymentStateAllowsSamePayloadRetry(suppliedPaymentState?.payload)) {
     const submitBody = {
@@ -1609,11 +1881,11 @@ if (!planResponse.ok) {
       ...(jobContext ? { jobContext } : {}),
       paymentPayload: suppliedPaymentPayload
     };
-    const submit = await paidSubmitJson(hireUrl, {
+    const submit = await timedClientStep("submitMs", () => paidSubmitJson(hireUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(submitBody)
-    });
+    }));
     const submittedRequestId =
       submit.payload?.requestId ??
       submit.payload?.paidExecution?.requestId ??
@@ -1634,20 +1906,21 @@ if (!planResponse.ok) {
       paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256
     };
     if (!submit.ok && submit.payload?.retryable === true) {
-      const recovery = await recoverRetryablePaidSubmitFailure({
+      const recovery = await timedClientStep("recoveryMs", () => recoverRetryablePaidSubmitFailure({
         submit,
         agentId,
         executionIds,
         priceUsd: null,
         runDir,
         paymentPayloadPath: suppliedPaymentPayloadPath,
+        paymentPayload: suppliedPaymentPayload,
         paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
         paymentStateUrl: suppliedPaymentStateUrl,
         resultStateUrl,
         submittedRequestId,
         existingPaymentState: suppliedPaymentState?.payload,
         recoveryMode: "same_payment_payload_without_plan"
-      });
+      }));
       const output = recovery.output;
       writeJson(path.join(runDir, "buyer-run.json"), output);
       console.log(JSON.stringify(output, null, 2));
@@ -1659,9 +1932,15 @@ if (!planResponse.ok) {
       ? await pollRecoverableExecutionState(resultStateUrl)
       : null;
     const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
+    const finalized = await timedClientStep("settlementRecoveryMs", () => finalizeDeliveredSummaryWithSettlement({
+      summary: recoveredSummary ?? summary,
+      paymentStateUrl: suppliedPaymentStateUrl,
+      paymentPayload: suppliedPaymentPayload,
+      paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256
+    }));
     const buyerOutputPath = writeBuyerOutputFile(runDir, submit.payload);
-    const output = {
-      ...(recoveredSummary ?? summary),
+    const output = attachBuyerFinalSummary({
+      ...finalized.summary,
       paid: true,
       status: submit.status,
       agentId,
@@ -1678,8 +1957,10 @@ if (!planResponse.ok) {
       recoveryReason: "x402_plan_unavailable_existing_payload_retry_safe",
       existingPaymentState: suppliedPaymentState.payload,
       ...(recoveryPoll ? { recoveryPoll } : {}),
+      ...(finalized.settlementRecovery ? { settlementRecovery: finalized.settlementRecovery } : {}),
+      ...(finalized.paymentStateResponse?.payload ? { finalPaymentState: finalized.paymentStateResponse.payload } : {}),
       response: submit.payload
-    };
+    });
     writeJson(path.join(runDir, "buyer-run.json"), output);
     console.log(JSON.stringify(output, null, 2));
     if (!output.ok) {
@@ -1754,20 +2035,20 @@ async function preflightHire() {
   });
 }
 
-let preflight = await requestJsonWithPrePaymentRetries(
+let preflight = await timedClientStep("preflightMs", () => requestJsonWithPrePaymentRetries(
   "hire-preflight",
   preflightHire,
   isRetryablePrePaymentHirePreflight
-);
+));
 let activationProbe = null;
 if (preflight.status === 409 && preflight.payload?.code === "paid_execution_probe_required" && args["activate-if-needed"]) {
   activationProbe = runSellerReadiness(args, apiBase);
   if (activationProbe.ok) {
-    preflight = await requestJsonWithPrePaymentRetries(
+    preflight = await timedClientStep("preflightMs", () => requestJsonWithPrePaymentRetries(
       "hire-preflight-after-activation",
       preflightHire,
       isRetryablePrePaymentHirePreflight
-    );
+    ));
   }
 }
 
@@ -1868,12 +2149,12 @@ let paymentPayloadPath = suppliedPaymentPayloadPath;
 if (!paymentPayload && args["wallet-env"]) {
   const privateKey = buyerPrivateKeyFromEnv(String(args["wallet-env"]));
   const account = privateKeyToAccount(privateKey);
-  paymentPayload = await buildFeeSplitPaymentPayload({
+  paymentPayload = await timedClientStep("paymentSigningMs", () => buildFeeSplitPaymentPayload({
     paymentRequirement,
     sessionId: String(paymentRequirement.sessionId ?? planResponse.payload?.sessionId ?? ""),
     payer: account.address,
     account
-  });
+  }));
   paymentPayloadPath = writeJson(path.join(runDir, "payment-payload.json"), paymentPayload);
 }
 if (!paymentPayload) {
@@ -1911,11 +2192,11 @@ const submitBody = {
   ...(jobContext ? { jobContext } : {}),
   paymentPayload
 };
-const submit = await paidSubmitJson(hireUrl, {
+const submit = await timedClientStep("submitMs", () => paidSubmitJson(hireUrl, {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify(submitBody)
-});
+}));
 const paymentPayloadDigestSha256 = digestJson(paymentPayload);
 const submittedRequestId =
   submit.payload?.requestId ??
@@ -1938,19 +2219,20 @@ const executionIds = {
   paymentPayloadDigestSha256
 };
 if (!submit.ok && submit.payload?.retryable === true) {
-  const recovery = await recoverRetryablePaidSubmitFailure({
+  const recovery = await timedClientStep("recoveryMs", () => recoverRetryablePaidSubmitFailure({
     submit,
     agentId,
     executionIds,
     priceUsd: baseOutput.priceUsd,
     runDir,
     paymentPayloadPath,
+    paymentPayload,
     paymentPayloadDigestSha256,
     paymentStateUrl,
     resultStateUrl,
     submittedRequestId,
     recoveryMode: "payment_state_digest_after_submit_timeout"
-  });
+  }));
   const output = recovery.output;
   writeJson(path.join(runDir, "buyer-run.json"), output);
   console.log(JSON.stringify(output, null, 2));
@@ -1962,9 +2244,15 @@ const recoveryPoll = summary.code === "job_running_or_return_timeout"
   ? await pollRecoverableExecutionState(resultStateUrl)
   : null;
 const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
+const finalized = await timedClientStep("settlementRecoveryMs", () => finalizeDeliveredSummaryWithSettlement({
+  summary: recoveredSummary ?? summary,
+  paymentStateUrl,
+  paymentPayload,
+  paymentPayloadDigestSha256
+}));
 const buyerOutputPath = writeBuyerOutputFile(runDir, submit.payload);
-const output = {
-  ...(recoveredSummary ?? summary),
+const output = attachBuyerFinalSummary({
+  ...finalized.summary,
   paid: true,
   status: submit.status,
   agentId,
@@ -1977,8 +2265,10 @@ const output = {
   manifestDir: runDir,
   ...(buyerOutputPath ? { buyerOutputPath } : {}),
   ...(recoveryPoll ? { recoveryPoll } : {}),
+  ...(finalized.settlementRecovery ? { settlementRecovery: finalized.settlementRecovery } : {}),
+  ...(finalized.paymentStateResponse?.payload ? { finalPaymentState: finalized.paymentStateResponse.payload } : {}),
   response: submit.payload
-};
+});
 writeJson(path.join(runDir, "buyer-run.json"), output);
 console.log(JSON.stringify(output, null, 2));
 if (!output.ok) {
