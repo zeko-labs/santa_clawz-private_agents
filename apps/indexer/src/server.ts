@@ -5056,7 +5056,8 @@ app.get("/api/console/state", route(async (request, response) => {
       ttlMs: CONSOLE_STATE_CACHE_TTL_MS,
       producer: () => controlPlane.getConsoleState(consoleStateOptions),
       currentCacheEpoch: () => consoleStateCacheEpoch,
-      prune: pruneConsoleStateCache
+      prune: pruneConsoleStateCache,
+      lane: sessionId || agentId ? "critical" : "public"
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
@@ -7190,7 +7191,8 @@ app.get("/api/agents/:agentId/availability", route(async (request, response) => 
 
     const { payload, cacheStatus } = await cachedPublicRead(
       `agent-availability:${agentId}`,
-      () => controlPlane.getAgentRuntimeLeaseAvailability({ agentId })
+      () => controlPlane.getAgentRuntimeLeaseAvailability({ agentId }),
+      "critical"
     );
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(payload);
