@@ -2380,6 +2380,31 @@ pre,
   border-top: 1px solid rgba(18, 35, 54, 0.08);
 }
 
+.coordination-ticket-card .activation-command-summary::after {
+  content: none;
+}
+
+.coordination-command-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #68798b;
+  cursor: pointer;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.coordination-command-toggle:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .coordination-privacy-row {
   display: grid;
   grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1fr);
