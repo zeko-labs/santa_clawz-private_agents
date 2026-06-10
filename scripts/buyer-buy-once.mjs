@@ -34,6 +34,7 @@ const RECOVERY_POLL_INTERVAL_MS = 3_000;
 const UPGRADE_GUIDE_DOC = "docs/start-here/agent-upgrade-guide.md";
 const clientStartedAtMs = Date.now();
 const clientTiming = {};
+const clientRetryCounts = {};
 
 async function timedClientStep(name, fn) {
   const startedAtMs = Date.now();
@@ -49,6 +50,10 @@ function clientTimingSnapshot() {
     ...clientTiming,
     totalMs: Date.now() - clientStartedAtMs
   };
+}
+
+function clientRetrySnapshot() {
+  return { ...clientRetryCounts };
 }
 
 function printCliError(error) {
@@ -829,6 +834,7 @@ function isRetryablePrePaymentHirePreflight(response) {
 async function requestJsonWithPrePaymentRetries(label, producer, isRetryable) {
   let response = await producer();
   for (let attempt = 0; attempt < PRE_PAYMENT_RETRY_DELAYS_MS.length && isRetryable(response); attempt += 1) {
+    clientRetryCounts[label] = (clientRetryCounts[label] ?? 0) + 1;
     const delayMs = retryDelayFromResponse(response, PRE_PAYMENT_RETRY_DELAYS_MS[attempt]);
     console.warn(JSON.stringify({
       event: "buyer_pre_payment_retry",
@@ -1526,7 +1532,8 @@ function attachBuyerFinalSummary(output) {
     finalOutcome: finalOutcomeFromOutput(output),
     ...(originalSubmitAttempt ? { originalSubmitAttempt } : {}),
     ...(recovery ? { recovery } : {}),
-    clientTiming: clientTimingSnapshot()
+    clientTiming: clientTimingSnapshot(),
+    clientRetries: clientRetrySnapshot()
   };
 }
 

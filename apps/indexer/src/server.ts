@@ -204,7 +204,7 @@ type HotReadInflightEntry = {
   promise: Promise<unknown>;
 };
 type HotReadProducerTask = () => void;
-type HotReadProducerLane = "public" | "critical";
+type HotReadProducerLane = "public" | "critical" | "protocol";
 type HotReadProducerQueueState = {
   active: number;
   queued: HotReadProducerTask[];
@@ -219,6 +219,8 @@ const paymentLedgerCache = new Map<string, HotReadCacheEntry>();
 const paymentLedgerInflight = new Map<string, HotReadInflightEntry>();
 const x402PaymentStateCache = new Map<string, HotReadCacheEntry>();
 const x402PaymentStateInflight = new Map<string, HotReadInflightEntry>();
+const x402PlanCache = new Map<string, HotReadCacheEntry>();
+const x402PlanInflight = new Map<string, HotReadInflightEntry>();
 const publicMarketplaceSnapshotCache = new Map<string, HotReadCacheEntry>();
 const publicMarketplaceSnapshotInflight = new Map<string, HotReadInflightEntry>();
 const publicReadCache = new Map<string, HotReadCacheEntry>();
@@ -245,8 +247,18 @@ const criticalHotReadProducerQueue: HotReadProducerQueueState = {
   maxQueued: CRITICAL_HOT_READ_PRODUCER_QUEUE_MAX,
   label: "critical"
 };
+const protocolHotReadProducerQueue: HotReadProducerQueueState = {
+  active: 0,
+  queued: [],
+  concurrency: 2,
+  maxQueued: 24,
+  label: "protocol"
+};
 
 function hotReadQueueForLane(lane: HotReadProducerLane): HotReadProducerQueueState {
+  if (lane === "protocol") {
+    return protocolHotReadProducerQueue;
+  }
   return lane === "critical" ? criticalHotReadProducerQueue : publicHotReadProducerQueue;
 }
 
@@ -300,12 +312,31 @@ function clearConsoleStateCache() {
   consoleStateInflight.clear();
   paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
-  x402PaymentStateCache.clear();
-  x402PaymentStateInflight.clear();
   publicMarketplaceSnapshotCache.clear();
   publicMarketplaceSnapshotInflight.clear();
   publicReadCache.clear();
   publicReadInflight.clear();
+}
+
+function clearX402PlanCache() {
+  x402PlanCache.clear();
+  x402PlanInflight.clear();
+}
+
+function clearX402PlanCacheForAgent(agentId: string) {
+  if (!agentId) {
+    return;
+  }
+  for (const key of Array.from(x402PlanCache.keys())) {
+    if (key.endsWith(`:${agentId}`) || key.includes(`:agent:${agentId}`)) {
+      x402PlanCache.delete(key);
+    }
+  }
+  for (const key of Array.from(x402PlanInflight.keys())) {
+    if (key.endsWith(`:${agentId}`) || key.includes(`:agent:${agentId}`)) {
+      x402PlanInflight.delete(key);
+    }
+  }
 }
 
 function agentIdFromHeartbeatPath(pathname: string) {
@@ -313,14 +344,25 @@ function agentIdFromHeartbeatPath(pathname: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : "";
 }
 
+function writeCanAffectX402Plan(pathname: string) {
+  return (
+    pathname === "/api/console/profile" ||
+    /^\/api\/agents\/[^/]+\/readiness\/refresh$/.test(pathname)
+  );
+}
+
 function invalidateCachesAfterWrite(pathname: string) {
   const heartbeatAgentId = agentIdFromHeartbeatPath(pathname);
   if (heartbeatAgentId) {
     publicReadCache.delete(`agent-availability:${heartbeatAgentId}`);
     publicReadInflight.delete(`agent-availability:${heartbeatAgentId}`);
+    clearX402PlanCacheForAgent(heartbeatAgentId);
     return;
   }
   clearConsoleStateCache();
+  if (writeCanAffectX402Plan(pathname)) {
+    clearX402PlanCache();
+  }
 }
 
 function invalidateAgentRuntimeStatusCaches(agentId: string) {
@@ -330,6 +372,7 @@ function invalidateAgentRuntimeStatusCaches(agentId: string) {
   clearConsoleStateCache();
   publicReadCache.delete(`agent-availability:${agentId}`);
   publicReadInflight.delete(`agent-availability:${agentId}`);
+  clearX402PlanCacheForAgent(agentId);
 }
 
 function hotReadRetainedUntilMs(ttlMs: number, nowMs = Date.now()) {
@@ -458,6 +501,21 @@ function pruneX402PaymentStateCache(nowMs = Date.now()) {
       break;
     }
     x402PaymentStateCache.delete(oldest.value);
+  }
+}
+
+function pruneX402PlanCache(nowMs = Date.now()) {
+  for (const [key, entry] of x402PlanCache.entries()) {
+    if (entry.retainedUntilMs <= nowMs) {
+      x402PlanCache.delete(key);
+    }
+  }
+  while (x402PlanCache.size > PUBLIC_READ_CACHE_MAX_ENTRIES) {
+    const oldest = x402PlanCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    x402PlanCache.delete(oldest.value);
   }
 }
 
@@ -2648,6 +2706,66 @@ function x402PlanTemporarilyUnavailable(input: {
   };
 }
 
+async function cachedX402Plan(input: {
+  cacheKey: string;
+  producer: () => Promise<X402PlanResponse>;
+}): Promise<{
+  payload: ReturnType<typeof decorateX402PlanResponse>;
+  cacheStatus: HotReadCacheStatus;
+}> {
+  const nowMs = Date.now();
+  const cached = PUBLIC_READ_CACHE_TTL_MS > 0 ? x402PlanCache.get(input.cacheKey) : undefined;
+  if (cached && cached.expiresAtMs > nowMs) {
+    return {
+      payload: decorateX402PlanResponse(cached.payload as X402PlanResponse, "hit"),
+      cacheStatus: "hit"
+    };
+  }
+  const inflight = x402PlanInflight.get(input.cacheKey);
+  if (cached && cached.retainedUntilMs > nowMs) {
+    if (!inflight || inflight.epoch !== publicReadCacheEpoch) {
+      launchHotReadRefresh({
+        cacheKey: input.cacheKey,
+        cacheEpoch: publicReadCacheEpoch,
+        cache: x402PlanCache,
+        inflight: x402PlanInflight,
+        ttlMs: PUBLIC_READ_CACHE_TTL_MS,
+        producer: input.producer,
+        currentCacheEpoch: () => publicReadCacheEpoch,
+        prune: pruneX402PlanCache,
+        lane: "protocol"
+      });
+      return {
+        payload: decorateX402PlanResponse(cached.payload as X402PlanResponse, "refreshing"),
+        cacheStatus: "refreshing"
+      };
+    }
+    return {
+      payload: decorateX402PlanResponse(cached.payload as X402PlanResponse, "stale"),
+      cacheStatus: "stale"
+    };
+  }
+  const coldRead =
+    inflight && inflight.epoch === publicReadCacheEpoch
+      ? inflight.promise as Promise<X402PlanResponse>
+      : launchHotReadRefresh({
+          cacheKey: input.cacheKey,
+          cacheEpoch: publicReadCacheEpoch,
+          cache: x402PlanCache,
+          inflight: x402PlanInflight,
+          ttlMs: PUBLIC_READ_CACHE_TTL_MS,
+          producer: input.producer,
+          currentCacheEpoch: () => publicReadCacheEpoch,
+          prune: pruneX402PlanCache,
+          lane: "protocol"
+        });
+  const payload = await withColdReadBudget(coldRead, X402_PLAN_COLD_READ_BUDGET_MS, "x402_plan_cold_read_timeout");
+  return {
+    payload: decorateX402PlanResponse(payload, inflight ? "inflight" : "miss"),
+    cacheStatus: inflight ? "inflight" : "miss"
+  };
+}
+
 function commaSet(value: string | undefined) {
   return new Set((value ?? "").split(",").map((item) => item.trim()).filter(Boolean));
 }
@@ -3768,7 +3886,7 @@ async function cachedX402PaymentState(input: {
         producer: input.producer,
         currentCacheEpoch: () => paymentLedgerCacheEpoch,
         prune: pruneX402PaymentStateCache,
-        lane: "critical"
+        lane: "protocol"
       });
       return {
         payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "refreshing"),
@@ -3792,7 +3910,7 @@ async function cachedX402PaymentState(input: {
           producer: input.producer,
           currentCacheEpoch: () => paymentLedgerCacheEpoch,
           prune: pruneX402PaymentStateCache,
-          lane: "critical"
+          lane: "protocol"
         });
   try {
     const payload = await withColdReadBudget(coldRead, X402_PAYMENT_STATE_COLD_READ_BUDGET_MS);
@@ -7304,11 +7422,10 @@ app.get("/api/x402/plan", route(async (request, response) => {
     const agentId = queryString(request.query, "agentId") ?? "";
     const apiBase = getBaseUrl(request);
     const cacheKey = `x402-plan:${apiBase}:session:${sessionId}:agent:${agentId}`;
-    const planRead = await withColdReadBudget(
-      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromQuery(request)).plan, "critical"),
-      X402_PLAN_COLD_READ_BUDGET_MS,
-      "x402_plan_cold_read_timeout"
-    ).catch((error) => ({ error }));
+    const planRead = await cachedX402Plan({
+      cacheKey,
+      producer: async () => (await buildX402PlanFromQuery(request)).plan
+    }).catch((error) => ({ error }));
     if ("error" in planRead) {
       response.set("x-santaclawz-cache", "temporarily_unavailable");
       response.status(503).json(x402PlanTemporarilyUnavailable({
@@ -7321,11 +7438,10 @@ app.get("/api/x402/plan", route(async (request, response) => {
       return;
     }
     const cacheStatus = planRead.cacheStatus;
-    const basePlan = decorateX402PlanResponse(planRead.payload, cacheStatus);
     const plan = await attachBuyerPaymentSafetyToPlan({
       apiBase,
       query: request.query,
-      plan: basePlan as X402PlanResponse
+      plan: planRead.payload as X402PlanResponse
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
@@ -7346,11 +7462,10 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
 
     const apiBase = getBaseUrl(request);
     const cacheKey = `agent-x402-plan:${apiBase}:${agentId}`;
-    const planRead = await withColdReadBudget(
-      cachedPublicRead(cacheKey, async () => (await buildX402PlanFromOptions(apiBase, { agentId })).plan, "critical"),
-      X402_PLAN_COLD_READ_BUDGET_MS,
-      "x402_plan_cold_read_timeout"
-    ).catch((error) => ({ error }));
+    const planRead = await cachedX402Plan({
+      cacheKey,
+      producer: async () => (await buildX402PlanFromOptions(apiBase, { agentId })).plan
+    }).catch((error) => ({ error }));
     if ("error" in planRead) {
       response.set("x-santaclawz-cache", "temporarily_unavailable");
       response.status(503).json(x402PlanTemporarilyUnavailable({
@@ -7362,11 +7477,10 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
       return;
     }
     const cacheStatus = planRead.cacheStatus;
-    const basePlan = decorateX402PlanResponse(planRead.payload, cacheStatus);
     const plan = await attachBuyerPaymentSafetyToPlan({
       apiBase,
       query: request.query,
-      plan: basePlan as X402PlanResponse
+      plan: planRead.payload as X402PlanResponse
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
