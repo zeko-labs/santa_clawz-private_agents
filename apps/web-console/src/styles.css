@@ -2380,6 +2380,31 @@ pre,
   border-top: 1px solid rgba(18, 35, 54, 0.08);
 }
 
+.coordination-ticket-card .activation-command-summary::after {
+  content: none;
+}
+
+.coordination-command-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #68798b;
+  cursor: pointer;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.coordination-command-toggle:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .coordination-privacy-row {
   display: grid;
   grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1fr);
@@ -4055,8 +4080,6 @@ pre,
   box-sizing: border-box;
   min-height: 28px;
   padding: 6px 9px;
-  font-size: 0.66rem;
-  line-height: 1.05;
 }
 
 .payment-activity-card .board-proof-pill.payment-status-pill {
@@ -4318,6 +4341,7 @@ pre,
 .board-proof-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   width: fit-content;
   padding: 6px 9px;
@@ -4328,6 +4352,7 @@ pre,
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.06em;
+  line-height: 1.1;
   text-transform: uppercase;
 }
 
@@ -8024,7 +8049,7 @@ button:disabled {
     overflow: hidden;
     font-size: 0.58rem;
     letter-spacing: 0.04em;
-    line-height: 1;
+    line-height: 1.1;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -8032,8 +8057,6 @@ button:disabled {
   .agent-message-card.compact.payment-activity-card .board-proof-pill.payment-status-pill {
     flex: 0 0 auto;
     max-width: 128px;
-    font-size: 0.66rem;
-    line-height: 1;
     min-height: 28px;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -2628,6 +2628,7 @@ export function App() {
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
   const [coordinationSetupCopied, setCoordinationSetupCopied] = useState(false);
   const [coordinationSetupIssuing, setCoordinationSetupIssuing] = useState(false);
+  const [coordinationCommandOpen, setCoordinationCommandOpen] = useState(false);
   const [coordinationSetupTicket, setCoordinationSetupTicket] = useState<CoordinationSetupTicket | null>(null);
   const [coordinationSetupTicketStatus, setCoordinationSetupTicketStatus] = useState<CoordinationSetupTicketStatusResponse | null>(null);
   const [coordinationTicketNowMs, setCoordinationTicketNowMs] = useState<number>(Date.now());
@@ -4765,6 +4766,7 @@ export function App() {
         swarmId: ticket.swarmId
       });
       setCoordinationSetupCopied(false);
+      setCoordinationCommandOpen(false);
       setCoordinationTicketNowMs(Date.now());
       setCoordinationError(null);
     } catch (nextError) {
@@ -4991,6 +4993,7 @@ export function App() {
     setCoordinationAgentUrl("");
     setCoordinationError(null);
     setCoordinationSetupCopied(false);
+    setCoordinationCommandOpen(false);
     setCoordinationSetupTicket(null);
     setCoordinationSetupTicketStatus(null);
     clearStoredCoordinationDraft();
@@ -5245,24 +5248,32 @@ export function App() {
                         <strong>{coordinationSetupTicketExpired ? "Ticket expired" : "Copy workshop ticket"}</strong>
                         <code>{coordinationSetupTicketExpired ? "Reissue a fresh ticket before sharing" : "Ticket + per-agent claim commands"}</code>
                       </span>
+                      <button
+                        type="button"
+                        className="coordination-command-toggle"
+                        aria-expanded={coordinationCommandOpen}
+                        onClick={() => {
+                          setCoordinationCommandOpen((open) => !open);
+                        }}
+                      >
+                        {coordinationCommandOpen ? "Hide command" : "Show command"}
+                      </button>
                     </div>
                     <div className="coordination-ticket-next-steps">
                       <div>
-                        <strong>Preferred path</strong>
-                        <span>Put the ticket in your workshop runner, deployment script, local wrapper, or secret manager. Each enrolled agent claims only its own setup with its agent id.</span>
-                      </div>
-                      <div>
-                        <strong>Manual fallback</strong>
-                        <span>Send the ticket privately to the operator of each selected agent. Do not post it in a public Slack, Telegram, Discord, or open channel.</span>
+                        <strong>Team setup</strong>
+                        <span>Put the ticket in your workshop runner, deployment script, local wrapper, or secret manager. Or send it privately to each selected agent operator. Each enrolled agent claims only its own setup with its agent id.</span>
                       </div>
                       <div>
                         <strong>SantaClawz role</strong>
                         <span>SantaClawz stores the workshop setup and claim endpoint; V1 does not automatically message external agent owners because the ticket is a bearer setup credential.</span>
                       </div>
                     </div>
-                    <div className="command-strip compact-command-strip activation-command-strip coordination-ticket-command-strip">
-                      <pre className="activation-command-code">{coordinationSetupTicketHandoff}</pre>
-                    </div>
+                    {coordinationCommandOpen ? (
+                      <div className="command-strip compact-command-strip activation-command-strip coordination-ticket-command-strip">
+                        <pre className="activation-command-code">{coordinationSetupTicketHandoff}</pre>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
