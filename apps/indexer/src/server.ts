@@ -3789,7 +3789,138 @@ async function buildX402PaymentStateResponse(input: {
 
 type X402PaymentStateResponse = Awaited<ReturnType<typeof buildX402PaymentStateResponse>>;
 
+type X402PaymentStateLookup = {
+  ledgerId?: string;
+  intentId?: string;
+  requestId?: string;
+  paymentPayloadDigestSha256?: string;
+};
+
 type X402PaymentStateCacheStatus = HotReadCacheStatus | "temporarily_unavailable";
+
+function normalizeX402PaymentStateLookup(input: X402PaymentStateLookup): X402PaymentStateLookup {
+  const ledgerId = optionalString(input.ledgerId);
+  const intentId = optionalString(input.intentId);
+  const requestId = optionalString(input.requestId);
+  const paymentPayloadDigestSha256 = optionalString(input.paymentPayloadDigestSha256);
+  return {
+    ...(ledgerId ? { ledgerId } : {}),
+    ...(intentId ? { intentId } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+  };
+}
+
+function hasX402PaymentStateLookup(input: X402PaymentStateLookup) {
+  return Boolean(input.ledgerId || input.intentId || input.requestId || input.paymentPayloadDigestSha256);
+}
+
+function x402PaymentStateCacheKey(input: X402PaymentStateLookup) {
+  const lookup = normalizeX402PaymentStateLookup(input);
+  return [
+    "x402-payment-state",
+    lookup.ledgerId ? `ledger:${lookup.ledgerId}` : "",
+    lookup.intentId ? `intent:${lookup.intentId}` : "",
+    lookup.requestId ? `request:${lookup.requestId}` : "",
+    lookup.paymentPayloadDigestSha256 ? `digest:${lookup.paymentPayloadDigestSha256}` : ""
+  ].join("|");
+}
+
+function x402PaymentStateLookupFromRecord(value: unknown): X402PaymentStateLookup {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const ledgerId = optionalString(value.ledgerId);
+  const intentId = optionalString(value.intentId) ?? optionalString(value.quoteIntentId);
+  const requestId = optionalString(value.requestId) ?? optionalString(value.hireRequestId);
+  const paymentPayloadDigestSha256 = optionalString(value.paymentPayloadDigestSha256);
+  return normalizeX402PaymentStateLookup({
+    ...(ledgerId ? { ledgerId } : {}),
+    ...(intentId ? { intentId } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+  });
+}
+
+function cacheCanonicalX402PaymentState(
+  payload: X402PaymentStateResponse,
+  ...seedLookups: X402PaymentStateLookup[]
+) {
+  if (PAYMENT_LEDGER_CACHE_TTL_MS <= 0) {
+    return;
+  }
+  const lookups: X402PaymentStateLookup[] = [];
+  const addLookup = (lookup: X402PaymentStateLookup) => {
+    const normalized = normalizeX402PaymentStateLookup(lookup);
+    if (hasX402PaymentStateLookup(normalized)) {
+      lookups.push(normalized);
+    }
+  };
+  for (const lookup of seedLookups) {
+    addLookup(lookup);
+  }
+  addLookup(x402PaymentStateLookupFromRecord(payload.lookup));
+  const payment = isRecord(payload.payment) ? payload.payment : undefined;
+  const latestLedger = isRecord(payment?.latestLedger) ? payment.latestLedger : undefined;
+  const ledgerLookup = x402PaymentStateLookupFromRecord(latestLedger);
+  addLookup(ledgerLookup);
+  if (ledgerLookup.ledgerId) {
+    addLookup({ ledgerId: ledgerLookup.ledgerId });
+  }
+  if (ledgerLookup.requestId) {
+    addLookup({ requestId: ledgerLookup.requestId });
+  }
+  if (ledgerLookup.paymentPayloadDigestSha256) {
+    addLookup({ paymentPayloadDigestSha256: ledgerLookup.paymentPayloadDigestSha256 });
+  }
+  const execution = isRecord(payload.execution) ? payload.execution : undefined;
+  const executionLookup = x402PaymentStateLookupFromRecord(execution);
+  addLookup({
+    ...executionLookup,
+    ...(ledgerLookup.paymentPayloadDigestSha256
+      ? { paymentPayloadDigestSha256: ledgerLookup.paymentPayloadDigestSha256 }
+      : {})
+  });
+  const cacheKeys = new Set(lookups.map(x402PaymentStateCacheKey));
+  const nowMs = Date.now();
+  for (const cacheKey of cacheKeys) {
+    setHotReadCacheEntry(x402PaymentStateCache, cacheKey, PAYMENT_LEDGER_CACHE_TTL_MS, payload, nowMs);
+    x402PaymentStateInflight.delete(cacheKey);
+  }
+  pruneX402PaymentStateCache();
+}
+
+function x402PaymentStateFinalitySummary(payload: X402PaymentStateResponse) {
+  const payment = isRecord(payload.payment) ? payload.payment : undefined;
+  const latestLedger = isRecord(payment?.latestLedger) ? payment.latestLedger : undefined;
+  const transactionHashes = Array.isArray(latestLedger?.transactionHashes)
+    ? latestLedger.transactionHashes.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  return {
+    protocolState: typeof payload.protocolState === "string" ? payload.protocolState : undefined,
+    buyerAction: typeof payload.buyerAction === "string" ? payload.buyerAction : undefined,
+    sellerOutcome: typeof payload.sellerOutcome === "string" ? payload.sellerOutcome : undefined,
+    operatorObligation: typeof payload.operatorObligation === "string" ? payload.operatorObligation : undefined,
+    paymentStatus: typeof payload.paymentStatus === "string" ? payload.paymentStatus : undefined,
+    settlementStatus: typeof payload.settlementStatus === "string" ? payload.settlementStatus : undefined,
+    paymentFinality: typeof payload.paymentFinality === "string" ? payload.paymentFinality : undefined,
+    paymentFinalityPending: payload.paymentFinalityPending === true,
+    statePollingRequired: payload.statePollingRequired === true,
+    ...(isRecord(payload.partyFinality) ? { partyFinality: payload.partyFinality } : {}),
+    ...(typeof latestLedger?.ledgerId === "string" ? { ledgerId: latestLedger.ledgerId } : {}),
+    ...(typeof latestLedger?.hireRequestId === "string" ? { requestId: latestLedger.hireRequestId } : {}),
+    ...(typeof latestLedger?.paymentPayloadDigestSha256 === "string"
+      ? { paymentPayloadDigestSha256: latestLedger.paymentPayloadDigestSha256 }
+      : {}),
+    ...(typeof latestLedger?.sellerSettlementTxHash === "string"
+      ? { sellerSettlementTxHash: latestLedger.sellerSettlementTxHash }
+      : {}),
+    ...(typeof latestLedger?.protocolFeeTxHash === "string"
+      ? { protocolFeeTxHash: latestLedger.protocolFeeTxHash }
+      : {}),
+    ...(transactionHashes.length > 0 ? { transactionHashes } : {})
+  };
+}
 
 function withColdReadBudget<T>(
   promise: Promise<T>,
@@ -7556,13 +7687,7 @@ app.get("/api/x402/payment-state", route(async (request, response) => {
       ...(requestId ? { requestId } : {}),
       ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
     };
-    const cacheKey = [
-      "x402-payment-state",
-      ledgerId ? `ledger:${ledgerId}` : "",
-      intentId ? `intent:${intentId}` : "",
-      requestId ? `request:${requestId}` : "",
-      paymentPayloadDigestSha256 ? `digest:${paymentPayloadDigestSha256}` : ""
-    ].join("|");
+    const cacheKey = x402PaymentStateCacheKey(lookup);
     const { payload, cacheStatus, statusCode } = await cachedX402PaymentState({
       cacheKey,
       lookup,
@@ -8378,13 +8503,16 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       return;
     }
     if (ledgerHasSettledPayment(canonicalLedgerEntry)) {
+      const paymentState = await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup });
+      cacheCanonicalX402PaymentState(paymentState, stateLookup);
       response.json({
         ok: true,
         idempotent: true,
         status: "settled",
         code: "settlement_already_recorded",
         doNotCreateNewPayment: true,
-        paymentState: await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup })
+        ...x402PaymentStateFinalitySummary(paymentState),
+        paymentState
       });
       return;
     }
@@ -8418,11 +8546,14 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
     });
     const paymentState = await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup });
     if (outcome.status === "settled") {
+      cacheCanonicalX402PaymentState(paymentState, stateLookup);
       response.json({
         ok: true,
         status: "settled",
         code: "settlement_retry_settled",
         idempotent: true,
+        doNotCreateNewPayment: true,
+        ...x402PaymentStateFinalitySummary(paymentState),
         paymentState
       });
       return;
