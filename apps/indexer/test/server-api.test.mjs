@@ -4532,31 +4532,36 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       false
     );
 
-    const deliveredAwaitingSettlementDigest = "e".repeat(64);
+    const deliveredAwaitingSettlementPayload = {
+      protocol: "x402",
+      nonce: "delivered-awaiting-settlement-test"
+    };
+    const deliveredAwaitingSettlementDigest = createHash("sha256")
+      .update(JSON.stringify(deliveredAwaitingSettlementPayload))
+      .digest("hex");
     const deliveredPaymentLedgerPath = path.join(workspaceDir, ".clawz-data", "state", "payment-ledger.json");
+    const deliveredPaymentLedgerEntry = {
+      ledgerId: "pay_delivered_awaiting_settlement_test",
+      createdAtIso: new Date().toISOString(),
+      updatedAtIso: new Date().toISOString(),
+      agentId,
+      sessionId,
+      x402RequestId: "req_delivered_awaiting_settlement_test",
+      hireRequestId: hire.payload.requestId,
+      resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      paymentPayloadDigestSha256: deliveredAwaitingSettlementDigest,
+      transactionHashes: [],
+      paymentStatus: "authorization_verified",
+      executionStatus: "completed",
+      returnStatus: "accepted"
+    };
     await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
-      entries: [
-        {
-          ledgerId: "pay_delivered_awaiting_settlement_test",
-          createdAtIso: new Date().toISOString(),
-          updatedAtIso: new Date().toISOString(),
-          agentId,
-          sessionId,
-          x402RequestId: "req_delivered_awaiting_settlement_test",
-          hireRequestId: hire.payload.requestId,
-          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
-          pricingMode: "fixed-exact",
-          rail: "base-usdc",
-          networkId: "eip155:8453",
-          assetSymbol: "USDC",
-          amountUsd: "0.25",
-          paymentPayloadDigestSha256: deliveredAwaitingSettlementDigest,
-          transactionHashes: [],
-          paymentStatus: "authorization_verified",
-          executionStatus: "completed",
-          returnStatus: "accepted"
-        }
-      ]
+      entries: [deliveredPaymentLedgerEntry]
     }, null, 2), "utf8");
     const deliveredPaymentState = await requestJson(
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
@@ -4630,6 +4635,44 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredSettlementWrongPayload.payload.doNotCreateNewPayment, true);
     assert.equal(deliveredSettlementWrongPayload.payload.expectedPaymentPayloadDigestSha256, deliveredAwaitingSettlementDigest);
     assert.equal("paymentState" in deliveredSettlementWrongPayload.payload, false);
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ...deliveredPaymentLedgerEntry,
+          updatedAtIso: new Date().toISOString(),
+          paymentStatus: "settled",
+          settlementStatus: "settled",
+          sellerSettlementTxHash: "0xdeliveredawaitingsettlementalreadyrecorded",
+          protocolFeeTxHash: "0xdeliveredawaitingsettlementfeerecorded",
+          transactionHashes: [
+            "0xdeliveredawaitingsettlementalreadyrecorded",
+            "0xdeliveredawaitingsettlementfeerecorded"
+          ]
+        }
+      ]
+    }, null, 2), "utf8");
+    const deliveredSettlementAlreadyRecorded = await requestJson(
+      `${baseUrl}/api/x402/settlement-retry?ledgerId=pay_delivered_awaiting_settlement_test`,
+      {
+        method: "POST",
+        body: JSON.stringify({ paymentPayload: deliveredAwaitingSettlementPayload })
+      }
+    );
+    assert.equal(deliveredSettlementAlreadyRecorded.status, 200);
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.code, "settlement_already_recorded");
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.protocolState, "DELIVERED_SETTLED");
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.paymentFinality, "settled");
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.paymentFinalityPending, false);
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.sellerSettlementTxHash, "0xdeliveredawaitingsettlementalreadyrecorded");
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.paymentState.protocolState, "DELIVERED_SETTLED");
+    const deliveredPaymentStateAfterSettlementRetry = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
+    );
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.status, 200);
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.protocolState, "DELIVERED_SETTLED");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.projectionSource, "hit");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.paymentFinality, "settled");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.paymentFinalityPending, false);
     assert.match(deliveredPaymentState.payload.retryResume.guidance, /Delivery is available/);
     assert.doesNotMatch(deliveredPaymentState.payload.retryResume.guidance, /Retry or resume/);
     assert.equal(deliveredPaymentState.payload.partyFinality.buyerTerminal, true);

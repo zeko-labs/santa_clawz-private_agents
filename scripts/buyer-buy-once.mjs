@@ -750,6 +750,10 @@ async function requestJson(url, init = {}, options = {}) {
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
     ? options.timeoutMs
     : API_FETCH_TIMEOUT_MS;
+  const retryableCode =
+    typeof options.retryableCode === "string" && options.retryableCode.trim()
+      ? options.retryableCode.trim()
+      : "platform_unavailable_retryable";
   const fetchInit = {
     ...init,
     ...(!init.signal && Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -765,7 +769,7 @@ async function requestJson(url, init = {}, options = {}) {
       ok: false,
       status: 0,
       payload: createRetryablePlatformFailure(0, error instanceof Error ? error.message : String(error), {
-        code: "platform_unavailable_retryable",
+        code: retryableCode,
         operation: init.method ?? "GET",
         transportTimeoutMs: timeoutMs
       })
@@ -778,7 +782,7 @@ async function requestJson(url, init = {}, options = {}) {
   } catch {
     payload = isRetryablePlatformStatus(response.status)
       ? createRetryablePlatformFailure(response.status, text, {
-          code: "platform_unavailable_retryable",
+          code: retryableCode,
           operation: init.method ?? "GET",
           transportTimeoutMs: timeoutMs
         })
@@ -788,7 +792,10 @@ async function requestJson(url, init = {}, options = {}) {
 }
 
 function paidSubmitJson(url, init) {
-  return requestJson(url, init, { timeoutMs: PAID_SUBMIT_FETCH_TIMEOUT_MS });
+  return requestJson(url, init, {
+    timeoutMs: PAID_SUBMIT_FETCH_TIMEOUT_MS,
+    retryableCode: "paid_submit_transport_unavailable_retryable"
+  });
 }
 
 function payloadCode(response) {
@@ -1287,6 +1294,10 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
   const buyerAction = stringValue(lifecycle, "buyerAction") || stringValue(paymentStatePayload, "buyerAction");
   const sellerOutcome = stringValue(lifecycle, "sellerOutcome") || stringValue(paymentStatePayload, "sellerOutcome");
   const operatorObligation = stringValue(lifecycle, "operatorObligation") || stringValue(paymentStatePayload, "operatorObligation");
+  const paymentFinality =
+    stringValue(lifecycle, "paymentFinality") || stringValue(paymentStatePayload, "paymentFinality");
+  const paymentFinalityPending =
+    lifecycle.paymentFinalityPending === true || paymentStatePayload?.paymentFinalityPending === true;
   const execution = isRecord(paymentStatePayload?.execution) ? paymentStatePayload.execution : paymentStatePayload;
   const buyerDelivery = buyerDeliveryProjection(execution);
   const buyerDeliveryAvailable = buyerAnswer.hasBuyerDelivery === true || buyerDelivery.buyerDeliveryAvailable;
@@ -1315,6 +1326,8 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
     buyerAction,
     sellerOutcome: sellerOutcome || "completed",
     operatorObligation: operatorObligation || (paymentSettled ? "none" : "settle_payment"),
+    paymentFinality: paymentFinality || (paymentSettled ? "settled" : "pending"),
+    paymentFinalityPending: paymentSettled ? false : paymentFinalityPending || true,
     paymentStatus: paymentSettled
       ? "settled"
       : stringValue(latestLedger, "paymentStatus") || stringValue(paymentStatePayload, "paymentStatus") || "authorized",
