@@ -2122,15 +2122,27 @@ if (preflight.status === 409 && preflight.payload?.code === "paid_execution_prob
 }
 
 if (!paymentRequirement || !accept) {
-  const code = preflight.payload?.requestType === "quote_intake" || preflight.payload?.pricingMode === "quote-required"
+  const retryablePreflight = isRetryablePrePaymentHirePreflight(preflight);
+  const responseCode = payloadCode(preflight);
+  const quoteRequired = preflight.payload?.requestType === "quote_intake" || preflight.payload?.pricingMode === "quote-required";
+  const code = quoteRequired
     ? "seller_requires_quote"
-    : "payment_requirement_not_found";
+    : retryablePreflight
+      ? responseCode || "hire_preflight_temporarily_unavailable"
+      : "payment_requirement_not_found";
   const output = {
     ok: false,
     code,
-    message: code === "seller_requires_quote"
+    message: quoteRequired
       ? "Seller is quote-required. Use procurement/quote flow, then pay the accepted quote."
-      : "Preflight did not return a fixed-price x402 payment requirement.",
+      : retryablePreflight
+        ? "Hire preflight was temporarily unavailable before any payment was requested. Retry preflight; do not sign a payment from this response."
+        : "Preflight did not return a fixed-price x402 payment requirement.",
+    retryable: retryablePreflight,
+    paymentRequested: false,
+    paymentRequirementFound: false,
+    safeToCreateNewPayment: false,
+    nextAction: retryablePreflight ? "retry_hire_preflight" : quoteRequired ? "request_quote" : "inspect_preflight_response",
     ...baseOutput,
     response: preflight.payload
   };
