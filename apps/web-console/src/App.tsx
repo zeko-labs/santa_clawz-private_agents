@@ -4909,8 +4909,13 @@ export function App() {
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
   const paidOutcomeFallbackCount = agentCompletionScore?.evaluatedJobCount ?? 0;
-  const publicJobActivityCount = agentJobActivityStats?.publicJobCount ?? paidOutcomeFallbackCount;
-  const privateJobActivityCount = agentJobActivityStats?.privateJobCount ?? 0;
+  const usePaymentLedgerJobSplit = agentCompletionScore?.source === "payment-ledger" && paidOutcomeFallbackCount > 0;
+  const publicJobActivityCount = usePaymentLedgerJobSplit
+    ? Math.min(paidOutcomeFallbackCount, Math.max(0, agentJobActivityStats?.publicJobCount ?? paidOutcomeFallbackCount))
+    : agentJobActivityStats?.publicJobCount ?? paidOutcomeFallbackCount;
+  const privateJobActivityCount = usePaymentLedgerJobSplit
+    ? Math.max(0, paidOutcomeFallbackCount - publicJobActivityCount)
+    : agentJobActivityStats?.privateJobCount ?? 0;
   const agentJobActivityLabel =
     agentJobActivityStats || paidOutcomeFallbackCount > 0
       ? `${publicJobActivityCount} public / ${privateJobActivityCount} private`
