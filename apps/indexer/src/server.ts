@@ -1894,6 +1894,91 @@ function relayDeliveryFailureBody(error: unknown, extra: Record<string, unknown>
   };
 }
 
+async function paymentAuthorizedExecutionStateUnknownBody(input: {
+  apiBase: string;
+  error: unknown;
+  agentId?: string;
+  ledgerId?: string;
+  paymentPayloadDigestSha256?: string;
+  payment?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
+}) {
+  const paymentStateUrl = input.paymentPayloadDigestSha256
+    ? `${input.apiBase}/api/x402/payment-state?${new URLSearchParams({
+        paymentPayloadDigestSha256: input.paymentPayloadDigestSha256
+      }).toString()}`
+    : undefined;
+  const protocolLifecycle = reduceSantaClawzPaidLifecycle({
+    paymentStatus: "authorization_verified",
+    settlementStatus: "authorized",
+    relayDeliveryStatus: "failed",
+    agentExecutionStatus: "not_started",
+    proofStatus: "not_started",
+    paymentAuthorized: true,
+    paymentSettled: false,
+    safeToRetrySamePayload: Boolean(input.paymentPayloadDigestSha256)
+  });
+  const baseFailure = relayDeliveryFailureBody(input.error, {
+    ...(input.extra ?? {}),
+    ...(input.agentId ? { agentId: input.agentId } : {}),
+    payment: {
+      ...(input.payment ?? {}),
+      status: "authorized",
+      ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+      transactionHashes: []
+    }
+  });
+  return {
+    ...baseFailure,
+    ok: false,
+    paid: true,
+    code: "payment_authorized_execution_state_unknown",
+    error: errorMessage(
+      input.error,
+      "Payment was authorized, but SantaClawz could not confirm agent delivery yet."
+    ),
+    retryable: true,
+    paymentAuthorized: true,
+    paymentRequested: true,
+    paymentSettled: false,
+    freshPaymentForbidden: true,
+    doNotCreateNewPayment: true,
+    safeToCreateNewPayment: protocolLifecycle.buyerAnswer.canCreateFreshPayment,
+    safeToRetrySamePayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
+    safeToRetrySamePaymentPayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
+    nextAction: protocolLifecycle.buyerAction,
+    protocolLifecycle,
+    protocolState: protocolLifecycle.protocolState,
+    buyerAction: protocolLifecycle.buyerAction,
+    sellerOutcome: protocolLifecycle.sellerOutcome,
+    operatorObligation: protocolLifecycle.operatorObligation,
+    ...lifecycleFinalityFields(protocolLifecycle),
+    buyerDeliveryAvailable: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
+    buyerComplete: protocolLifecycle.buyerAnswer.hasBuyerDelivery,
+    sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,
+    ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+    ...(input.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 } : {}),
+    ...(paymentStateUrl ? { paymentStateUrl } : {}),
+    operationalStatus: {
+      paymentStatus: "authorized",
+      settlementStatus: "authorized",
+      relayDeliveryStatus: "failed",
+      agentExecutionStatus: "not_started"
+    },
+    retryResume: {
+      safeToRetrySamePayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
+      safeToRetrySamePaymentPayload: protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload,
+      safeToCreateNewPayment: protocolLifecycle.buyerAnswer.canCreateFreshPayment,
+      nextAction: protocolLifecycle.buyerAction,
+      terminal: protocolLifecycle.terminal,
+      needsAttention: true,
+      guidance: input.paymentPayloadDigestSha256
+        ? "Payment is already authorized. Retry the exact same payment payload or poll payment-state; do not create a fresh payment."
+        : "Payment is already authorized. Poll payment-state before attempting any fresh payment."
+    }
+  };
+}
+
 function parseExecutionIntentTransitionRequest(value: unknown): Omit<ExecutionIntentTransitionOptions, "intentId"> {
   const body = isRecord(value) ? value : {};
   const evidenceDigestSha256 =
@@ -8085,12 +8170,19 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         }
       });
     } catch (error) {
-      response.status(400).json(relayDeliveryFailureBody(error, {
-        intent: approvedIntent,
+      response.status(202).json(await paymentAuthorizedExecutionStateUnknownBody({
+        apiBase: getBaseUrl(request),
+        error,
+        agentId: context.intent.agentId,
+        ledgerId: authorizationLedgerEntry.ledgerId,
+        paymentPayloadDigestSha256,
         payment: {
           status: "authorized",
           ledgerId: authorizationLedgerEntry.ledgerId,
           transactionHashes: []
+        },
+        extra: {
+          intent: approvedIntent
         }
       }));
       return;
@@ -9759,8 +9851,9 @@ const handleAgentHireRequest = route(async (request, response) => {
       });
     } catch (error) {
       if (paymentAuthorization) {
-        response.status(400).json(relayDeliveryFailureBody(error, {
-          agentId,
+        response.status(202).json(await paymentAuthorizedExecutionStateUnknownBody({
+          apiBase: getBaseUrl(request),
+          error,
           payment: {
             status: paymentAuthorization.status,
             ...(paymentAuthorization.rail ? { rail: paymentAuthorization.rail } : {}),
@@ -9773,7 +9866,14 @@ const handleAgentHireRequest = route(async (request, response) => {
             ...(paymentAuthorization.settlementEvents?.transactionHashes?.length
               ? { transactionHashes: paymentAuthorization.settlementEvents.transactionHashes }
               : {})
-          }
+          },
+          agentId,
+          ...(paymentAuthorization.ledgerId ? { ledgerId: paymentAuthorization.ledgerId } : {}),
+          ...(paymentAuthorization.paymentPayloadDigestSha256
+            ? { paymentPayloadDigestSha256: paymentAuthorization.paymentPayloadDigestSha256 }
+            : paymentAuthorization.paymentAuthorizationDigestSha256
+              ? { paymentPayloadDigestSha256: paymentAuthorization.paymentAuthorizationDigestSha256 }
+              : {})
         }));
         return;
       }
