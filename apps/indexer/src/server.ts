@@ -4081,6 +4081,17 @@ function x402PaymentStateTemporarilyUnavailable(input: {
   };
 }
 
+function x402PaymentStateNeedsFinalityRefresh(payload: unknown) {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return (
+    payload.statePollingRequired === true ||
+    payload.paymentFinalityPending === true ||
+    payload.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
+  );
+}
+
 async function cachedX402PaymentState(input: {
   cacheKey: string;
   lookup: Record<string, string>;
@@ -4100,8 +4111,10 @@ async function cachedX402PaymentState(input: {
   }
   const inflight = x402PaymentStateInflight.get(input.cacheKey);
   if (cached && cached.retainedUntilMs > nowMs) {
+    let refresh: Promise<X402PaymentStateResponse>;
+    let fallbackStatus: HotReadCacheStatus;
     if (!inflight || inflight.epoch !== paymentLedgerCacheEpoch) {
-      launchHotReadRefresh({
+      refresh = launchHotReadRefresh({
         cacheKey: input.cacheKey,
         cacheEpoch: paymentLedgerCacheEpoch,
         cache: x402PaymentStateCache,
@@ -4112,14 +4125,25 @@ async function cachedX402PaymentState(input: {
         prune: pruneX402PaymentStateCache,
         lane: "protocol"
       });
-      return {
-        payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "refreshing"),
-        cacheStatus: "refreshing"
-      };
+      fallbackStatus = "refreshing";
+    } else {
+      refresh = inflight.promise as Promise<X402PaymentStateResponse>;
+      fallbackStatus = "stale";
+    }
+    if (x402PaymentStateNeedsFinalityRefresh(cached.payload)) {
+      try {
+        const payload = await withColdReadBudget(refresh, X402_PAYMENT_STATE_COLD_READ_BUDGET_MS);
+        return {
+          payload: decorateX402PaymentStateResponse(payload, "inflight"),
+          cacheStatus: "inflight"
+        };
+      } catch {
+        // Keep retry safety available even if fresh finality cannot be produced inside the read budget.
+      }
     }
     return {
-      payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, "stale"),
-      cacheStatus: "stale"
+      payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, fallbackStatus),
+      cacheStatus: fallbackStatus
     };
   }
   const coldRead =

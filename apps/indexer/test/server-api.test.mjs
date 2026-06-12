@@ -4736,6 +4736,69 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.partyFinality.paymentTerminal, false);
     assert.equal(deliveredPaymentState.payload.partyFinality.operatorTerminal, false);
 
+    const stalePendingFinalityPayload = {
+      protocol: "x402",
+      nonce: "stale-pending-finality-promotion-test"
+    };
+    const stalePendingFinalityDigest = createHash("sha256")
+      .update(JSON.stringify(stalePendingFinalityPayload))
+      .digest("hex");
+    const stalePendingFinalityEntry = {
+      ledgerId: "pay_stale_pending_finality_test",
+      createdAtIso: new Date().toISOString(),
+      updatedAtIso: new Date().toISOString(),
+      agentId,
+      sessionId,
+      x402RequestId: "req_stale_pending_finality_test",
+      hireRequestId: hire.payload.requestId,
+      resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      paymentPayloadDigestSha256: stalePendingFinalityDigest,
+      transactionHashes: [],
+      paymentStatus: "authorization_verified",
+      executionStatus: "completed",
+      returnStatus: "accepted"
+    };
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [stalePendingFinalityEntry]
+    }, null, 2), "utf8");
+    const stalePendingInitial = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${stalePendingFinalityDigest}`
+    );
+    assert.equal(stalePendingInitial.status, 200);
+    assert.equal(stalePendingInitial.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(stalePendingInitial.payload.statePollingRequired, true);
+    await new Promise((resolve) => setTimeout(resolve, 5200));
+    await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ...stalePendingFinalityEntry,
+          updatedAtIso: new Date().toISOString(),
+          paymentStatus: "settled",
+          settlementStatus: "settled",
+          sellerSettlementTxHash: "0xstalependingfinalityseller",
+          protocolFeeTxHash: "0xstalependingfinalityfee",
+          transactionHashes: [
+            "0xstalependingfinalityseller",
+            "0xstalependingfinalityfee"
+          ]
+        }
+      ]
+    }, null, 2), "utf8");
+    const stalePendingPromoted = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${stalePendingFinalityDigest}`
+    );
+    assert.equal(stalePendingPromoted.status, 200);
+    assert.equal(stalePendingPromoted.payload.protocolState, "DELIVERED_SETTLED");
+    assert.equal(stalePendingPromoted.payload.stateFreshness, "fresh");
+    assert.equal(stalePendingPromoted.payload.projectionSource, "inflight");
+    assert.equal(stalePendingPromoted.payload.paymentFinality, "settled");
+    assert.equal(stalePendingPromoted.payload.paymentFinalityPending, false);
+
     const staleLedgerDigest = "a".repeat(64);
     await writeFile(deliveredPaymentLedgerPath, JSON.stringify({
       entries: [
