@@ -4022,6 +4022,29 @@ function x402PaymentStateFinalitySummary(payload: X402PaymentStateResponse) {
   };
 }
 
+function x402PaymentStateShowsSettled(payload: X402PaymentStateResponse): boolean {
+  const payment = isRecord(payload.payment) ? payload.payment : undefined;
+  const latestLedger = isRecord(payment?.latestLedger) ? payment.latestLedger : undefined;
+  return Boolean(
+    payload.protocolState === "DELIVERED_SETTLED" ||
+      payload.paymentFinality === "settled" ||
+      payload.settlementStatus === "settled" ||
+      (
+        latestLedger &&
+        (
+          latestLedger.paymentStatus === "settled" ||
+          latestLedger.paymentStatus === "already_settled" ||
+          typeof latestLedger.sellerSettlementTxHash === "string" ||
+          typeof latestLedger.protocolFeeTxHash === "string" ||
+          (
+            Array.isArray(latestLedger.transactionHashes) &&
+            latestLedger.transactionHashes.some((value) => typeof value === "string" && value.length > 0)
+          )
+        )
+      )
+  );
+}
+
 function withColdReadBudget<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -8708,6 +8731,22 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       ...(typeof ledgerEntry.protocolFeeBps === "number" ? { protocolFeeBps: ledgerEntry.protocolFeeBps } : {})
     });
     const paymentState = await buildX402PaymentStateResponse({ apiBase: getBaseUrl(request), ...stateLookup });
+    if (x402PaymentStateShowsSettled(paymentState)) {
+      cacheCanonicalX402PaymentState(paymentState, stateLookup);
+      response.json({
+        ok: true,
+        status: "settled",
+        code: "settlement_retry_already_terminal",
+        idempotent: true,
+        idempotentRecovery: true,
+        samePayloadReplayDetected: true,
+        duplicateChargeCreated: false,
+        doNotCreateNewPayment: true,
+        ...x402PaymentStateFinalitySummary(paymentState),
+        paymentState
+      });
+      return;
+    }
     if (outcome.status === "settled") {
       cacheCanonicalX402PaymentState(paymentState, stateLookup);
       response.json({
