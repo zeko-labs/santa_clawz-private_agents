@@ -4545,6 +4545,11 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(relayFailurePaymentState.payload.retryResume.safeToRetrySamePayload, false);
     assert.equal(relayFailurePaymentState.payload.retryResume.safeToCreateNewPayment, true);
     assert.match(relayFailurePaymentState.payload.retryResume.guidance, /terminal no-charge/);
+    const relayFailureExecutionState = await requestJson(`${baseUrl}${hire.payload.jobWorkspace.statePath}`);
+    assert.equal(relayFailureExecutionState.status, 200);
+    assert.equal(relayFailureExecutionState.payload.protocolState, "PLATFORM_FAILED_NO_SETTLEMENT");
+    assert.equal(relayFailureExecutionState.payload.sellerOutcome, "not_at_fault");
+    assert.equal(relayFailureExecutionState.payload.lifecycle.sellerReputationImpact, "none");
     await writeFile(relayFailurePaymentLedgerPath, JSON.stringify({ entries: [] }, null, 2), "utf8");
 
     const lateReturn = {

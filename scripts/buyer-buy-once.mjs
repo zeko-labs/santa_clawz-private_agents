@@ -1351,6 +1351,67 @@ function recoveredSummaryFromPaymentState(paymentStatePayload, paymentPayloadDig
   };
 }
 
+function terminalNoSettlementSummaryFromPaymentState(paymentStatePayload, paymentPayloadDigestSha256) {
+  const lifecycle = firstRecord(paymentStatePayload?.protocolLifecycle, paymentStatePayload);
+  const retryResume = retryResumeFromPaymentState(paymentStatePayload);
+  const latestLedger = isRecord(paymentStatePayload?.payment?.latestLedger) ? paymentStatePayload.payment.latestLedger : {};
+  const protocolState = stringValue(lifecycle, "protocolState") || stringValue(paymentStatePayload, "protocolState");
+  if (protocolState !== "PLATFORM_FAILED_NO_SETTLEMENT") {
+    return null;
+  }
+  const buyerAction = stringValue(lifecycle, "buyerAction") || stringValue(paymentStatePayload, "buyerAction") || "create_fresh_payment";
+  const sellerOutcome = stringValue(lifecycle, "sellerOutcome") || stringValue(paymentStatePayload, "sellerOutcome") || "not_at_fault";
+  const operatorObligation = stringValue(lifecycle, "operatorObligation") || stringValue(paymentStatePayload, "operatorObligation") || "none";
+  const execution = isRecord(paymentStatePayload?.execution) ? paymentStatePayload.execution : {};
+  const executionLifecycle = firstRecord(execution.lifecycle, paymentStatePayload?.lifecycle);
+  return {
+    ok: false,
+    code: "platform_failed_no_settlement",
+    completionMode: "terminal_no_settlement_from_payment_state",
+    retryable: false,
+    nextAction: "create_fresh_payment",
+    protocolState,
+    buyerAction,
+    sellerOutcome,
+    operatorObligation,
+    paymentTerminal: true,
+    paymentFinality: "not_settled",
+    paymentFinalityPending: false,
+    paymentStatus:
+      stringValue(paymentStatePayload, "paymentStatus") ||
+      stringValue(latestLedger, "paymentStatus") ||
+      "execution_failed",
+    settlementStatus:
+      stringValue(paymentStatePayload, "settlementStatus") ||
+      stringValue(latestLedger, "settlementStatus") ||
+      "not_attempted",
+    relayDeliveryStatus:
+      stringValue(executionLifecycle, "relayDeliveryStatus") ||
+      stringValue(paymentStatePayload, "relayDeliveryStatus") ||
+      "failed",
+    agentExecutionStatus:
+      stringValue(executionLifecycle, "agentExecutionStatus") ||
+      stringValue(paymentStatePayload, "agentExecutionStatus") ||
+      "not_confirmed",
+    sellerExecutionCompleted: false,
+    buyerComplete: false,
+    buyerDeliveryAvailable: false,
+    buyerDeliveryStatus: "missing",
+    buyerVisibleOutputCount: 0,
+    artifactDeliveryAvailable: false,
+    artifactDeliveryStatus: "not_delivered",
+    sellerReputationImpact: "none",
+    safeToCreateNewPayment: retryResume.safeToCreateNewPayment === true || buyerAction === "create_fresh_payment",
+    safeToRetrySamePayload: false,
+    safeToRetrySamePaymentPayload: false,
+    requestId: paymentStateLookupRequestId(paymentStatePayload),
+    stateUrl: stateUrlFromPaymentState(paymentStatePayload, paymentPayloadDigestSha256),
+    guidance:
+      stringValue(retryResume, "guidance") ||
+      "This payment path is terminal no-settlement. No buyer delivery or settlement was recorded; create a fresh payment only for a new attempt."
+  };
+}
+
 async function enrichRecoveredSummaryFromExecutionState(recovered) {
   if (!recovered?.stateUrl) {
     return { recovered };
@@ -1461,12 +1522,18 @@ function finalOutcomeFromOutput(output) {
     stringValue(protocolLifecycle, "paymentFinality") ||
     stringValue(paymentState, "paymentFinality") ||
     (settlementStatus === "settled" ? "settled" : "");
+  const paymentTerminal =
+    output.paymentTerminal === true ||
+    protocolState === "DELIVERED_SETTLED" ||
+    protocolState === "PLATFORM_FAILED_NO_SETTLEMENT" ||
+    protocolState === "EXPIRED_NO_CHARGE" ||
+    paymentFinality === "settled";
   return {
     ok: output.ok === true,
     code: stringValue(output, "code") || (output.ok === true ? "ok" : "not_ok"),
     ...(protocolState ? { protocolState } : {}),
     buyerDeliveryAvailable,
-    paymentTerminal: protocolState === "DELIVERED_SETTLED" || paymentFinality === "settled",
+    paymentTerminal,
     paymentFinality: paymentFinality || (settlementStatus === "settled" ? "settled" : "unknown"),
     settlementStatus: settlementStatus || "unknown",
     safeToCreateNewPayment:
@@ -1663,6 +1730,11 @@ async function attemptSamePayloadSettlementRecovery(input) {
 }
 
 function writePaymentRecoveryInstructions(input) {
+  const safeToCreateNewPayment = input.safeToCreateNewPayment === true;
+  const safeToRetrySamePaymentPayload =
+    typeof input.safeToRetrySamePaymentPayload === "boolean"
+      ? input.safeToRetrySamePaymentPayload
+      : true;
   return writeJson(path.join(input.runDir, "recovery-next-steps.json"), {
     schemaVersion: "santaclawz-buyer-recovery/1.0",
     generatedAtIso: new Date().toISOString(),
@@ -1672,11 +1744,14 @@ function writePaymentRecoveryInstructions(input) {
     ...(input.resultStateUrl ? { resultStateUrl: input.resultStateUrl } : {}),
     ...(input.requestId ? { requestId: input.requestId } : {}),
     safety: {
-      safeToCreateNewPayment: false,
-      safeToRetrySamePaymentPayload: true
+      safeToCreateNewPayment,
+      safeToRetrySamePaymentPayload
     },
-    nextAction: "poll_payment_state",
-    guidance: "Do not create a fresh payment for this job. Poll payment-state with the saved digest, or retry the same idempotent payment payload after service recovery."
+    nextAction: input.nextAction ?? "poll_payment_state",
+    ...(input.canonicalState ? { canonicalState: input.canonicalState } : {}),
+    guidance:
+      input.guidance ??
+      "Do not create a fresh payment for this job. Poll payment-state with the saved digest, or retry the same idempotent payment payload after service recovery."
   });
 }
 
@@ -1763,6 +1838,59 @@ async function recoverRetryablePaidSubmitFailure(input) {
       settlementRecovery
     });
     return { exitCode: 0, output };
+  }
+
+  const terminalNoSettlement = postSubmitPaymentState?.ok
+    ? terminalNoSettlementSummaryFromPaymentState(postSubmitPaymentState.payload, input.paymentPayloadDigestSha256)
+    : terminalNoSettlementSummaryFromPaymentState(paymentStatePoll.lastPayload, input.paymentPayloadDigestSha256);
+  if (terminalNoSettlement) {
+    const recoveryFilePath = writePaymentRecoveryInstructions({
+      runDir: input.runDir,
+      code: terminalNoSettlement.code,
+      paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
+      paymentStateUrl: input.paymentStateUrl,
+      resultStateUrl: terminalNoSettlement.stateUrl || input.resultStateUrl,
+      requestId: terminalNoSettlement.requestId || input.submittedRequestId,
+      safeToCreateNewPayment: terminalNoSettlement.safeToCreateNewPayment,
+      safeToRetrySamePaymentPayload: terminalNoSettlement.safeToRetrySamePaymentPayload,
+      nextAction: terminalNoSettlement.nextAction,
+      canonicalState: {
+        protocolState: terminalNoSettlement.protocolState,
+        buyerAction: terminalNoSettlement.buyerAction,
+        sellerOutcome: terminalNoSettlement.sellerOutcome,
+        operatorObligation: terminalNoSettlement.operatorObligation,
+        paymentFinality: terminalNoSettlement.paymentFinality,
+        settlementStatus: terminalNoSettlement.settlementStatus
+      },
+      guidance: terminalNoSettlement.guidance
+    });
+    const output = attachBuyerFinalSummary({
+      ...terminalNoSettlement,
+      paid: true,
+      status: input.submit.status,
+      agentId: input.agentId,
+      ids: input.executionIds,
+      priceUsd: input.priceUsd,
+      manifestDir: input.runDir,
+      ...(input.paymentPayloadPath ? { paymentPayloadPath: input.paymentPayloadPath } : {}),
+      paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
+      paymentStateUrl: input.paymentStateUrl,
+      resultStateUrl: terminalNoSettlement.stateUrl || input.resultStateUrl,
+      recoveryMode: input.recoveryMode,
+      safeNextAction: terminalNoSettlement.nextAction,
+      recoveryFilePath,
+      paymentStateRecovery: {
+        recovered: false,
+        terminal: true,
+        elapsedMs: paymentStatePoll.elapsedMs,
+        attempts: paymentStatePoll.attempts,
+        lastStatus: paymentStatePoll.lastStatus
+      },
+      ...(input.existingPaymentState ? { existingPaymentState: input.existingPaymentState } : {}),
+      postSubmitPaymentState: postSubmitPaymentState?.payload ?? paymentStatePoll.lastPayload,
+      response: input.submit.payload
+    });
+    return { exitCode: 1, output };
   }
 
   const recoveryFilePath = writePaymentRecoveryInstructions({
