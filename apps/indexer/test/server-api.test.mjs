@@ -3247,6 +3247,51 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(expiredPaymentState.payload.retryResume.paymentPayloadExpiredForRetry, true);
     assert.equal(expiredPaymentState.payload.retryResume.nextAction, "poll_execution_state");
 
+    const expiredNoLedgerPaymentPayload = {
+      ...retryPaymentPayload,
+      paymentId: "pay_expired_no_ledger_test"
+    };
+    const expiredNoLedgerDigest = createHash("sha256").update(JSON.stringify(expiredNoLedgerPaymentPayload)).digest("hex");
+    await writeFile(retryPaymentLedgerPath, JSON.stringify({
+      entries: [
+        {
+          ledgerId: "pay_expired_no_ledger_test",
+          createdAtIso: new Date().toISOString(),
+          updatedAtIso: new Date().toISOString(),
+          agentId,
+          sessionId,
+          resource: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`,
+          pricingMode: "fixed-exact",
+          rail: "base-usdc",
+          networkId: "eip155:8453",
+          assetSymbol: "USDC",
+          amountUsd: "0.20",
+          paymentPayloadDigestSha256: expiredNoLedgerDigest,
+          transactionHashes: [],
+          paymentStatus: "not_settled",
+          executionStatus: "not_started",
+          returnStatus: "none",
+          errorCode: "payment_payload_expired_no_ledger",
+          errorMessage: "Payment payload is expired."
+        }
+      ]
+    }, null, 2), "utf8");
+    const expiredNoLedgerPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${expiredNoLedgerDigest}`
+    );
+    assert.equal(expiredNoLedgerPaymentState.status, 200);
+    assert.equal(expiredNoLedgerPaymentState.payload.protocolState, "EXPIRED_NO_CHARGE");
+    assert.equal(expiredNoLedgerPaymentState.payload.buyerAction, "create_fresh_payment");
+    assert.equal(expiredNoLedgerPaymentState.payload.sellerOutcome, "not_at_fault");
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.safeToRetrySamePayload, false);
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.safeToRetrySamePaymentPayload, false);
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.safeToCreateNewPayment, true);
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.terminal, true);
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.terminalReason, "payment_payload_expired_no_charge");
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.refundOrNoChargeStatus, "no_charge_authorization_expired");
+    assert.equal(expiredNoLedgerPaymentState.payload.retryResume.paymentPayloadExpiredForRetry, true);
+    await writeFile(retryPaymentLedgerPath, JSON.stringify({ entries: [] }, null, 2), "utf8");
+
     const quoteReady = await requestJson(`${baseUrl}/api/console/profile?sessionId=${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "x-clawz-admin-key": adminKey },
@@ -4284,6 +4329,8 @@ async function testStaleRelayDoesNotStayLive() {
     assert.equal(liveAvailability.status, 200);
     assert.equal(liveAvailability.payload.reachable, true);
     assert.equal(liveAvailability.payload.runtimeStatus, "live");
+    assert.equal(liveAvailability.payload.heartbeat.status, "live");
+    assert.match(liveAvailability.payload.heartbeat.reason, /relay websocket is fresh/i);
     assert.equal(liveAvailability.payload.readiness, undefined);
 
     const relayPricingUpdate = await requestJson(`${baseUrl}/api/console/profile?agentId=${encodeURIComponent(agentId)}`, {

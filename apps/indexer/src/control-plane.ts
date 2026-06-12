@@ -5743,6 +5743,30 @@ export class ClawzControlPlane {
     };
   }
 
+  private buildRelayBackedHeartbeatState(
+    heartbeat: AgentRuntimeHeartbeatState,
+    relayConnected: boolean,
+    checkedAtIso = new Date().toISOString()
+  ): AgentRuntimeHeartbeatState {
+    if (!relayConnected) {
+      return heartbeat;
+    }
+
+    const checkedAtMs = Date.parse(checkedAtIso);
+    const ttlSeconds = Math.max(heartbeat.ttlSeconds, AGENT_RUNTIME_HEARTBEAT_DEFAULT_TTL_SECONDS);
+    const staleAtIso = new Date(checkedAtMs + ttlSeconds * 1000).toISOString();
+    return {
+      ...heartbeat,
+      status: "live",
+      checkedAtIso,
+      ttlSeconds,
+      lastHeartbeatAtIso: checkedAtIso,
+      staleAtIso,
+      reason: "SantaClawz relay websocket is fresh for paid execution.",
+      note: heartbeat.note ?? "SantaClawz relay websocket lease."
+    };
+  }
+
   private ownershipRecordForSession(state: ConsolePersistenceState, sessionId: string): SessionOwnershipRecord {
     return state.ownershipBySession[sessionId] ?? buildDefaultOwnershipRecord(true);
   }
@@ -11036,7 +11060,7 @@ export class ClawzControlPlane {
       })
     ]);
     const heartbeatRecord = heartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
-    const heartbeat = this.buildAgentRuntimeHeartbeatState({
+    const rawHeartbeat = this.buildAgentRuntimeHeartbeatState({
       state,
       sessionId,
       trustModeId,
@@ -11045,6 +11069,7 @@ export class ClawzControlPlane {
     const relayAgentId = this.agentIdForSession(state, sessionId, trustModeId);
     const relayProfile = isRelayDeliveryProfile(profile);
     const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(relayAgentId) ?? false);
+    const heartbeat = this.buildRelayBackedHeartbeatState(rawHeartbeat, relayConnected);
     const observedNonRelayReachable = options.verifyReachability === true
       ? reachability.reachable
       : heartbeat.status === "live";
@@ -11109,13 +11134,14 @@ export class ClawzControlPlane {
     const agentId = this.agentIdForSession(state, sessionId);
     const heartbeatFile = await this.loadRuntimeHeartbeatFile();
     const heartbeatRecord = heartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
-    const heartbeat = this.buildAgentRuntimeHeartbeatState({
+    const rawHeartbeat = this.buildAgentRuntimeHeartbeatState({
       state,
       sessionId,
       ...(heartbeatRecord ? { record: heartbeatRecord } : {})
     });
     const relayProfile = isRelayDeliveryProfile(profile);
     const relayConnected = relayProfile && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+    const heartbeat = this.buildRelayBackedHeartbeatState(rawHeartbeat, relayConnected);
     const heartbeatLive = heartbeat.status === "live";
     const reachable = relayProfile ? relayConnected : heartbeatLive;
     const runtimeStatus: AgentRuntimeStatus = reachable ? "live" : "offline";
@@ -13400,12 +13426,15 @@ export class ClawzControlPlane {
     }
     if (paymentAuthorization.status !== "not-required") {
       const heartbeatRecord = runtimeHeartbeatFile.heartbeats.find((record) => record.sessionId === sessionId);
-      const heartbeat = this.buildAgentRuntimeHeartbeatState({
+      const rawHeartbeat = this.buildAgentRuntimeHeartbeatState({
         state,
         sessionId,
         trustModeId,
         ...(heartbeatRecord ? { record: heartbeatRecord } : {})
       });
+      const agentId = this.agentIdForSession(state, sessionId, trustModeId);
+      const relayConnected = isRelayDeliveryProfile(profile) && (this.relayRuntimeStatusProvider?.(agentId) ?? false);
+      const heartbeat = this.buildRelayBackedHeartbeatState(rawHeartbeat, relayConnected);
       const staleAtMs = heartbeat.staleAtIso ? Date.parse(heartbeat.staleAtIso) : NaN;
       const nearStale = Number.isFinite(staleAtMs) && staleAtMs - Date.now() < PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS;
       if (heartbeat.status !== "live" || nearStale) {
