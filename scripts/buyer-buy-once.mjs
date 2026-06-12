@@ -23,7 +23,8 @@ const BOOLEAN_FLAGS = new Set([
   "activation-probe",
   "paid-activation-probe",
   "seller-readiness-test",
-  "seller-test"
+  "seller-test",
+  "wait-for-settlement"
 ]);
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
@@ -114,6 +115,7 @@ Options:
   --activate-if-needed               If seller env is provided, run seller readiness/probe before retrying preflight.
   --seller-env-file .env.santaclawz  Seller env for --activate-if-needed.
   --local-hire-url http://127.0.0.1:8797/hire
+  --wait-for-settlement              Wait for terminal settlement in this command. Default returns on buyer delivery.
   --dry-run                          Force dry-run even when --allow-real-money is present.
   --allow-real-money                 Required before signing/submitting a paid payload.
   --json
@@ -1053,13 +1055,21 @@ function writeBuyerOutputFile(runDir, payload) {
 
 function paidExecutionSummary(responseOk, payload) {
   const operational = isRecord(payload?.operationalStatus) ? payload.operationalStatus : {};
+  const protocolLifecycle = isRecord(payload?.protocolLifecycle) ? payload.protocolLifecycle : {};
   const payment = isRecord(payload?.payment) ? payload.payment : {};
   const stringFrom = (source, key) => (isRecord(source) && typeof source[key] === "string" ? source[key] : "");
+  const numberFrom = (source, key) => (isRecord(source) && typeof source[key] === "number" ? source[key] : undefined);
   const paymentStatus = stringFrom(operational, "paymentStatus") || stringFrom(payload, "paymentStatus") || stringFrom(payment, "status");
   const settlementStatus = stringFrom(operational, "settlementStatus") || stringFrom(payload, "settlementStatus") || "unknown";
   const relayDeliveryStatus = stringFrom(operational, "relayDeliveryStatus") || stringFrom(payload, "relayDeliveryStatus") || "not_confirmed";
   const agentExecutionStatus =
     stringFrom(operational, "agentExecutionStatus") || stringFrom(payload, "agentExecutionStatus") || stringFrom(payload, "status") || "not_confirmed";
+  const protocolState = stringFrom(payload, "protocolState") || stringFrom(protocolLifecycle, "protocolState");
+  const paymentFinality = stringFrom(payload, "paymentFinality") || stringFrom(protocolLifecycle, "paymentFinality");
+  const paymentFinalityPending =
+    payload?.paymentFinalityPending === true || protocolLifecycle.paymentFinalityPending === true;
+  const recommendedPollAfterMs =
+    numberFrom(payload, "recommendedPollAfterMs") ?? numberFrom(protocolLifecycle, "recommendedPollAfterMs");
   const paymentAccepted = ["authorized", "settled", "paid", "escrowed", "execution_completed"].includes(paymentStatus);
   const workCompleted =
     responseOk &&
@@ -1082,12 +1092,18 @@ function paidExecutionSummary(responseOk, payload) {
   return {
     ok: buyerComplete,
     code: buyerComplete
-      ? "paid_execution_buyer_complete"
+      ? protocolState === "DELIVERED_AWAITING_SETTLEMENT"
+        ? "paid_execution_delivery_available_settlement_pending"
+        : "paid_execution_buyer_complete"
       : outputUnavailable
         ? "paid_execution_output_unavailable"
       : acceptedPendingResult
         ? "job_running_or_return_timeout"
         : "paid_execution_not_completed",
+    ...(protocolState ? { protocolState } : {}),
+    ...(paymentFinality ? { paymentFinality } : {}),
+    paymentFinalityPending,
+    ...(typeof recommendedPollAfterMs === "number" ? { recommendedPollAfterMs } : {}),
     paymentStatus: paymentStatus || "unknown",
     settlementStatus,
     relayDeliveryStatus,
@@ -1885,14 +1901,16 @@ async function recoverRetryablePaidSubmitFailure(input) {
   let postSubmitPaymentState = paymentStatePoll.paymentStateResponse;
   let settlementRecovery = null;
   if (paymentStatePoll.recovered === true && paymentStatePoll.recoveredSummary?.ok === true) {
-    settlementRecovery = await attemptSamePayloadSettlementRecovery({
-      paymentStateResponse: postSubmitPaymentState,
-      paymentStateUrl: input.paymentStateUrl,
-      paymentPayload: input.paymentPayload,
-      paymentPayloadDigestSha256: input.paymentPayloadDigestSha256
-    });
-    if (settlementRecovery.attempted && settlementRecovery.finalPaymentStateResponse) {
-      postSubmitPaymentState = settlementRecovery.finalPaymentStateResponse;
+    if (input.waitForSettlement === true) {
+      settlementRecovery = await attemptSamePayloadSettlementRecovery({
+        paymentStateResponse: postSubmitPaymentState,
+        paymentStateUrl: input.paymentStateUrl,
+        paymentPayload: input.paymentPayload,
+        paymentPayloadDigestSha256: input.paymentPayloadDigestSha256
+      });
+      if (settlementRecovery.attempted && settlementRecovery.finalPaymentStateResponse) {
+        postSubmitPaymentState = settlementRecovery.finalPaymentStateResponse;
+      }
     }
     const recoveredSummary = settlementRecovery?.finalRecoveredSummary?.ok
       ? settlementRecovery.finalRecoveredSummary
@@ -1916,7 +1934,8 @@ async function recoverRetryablePaidSubmitFailure(input) {
       resultStateUrl: input.resultStateUrl,
       buyerOutputPath,
       response: input.submit.payload,
-      settlementRecovery
+      ...(settlementRecovery ? { settlementRecovery } : {}),
+      settlementObservationMode: input.waitForSettlement === true ? "wait_for_settlement" : "delivery_first_async"
     });
     return { exitCode: 0, output };
   }
@@ -2090,6 +2109,7 @@ const activationProbeRequested = Boolean(args["activation-probe"] || args["paid-
 const maxUsd = decimalStringToNumber(args["max-usd"]);
 const outputDir = String(args["output-dir"] ?? DEFAULT_OUTPUT_DIR).trim();
 const dryRun = Boolean(args["dry-run"]) || !args["allow-real-money"];
+const waitForSettlement = Boolean(args["wait-for-settlement"]);
 if (!agentId) throw new Error("--agent or --agent-id is required.");
 if (!taskPrompt) throw new Error("--prompt or --task is required.");
 if (maxUsd === null) throw new Error("--max-usd is required and must be a number.");
@@ -2171,7 +2191,8 @@ if (!planResponse.ok) {
         resultStateUrl,
         submittedRequestId,
         existingPaymentState: suppliedPaymentState?.payload,
-        recoveryMode: "same_payment_payload_without_plan"
+        recoveryMode: "same_payment_payload_without_plan",
+        waitForSettlement
       }));
       const output = recovery.output;
       writeJson(path.join(runDir, "buyer-run.json"), output);
@@ -2184,12 +2205,18 @@ if (!planResponse.ok) {
       ? await pollRecoverableExecutionState(resultStateUrl)
       : null;
     const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
-    const finalized = await timedClientStep("settlementRecoveryMs", () => finalizeDeliveredSummaryWithSettlement({
-      summary: recoveredSummary ?? summary,
-      paymentStateUrl: suppliedPaymentStateUrl,
-      paymentPayload: suppliedPaymentPayload,
-      paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256
-    }));
+    const finalized = waitForSettlement
+      ? await timedClientStep("settlementRecoveryMs", () => finalizeDeliveredSummaryWithSettlement({
+          summary: recoveredSummary ?? summary,
+          paymentStateUrl: suppliedPaymentStateUrl,
+          paymentPayload: suppliedPaymentPayload,
+          paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256
+        }))
+      : {
+          summary: recoveredSummary ?? summary,
+          settlementRecovery: null,
+          paymentStateResponse: null
+        };
     const buyerOutputPath = writeBuyerOutputFile(runDir, submit.payload);
     const output = attachBuyerFinalSummary({
       ...finalized.summary,
@@ -2207,6 +2234,7 @@ if (!planResponse.ok) {
       ...(buyerOutputPath ? { buyerOutputPath } : {}),
       recoveryMode: "same_payment_payload_without_plan",
       recoveryReason: "x402_plan_unavailable_existing_payload_retry_safe",
+      settlementObservationMode: waitForSettlement ? "wait_for_settlement" : "delivery_first_async",
       existingPaymentState: suppliedPaymentState.payload,
       ...(recoveryPoll ? { recoveryPoll } : {}),
       ...(finalized.settlementRecovery ? { settlementRecovery: finalized.settlementRecovery } : {}),
@@ -2495,7 +2523,8 @@ if (!submit.ok && submit.payload?.retryable === true) {
     paymentStateUrl,
     resultStateUrl,
     submittedRequestId,
-    recoveryMode: "payment_state_digest_after_submit_timeout"
+    recoveryMode: "payment_state_digest_after_submit_timeout",
+    waitForSettlement
   }));
   const output = recovery.output;
   writeJson(path.join(runDir, "buyer-run.json"), output);
@@ -2508,12 +2537,18 @@ const recoveryPoll = summary.code === "job_running_or_return_timeout"
   ? await pollRecoverableExecutionState(resultStateUrl)
   : null;
 const recoveredSummary = recoveredSummaryFromRecoveryPoll(recoveryPoll, args["seller-env-file"] ?? ".env.santaclawz");
-const finalized = await timedClientStep("settlementRecoveryMs", () => finalizeDeliveredSummaryWithSettlement({
-  summary: recoveredSummary ?? summary,
-  paymentStateUrl,
-  paymentPayload,
-  paymentPayloadDigestSha256
-}));
+const finalized = waitForSettlement
+  ? await timedClientStep("settlementRecoveryMs", () => finalizeDeliveredSummaryWithSettlement({
+      summary: recoveredSummary ?? summary,
+      paymentStateUrl,
+      paymentPayload,
+      paymentPayloadDigestSha256
+    }))
+  : {
+      summary: recoveredSummary ?? summary,
+      settlementRecovery: null,
+      paymentStateResponse: null
+    };
 const buyerOutputPath = writeBuyerOutputFile(runDir, submit.payload);
 const output = attachBuyerFinalSummary({
   ...finalized.summary,
@@ -2527,6 +2562,7 @@ const output = attachBuyerFinalSummary({
   stateUrl: resultStateUrl,
   paymentStateUrl,
   manifestDir: runDir,
+  settlementObservationMode: waitForSettlement ? "wait_for_settlement" : "delivery_first_async",
   ...(buyerOutputPath ? { buyerOutputPath } : {}),
   ...(recoveryPoll ? { recoveryPoll } : {}),
   ...(finalized.settlementRecovery ? { settlementRecovery: finalized.settlementRecovery } : {}),
