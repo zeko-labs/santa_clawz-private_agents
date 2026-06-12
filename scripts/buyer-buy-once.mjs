@@ -1076,6 +1076,8 @@ function recoveredCompletionFromState(payload) {
   const relayDeliveryStatus = typeof lifecycle.relayDeliveryStatus === "string" ? lifecycle.relayDeliveryStatus : "";
   const agentExecutionStatus = typeof lifecycle.agentExecutionStatus === "string" ? lifecycle.agentExecutionStatus : "";
   const proofStatus = typeof lifecycle.proofStatus === "string" ? lifecycle.proofStatus : "";
+  const paymentStatus = typeof lifecycle.paymentStatus === "string" ? lifecycle.paymentStatus : "unknown";
+  const settlementStatus = typeof lifecycle.settlementStatus === "string" ? lifecycle.settlementStatus : "unknown";
   const buyerDelivery = buyerDeliveryProjection(payload);
   const sellerExecutionCompleted =
     agentExecutionStatus === "completed" &&
@@ -1100,8 +1102,9 @@ function recoveredCompletionFromState(payload) {
     outputUnavailable,
     failed,
     currentPhase,
-    paymentStatus: typeof lifecycle.paymentStatus === "string" ? lifecycle.paymentStatus : "unknown",
-    settlementStatus: typeof lifecycle.settlementStatus === "string" ? lifecycle.settlementStatus : "unknown",
+    paymentStatus,
+    settlementStatus,
+    paymentSettled: settlementStatus === "settled" || paymentStatus === "settled",
     relayDeliveryStatus: relayDeliveryStatus || "unknown",
     agentExecutionStatus: agentExecutionStatus || "unknown",
     proofStatus: proofStatus || "unknown",
@@ -1366,9 +1369,20 @@ async function enrichRecoveredSummaryFromExecutionState(recovered) {
       executionStateResponse
     };
   }
+  const paymentSettled = completion.paymentSettled === true;
   return {
     recovered: {
       ...recovered,
+      ...(paymentSettled
+        ? {
+            code: "paid_execution_buyer_complete",
+            completionMode: "recovered_from_execution_state",
+            protocolState: "DELIVERED_SETTLED",
+            paymentFinality: "settled",
+            paymentFinalityPending: false,
+            operatorObligation: "none"
+          }
+        : {}),
       paymentStatus: completion.paymentStatus,
       settlementStatus: completion.settlementStatus,
       relayDeliveryStatus: completion.relayDeliveryStatus,
