@@ -965,6 +965,81 @@ function buyerVisibleOutputTexts(payload) {
     .map((entry) => entry.text.trim());
 }
 
+function numberValue(source, key) {
+  return isRecord(source) && typeof source[key] === "number" && Number.isFinite(source[key])
+    ? source[key]
+    : 0;
+}
+
+function normalizeBuyerDeliverySummary(output) {
+  const executionState = isRecord(output.executionState) ? output.executionState : {};
+  const paymentState = isRecord(output.paymentState) ? output.paymentState : {};
+  const paymentStateExecution = isRecord(paymentState.execution) ? paymentState.execution : {};
+  const response = isRecord(output.response) ? output.response : {};
+  const projections = [
+    buyerDeliveryProjection(executionState),
+    buyerDeliveryProjection(paymentStateExecution),
+    buyerDeliveryProjection(paymentState),
+    buyerDeliveryProjection(response),
+    buyerDeliveryProjection(output)
+  ];
+  const bestProjection =
+    projections.find((projection) => projection.inlineOutputCount > 0) ||
+    projections.find((projection) => projection.artifactDeliveryAvailable) ||
+    projections.find((projection) => projection.buyerDeliveryAvailable) ||
+    projections[0];
+  const localInlineAvailable = typeof output.buyerOutputPath === "string" && output.buyerOutputPath.trim().length > 0;
+  const inlineOutputCount = Math.max(
+    numberValue(output, "inlineOutputCount"),
+    bestProjection.inlineOutputCount,
+    localInlineAvailable ? 1 : 0
+  );
+  const buyerVisibleOutputCount = Math.max(
+    numberValue(output, "buyerVisibleOutputCount"),
+    bestProjection.buyerVisibleOutputCount,
+    inlineOutputCount
+  );
+  const artifactDeliveryAvailable =
+    output.artifactDeliveryAvailable === true || bestProjection.artifactDeliveryAvailable === true;
+  const artifactReceiptCount = Math.max(
+    numberValue(output, "artifactReceiptCount"),
+    bestProjection.artifactReceiptCount
+  );
+  const buyerDeliveryAvailable =
+    output.buyerDeliveryAvailable === true ||
+    bestProjection.buyerDeliveryAvailable === true ||
+    inlineOutputCount > 0 ||
+    artifactDeliveryAvailable;
+  const buyerDeliveryStatus = buyerDeliveryAvailable
+    ? inlineOutputCount > 0
+      ? "inline_available"
+      : artifactDeliveryAvailable
+        ? "artifact_available"
+        : bestProjection.buyerDeliveryStatus === "missing"
+          ? "available"
+          : bestProjection.buyerDeliveryStatus
+    : stringValue(output, "buyerDeliveryStatus") || bestProjection.buyerDeliveryStatus;
+  return {
+    ...output,
+    buyerDeliveryStatus,
+    buyerDeliveryAvailable,
+    buyerVisibleOutputCount,
+    inlineOutputCount,
+    artifactDeliveryAvailable,
+    artifactDeliveryStatus:
+      stringValue(output, "artifactDeliveryStatus") ||
+      bestProjection.artifactDeliveryStatus ||
+      (artifactDeliveryAvailable ? "delivered" : "not_delivered"),
+    artifactReceiptCount,
+    buyerVerificationStatus:
+      stringValue(output, "buyerVerificationStatus") ||
+      bestProjection.buyerVerificationStatus,
+    buyerAcceptanceStatus:
+      stringValue(output, "buyerAcceptanceStatus") ||
+      bestProjection.buyerAcceptanceStatus
+  };
+}
+
 function writeBuyerOutputFile(runDir, payload) {
   const outputs = buyerVisibleOutputTexts(payload);
   if (outputs.length === 0) {
@@ -1555,6 +1630,10 @@ function compactSettlementRecovery(settlementRecovery) {
     : {};
   const finalPaymentStatePayload = isRecord(finalPaymentStateResponse.payload) ? finalPaymentStateResponse.payload : {};
   const finalLifecycle = firstRecord(finalPaymentStatePayload.protocolLifecycle, finalPaymentStatePayload);
+  const finalSettled =
+    stringValue(finalLifecycle, "protocolState") === "DELIVERED_SETTLED" ||
+    stringValue(finalLifecycle, "paymentFinality") === "settled" ||
+    stringValue(finalPaymentStatePayload, "settlementStatus") === "settled";
   return {
     attempted: settlementRecovery.attempted === true,
     ...(stringValue(settlementRecovery, "reason") ? { reason: stringValue(settlementRecovery, "reason") } : {}),
@@ -1568,6 +1647,7 @@ function compactSettlementRecovery(settlementRecovery) {
             ok: retryResponse.ok === true,
             status: retryResponse.status,
             ...(stringValue(retryResponse.payload, "code") ? { code: stringValue(retryResponse.payload, "code") } : {}),
+            ...(finalSettled && retryResponse.ok !== true ? { supersededByFinalPaymentState: true } : {}),
             ...(typeof retryResponse.payload?.idempotentRecovery === "boolean"
               ? { idempotentRecovery: retryResponse.payload.idempotentRecovery }
               : {}),
@@ -1629,10 +1709,11 @@ function attachBuyerFinalSummary(output) {
       }
     : undefined;
   const { settlementRecovery: _rawSettlementRecovery, ...sanitizedOutput } = output;
+  const normalizedOutput = normalizeBuyerDeliverySummary(sanitizedOutput);
   return {
-    ...sanitizedOutput,
+    ...normalizedOutput,
     ...(compactRecovery ? { settlementRecovery: compactRecovery } : {}),
-    finalOutcome: finalOutcomeFromOutput(output),
+    finalOutcome: finalOutcomeFromOutput(normalizedOutput),
     ...(originalSubmitAttempt ? { originalSubmitAttempt } : {}),
     ...(recovery ? { recovery } : {}),
     clientTiming: clientTimingSnapshot(),
