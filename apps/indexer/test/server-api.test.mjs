@@ -3097,6 +3097,7 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(nearStalePlan.status, 200);
     assert.equal(nearStalePlan.payload.heartbeatSafety.status, "stale_soon");
     assert.equal(nearStalePlan.payload.heartbeatSafety.paidPreflightSafe, false);
+    assert.equal(nearStalePlan.payload.heartbeatSafety.minimumFreshMs, 20_000);
     assert.equal(nearStalePlan.payload.buyerPaymentState, "NO_PAYMENT_CREATED");
     assert.equal(nearStalePlan.payload.paymentRequested, false);
     assert.equal(nearStalePlan.payload.readiness.hireable, false);
@@ -3169,6 +3170,11 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     });
     assert.equal(unpaidPaidHire.status, 402);
     assert.equal(typeof unpaidPaidHire.payload, "object");
+    assert.equal(unpaidPaidHire.payload.heartbeatSafety.status, "fresh");
+    assert.equal(unpaidPaidHire.payload.heartbeatSafety.paidPreflightSafe, true);
+    assert.equal(unpaidPaidHire.payload.heartbeatSafety.minimumFreshMs, 20_000);
+    assert.equal(unpaidPaidHire.payload.buyerPaymentState, "PAYMENT_REQUIRED");
+    assert.equal(unpaidPaidHire.payload.paymentRequested, true);
     const fixedPriceAccept = firstX402Accept(unpaidPaidHire.payload);
     assert.ok(fixedPriceAccept, JSON.stringify(unpaidPaidHire.payload));
     assert.equal(fixedPriceAccept.amount, "200000");
@@ -4660,6 +4666,9 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     );
     assert.equal(deliveredSettlementAlreadyRecorded.status, 200);
     assert.equal(deliveredSettlementAlreadyRecorded.payload.code, "settlement_already_recorded");
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.idempotentRecovery, true);
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.samePayloadReplayDetected, true);
+    assert.equal(deliveredSettlementAlreadyRecorded.payload.duplicateChargeCreated, false);
     assert.equal(deliveredSettlementAlreadyRecorded.payload.protocolState, "DELIVERED_SETTLED");
     assert.equal(deliveredSettlementAlreadyRecorded.payload.paymentFinality, "settled");
     assert.equal(deliveredSettlementAlreadyRecorded.payload.paymentFinalityPending, false);

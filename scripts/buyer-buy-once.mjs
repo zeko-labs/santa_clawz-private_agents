@@ -1486,7 +1486,16 @@ function compactSettlementRecovery(settlementRecovery) {
           retry: {
             ok: retryResponse.ok === true,
             status: retryResponse.status,
-            ...(stringValue(retryResponse.payload, "code") ? { code: stringValue(retryResponse.payload, "code") } : {})
+            ...(stringValue(retryResponse.payload, "code") ? { code: stringValue(retryResponse.payload, "code") } : {}),
+            ...(typeof retryResponse.payload?.idempotentRecovery === "boolean"
+              ? { idempotentRecovery: retryResponse.payload.idempotentRecovery }
+              : {}),
+            ...(typeof retryResponse.payload?.samePayloadReplayDetected === "boolean"
+              ? { samePayloadReplayDetected: retryResponse.payload.samePayloadReplayDetected }
+              : {}),
+            ...(typeof retryResponse.payload?.duplicateChargeCreated === "boolean"
+              ? { duplicateChargeCreated: retryResponse.payload.duplicateChargeCreated }
+              : {})
           }
         }
       : {}),

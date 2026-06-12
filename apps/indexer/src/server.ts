@@ -5050,7 +5050,10 @@ async function buildX402PlanFromQuery(request: IndexerRequest) {
   });
 }
 
-async function ensureAgentOnlineForPayment(response: IndexerResponse, consoleState: ConsoleStateResponse): Promise<boolean> {
+async function ensureAgentOnlineForPayment(
+  response: IndexerResponse,
+  consoleState: ConsoleStateResponse
+): Promise<ReturnType<typeof heartbeatPaymentSafety> | false> {
   const agentAvailability = await controlPlane.getAgentRuntimeAvailability({
     sessionId: consoleState.session.sessionId
   });
@@ -5060,7 +5063,7 @@ async function ensureAgentOnlineForPayment(response: IndexerResponse, consoleSta
   });
 
   if (safety.paidPreflightSafe) {
-    return true;
+    return safety;
   }
 
   response.status(503).json({
@@ -8600,6 +8603,9 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
       response.json({
         ok: true,
         idempotent: true,
+        idempotentRecovery: true,
+        samePayloadReplayDetected: true,
+        duplicateChargeCreated: false,
         status: "settled",
         code: "settlement_already_recorded",
         doNotCreateNewPayment: true,
@@ -8644,6 +8650,9 @@ app.post("/api/x402/settlement-retry", route(async (request, response) => {
         status: "settled",
         code: "settlement_retry_settled",
         idempotent: true,
+        idempotentRecovery: true,
+        samePayloadReplayDetected: true,
+        duplicateChargeCreated: false,
         doNotCreateNewPayment: true,
         ...x402PaymentStateFinalitySummary(paymentState),
         paymentState
@@ -9518,7 +9527,8 @@ const handleAgentHireRequest = route(async (request, response) => {
         });
         return;
       }
-      if (!(await ensureAgentOnlineForPayment(response, consoleState))) {
+      const paymentSafety = await ensureAgentOnlineForPayment(response, consoleState);
+      if (!paymentSafety) {
         return;
       }
       if (!activationProbeRequested && !paidExecutionProvenFromReadiness(consoleState.readiness)) {
@@ -9534,7 +9544,13 @@ const handleAgentHireRequest = route(async (request, response) => {
 
       if (!paymentPayload) {
         setHeaders(response, buildAgentX402Headers({ paymentRequired: runtime.paymentRequired }));
-        response.status(402).json(runtime.paymentRequired);
+        response.status(402).json({
+          ...runtime.paymentRequired,
+          heartbeatSafety: paymentSafety,
+          buyerPaymentState: "PAYMENT_REQUIRED",
+          paymentRequested: true,
+          recommendedPollAfterMs: 0
+        });
         return;
       }
 
