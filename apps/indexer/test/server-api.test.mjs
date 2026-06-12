@@ -525,7 +525,8 @@ async function requestJson(url, init) {
   const payload = await response.json();
   return {
     status: response.status,
-    payload
+    payload,
+    headers: response.headers
   };
 }
 
@@ -3066,6 +3067,39 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(provenPaidAgentHeartbeat.status, 200);
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.provenBy, "heartbeat_probe");
     assert.equal(provenPaidAgentHeartbeat.payload.paidExecutionProbe.lastProvenBuild, "server-api-test-build");
+
+    const firstCachedPlan = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`);
+    assert.equal(firstCachedPlan.status, 200);
+    assert.equal(firstCachedPlan.headers.get("x-santaclawz-cache"), "miss");
+    assert.equal(firstCachedPlan.payload.heartbeatSafety.status, "fresh");
+    const secondCachedPlan = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`);
+    assert.equal(secondCachedPlan.status, 200);
+    assert.equal(secondCachedPlan.headers.get("x-santaclawz-cache"), "hit");
+    assert.equal(secondCachedPlan.payload.heartbeatSafety.status, "fresh");
+
+    const heartbeatRefresh = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": adminKey },
+      body: JSON.stringify({
+        sessionId,
+        status: "live",
+        ttlSeconds: 60,
+        relayAgentBuild: "server-api-test-build-refreshed",
+        paidExecutionProbe: {
+          attempted: true,
+          ok: true,
+          requestId: "probe_server_api_paid_ready",
+          packageVerified: true,
+          buyerDeliveryVerified: true,
+          returnStatus: "completed"
+        }
+      })
+    });
+    assert.equal(heartbeatRefresh.status, 200);
+    const cachedPlanAfterHeartbeat = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/x402-plan`);
+    assert.equal(cachedPlanAfterHeartbeat.status, 200);
+    assert.equal(cachedPlanAfterHeartbeat.headers.get("x-santaclawz-cache"), "hit");
+    assert.equal(cachedPlanAfterHeartbeat.payload.heartbeatSafety.status, "fresh");
 
     const runtimeHeartbeatPath = path.join(workspaceDir, ".clawz-data", "state", "agent-runtime-heartbeats.json");
     const heartbeatProbe = {

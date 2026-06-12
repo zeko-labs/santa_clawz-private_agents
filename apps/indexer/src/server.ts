@@ -356,7 +356,6 @@ function invalidateCachesAfterWrite(pathname: string) {
   if (heartbeatAgentId) {
     publicReadCache.delete(`agent-availability:${heartbeatAgentId}`);
     publicReadInflight.delete(`agent-availability:${heartbeatAgentId}`);
-    clearX402PlanCacheForAgent(heartbeatAgentId);
     return;
   }
   clearConsoleStateCache();
@@ -2518,12 +2517,9 @@ async function buildX402PlanFromOptions(
     baseUrl,
     consoleState
   });
-  const runtimeLease = await controlPlane.getAgentRuntimeLeaseAvailability({
-    sessionId: consoleState.session.sessionId
-  }).catch(() => undefined);
   return {
     consoleState,
-    plan: applyHeartbeatPaymentSafetyToX402Plan(plan, runtimeLease)
+    plan
   };
 }
 
@@ -2618,6 +2614,17 @@ function applyHeartbeatPaymentSafetyToX402Plan<T extends object>(
     recommendedPollAfterMs: safety.recommendedPollAfterMs,
     guidance: safety.guidance
   };
+}
+
+async function attachHeartbeatPaymentSafetyToPlan<T extends object>(
+  plan: T
+): Promise<T & { heartbeatSafety: ReturnType<typeof heartbeatPaymentSafety> }> {
+  const planRecord = plan as Record<string, unknown>;
+  const sessionId = typeof planRecord.sessionId === "string" ? planRecord.sessionId : "";
+  const runtimeLease = sessionId
+    ? await controlPlane.getAgentRuntimeLeaseAvailability({ sessionId }).catch(() => undefined)
+    : undefined;
+  return applyHeartbeatPaymentSafetyToX402Plan(plan, runtimeLease);
 }
 
 function paymentStateLookupFromQuery(query: unknown) {
@@ -7718,10 +7725,11 @@ app.get("/api/x402/plan", route(async (request, response) => {
       return;
     }
     const cacheStatus = planRead.cacheStatus;
+    const planWithHeartbeatSafety = await attachHeartbeatPaymentSafetyToPlan(planRead.payload as X402PlanResponse);
     const plan = await attachBuyerPaymentSafetyToPlan({
       apiBase,
       query: request.query,
-      plan: planRead.payload as X402PlanResponse
+      plan: planWithHeartbeatSafety
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
@@ -7757,10 +7765,11 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
       return;
     }
     const cacheStatus = planRead.cacheStatus;
+    const planWithHeartbeatSafety = await attachHeartbeatPaymentSafetyToPlan(planRead.payload as X402PlanResponse);
     const plan = await attachBuyerPaymentSafetyToPlan({
       apiBase,
       query: request.query,
-      plan: planRead.payload as X402PlanResponse
+      plan: planWithHeartbeatSafety
     });
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
