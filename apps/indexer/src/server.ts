@@ -6712,12 +6712,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         artifactDeliveryAvailable: artifactDelivered,
         buyerVerificationStatus: buyerVerified ? "verified" : latestReceipt?.buyerScanStatus === "failed" ? "failed" : "not_verified",
         buyerAcceptanceStatus: buyerAccepted ? "accepted" : latestReceipt?.buyerAcceptanceStatus ?? "pending",
-        sellerReputationImpact:
-          hasFailure && !staleDeliveryFailureAfterReturn
-            ? "seller_failure"
-            : returnVerified && !buyerDeliveryAvailable
-              ? "none_until_delivery_fault_attributed"
-              : "none",
+        sellerReputationImpact: protocolLifecycle.sellerAnswer.reputationImpact,
         narrative: lifecycleNarrative
       },
       relayTrace: hireRequest.relayTrace ?? [],
