@@ -5860,7 +5860,14 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
       inflight: publicMarketplaceSnapshotInflight,
       ttlMs: PUBLIC_MARKETPLACE_SNAPSHOT_CACHE_TTL_MS,
       producer: async () => {
-        const [agents, agentBoard, paymentLedger, publicSocialAnchorQueue] = await Promise.all([
+        const [
+          agents,
+          agentBoard,
+          paymentLedger,
+          publicSocialAnchorQueue,
+          workshopReceiptSummary,
+          publicActivitySummary
+        ] = await Promise.all([
           controlPlane.listRegisteredAgents(),
           controlPlane.listAgentBoardMessages({ limit: 100 }),
           controlPlane.listPaymentLedger({ limit: 100 }),
@@ -5869,7 +5876,9 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
             batchLimit: 6,
             statuses: ["confirmed"],
             kinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS
-          })
+          }),
+          controlPlane.getWorkshopReceiptSummary(),
+          controlPlane.getPublicActivitySummary({ socialAnchorKinds: PUBLIC_SOCIAL_ANCHOR_FEED_KINDS })
         ]);
         return {
         schemaVersion: "santaclawz-public-marketplace-snapshot/1.0",
@@ -5882,7 +5891,9 @@ app.get("/api/public/marketplace-snapshot", route(async (request, response) => {
         },
         agentBoard,
         paymentLedger: compactPaymentLedgerForPublicSnapshot(paymentLedger),
-        publicSocialAnchorQueue
+        publicSocialAnchorQueue,
+        workshopReceiptSummary,
+        publicActivitySummary
         };
       },
       currentCacheEpoch: () => publicMarketplaceSnapshotCacheEpoch,

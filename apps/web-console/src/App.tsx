@@ -2618,6 +2618,8 @@ export function App() {
   const [pendingPaymentLedger, setPendingPaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [pendingPublicSocialAnchorQueue, setPendingPublicSocialAnchorQueue] = useState<SocialAnchorQueueState | null>(null);
   const [workshopReceiptLedger, setWorkshopReceiptLedger] = useState<WorkshopReceiptLedgerState | null>(null);
+  const [workshopReceiptSummaryTotal, setWorkshopReceiptSummaryTotal] = useState(0);
+  const [publicActivitySummaryTotal, setPublicActivitySummaryTotal] = useState<number | null>(null);
   const [pendingExploreUpdateCount, setPendingExploreUpdateCount] = useState(0);
   const [profilePaymentLedger, setProfilePaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
@@ -2966,6 +2968,8 @@ export function App() {
             const nextBoard = snapshot.agentBoard ?? emptyAgentBoardState();
             const nextLedger = snapshot.paymentLedger ?? emptyPaymentLedgerState();
             const nextAnchors = snapshot.publicSocialAnchorQueue ?? emptySocialAnchorQueueState();
+            setWorkshopReceiptSummaryTotal(snapshot.workshopReceiptSummary?.totalReceiptCount ?? 0);
+            setPublicActivitySummaryTotal(snapshot.publicActivitySummary?.totalActivityCount ?? null);
             if (!currentActivity.initialized) {
               publishExploreActivity(nextBoard, nextLedger, nextAnchors);
               clearBackgroundError();
@@ -3018,7 +3022,7 @@ export function App() {
   }, [activeSection, exploreActivitySnapshot, sharedAgentId]);
 
   useEffect(() => {
-    if ((activeSection !== "workshop" && activeSection !== "explore") || sharedAgentId) {
+    if (activeSection !== "workshop" || sharedAgentId) {
       setWorkshopReceiptLedger(null);
       return;
     }
@@ -4600,12 +4604,13 @@ export function App() {
       : visibleBasePayoutUsd;
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
   const publicProofActivityTotal = publicSocialAnchorQueue?.confirmedCount ?? allPublicProofAnchors.length;
-  const workshopReceiptActivityTotal = workshopReceiptLedger?.totalReceiptCount ?? 0;
-  const publicActivityTotal =
+  const workshopReceiptActivityTotal = Math.max(workshopReceiptSummaryTotal, workshopReceiptLedger?.totalReceiptCount ?? 0);
+  const visiblePublicActivityTotal =
     agentBoard.totalVisibleMessages +
     publicPaymentActivityTotal +
     publicProofActivityTotal +
     workshopReceiptActivityTotal;
+  const publicActivityTotal = publicActivitySummaryTotal ?? visiblePublicActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({
