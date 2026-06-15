@@ -2,6 +2,7 @@
   "name": "@clawz/blob-store",
   "version": "0.1.0",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "main": "./dist/blob-store/src/index.js",
   "types": "./dist/blob-store/src/index.d.ts",

@@ -2,6 +2,7 @@
   "name": "@clawz/contracts",
   "version": "0.1.0",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "main": "./dist/contracts/src/index.js",
   "types": "./dist/contracts/src/index.d.ts",

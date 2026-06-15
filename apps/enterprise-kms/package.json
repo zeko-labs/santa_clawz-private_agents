@@ -2,6 +2,7 @@
   "name": "@clawz/enterprise-kms",
   "version": "0.1.0",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "scripts": {
     "dev": "node ../../node_modules/tsx/dist/cli.mjs watch src/server.ts",
