@@ -2,6 +2,7 @@
   "name": "@clawz/key-broker",
   "version": "0.1.0",
   "private": true,
+  "license": "BUSL-1.1",
   "type": "module",
   "main": "./dist/key-broker/src/index.js",
   "types": "./dist/key-broker/src/index.d.ts",
