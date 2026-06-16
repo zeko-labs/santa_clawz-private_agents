@@ -1650,7 +1650,6 @@ function compactSettlementRecovery(settlementRecovery) {
     stringValue(finalLifecycle, "protocolState") === "DELIVERED_SETTLED" ||
     stringValue(finalLifecycle, "paymentFinality") === "settled" ||
     stringValue(finalPaymentStatePayload, "settlementStatus") === "settled";
-  const retryCode = stringValue(retryResponse.payload, "code");
   return {
     attempted: settlementRecovery.attempted === true,
     ...(stringValue(settlementRecovery, "reason") ? { reason: stringValue(settlementRecovery, "reason") } : {}),
@@ -1663,9 +1662,7 @@ function compactSettlementRecovery(settlementRecovery) {
           retry: {
             ok: retryResponse.ok === true,
             status: retryResponse.status,
-            ...(retryCode
-              ? { code: finalSettled && retryResponse.ok !== true ? "settlement_retry_already_terminal" : retryCode }
-              : {}),
+            ...(stringValue(retryResponse.payload, "code") ? { code: stringValue(retryResponse.payload, "code") } : {}),
             ...(finalSettled && retryResponse.ok !== true ? { supersededByFinalPaymentState: true } : {}),
             ...(typeof retryResponse.payload?.idempotentRecovery === "boolean"
               ? { idempotentRecovery: retryResponse.payload.idempotentRecovery }
