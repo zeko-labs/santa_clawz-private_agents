@@ -2768,6 +2768,27 @@ function decorateX402PlanResponse(
   };
 }
 
+async function attachDynamicSafetyToX402Plan(input: {
+  apiBase: string;
+  query: unknown;
+  plan: X402PlanResponse;
+}) {
+  const heartbeatSafePlan = await withColdReadBudget(
+    attachHeartbeatPaymentSafetyToPlan(input.plan),
+    X402_PLAN_COLD_READ_BUDGET_MS,
+    "x402_plan_heartbeat_read_timeout"
+  );
+  return withColdReadBudget(
+    attachBuyerPaymentSafetyToPlan({
+      apiBase: input.apiBase,
+      query: input.query,
+      plan: heartbeatSafePlan
+    }),
+    X402_PLAN_COLD_READ_BUDGET_MS,
+    "x402_plan_buyer_safety_read_timeout"
+  );
+}
+
 function x402PlanTemporarilyUnavailable(input: {
   apiBase: string;
   cacheKey: string;
@@ -7720,12 +7741,22 @@ app.get("/api/x402/plan", route(async (request, response) => {
       return;
     }
     const cacheStatus = planRead.cacheStatus;
-    const planWithHeartbeatSafety = await attachHeartbeatPaymentSafetyToPlan(planRead.payload as X402PlanResponse);
-    const plan = await attachBuyerPaymentSafetyToPlan({
+    const plan = await attachDynamicSafetyToX402Plan({
       apiBase,
       query: request.query,
-      plan: planWithHeartbeatSafety
-    });
+      plan: planRead.payload as X402PlanResponse
+    }).catch((error) => ({ error }));
+    if ("error" in plan) {
+      response.set("x-santaclawz-cache", "temporarily_unavailable");
+      response.status(503).json(x402PlanTemporarilyUnavailable({
+        apiBase,
+        cacheKey,
+        ...(agentId ? { agentId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        error: plan.error
+      }));
+      return;
+    }
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
   } catch (error) {
@@ -7760,12 +7791,21 @@ app.get("/api/agents/:agentId/x402-plan", route(async (request, response) => {
       return;
     }
     const cacheStatus = planRead.cacheStatus;
-    const planWithHeartbeatSafety = await attachHeartbeatPaymentSafetyToPlan(planRead.payload as X402PlanResponse);
-    const plan = await attachBuyerPaymentSafetyToPlan({
+    const plan = await attachDynamicSafetyToX402Plan({
       apiBase,
       query: request.query,
-      plan: planWithHeartbeatSafety
-    });
+      plan: planRead.payload as X402PlanResponse
+    }).catch((error) => ({ error }));
+    if ("error" in plan) {
+      response.set("x-santaclawz-cache", "temporarily_unavailable");
+      response.status(503).json(x402PlanTemporarilyUnavailable({
+        apiBase,
+        cacheKey,
+        agentId,
+        error: plan.error
+      }));
+      return;
+    }
     response.set("x-santaclawz-cache", cacheStatus);
     response.json(plan);
   } catch (error) {
