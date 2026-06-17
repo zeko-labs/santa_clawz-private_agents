@@ -24,7 +24,8 @@ const BOOLEAN_FLAGS = new Set([
   "paid-activation-probe",
   "seller-readiness-test",
   "seller-test",
-  "wait-for-settlement"
+  "wait-for-settlement",
+  "private"
 ]);
 const HIRE_TASK_PROMPT_MAX_LENGTH = 2000;
 const HIRE_REQUESTER_CONTACT_MAX_LENGTH = 240;
@@ -115,6 +116,8 @@ Options:
   --activate-if-needed               If seller env is provided, run seller readiness/probe before retrying preflight.
   --seller-env-file .env.santaclawz  Seller env for --activate-if-needed.
   --local-hire-url http://127.0.0.1:8797/hire
+  --private                          Request private SantaClawz job visibility.
+  --job-privacy private              Alias for --private. Public is the default.
   --wait-for-settlement              Wait for terminal settlement in this command. Default returns on buyer delivery.
   --dry-run                          Force dry-run even when --allow-real-money is present.
   --allow-real-money                 Required before signing/submitting a paid payload.
@@ -240,6 +243,23 @@ function buildJobContext(args) {
     context.urls = [...(Array.isArray(context.urls) ? context.urls : []), ...urls].slice(0, 20);
   }
   return Object.keys(context).length ? context : undefined;
+}
+
+function buildJobPrivacy(args) {
+  const privacy = String(args["job-privacy"] ?? "").trim().toLowerCase();
+  const privateRequested = Boolean(args.private) || privacy === "private";
+  if (!privateRequested) {
+    if (privacy && privacy !== "public") {
+      throw new Error("--job-privacy must be public or private.");
+    }
+    return undefined;
+  }
+  return {
+    visibility: "private",
+    publicAggregateStats: true,
+    publicLifecycleEvents: false,
+    publicArtifactMetadata: false
+  };
 }
 
 function jobContextHasField(context, field) {
@@ -1104,6 +1124,7 @@ function paidExecutionSummary(responseOk, payload) {
   const sellerExecutionCompleted = workCompleted;
   const buyerDelivery = buyerDeliveryProjection(payload);
   const buyerComplete = sellerExecutionCompleted && buyerDelivery.buyerDeliveryAvailable;
+  const deliveryCompleteSettlementPending = buyerComplete && protocolState === "DELIVERED_AWAITING_SETTLEMENT";
   const acceptedPendingResult =
     responseOk &&
     relayDeliveryStatus === "acknowledged" &&
@@ -1128,6 +1149,12 @@ function paidExecutionSummary(responseOk, payload) {
     ...(protocolState ? { protocolState } : {}),
     ...(paymentFinality ? { paymentFinality } : {}),
     paymentFinalityPending,
+    ...(deliveryCompleteSettlementPending
+      ? {
+          message:
+            "Delivery complete; settlement finality is pending. Do not create a fresh payment for this job."
+        }
+      : {}),
     ...(typeof recommendedPollAfterMs === "number" ? { recommendedPollAfterMs } : {}),
     paymentStatus: paymentStatus || "unknown",
     settlementStatus,
@@ -1751,13 +1778,15 @@ function attachBuyerFinalSummary(output) {
     : undefined;
   const { settlementRecovery: _rawSettlementRecovery, ...sanitizedOutput } = output;
   const normalizedOutput = normalizeBuyerDeliverySummary(sanitizedOutput);
+  const timing = clientTimingSnapshot();
   return {
     ...normalizedOutput,
     ...(compactRecovery ? { settlementRecovery: compactRecovery } : {}),
     finalOutcome: finalOutcomeFromOutput(normalizedOutput),
     ...(originalSubmitAttempt ? { originalSubmitAttempt } : {}),
     ...(recovery ? { recovery } : {}),
-    clientTiming: clientTimingSnapshot(),
+    phaseTiming: timing,
+    clientTiming: timing,
     clientRetries: clientRetrySnapshot()
   };
 }
@@ -2109,6 +2138,7 @@ function nextCommandBase(args, agentId, taskPrompt) {
     ...stringListFromArg(args.url).map((url) => `--url ${JSON.stringify(url)}`),
     ...(args["job-context-file"] ? [`--job-context-file ${JSON.stringify(String(args["job-context-file"]))}`] : []),
     ...(args["job-context-json"] ? [`--job-context-json ${JSON.stringify(String(args["job-context-json"]))}`] : []),
+    ...(args.private || String(args["job-privacy"] ?? "").trim().toLowerCase() === "private" ? ["--private"] : []),
     ...(args["activation-probe"] || args["paid-activation-probe"] ? ["--activation-probe"] : []),
     `--max-usd ${JSON.stringify(String(args["max-usd"]))}`
   ].join(" ");
@@ -2129,6 +2159,7 @@ const agentId = parseAgentId(args.agent ?? args["agent-id"] ?? args["hire-url"])
 const taskPrompt = String(args.prompt ?? args.task ?? "").trim();
 const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local").trim();
 const jobContext = buildJobContext(args);
+const jobPrivacy = buildJobPrivacy(args);
 const sellerReadinessTestRequested = Boolean(args["seller-readiness-test"] || args["seller-test"]);
 const activationProbeRequested = Boolean(args["activation-probe"] || args["paid-activation-probe"] || sellerReadinessTestRequested);
 const maxUsd = decimalStringToNumber(args["max-usd"]);
@@ -2289,6 +2320,7 @@ async function runSuppliedPaymentPayloadWithoutPlan() {
     requesterContact,
     ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
     ...(jobContext ? { jobContext } : {}),
+    ...(jobPrivacy ? { jobPrivacy } : {}),
     paymentPayload: suppliedPaymentPayload
   };
   const submit = await timedClientStep("submitMs", () => paidSubmitJson(hireUrl, {
@@ -2465,7 +2497,8 @@ async function preflightHire() {
     taskPrompt,
     requesterContact,
     ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
-    ...(jobContext ? { jobContext } : {})
+    ...(jobContext ? { jobContext } : {}),
+    ...(jobPrivacy ? { jobPrivacy } : {})
   };
   const requestBodyBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
   if (requestBodyBytes > HIRE_REQUEST_BODY_MAX_BYTES) {
@@ -2505,6 +2538,7 @@ const baseOutput = {
   requesterContact,
   prompt: taskPrompt,
   ...(jobContext ? { jobContext } : {}),
+  ...(jobPrivacy ? { jobPrivacy } : {}),
   ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
   maxUsd,
   priceUsd: priceUsd === null ? null : formatUsd(priceUsd),
@@ -2657,6 +2691,7 @@ const submitBody = {
   requesterContact,
   ...(sellerReadinessTestRequested ? { sellerReadinessTest: true } : activationProbeRequested ? { activationProbe: true } : {}),
   ...(jobContext ? { jobContext } : {}),
+  ...(jobPrivacy ? { jobPrivacy } : {}),
   paymentPayload
 };
 const submit = await timedClientStep("submitMs", () => paidSubmitJson(hireUrl, {
