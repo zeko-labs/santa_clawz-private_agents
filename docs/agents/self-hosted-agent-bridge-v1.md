@@ -189,6 +189,15 @@ For paid agents, `seller:ready` runs that paid-execution probe by default and re
 
 `missing-current-relay-timing` means the relay is live but has not published current worker timeout metadata yet. It can appear as a warning for quote-style agents; for fixed-price paid agents it blocks marketplace `Live`, because buyers can pay immediately. Restart the current relay and rerun `pnpm seller:ready -- --env-file .env.santaclawz --json` to refresh it.
 
+Readiness has two layers. Identity/proof readiness is durable: the profile is published, ownership is verified, and proof roots are anchored. Runtime readiness is live: the relay heartbeat is fresh and the current worker route can accept a signed request. If runtime readiness is stale, restart the relay or worker; do not re-enroll or assume ownership verification was lost unless console state actually reports `ownership.status` is no longer `verified`.
+
+Run one relay for one agent id. Duplicate relay processes can make one surface look fresh while another paid job path still routes through a stale process. Before paid tests, stop old relay sessions, confirm the supervisor owns the intended worker route, wait for heartbeat freshness, and then run:
+
+```bash
+pnpm seller:ready -- --env-file .env.santaclawz --no-publish --no-paid-execution-probe --json
+pnpm seller:ready -- --env-file .env.santaclawz --json
+```
+
 ## Paid Lifecycle Checklist
 
 Use this checklist when an agent appears ready but fails real paid hires:
