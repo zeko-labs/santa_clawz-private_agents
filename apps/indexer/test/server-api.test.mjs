@@ -4678,6 +4678,17 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(deliveredPaymentState.payload.buyerWorkStatus, "delivered");
+    assert.equal(deliveredPaymentState.payload.sellerWorkStatus, "completed");
+    assert.equal(deliveredPaymentState.payload.buyerPaymentAction, "do_not_pay_poll_or_settle_same_payload");
+    assert.equal(deliveredPaymentState.payload.platformSettlementStatus, "pending_platform_settlement");
+    assert.equal(deliveredPaymentState.payload.freshPaymentForbidden, true);
+    assert.equal(deliveredPaymentState.payload.paymentPayloadCreated, true);
+    assert.equal(deliveredPaymentState.payload.paymentPayloadSubmitted, true);
+    assert.equal(deliveredPaymentState.payload.paymentAuthorized, true);
+    assert.equal(deliveredPaymentState.payload.deliveryFinality, "delivered");
+    assert.equal(deliveredPaymentState.payload.settlementFinality, "pending");
+    assert.equal(deliveredPaymentState.payload.settlementOwner, "platform_or_buyer_agent_with_original_payload");
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorActionRequired, true);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.reconciliationRequired, false);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorReconciliationRequired, false);
@@ -4702,6 +4713,16 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       deliveredPaymentState.payload.retryResume.settlementRecovery.retryEndpoint,
       /\/api\/x402\/settlement-retry\?ledgerId=pay_delivered_awaiting_settlement_test/
     );
+    const deliveredPaymentStateByLedgerId = await requestJson(
+      `${baseUrl}/api/x402/payment-state?ledgerId=pay_delivered_awaiting_settlement_test`
+    );
+    assert.equal(deliveredPaymentStateByLedgerId.status, 200);
+    assert.equal(deliveredPaymentStateByLedgerId.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(deliveredPaymentStateByLedgerId.payload.lookup.ledgerId, "pay_delivered_awaiting_settlement_test");
+    assert.equal(deliveredPaymentStateByLedgerId.payload.payment.ledgerEntryCount, 1);
+    assert.equal(deliveredPaymentStateByLedgerId.payload.buyerWorkStatus, "delivered");
+    assert.equal(deliveredPaymentStateByLedgerId.payload.sellerWorkStatus, "completed");
+    assert.equal(deliveredPaymentStateByLedgerId.payload.freshPaymentForbidden, true);
     const deliveredPaymentStateCached = await requestJson(
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${deliveredAwaitingSettlementDigest}`
     );
@@ -4782,6 +4803,13 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.ok(["hit", "miss"].includes(deliveredPaymentStateAfterSettlementRetry.payload.projectionSource));
     assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.paymentFinality, "settled");
     assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.paymentFinalityPending, false);
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.buyerWorkStatus, "delivered");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.sellerWorkStatus, "completed");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.buyerPaymentAction, "none");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.platformSettlementStatus, "settled");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.freshPaymentForbidden, false);
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.settlementFinality, "settled");
+    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.settlementOwner, "none");
     assert.match(deliveredPaymentState.payload.retryResume.guidance, /Delivery is available/);
     assert.doesNotMatch(deliveredPaymentState.payload.retryResume.guidance, /Retry or resume/);
     assert.equal(deliveredPaymentState.payload.partyFinality.buyerTerminal, true);

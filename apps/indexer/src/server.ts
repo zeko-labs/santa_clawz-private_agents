@@ -1855,6 +1855,28 @@ function isRetryableSettlementError(error: unknown): boolean {
   );
 }
 
+function classifyX402SettlementFailure(error: unknown): {
+  code: string;
+  retryable: boolean;
+} {
+  const text = errorMessage(error, String(error ?? "")).toLowerCase();
+  if (/rate limit|over rate limit|\b429\b/.test(text)) {
+    return { code: "x402_facilitator_rpc_rate_limited", retryable: true };
+  }
+  if (/timeout|aborted|etimedout|temporarily unavailable|\b502\b|\b503\b|\b504\b/.test(text)) {
+    return { code: "x402_facilitator_temporarily_unavailable", retryable: true };
+  }
+  if (/nonce too low|already known|underpriced|replacement transaction underpriced|settlement_pending/.test(text)) {
+    return { code: "x402_facilitator_transaction_retryable", retryable: true };
+  }
+  return {
+    code: isRetryableSettlementError(error)
+      ? "x402_facilitator_retryable_failure"
+      : "x402_facilitator_terminal_failure",
+    retryable: isRetryableSettlementError(error)
+  };
+}
+
 function isExpiredPaymentPayloadError(error: unknown): boolean {
   return /expired|validbefore|valid before|authorization is no longer valid/i.test(errorMessage(error, String(error ?? "")));
 }
@@ -3624,6 +3646,84 @@ function paymentLedgerEntryHasAcceptedBuyerDelivery(
   );
 }
 
+function x402PaymentStatePartyProjection(input: {
+  protocolLifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>;
+  latestLedger?: PaymentLedgerEntry;
+  paymentPayloadDigestSha256?: string;
+  paymentAuthorized: boolean;
+  paymentSettled: boolean;
+  buyerDeliveryAvailable: boolean;
+  sellerCompleted: boolean;
+  sellerFailure: boolean;
+  settlementCompletionRequired: boolean;
+}) {
+  const { protocolLifecycle } = input;
+  const buyerWorkStatus = input.buyerDeliveryAvailable
+    ? "delivered"
+    : input.sellerFailure || protocolLifecycle.protocolState === "SELLER_FAILED_NO_SETTLEMENT"
+      ? "failed"
+      : input.paymentAuthorized
+        ? "pending"
+        : "not_started";
+  const sellerWorkStatus = input.sellerCompleted
+    ? "completed"
+    : input.sellerFailure
+      ? "failed"
+      : protocolLifecycle.sellerOutcome === "not_at_fault" && protocolLifecycle.protocolState.startsWith("PLATFORM_FAILED")
+        ? "not_reached"
+        : "pending";
+  const settlementFailureRetryable = input.latestLedger?.settlementRecovery?.canRetrySettlement === true;
+  const settlementFinality = input.paymentSettled
+    ? "settled"
+    : input.latestLedger?.paymentStatus === "settlement_failed"
+      ? settlementFailureRetryable
+        ? "failed_retryable"
+        : "failed"
+      : input.paymentAuthorized
+        ? "pending"
+        : "not_started";
+  const platformSettlementStatus = input.paymentSettled
+    ? "settled"
+    : input.settlementCompletionRequired
+      ? "pending_platform_settlement"
+      : input.latestLedger?.paymentStatus === "settlement_failed"
+        ? settlementFailureRetryable
+          ? "retryable_failure"
+          : "failed"
+        : input.paymentAuthorized
+          ? "authorized"
+          : "not_started";
+  const buyerPaymentAction = input.paymentSettled
+    ? "none"
+    : protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload
+      ? "retry_same_payment_payload"
+      : input.settlementCompletionRequired || platformSettlementStatus === "retryable_failure"
+        ? "do_not_pay_poll_or_settle_same_payload"
+        : protocolLifecycle.buyerAnswer.canCreateFreshPayment
+          ? "create_fresh_payment"
+        : "none";
+  return {
+    buyerWorkStatus,
+    sellerWorkStatus,
+    buyerPaymentAction,
+    platformSettlementStatus,
+    freshPaymentForbidden: !protocolLifecycle.buyerAnswer.canCreateFreshPayment,
+    paymentPayloadCreated: Boolean(input.paymentPayloadDigestSha256 || input.latestLedger?.paymentPayloadDigestSha256),
+    paymentPayloadSubmitted: Boolean(input.latestLedger),
+    paymentAuthorized: input.paymentAuthorized,
+    deliveryFinality: input.buyerDeliveryAvailable
+      ? "delivered"
+      : input.sellerFailure
+        ? "failed"
+        : "pending",
+    settlementFinality,
+    settlementOwner:
+      input.settlementCompletionRequired || platformSettlementStatus === "retryable_failure"
+        ? "platform_or_buyer_agent_with_original_payload"
+        : "none"
+  };
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -3632,18 +3732,21 @@ async function buildX402PaymentStateResponse(input: {
   paymentPayloadDigestSha256?: string;
 }) {
   const ledgerEntry = input.ledgerId ? await controlPlane.getPaymentLedgerEntry(input.ledgerId) : undefined;
-  const paymentLedger = await controlPlane.listPaymentLedger({
-    ...(input.intentId ? { quoteIntentId: input.intentId } : {}),
-    ...(input.requestId ? { hireRequestId: input.requestId } : {}),
-    ...(input.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 } : {}),
-    limit: 10
-  });
+  const ledgerOnlyLookup = Boolean(input.ledgerId && !input.intentId && !input.requestId && !input.paymentPayloadDigestSha256);
+  const paymentLedgerEntries = ledgerOnlyLookup
+    ? []
+    : (await controlPlane.listPaymentLedger({
+        ...(input.intentId ? { quoteIntentId: input.intentId } : {}),
+        ...(input.requestId ? { hireRequestId: input.requestId } : {}),
+        ...(input.paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256: input.paymentPayloadDigestSha256 } : {}),
+        limit: 10
+      })).entries;
   const entries = ledgerEntry
     ? [
         ledgerEntry,
-        ...paymentLedger.entries.filter((entry) => entry.ledgerId !== ledgerEntry.ledgerId)
+        ...paymentLedgerEntries.filter((entry) => entry.ledgerId !== ledgerEntry.ledgerId)
       ]
-    : paymentLedger.entries;
+    : paymentLedgerEntries;
   const rawLatestLedger = entries[0];
   const intentId = input.intentId ?? rawLatestLedger?.quoteIntentId;
   const requestId = input.requestId ?? rawLatestLedger?.hireRequestId;
@@ -3824,6 +3927,17 @@ async function buildX402PaymentStateResponse(input: {
       paymentAuthorized &&
       !paymentSettled
   );
+  const partyProjection = x402PaymentStatePartyProjection({
+    protocolLifecycle,
+    ...(latestLedger ? { latestLedger } : {}),
+    ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
+    paymentAuthorized,
+    paymentSettled,
+    buyerDeliveryAvailable: paymentStateBuyerDeliveryAvailable,
+    sellerCompleted: paymentStateSellerCompleted,
+    sellerFailure: paymentStateSellerFailure,
+    settlementCompletionRequired
+  });
   const settlementActionEndpoint =
     settlementCanRetry || settlementCompletionRequired
       ? paymentStateRetryEndpoint({
@@ -3889,6 +4003,7 @@ async function buildX402PaymentStateResponse(input: {
     buyerAction: protocolLifecycle.buyerAction,
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
+    ...partyProjection,
     ...lifecycleFinalityFields(protocolLifecycle),
     partyFinality,
     paymentStatus: paymentStatePaymentStatus,
@@ -4477,6 +4592,17 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
     ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
     ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
+    ...(typeof payloadRecord.buyerWorkStatus === "string" ? { buyerWorkStatus: payloadRecord.buyerWorkStatus } : {}),
+    ...(typeof payloadRecord.sellerWorkStatus === "string" ? { sellerWorkStatus: payloadRecord.sellerWorkStatus } : {}),
+    ...(typeof payloadRecord.buyerPaymentAction === "string" ? { buyerPaymentAction: payloadRecord.buyerPaymentAction } : {}),
+    ...(typeof payloadRecord.platformSettlementStatus === "string" ? { platformSettlementStatus: payloadRecord.platformSettlementStatus } : {}),
+    ...(typeof payloadRecord.freshPaymentForbidden === "boolean" ? { freshPaymentForbidden: payloadRecord.freshPaymentForbidden } : {}),
+    ...(typeof payloadRecord.paymentPayloadCreated === "boolean" ? { paymentPayloadCreated: payloadRecord.paymentPayloadCreated } : {}),
+    ...(typeof payloadRecord.paymentPayloadSubmitted === "boolean" ? { paymentPayloadSubmitted: payloadRecord.paymentPayloadSubmitted } : {}),
+    ...(typeof payloadRecord.paymentAuthorized === "boolean" ? { paymentAuthorized: payloadRecord.paymentAuthorized } : {}),
+    ...(typeof payloadRecord.deliveryFinality === "string" ? { deliveryFinality: payloadRecord.deliveryFinality } : {}),
+    ...(typeof payloadRecord.settlementFinality === "string" ? { settlementFinality: payloadRecord.settlementFinality } : {}),
+    ...(typeof payloadRecord.settlementOwner === "string" ? { settlementOwner: payloadRecord.settlementOwner } : {}),
     ...(typeof payload.paymentFinality === "string" ? { paymentFinality: payload.paymentFinality } : {}),
     ...(typeof payload.paymentFinalityPending === "boolean" ? { paymentFinalityPending: payload.paymentFinalityPending } : {}),
     ...(typeof payload.statePollingRequired === "boolean" ? { statePollingRequired: payload.statePollingRequired } : {}),
@@ -4708,17 +4834,20 @@ async function settleCompletedAgentHirePaymentOutcome(input: Parameters<typeof s
       result: await settleCompletedAgentHirePayment(input)
     };
   } catch (error) {
+    const settlementFailure = classifyX402SettlementFailure(error);
     await controlPlane.recordPaymentLedgerSettlementFailure({
       ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
       errorMessage: errorMessage(error, "Unable to settle x402 payment."),
-      settlementRetryable: isRetryableSettlementError(error)
+      errorCode: settlementFailure.code,
+      settlementRetryable: settlementFailure.retryable
     });
     console.warn(JSON.stringify({
       event: "x402_background_settlement_failed",
       agentId: input.agentId,
       requestId: input.requestId,
       ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
-      retryable: isRetryableSettlementError(error),
+      errorCode: settlementFailure.code,
+      retryable: settlementFailure.retryable,
       error: errorMessage(error, "Unable to settle x402 payment.")
     }));
     return { status: "failed", error };
@@ -8378,10 +8507,12 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
           paymentResponseDigestSha256
         });
       } catch (error) {
+        const settlementFailure = classifyX402SettlementFailure(error);
         await controlPlane.recordPaymentLedgerSettlementFailure({
           ledgerId: authorizationLedgerEntry.ledgerId,
           errorMessage: errorMessage(error, "Unable to settle x402 payment."),
-          settlementRetryable: isRetryableSettlementError(error)
+          errorCode: settlementFailure.code,
+          settlementRetryable: settlementFailure.retryable
         });
         response.status(202).json(paymentSettlementFailureBody(error, {
           intent: approvedIntent,
