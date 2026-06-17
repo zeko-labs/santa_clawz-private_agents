@@ -4894,25 +4894,18 @@ export function App() {
   const focusedNextStepLabel = focusedRegistryAgent ? nextStepLabel(focusedRegistryAgent) : null;
   const profileCompletedPayments = (profilePaymentLedger?.entries ?? []).filter(isCompletedPaymentEntry);
   const agentCompletionScore = focusedRegistryAgent?.completionScore ?? state.completionScore;
-  const agentCompletionPendingCount = agentCompletionScore?.pendingJobCount ?? 0;
-  const agentCompletionPendingSuffix =
-    agentCompletionPendingCount > 0 ? ` · ${agentCompletionPendingCount} unresolved` : "";
   const agentCompletionScoreLabel =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
       ? agentCompletionScore.source === "payment-ledger"
         ? `${agentCompletionScore.successRatePct ?? 0}% delivery`
         : `${agentCompletionScore.successRatePct ?? 0}% success`
-      : agentCompletionPendingCount > 0
-        ? `${agentCompletionPendingCount} unresolved paid ${agentCompletionPendingCount === 1 ? "path" : "paths"}`
-        : "No delivery history yet";
+      : "No delivery history yet";
   const agentCompletionScoreDetail =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
       ? agentCompletionScore.source === "payment-ledger"
-        ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} paid deliveries${agentCompletionPendingSuffix}`
-        : `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs${agentCompletionPendingSuffix}`
-      : agentCompletionPendingCount > 0
-        ? "Payment recorded without completed delivery yet"
-        : "Waiting for paid delivery outcomes";
+        ? `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} paid deliveries`
+        : `${agentCompletionScore.completedJobCount}/${agentCompletionScore.evaluatedJobCount} last paid jobs`
+      : "Waiting for paid delivery outcomes";
   const agentCompletionScoreClass = `completion-score-pill completion-score-${completionScoreTone(agentCompletionScore?.successRatePct)}`;
   const agentJobActivityStats = focusedRegistryAgent?.jobActivityStats ?? state.jobActivityStats;
   const paidOutcomeFallbackCount = agentCompletionScore?.evaluatedJobCount ?? 0;

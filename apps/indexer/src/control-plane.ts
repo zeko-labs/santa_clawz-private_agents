@@ -3369,6 +3369,14 @@ function paymentLedgerPendingNeedsAttention(entry: PaymentLedgerEntry) {
   return paid && !completed;
 }
 
+function paymentLedgerScoredSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSellerOutcome {
+  const outcome = paymentLedgerSellerOutcome(entry);
+  if (outcome === "pending" && paymentLedgerPendingNeedsAttention(entry)) {
+    return "failed";
+  }
+  return outcome;
+}
+
 function buildPaymentLedgerCompletionScore(
   paymentLedger: PaymentLedgerFile | undefined,
   sessionId: string
@@ -3381,24 +3389,13 @@ function buildPaymentLedgerCompletionScore(
     .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
     .map((entry) => ({
       entry,
-      outcome: paymentLedgerSellerOutcome(entry)
+      outcome: paymentLedgerScoredSellerOutcome(entry)
     }));
-  const pendingJobCount = scored.filter((entry) => paymentLedgerPendingNeedsAttention(entry.entry)).length;
   const evaluated = scored
     .filter((entry) => entry.outcome !== "pending")
     .slice(0, JOB_COMPLETION_SCORE_WINDOW_SIZE);
   if (evaluated.length === 0) {
-    return pendingJobCount > 0
-      ? {
-          windowSize: JOB_COMPLETION_SCORE_WINDOW_SIZE,
-          evaluatedJobCount: 0,
-          completedJobCount: 0,
-          failedJobCount: 0,
-          pendingJobCount,
-          source: "payment-ledger",
-          label: `${pendingJobCount} unresolved paid ${pendingJobCount === 1 ? "path" : "paths"}`
-        }
-      : undefined;
+    return undefined;
   }
 
   const completedJobCount = evaluated.filter((entry) => entry.outcome === "completed").length;
@@ -3412,13 +3409,10 @@ function buildPaymentLedgerCompletionScore(
     evaluatedJobCount,
     completedJobCount,
     failedJobCount,
-    ...(pendingJobCount > 0 ? { pendingJobCount } : {}),
     successRatePct,
     ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
     source: "payment-ledger",
-    label: `${completedJobCount}/${evaluatedJobCount} paid deliveries${
-      pendingJobCount > 0 ? `, ${pendingJobCount} unresolved` : ""
-    }`
+    label: `${completedJobCount}/${evaluatedJobCount} paid deliveries`
   };
 }
 
