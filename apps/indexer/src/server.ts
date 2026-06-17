@@ -312,6 +312,8 @@ function clearConsoleStateCache() {
   consoleStateInflight.clear();
   paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
+  x402PaymentStateCache.clear();
+  x402PaymentStateInflight.clear();
   publicMarketplaceSnapshotCache.clear();
   publicMarketplaceSnapshotInflight.clear();
   publicReadCache.clear();

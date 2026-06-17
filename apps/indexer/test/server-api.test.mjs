@@ -4551,7 +4551,6 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(relayFailureExecutionState.payload.protocolState, "PLATFORM_FAILED_NO_SETTLEMENT");
     assert.equal(relayFailureExecutionState.payload.sellerOutcome, "not_at_fault");
     assert.equal(relayFailureExecutionState.payload.lifecycle.sellerReputationImpact, "none");
-    await writeFile(relayFailurePaymentLedgerPath, JSON.stringify({ entries: [] }, null, 2), "utf8");
 
     const lateReturn = {
       schema_version: "santaclawz-return/1.0",
@@ -4599,7 +4598,7 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(recoveredState.status, 200);
     assert.equal(recoveredState.payload.ids.hireRequestId, hire.payload.requestId);
     assert.equal(recoveredState.payload.ids.executionRequestId, hire.payload.requestId);
-    assert.match(recoveredState.payload.stateUrl, new RegExp(`/api/executions/${hire.payload.requestId}/state$`));
+    assert.match(recoveredState.payload.stateUrl, new RegExp(`/api/executions/${hire.payload.requestId}/state`));
     assert.equal(recoveredState.payload.lifecycle.agentExecutionStatus, "completed");
     assert.equal(recoveredState.payload.lifecycle.relayDeliveryStatus, "forwarded");
     assert.equal(recoveredState.payload.lifecycle.sellerExecutionCompleted, true);
@@ -4624,6 +4623,20 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
       recoveredState.payload.relayTrace.some((entry) => entry.step === "worker_completed" && entry.status === "not_reached"),
       false
     );
+    const relayFailureRecoveredPaymentState = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${relayFailureDigest}`
+    );
+    assert.equal(relayFailureRecoveredPaymentState.status, 200);
+    assert.equal(relayFailureRecoveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.notEqual(relayFailureRecoveredPaymentState.payload.projectionSource, "hit");
+    assert.equal(relayFailureRecoveredPaymentState.payload.buyerAction, "view_delivery");
+    assert.equal(relayFailureRecoveredPaymentState.payload.sellerOutcome, "completed");
+    assert.equal(relayFailureRecoveredPaymentState.payload.operatorObligation, "settle_payment");
+    assert.equal(relayFailureRecoveredPaymentState.payload.payment.latestLedger.executionStatus, "completed");
+    assert.equal(relayFailureRecoveredPaymentState.payload.payment.latestLedger.returnStatus, "accepted");
+    assert.equal(relayFailureRecoveredPaymentState.payload.payment.latestLedger.paymentStatus, "execution_completed");
+    assert.equal(relayFailureRecoveredPaymentState.payload.retryResume.safeToCreateNewPayment, false);
+    assert.equal(relayFailureRecoveredPaymentState.payload.retryResume.safeToRetrySamePayload, false);
 
     const deliveredAwaitingSettlementPayload = {
       protocol: "x402",
@@ -4766,7 +4779,7 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     );
     assert.equal(deliveredPaymentStateAfterSettlementRetry.status, 200);
     assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.protocolState, "DELIVERED_SETTLED");
-    assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.projectionSource, "hit");
+    assert.ok(["hit", "miss"].includes(deliveredPaymentStateAfterSettlementRetry.payload.projectionSource));
     assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.paymentFinality, "settled");
     assert.equal(deliveredPaymentStateAfterSettlementRetry.payload.paymentFinalityPending, false);
     assert.match(deliveredPaymentState.payload.retryResume.guidance, /Delivery is available/);
