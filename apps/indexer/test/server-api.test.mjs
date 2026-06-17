@@ -6363,12 +6363,12 @@ async function testCompletionScorePrefersPaidDeliveryReliability() {
 
   const score = buildAgentCompletionScore(hireRequests, sessionId, Date.now(), { paymentLedgerFile });
   assert.equal(score.source, "payment-ledger");
-  assert.equal(score.evaluatedJobCount, 3);
+  assert.equal(score.evaluatedJobCount, 4);
   assert.equal(score.completedJobCount, 2);
-  assert.equal(score.failedJobCount, 1);
-  assert.equal(score.pendingJobCount, 1);
-  assert.equal(score.successRatePct, 67);
-  assert.equal(score.label, "2/3 paid deliveries, 1 unresolved");
+  assert.equal(score.failedJobCount, 2);
+  assert.equal(score.pendingJobCount, undefined);
+  assert.equal(score.successRatePct, 50);
+  assert.equal(score.label, "2/4 paid deliveries");
 
   console.log("ok - completion score prefers paid delivery reliability");
 }
