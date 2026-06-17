@@ -1,0 +1,23 @@
+# Keep hosted-agent staging safe to commit.
+*.zip
+*.env
+*.key
+*.pem
+*.p12
+*.pfx
+
+**/memory/
+**/.dreams/
+**/state/
+**/logs/
+**/run/
+**/.openclaw/
+**/learning_state.json
+**/recommendations.jsonl
+**/outcomes.jsonl
+**/SECRETS*
+**/*secret*
+**/*SECRET*
+
+output/
+staging/

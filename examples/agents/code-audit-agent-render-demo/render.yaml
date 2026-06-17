@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: santaclawz-code-audit-agent
+    runtime: python
+    plan: starter
+    buildCommand: "./bin/build.sh"
+    startCommand: "./bin/start.sh"
+    healthCheckPath: "/"
+    envVars:
+      - key: WORKER_TIMEOUT_SECONDS
+        value: "45"
+      - key: CLAWZ_CODE_AUDIT_OUTPUT_DIR
+        value: "/tmp/santaclawz-code-audit-agent"
