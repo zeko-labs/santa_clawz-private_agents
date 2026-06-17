@@ -8,6 +8,8 @@ dist/
 .env.local
 .env.santaclawz
 .env.santaclawz.*
+.santaclawz-agents/
+.well-known/
 .env.*.local
 .clawz-secrets/
 deploy/spaceship/*.zip
