@@ -682,6 +682,7 @@ export interface AgentCompletionScore {
   evaluatedJobCount: number;
   completedJobCount: number;
   failedJobCount: number;
+  pendingJobCount?: number;
   successRatePct?: number;
   lastEvaluatedAtIso?: string;
   source?: "payment-ledger" | "hire-requests";

@@ -3350,6 +3350,25 @@ function paymentLedgerSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSel
   return "pending";
 }
 
+function paymentLedgerPendingNeedsAttention(entry: PaymentLedgerEntry) {
+  if (isActivationLanePaymentResource(entry.resource) || paymentLedgerSellerOutcome(entry) !== "pending") {
+    return false;
+  }
+  if (entry.lifecycleStatus?.needsAttention === true || entry.lifecycleStatus?.paidButNotCompleted === true) {
+    return true;
+  }
+  const paid =
+    entry.paymentStatus === "authorization_verified" ||
+    entry.paymentStatus === "payment_verified" ||
+    entry.paymentStatus === "settled" ||
+    entry.paymentStatus === "already_settled" ||
+    entry.paymentStatus === "seller_settled" ||
+    entry.paymentStatus === "protocol_fee_settled" ||
+    entry.paymentStatus === "partially_settled";
+  const completed = entry.executionStatus === "completed" || entry.returnStatus === "accepted";
+  return paid && !completed;
+}
+
 function buildPaymentLedgerCompletionScore(
   paymentLedger: PaymentLedgerFile | undefined,
   sessionId: string
@@ -3357,17 +3376,29 @@ function buildPaymentLedgerCompletionScore(
   if (!paymentLedger) {
     return undefined;
   }
-  const evaluated = paymentLedger.entries
+  const scored = paymentLedger.entries
     .filter((entry) => entry.sessionId === sessionId)
     .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
     .map((entry) => ({
       entry,
       outcome: paymentLedgerSellerOutcome(entry)
-    }))
+    }));
+  const pendingJobCount = scored.filter((entry) => paymentLedgerPendingNeedsAttention(entry.entry)).length;
+  const evaluated = scored
     .filter((entry) => entry.outcome !== "pending")
     .slice(0, JOB_COMPLETION_SCORE_WINDOW_SIZE);
   if (evaluated.length === 0) {
-    return undefined;
+    return pendingJobCount > 0
+      ? {
+          windowSize: JOB_COMPLETION_SCORE_WINDOW_SIZE,
+          evaluatedJobCount: 0,
+          completedJobCount: 0,
+          failedJobCount: 0,
+          pendingJobCount,
+          source: "payment-ledger",
+          label: `${pendingJobCount} unresolved paid ${pendingJobCount === 1 ? "path" : "paths"}`
+        }
+      : undefined;
   }
 
   const completedJobCount = evaluated.filter((entry) => entry.outcome === "completed").length;
@@ -3381,10 +3412,13 @@ function buildPaymentLedgerCompletionScore(
     evaluatedJobCount,
     completedJobCount,
     failedJobCount,
+    ...(pendingJobCount > 0 ? { pendingJobCount } : {}),
     successRatePct,
     ...(lastEvaluatedAtIso ? { lastEvaluatedAtIso } : {}),
     source: "payment-ledger",
-    label: `${completedJobCount}/${evaluatedJobCount} paid deliveries`
+    label: `${completedJobCount}/${evaluatedJobCount} paid deliveries${
+      pendingJobCount > 0 ? `, ${pendingJobCount} unresolved` : ""
+    }`
   };
 }
 
