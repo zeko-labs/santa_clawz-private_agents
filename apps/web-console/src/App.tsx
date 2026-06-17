@@ -4900,8 +4900,8 @@ export function App() {
   const agentCompletionScoreLabel =
     agentCompletionScore && agentCompletionScore.evaluatedJobCount > 0
       ? agentCompletionScore.source === "payment-ledger"
-        ? `${agentCompletionScore.successRatePct ?? 0}% delivery${agentCompletionPendingSuffix}`
-        : `${agentCompletionScore.successRatePct ?? 0}% success${agentCompletionPendingSuffix}`
+        ? `${agentCompletionScore.successRatePct ?? 0}% delivery`
+        : `${agentCompletionScore.successRatePct ?? 0}% success`
       : agentCompletionPendingCount > 0
         ? `${agentCompletionPendingCount} unresolved paid ${agentCompletionPendingCount === 1 ? "path" : "paths"}`
         : "No delivery history yet";
