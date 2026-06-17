@@ -3718,9 +3718,61 @@ function x402PaymentStatePartyProjection(input: {
         : "pending",
     settlementFinality,
     settlementOwner:
-      input.settlementCompletionRequired || platformSettlementStatus === "retryable_failure"
+      input.settlementCompletionRequired
+        ? "platform"
+        : platformSettlementStatus === "retryable_failure"
         ? "platform_or_buyer_agent_with_original_payload"
         : "none"
+  };
+}
+
+function x402SettlementTelemetry(input: {
+  latestLedger?: PaymentLedgerEntry;
+  paymentAuthorized: boolean;
+  paymentSettled: boolean;
+  settlementCompletionRequired: boolean;
+  settlementCanRetry: boolean;
+  platformSettlementStatus: string;
+  settlementActionEndpoint?: string;
+}) {
+  if (!input.paymentAuthorized && !input.latestLedger) {
+    return undefined;
+  }
+  const owner = input.paymentSettled
+    ? "none"
+    : input.settlementCompletionRequired
+      ? "platform"
+      : input.settlementCanRetry
+        ? "platform_or_buyer_agent_with_original_payload"
+        : input.paymentAuthorized
+          ? "platform"
+          : "none";
+  const nextAction = input.paymentSettled
+    ? "none"
+    : input.settlementCompletionRequired
+      ? "poll_payment_state"
+      : input.settlementCanRetry
+        ? "retry_settlement_same_payload"
+        : input.paymentAuthorized
+          ? "poll_payment_state"
+          : "none";
+  return {
+    status: input.platformSettlementStatus,
+    owner,
+    settlementRequired: input.settlementCompletionRequired,
+    samePayloadSettlementAvailable: input.settlementCompletionRequired || input.settlementCanRetry,
+    retryable: input.settlementCanRetry && !input.settlementCompletionRequired,
+    retryableFailure: input.settlementCanRetry && !input.settlementCompletionRequired,
+    nextAction,
+    freshPaymentForbidden: input.paymentAuthorized && !input.paymentSettled,
+    ...(input.latestLedger?.ledgerId ? { ledgerId: input.latestLedger.ledgerId } : {}),
+    ...(input.latestLedger?.updatedAtIso ? { ledgerUpdatedAtIso: input.latestLedger.updatedAtIso } : {}),
+    ...(input.latestLedger?.paymentStatus ? { ledgerPaymentStatus: input.latestLedger.paymentStatus } : {}),
+    ...(input.latestLedger?.settlementRecovery?.nextSettlementAction
+      ? { ledgerNextSettlementAction: input.latestLedger.settlementRecovery.nextSettlementAction }
+      : {}),
+    ...(input.settlementActionEndpoint ? { retryEndpoint: input.settlementActionEndpoint } : {}),
+    ...(input.paymentSettled ? {} : { recommendedPollAfterMs: 2000 })
   };
 }
 
@@ -3975,6 +4027,15 @@ async function buildX402PaymentStateResponse(input: {
   const stateProjectionUpdatedAtIso = new Date().toISOString();
   const ledgerUpdatedAtIso = latestLedger?.updatedAtIso;
   const sourceFreshnessMs = sourceFreshnessMsFromIso(ledgerUpdatedAtIso, stateProjectionUpdatedAtIso);
+  const settlementTelemetry = x402SettlementTelemetry({
+    ...(latestLedger ? { latestLedger } : {}),
+    paymentAuthorized,
+    paymentSettled,
+    settlementCompletionRequired,
+    settlementCanRetry,
+    platformSettlementStatus: partyProjection.platformSettlementStatus,
+    ...(settlementActionEndpoint ? { settlementActionEndpoint } : {})
+  });
   return {
     schemaVersion: "santaclawz-x402-payment-state/1.0",
     ok: true,
@@ -4008,6 +4069,7 @@ async function buildX402PaymentStateResponse(input: {
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
     ...partyProjection,
+    ...(settlementTelemetry ? { settlementTelemetry } : {}),
     ...lifecycleFinalityFields(protocolLifecycle),
     partyFinality,
     paymentStatus: paymentStatePaymentStatus,
@@ -4053,7 +4115,7 @@ async function buildX402PaymentStateResponse(input: {
       ...(settlementActionEndpoint
         ? {
             settlementRecovery: {
-              actor: "platform_or_buyer_agent_with_original_payload",
+              actor: settlementCompletionRequired ? "platform" : "platform_or_buyer_agent_with_original_payload",
               action: settlementCompletionRequired ? "complete_settlement_same_payload" : "retry_settlement_same_payload",
               status: settlementCompletionRequired ? "pending_settlement" : "retryable_settlement_failure",
               retryEndpoint: settlementActionEndpoint,
@@ -4607,6 +4669,7 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payloadRecord.deliveryFinality === "string" ? { deliveryFinality: payloadRecord.deliveryFinality } : {}),
     ...(typeof payloadRecord.settlementFinality === "string" ? { settlementFinality: payloadRecord.settlementFinality } : {}),
     ...(typeof payloadRecord.settlementOwner === "string" ? { settlementOwner: payloadRecord.settlementOwner } : {}),
+    ...(isRecord(payloadRecord.settlementTelemetry) ? { settlementTelemetry: payloadRecord.settlementTelemetry } : {}),
     ...(typeof payload.paymentFinality === "string" ? { paymentFinality: payload.paymentFinality } : {}),
     ...(typeof payload.paymentFinalityPending === "boolean" ? { paymentFinalityPending: payload.paymentFinalityPending } : {}),
     ...(typeof payload.statePollingRequired === "boolean" ? { statePollingRequired: payload.statePollingRequired } : {}),

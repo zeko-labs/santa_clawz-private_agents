@@ -428,15 +428,29 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
+function arrayStrings(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+
 function buildReadinessSummary(input) {
   const plan = input.afterPlan?.payload ?? input.beforePlan?.payload ?? {};
   const state = input.afterState?.payload ?? input.beforeState?.payload ?? {};
   const availability = input.availability?.payload ?? {};
+  const hostedReadiness = availability.readiness && typeof availability.readiness === "object"
+    ? availability.readiness
+    : {};
+  const hostedReadinessBlockers = arrayStrings(hostedReadiness.blockers);
   const quoteMode = plan.pricingMode === "quote-required";
   const fixedMode = plan.pricingMode === "fixed-exact";
   const freeTestMode = plan.pricingMode === "free-test";
   const railReady = Array.isArray(plan.rails) ? plan.rails.some((rail) => rail?.ready === true) : false;
-  const ownershipVerified = state.ownership?.status === "verified";
+  const stateOwnershipVerified = state.ownership?.status === "verified";
+  const hostedReadinessHireable = hostedReadiness.hireable === true;
+  const ownershipSnapshotConflict =
+    !stateOwnershipVerified &&
+    hostedReadinessHireable &&
+    !hostedReadinessBlockers.includes("ownership-unverified");
+  const ownershipVerified = stateOwnershipVerified || ownershipSnapshotConflict;
   const paymentsEnabled = plan.paymentsEnabled === true;
   const paymentProfileReady = plan.paymentProfileReady === true;
   const payoutReady = plan.payoutAddressConfigured === true;
@@ -529,6 +543,26 @@ function buildReadinessSummary(input) {
     blockingReason: blockers[0]?.message,
     statusCoaching,
     upgradeGuide: buildUpgradeGuideHint(input.config),
+    readinessSources: {
+      ownership: ownershipSnapshotConflict
+        ? "hosted-readiness-projection"
+        : "console-state",
+      stateOwnershipStatus: state.ownership?.status ?? "unknown",
+      hostedReadinessHireable,
+      hostedReadinessBlockers
+    },
+    ...(ownershipSnapshotConflict
+      ? {
+          readinessDiagnostics: [
+            {
+              code: "ownership_snapshot_conflict",
+              severity: "info",
+              message:
+                "Console state ownership looked stale, but hosted readiness reported this agent hireable and did not report ownership-unverified."
+            }
+          ]
+        }
+      : {}),
     blockers,
     checks: {
       enrolled: Boolean(configValue(input.config, "agentId") && configValue(input.config, "sessionId")),

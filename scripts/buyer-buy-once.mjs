@@ -58,6 +58,17 @@ function clientRetrySnapshot() {
   return { ...clientRetryCounts };
 }
 
+function clientRetrySummary() {
+  const entries = Object.entries(clientRetryCounts).filter(([, count]) => count > 0);
+  if (!entries.length) {
+    return undefined;
+  }
+  return {
+    total: entries.reduce((sum, [, count]) => sum + count, 0),
+    labels: Object.fromEntries(entries)
+  };
+}
+
 function printCliError(error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(JSON.stringify({
@@ -1779,6 +1790,7 @@ function attachBuyerFinalSummary(output) {
   const { settlementRecovery: _rawSettlementRecovery, ...sanitizedOutput } = output;
   const normalizedOutput = normalizeBuyerDeliverySummary(sanitizedOutput);
   const timing = clientTimingSnapshot();
+  const retrySummary = clientRetrySummary();
   return {
     ...normalizedOutput,
     ...(compactRecovery ? { settlementRecovery: compactRecovery } : {}),
@@ -1787,6 +1799,7 @@ function attachBuyerFinalSummary(output) {
     ...(recovery ? { recovery } : {}),
     phaseTiming: timing,
     clientTiming: timing,
+    ...(retrySummary ? { prePaymentRetrySummary: retrySummary } : {}),
     clientRetries: clientRetrySnapshot()
   };
 }
