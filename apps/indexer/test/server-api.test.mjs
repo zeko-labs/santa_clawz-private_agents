@@ -4688,7 +4688,16 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.paymentAuthorized, true);
     assert.equal(deliveredPaymentState.payload.deliveryFinality, "delivered");
     assert.equal(deliveredPaymentState.payload.settlementFinality, "pending");
-    assert.equal(deliveredPaymentState.payload.settlementOwner, "platform_or_buyer_agent_with_original_payload");
+    assert.equal(deliveredPaymentState.payload.settlementOwner, "platform");
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.status, "pending_platform_settlement");
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.owner, "platform");
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.settlementRequired, true);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.samePayloadSettlementAvailable, true);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.retryable, false);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.retryableFailure, false);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.nextAction, "poll_payment_state");
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.freshPaymentForbidden, true);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.recommendedPollAfterMs, 2000);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorActionRequired, true);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.reconciliationRequired, false);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorReconciliationRequired, false);
