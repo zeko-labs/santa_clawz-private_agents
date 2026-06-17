@@ -4484,8 +4484,9 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "failed");
     assert.equal(hire.payload.operationalStatus.agentExecutionStatus, "submitted");
     assert.equal(["relay_disconnected", "relay_timeout"].includes(hire.payload.deliveryReceipt.stage), true);
+    assert.equal(hire.payload.deliveryReceipt.errorCode, "relay_worker_ack_timeout");
     assert.match(hire.payload.deliveryReceipt.target, /^santaclawz-relay:\/\//);
-    assert.match(hire.payload.deliveryError, /relay response|Relay connection/);
+    assert.match(hire.payload.deliveryError, /worker acknowledgement|relay response|Relay connection/);
     assert.deepEqual(
       hire.payload.relayTrace.map((entry) => `${entry.step}:${entry.status}`),
       [

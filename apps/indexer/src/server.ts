@@ -2750,6 +2750,13 @@ async function attachBuyerPaymentSafetyToPlan(input: {
 }
 
 type X402PlanResponse = Awaited<ReturnType<typeof buildX402PlanFromOptions>>["plan"];
+type X402PlanSafetyProjectionStage = "heartbeat" | "buyer-payment";
+type X402PlanSafetyProjectionError = {
+  stage: X402PlanSafetyProjectionStage;
+  code: string;
+  retryable: true;
+  message: string;
+};
 
 function decorateX402PlanResponse(
   payload: X402PlanResponse,
@@ -2773,20 +2780,58 @@ async function attachDynamicSafetyToX402Plan(input: {
   query: unknown;
   plan: X402PlanResponse;
 }) {
-  const heartbeatSafePlan = await withColdReadBudget(
-    attachHeartbeatPaymentSafetyToPlan(input.plan),
-    X402_PLAN_COLD_READ_BUDGET_MS,
-    "x402_plan_heartbeat_read_timeout"
-  );
-  return withColdReadBudget(
-    attachBuyerPaymentSafetyToPlan({
-      apiBase: input.apiBase,
-      query: input.query,
-      plan: heartbeatSafePlan
-    }),
-    X402_PLAN_COLD_READ_BUDGET_MS,
-    "x402_plan_buyer_safety_read_timeout"
-  );
+  let plan = input.plan;
+  const projectionErrors: X402PlanSafetyProjectionError[] = [];
+
+  try {
+    plan = await withColdReadBudget(
+      attachHeartbeatPaymentSafetyToPlan(plan),
+      X402_PLAN_COLD_READ_BUDGET_MS,
+      "x402_plan_heartbeat_read_timeout"
+    );
+  } catch (error) {
+    projectionErrors.push({
+      stage: "heartbeat",
+      code: "x402_plan_heartbeat_safety_pending",
+      retryable: true,
+      message: errorMessage(error, "Heartbeat safety projection exceeded the x402 plan read budget.")
+    });
+  }
+
+  try {
+    plan = await withColdReadBudget(
+      attachBuyerPaymentSafetyToPlan({
+        apiBase: input.apiBase,
+        query: input.query,
+        plan
+      }),
+      X402_PLAN_COLD_READ_BUDGET_MS,
+      "x402_plan_buyer_safety_read_timeout"
+    );
+  } catch (error) {
+    projectionErrors.push({
+      stage: "buyer-payment",
+      code: "x402_plan_buyer_payment_safety_pending",
+      retryable: true,
+      message: errorMessage(error, "Buyer payment safety projection exceeded the x402 plan read budget.")
+    });
+  }
+
+  if (projectionErrors.length === 0) {
+    return plan;
+  }
+  const planRecord = plan as unknown as Record<string, unknown>;
+
+  return {
+    ...plan,
+    planProjectionPending: true,
+    safetyProjectionPending: true,
+    safetyProjectionErrors: projectionErrors,
+    recommendedPollAfterMs: Math.max(1000, Math.min(5000, X402_PLAN_COLD_READ_BUDGET_MS)),
+    guidance: typeof planRecord.guidance === "string"
+      ? planRecord.guidance
+      : "The x402 plan is available, but optional safety projection is still refreshing. Use the hire preflight before signing and retry plan shortly for fresh safety fields."
+  };
 }
 
 function x402PlanTemporarilyUnavailable(input: {
@@ -10481,6 +10526,7 @@ function parseBoundedIntegerEnv(name: string, fallback: number, min: number, max
 
 const RELAY_RESPONSE_TIMEOUT_MS =
   parseBoundedIntegerEnv("CLAWZ_AGENT_RELAY_RESPONSE_TIMEOUT_MS", 120_000, 15_000, 300_000);
+const RELAY_WORKER_ACK_TIMEOUT_MS = Math.max(1000, Math.min(8000, Math.floor(RELAY_RESPONSE_TIMEOUT_MS / 10)));
 const RELAY_MESSAGE_MAX_BYTES = 192 * 1024;
 const RELAY_HEARTBEAT_GRACE_MS =
   Number.parseInt(process.env.CLAWZ_AGENT_RELAY_HEARTBEAT_GRACE_MS ?? "", 10) || 45_000;
@@ -10551,10 +10597,33 @@ type RelayPendingRequest = {
   }): void;
   reject(error: Error): void;
   timeout: ReturnType<typeof setTimeout>;
+  ackTimeout?: ReturnType<typeof setTimeout>;
   trace: HireRelayTraceStep[];
   requestId?: string;
   requestBodyDigestSha256?: string;
 };
+
+function relayTraceSawWorker(trace: HireRelayTraceStep[]) {
+  return trace.some((entry) =>
+    entry.step === "worker_ack" ||
+    entry.step === "received_by_worker" ||
+    entry.step === "worker_http_request_started" ||
+    entry.step === "worker_http_response_received" ||
+    entry.step === "worker_return_parse_started" ||
+    entry.step === "worker_return_json_parse_completed" ||
+    entry.step === "worker_return_schema_validation_completed" ||
+    entry.step === "relay_response_compacted" ||
+    entry.step === "worker_return_parse_completed" ||
+    entry.step === "hire_response_prepared"
+  );
+}
+
+function clearRelayWorkerAckTimeout(pending: RelayPendingRequest) {
+  if (pending.ackTimeout) {
+    clearTimeout(pending.ackTimeout);
+    delete pending.ackTimeout;
+  }
+}
 
 type RelayRateLimitBucket = {
   count: number;
@@ -10737,8 +10806,12 @@ class AgentRelayConnection {
     }>((resolve, reject) => {
       const trace: HireRelayTraceStep[] = [];
       const timeout = setTimeout(() => {
+        const pending = this.pending.get(messageId);
+        if (pending) {
+          clearRelayWorkerAckTimeout(pending);
+        }
         this.pending.delete(messageId);
-        const sawWorker = trace.some((entry) => entry.step === "worker_ack" || entry.step === "received_by_worker");
+        const sawWorker = relayTraceSawWorker(trace);
         const error = new Error(
           sawWorker
             ? "Timed out waiting for agent relay response after worker acknowledgement."
@@ -10776,10 +10849,58 @@ class AgentRelayConnection {
         error.relayTrace = trace;
         reject(error);
       }, RELAY_RESPONSE_TIMEOUT_MS);
+      const ackTimeout = setTimeout(() => {
+        const pending = this.pending.get(messageId);
+        if (!pending || relayTraceSawWorker(pending.trace)) {
+          if (pending) {
+            clearRelayWorkerAckTimeout(pending);
+          }
+          return;
+        }
+        this.pending.delete(messageId);
+        clearTimeout(pending.timeout);
+        clearRelayWorkerAckTimeout(pending);
+        const error = new Error("Timed out waiting for agent worker acknowledgement.") as Error & {
+          code?: string;
+          relayTrace?: HireRelayTraceStep[];
+          relayMessageId?: string;
+          requestId?: string;
+          requestBodyDigestSha256?: string;
+          platformRelayTimeoutMs?: number;
+          platformWorkerAckTimeoutMs?: number;
+        };
+        error.code = "relay_worker_ack_timeout";
+        error.relayMessageId = messageId;
+        if (requestId) {
+          error.requestId = requestId;
+        }
+        error.requestBodyDigestSha256 = requestBodyDigestSha256;
+        error.platformRelayTimeoutMs = RELAY_RESPONSE_TIMEOUT_MS;
+        error.platformWorkerAckTimeoutMs = RELAY_WORKER_ACK_TIMEOUT_MS;
+        pending.trace.push({
+          step: "relay_returned",
+          status: "failed",
+          occurredAtIso: new Date().toISOString(),
+          relayMessageId: messageId,
+          ...(requestId ? { requestId } : {}),
+          requestBodyDigestSha256,
+          platformTimeoutMs: RELAY_RESPONSE_TIMEOUT_MS,
+          detail: [
+            error.message,
+            `code ${error.code}`,
+            requestId ? `request ${requestId}` : "",
+            `worker ack timeout ${RELAY_WORKER_ACK_TIMEOUT_MS}ms`,
+            `platform timeout ${RELAY_RESPONSE_TIMEOUT_MS}ms`
+          ].filter(Boolean).join("; ")
+        });
+        error.relayTrace = pending.trace;
+        reject(error);
+      }, RELAY_WORKER_ACK_TIMEOUT_MS);
       this.pending.set(messageId, {
         resolve,
         reject,
         timeout,
+        ackTimeout,
         trace,
         ...(requestId ? { requestId } : {}),
         requestBodyDigestSha256
@@ -10808,6 +10929,7 @@ class AgentRelayConnection {
         });
       } catch (error) {
         clearTimeout(timeout);
+        clearTimeout(ackTimeout);
         this.pending.delete(messageId);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
@@ -10820,6 +10942,7 @@ class AgentRelayConnection {
     if (!pending) {
       return;
     }
+    clearRelayWorkerAckTimeout(pending);
     pending.trace.push({
       step: "worker_ack",
       status: "completed",
@@ -10862,6 +10985,9 @@ class AgentRelayConnection {
       : undefined;
     if (!step) {
       return;
+    }
+    if (step === "received_by_worker" || step === "worker_http_request_started") {
+      clearRelayWorkerAckTimeout(pending);
     }
     const requestId = typeof message.requestId === "string" && message.requestId.trim().length > 0
       ? message.requestId.trim().slice(0, 96)
@@ -11016,6 +11142,7 @@ class AgentRelayConnection {
     }
     this.pending.delete(messageId);
     clearTimeout(pending.timeout);
+    clearRelayWorkerAckTimeout(pending);
     const responseRequestId = typeof message.requestId === "string" && message.requestId.trim().length > 0
       ? message.requestId.trim().slice(0, 96)
       : pending.requestId;
@@ -11233,6 +11360,7 @@ class AgentRelayConnection {
   private rejectPending(message: string) {
     for (const [messageId, pending] of this.pending.entries()) {
       clearTimeout(pending.timeout);
+      clearRelayWorkerAckTimeout(pending);
       pending.reject(new Error(message));
       this.pending.delete(messageId);
     }
