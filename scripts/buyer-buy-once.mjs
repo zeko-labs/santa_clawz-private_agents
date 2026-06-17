@@ -122,7 +122,7 @@ Options:
 
 Env:
   CLAWZ_API_FETCH_TIMEOUT_MS          Timeout for ordinary API reads. Default 10000.
-  CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS  Timeout for paid submit POST. Default 20000.
+  CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS  Timeout for paid submit POST. Default 35000.
 `);
 }
 
@@ -745,7 +745,7 @@ function boundedIntegerEnv(name, fallback, min, max) {
 }
 
 const API_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_API_FETCH_TIMEOUT_MS", 10_000, 1_000, 120_000);
-const PAID_SUBMIT_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS", 20_000, 5_000, 120_000);
+const PAID_SUBMIT_FETCH_TIMEOUT_MS = boundedIntegerEnv("CLAWZ_PAID_SUBMIT_FETCH_TIMEOUT_MS", 35_000, 5_000, 120_000);
 const PRE_PAYMENT_RETRY_DELAYS_MS = [1000, 2500, 5000];
 
 async function requestJson(url, init = {}, options = {}) {
@@ -838,6 +838,31 @@ function isRetryablePrePaymentHirePreflight(response) {
     response?.payload?.buyerPaymentState === "NO_PAYMENT_CREATED" ||
     response?.payload?.safeToRetryFreshPreflight === true
   );
+}
+
+function prePaymentSafetyBlock(payload) {
+  const safety = isRecord(payload?.heartbeatSafety) ? payload.heartbeatSafety : null;
+  if (!safety || safety.paidPreflightSafe !== false) {
+    return null;
+  }
+  return {
+    ok: false,
+    code: "agent_runtime_preflight_not_safe",
+    message:
+      stringValue(safety, "guidance") ||
+      "Agent runtime heartbeat is not fresh enough for paid work. No payment was signed or submitted.",
+    retryable: true,
+    paymentRequested: false,
+    buyerPaymentState: "NO_PAYMENT_CREATED",
+    safeToCreateNewPayment: false,
+    safeToRetrySamePayload: false,
+    safeToRetryFreshPreflight: true,
+    nextAction: "retry_x402_plan_after_heartbeat",
+    recommendedPollAfterMs: Number.isFinite(safety.recommendedPollAfterMs)
+      ? Math.max(1000, Math.min(safety.recommendedPollAfterMs, 10_000))
+      : 5000,
+    heartbeatSafety: safety
+  };
 }
 
 async function requestJsonWithPrePaymentRetries(label, producer, isRetryable) {
@@ -2388,6 +2413,24 @@ if (!planResponse.ok) {
   process.exit(1);
 }
 
+const planSafetyBlock = prePaymentSafetyBlock(planResponse.payload);
+if (planSafetyBlock) {
+  const output = {
+    ...planSafetyBlock,
+    agentId,
+    hireUrl,
+    planUrl,
+    requesterContact,
+    prompt: taskPrompt,
+    maxUsd,
+    manifestDir: runDir,
+    response: planResponse.payload
+  };
+  writeJson(path.join(runDir, "buyer-run.json"), output);
+  console.log(JSON.stringify(output, null, 2));
+  process.exit(1);
+}
+
 const missingContext = activationProbeRequested
   ? []
   : missingContextRequirements(planResponse.payload?.contextRequirements, jobContext);
@@ -2471,6 +2514,18 @@ const baseOutput = {
   upgradeGuide: upgradeGuideHint(args["seller-env-file"] ?? ".env.santaclawz"),
   ...(activationProbe ? { activationProbe } : {})
 };
+
+const preflightSafetyBlock = prePaymentSafetyBlock(preflight.payload);
+if (preflightSafetyBlock) {
+  const output = {
+    ...preflightSafetyBlock,
+    ...baseOutput,
+    response: preflight.payload
+  };
+  writeJson(path.join(runDir, "buyer-run.json"), output);
+  console.log(JSON.stringify(output, null, 2));
+  process.exit(1);
+}
 
 if (priceUsd !== null && priceUsd > maxUsd) {
   const output = {

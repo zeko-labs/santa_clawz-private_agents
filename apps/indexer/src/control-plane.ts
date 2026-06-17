@@ -7666,6 +7666,26 @@ export class ClawzControlPlane {
       : undefined;
   }
 
+  async getPaymentLedgerEntryByPaymentPayloadDigest(paymentPayloadDigestSha256: string): Promise<PaymentLedgerEntry | undefined> {
+    const trimmed = paymentPayloadDigestSha256.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    assertSha256Hex(trimmed, "Payment ledger paymentPayloadDigestSha256");
+    const entry = (await this.loadPaymentLedgerFile()).entries
+      .filter((candidate) => candidate.paymentPayloadDigestSha256 === trimmed)
+      .sort((left, right) => Date.parse(right.updatedAtIso) - Date.parse(left.updatedAtIso))[0];
+    return entry
+      ? {
+          ...entry,
+          lifecycleStatus: this.buildPaymentLedgerLifecycleStatus(entry),
+          ...(this.buildPaymentSettlementRecovery(entry)
+            ? { settlementRecovery: this.buildPaymentSettlementRecovery(entry)! }
+            : {})
+        }
+      : undefined;
+  }
+
   async recordPaymentLedgerSettlement(input: PaymentLedgerSettlementInput): Promise<PaymentLedgerEntry> {
     assertUsdAmount(input.amountUsd, "Payment ledger amountUsd");
     if (input.paymentPayloadDigestSha256) {

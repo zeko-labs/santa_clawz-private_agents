@@ -3731,9 +3731,13 @@ async function buildX402PaymentStateResponse(input: {
   requestId?: string;
   paymentPayloadDigestSha256?: string;
 }) {
-  const ledgerEntry = input.ledgerId ? await controlPlane.getPaymentLedgerEntry(input.ledgerId) : undefined;
-  const ledgerOnlyLookup = Boolean(input.ledgerId && !input.intentId && !input.requestId && !input.paymentPayloadDigestSha256);
-  const paymentLedgerEntries = ledgerOnlyLookup
+  const ledgerEntry = input.ledgerId
+    ? await controlPlane.getPaymentLedgerEntry(input.ledgerId)
+    : input.paymentPayloadDigestSha256
+      ? await controlPlane.getPaymentLedgerEntryByPaymentPayloadDigest(input.paymentPayloadDigestSha256)
+      : undefined;
+  const directLedgerLookup = Boolean((input.ledgerId || input.paymentPayloadDigestSha256) && !input.intentId && !input.requestId);
+  const paymentLedgerEntries = directLedgerLookup
     ? []
     : (await controlPlane.listPaymentLedger({
         ...(input.intentId ? { quoteIntentId: input.intentId } : {}),
@@ -5014,8 +5018,34 @@ function isSponsoredBudgetSettlementFailure(entry: PaymentLedgerEntry): boolean 
   );
 }
 
+function firstEnvUrl(names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value !== "string") {
+      continue;
+    }
+    const first = value.split(",").map((entry) => entry.trim()).find(Boolean);
+    if (first) {
+      return first;
+    }
+  }
+  return undefined;
+}
+
+function baseRpcUrlForHostedSettlementReconciliation(): string {
+  return firstEnvUrl([
+    "CLAWZ_X402_BASE_RPC_URLS",
+    "CLAWZ_X402_BASE_RPC_URL",
+    "X402_BASE_RPC_URLS",
+    "X402_BASE_RPC_URL",
+    "BASE_RPC_URL",
+    "BASE_MAINNET_RPC_URL",
+    "CLAWZ_BASE_RPC_URL"
+  ]) ?? "https://mainnet.base.org";
+}
+
 async function baseRpcCall<T>(method: string, params: unknown[]): Promise<T> {
-  const rpcUrl = process.env.CLAWZ_BASE_RPC_URL?.trim() || "https://mainnet.base.org";
+  const rpcUrl = baseRpcUrlForHostedSettlementReconciliation();
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },

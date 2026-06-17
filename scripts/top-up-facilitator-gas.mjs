@@ -11,7 +11,16 @@ const BASE_CONFIG = {
   rail: "base",
   networkLabel: "base-mainnet",
   chainImport: "base",
-  rpcEnvNames: ["X402_BASE_RPC_URL", "X402_BASE_MAINNET_RPC_URL", "BASE_RPC_URL"],
+  rpcEnvNames: [
+    "CLAWZ_X402_BASE_RPC_URLS",
+    "CLAWZ_X402_BASE_RPC_URL",
+    "X402_BASE_RPC_URLS",
+    "X402_BASE_RPC_URL",
+    "X402_BASE_MAINNET_RPC_URL",
+    "BASE_RPC_URL",
+    "BASE_MAINNET_RPC_URL",
+    "CLAWZ_BASE_RPC_URL"
+  ],
   sourcePrivateKeyEnvNames: [
     "CLAWZ_BASE_FACILITATOR_GAS_TREASURY_PRIVATE_KEY",
     "CLAWZ_BASE_FACILITATOR_GAS_TOPUP_PRIVATE_KEY",
@@ -91,7 +100,7 @@ function optionalEnv(...names) {
   for (const name of names) {
     const value = process.env[name];
     if (typeof value === "string" && value.trim().length > 0) {
-      return value.trim();
+      return value.split(",").map((entry) => entry.trim()).find(Boolean) ?? null;
     }
   }
   return null;

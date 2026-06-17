@@ -9,6 +9,29 @@ const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 const DEFAULT_PROTOCOL_FEE_RECIPIENT = "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2";
 const RPC_TIMEOUT_MS = 30_000;
 const MAX_LOOKBACK_BLOCKS = 250_000;
+const BASE_RPC_ENV_NAMES = [
+  "CLAWZ_X402_BASE_RPC_URLS",
+  "CLAWZ_X402_BASE_RPC_URL",
+  "X402_BASE_RPC_URLS",
+  "X402_BASE_RPC_URL",
+  "BASE_RPC_URL",
+  "BASE_MAINNET_RPC_URL",
+  "CLAWZ_BASE_RPC_URL"
+];
+
+function firstEnvUrl(names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value !== "string") {
+      continue;
+    }
+    const first = value.split(",").map((entry) => entry.trim()).find(Boolean);
+    if (first) {
+      return first;
+    }
+  }
+  return undefined;
+}
 
 function parseArgs(argv) {
   const args = {
@@ -17,7 +40,7 @@ function parseArgs(argv) {
     matchBeforeMs: 5 * 60 * 1000,
     matchAfterMs: 10 * 60 * 1000,
     dataDir: process.env.CLAWZ_DATA_DIR?.trim() || path.join(process.cwd(), ".clawz-data"),
-    rpcUrl: process.env.CLAWZ_BASE_RPC_URL?.trim() || "https://mainnet.base.org"
+    rpcUrl: firstEnvUrl(BASE_RPC_ENV_NAMES) || "https://mainnet.base.org"
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
