@@ -235,7 +235,7 @@ function sanitizeJobContext(value) {
   return Object.keys(context).length ? context : {};
 }
 
-function buildJobContext(args) {
+function buildJobContext(args, fallbackContext = undefined) {
   const fromFile = args["job-context-file"]
     ? readJsonFile(String(args["job-context-file"]), "job context")
     : {};
@@ -247,6 +247,7 @@ function buildJobContext(args) {
     ...stringListFromArg(args.urls)
   ];
   const context = {
+    ...sanitizeJobContext(fallbackContext),
     ...sanitizeJobContext(fromFile),
     ...sanitizeJobContext(fromJson)
   };
@@ -256,9 +257,11 @@ function buildJobContext(args) {
   return Object.keys(context).length ? context : undefined;
 }
 
-function buildJobPrivacy(args) {
+function buildJobPrivacy(args, fallbackPrivacy = undefined) {
   const privacy = String(args["job-privacy"] ?? "").trim().toLowerCase();
-  const privateRequested = Boolean(args.private) || privacy === "private";
+  const fallbackPrivate =
+    isRecord(fallbackPrivacy) && fallbackPrivacy.visibility === "private";
+  const privateRequested = Boolean(args.private) || privacy === "private" || (!privacy && fallbackPrivate);
   if (!privateRequested) {
     if (privacy && privacy !== "public") {
       throw new Error("--job-privacy must be public or private.");
@@ -387,6 +390,19 @@ function normalizePaymentPayloadFromFile(paymentPayloadFile, options = {}) {
     throw new Error(`Payment payload file contains multiple service-keyed x402 payloads. Pass --service. Available: ${candidates.map(([key]) => key).join(", ")}`);
   }
   throw new Error("Payment payload file does not contain a valid x402 payload.");
+}
+
+function recoveryEnvelopeString(file, ...keys) {
+  if (!isRecord(file)) {
+    return "";
+  }
+  for (const key of keys) {
+    const value = file[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
 }
 
 function firstX402Accept(payload) {
@@ -1903,6 +1919,13 @@ function writePaymentRecoveryInstructions(input) {
     schemaVersion: "santaclawz-buyer-recovery/1.0",
     generatedAtIso: new Date().toISOString(),
     code: input.code,
+    agentId,
+    taskPrompt,
+    requesterContact,
+    maxUsd,
+    ...(jobContext ? { jobContext } : {}),
+    ...(jobPrivacy ? { jobPrivacy } : {}),
+    ...(input.paymentPayload ? { paymentPayload: input.paymentPayload } : {}),
     paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
     paymentStateUrl: input.paymentStateUrl,
     ...(input.resultStateUrl ? { resultStateUrl: input.resultStateUrl } : {}),
@@ -2014,6 +2037,7 @@ async function recoverRetryablePaidSubmitFailure(input) {
     const recoveryFilePath = writePaymentRecoveryInstructions({
       runDir: input.runDir,
       code: terminalNoSettlement.code,
+      paymentPayload: input.paymentPayload,
       paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
       paymentStateUrl: input.paymentStateUrl,
       resultStateUrl: terminalNoSettlement.stateUrl || input.resultStateUrl,
@@ -2063,6 +2087,7 @@ async function recoverRetryablePaidSubmitFailure(input) {
   const recoveryFilePath = writePaymentRecoveryInstructions({
     runDir: input.runDir,
     code: "recovery_pending_state_unknown",
+    paymentPayload: input.paymentPayload,
     paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
     paymentStateUrl: input.paymentStateUrl,
     resultStateUrl: input.resultStateUrl,
@@ -2168,20 +2193,37 @@ if (args.help) {
 }
 
 const apiBase = normalizeBuyerApiBase(String(args["api-base"] ?? process.env.CLAWZ_API_BASE ?? "https://api.santaclawz.ai").trim());
-const agentId = parseAgentId(args.agent ?? args["agent-id"] ?? args["hire-url"]);
-const taskPrompt = String(args.prompt ?? args.task ?? "").trim();
-const requesterContact = String(args["requester-contact"] ?? "buyer-agent:local").trim();
-const jobContext = buildJobContext(args);
-const jobPrivacy = buildJobPrivacy(args);
+const suppliedPaymentPayloadPath = args["payment-payload-file"] ? String(args["payment-payload-file"]) : null;
+const suppliedPaymentPayloadFile = suppliedPaymentPayloadPath
+  ? readJsonFile(suppliedPaymentPayloadPath, "payment payload")
+  : null;
+const recoveryEnvelope = isRecord(suppliedPaymentPayloadFile) ? suppliedPaymentPayloadFile : {};
+const recoveryJobContext = sanitizeJobContext(recoveryEnvelope.jobContext ?? recoveryEnvelope.context);
+const agentId = parseAgentId(
+  args.agent ??
+    args["agent-id"] ??
+    args["hire-url"] ??
+    recoveryEnvelopeString(recoveryEnvelope, "agentId", "agent", "hireUrl")
+);
+const taskPrompt = String(args.prompt ?? args.task ?? recoveryEnvelopeString(recoveryEnvelope, "taskPrompt", "prompt") ?? "").trim();
+const requesterContact = String(
+  args["requester-contact"] ??
+    recoveryEnvelopeString(recoveryEnvelope, "requesterContact", "buyerContact") ??
+    "buyer-agent:local"
+).trim();
+const jobContext = buildJobContext(args, recoveryJobContext);
+const jobPrivacy = buildJobPrivacy(args, recoveryEnvelope.jobPrivacy);
 const sellerReadinessTestRequested = Boolean(args["seller-readiness-test"] || args["seller-test"]);
 const activationProbeRequested = Boolean(args["activation-probe"] || args["paid-activation-probe"] || sellerReadinessTestRequested);
-const maxUsd = decimalStringToNumber(args["max-usd"]);
+const maxUsd = decimalStringToNumber(args["max-usd"] ?? recoveryEnvelope.maxUsd ?? recoveryEnvelope.maxUsdBudget);
 const outputDir = String(args["output-dir"] ?? DEFAULT_OUTPUT_DIR).trim();
 const dryRun = Boolean(args["dry-run"]) || !args["allow-real-money"];
 const waitForSettlement = Boolean(args["wait-for-settlement"]);
 if (!agentId) throw new Error("--agent or --agent-id is required.");
 if (!taskPrompt) throw new Error("--prompt or --task is required.");
-if (maxUsd === null) throw new Error("--max-usd is required and must be a number.");
+if (maxUsd === null && !suppliedPaymentPayloadPath) {
+  throw new Error("--max-usd is required for fresh payment creation and must be a number.");
+}
 if (taskPrompt.length > HIRE_TASK_PROMPT_MAX_LENGTH) {
   throw new Error(`--prompt is ${taskPrompt.length} characters; fixed-price hire requests currently allow ${HIRE_TASK_PROMPT_MAX_LENGTH}. Use quote/procurement/workspace for longer specs.`);
 }
@@ -2193,9 +2235,8 @@ const runId = `${new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15)}-${
 const runDir = path.join(outputDir, runId);
 const hireUrl = `${apiBase}/api/agents/${encodeURIComponent(agentId)}/hire`;
 const planUrl = `${apiBase}/api/agents/${encodeURIComponent(agentId)}/x402-plan`;
-const suppliedPaymentPayloadPath = args["payment-payload-file"] ? String(args["payment-payload-file"]) : null;
 const suppliedPaymentPayload = suppliedPaymentPayloadPath
-  ? normalizePaymentPayloadFromFile(readJsonFile(suppliedPaymentPayloadPath, "payment payload"), {
+  ? normalizePaymentPayloadFromFile(suppliedPaymentPayloadFile, {
       service: typeof args.service === "string" ? args.service : ""
     })
   : null;
@@ -2247,6 +2288,7 @@ async function runSuppliedPaymentPayloadWithoutPlan() {
       const recoveryFilePath = writePaymentRecoveryInstructions({
         runDir,
         code: terminalNoSettlement.code,
+        paymentPayload: suppliedPaymentPayload,
         paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
         paymentStateUrl: suppliedPaymentStateUrl,
         resultStateUrl: terminalNoSettlement.stateUrl,
@@ -2292,6 +2334,7 @@ async function runSuppliedPaymentPayloadWithoutPlan() {
       const recoveryFilePath = writePaymentRecoveryInstructions({
         runDir,
         code: "existing_payment_payload_not_retryable",
+        paymentPayload: suppliedPaymentPayload,
         paymentPayloadDigestSha256: suppliedPaymentPayloadDigestSha256,
         paymentStateUrl: suppliedPaymentStateUrl,
         resultStateUrl: stateUrlFromPaymentState(suppliedPaymentState.payload, suppliedPaymentPayloadDigestSha256),
@@ -2574,7 +2617,7 @@ if (preflightSafetyBlock) {
   process.exit(1);
 }
 
-if (priceUsd !== null && priceUsd > maxUsd) {
+if (maxUsd !== null && priceUsd !== null && priceUsd > maxUsd) {
   const output = {
     ok: false,
     code: "price_exceeds_max_usd",

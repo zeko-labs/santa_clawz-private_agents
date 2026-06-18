@@ -69,8 +69,10 @@ Set:
 - `X402_EVM_FACILITATOR_HOST=0.0.0.0`
 - `X402_EVM_FACILITATOR_PORT=10000`
 - `X402_EVM_NETWORK=base`
-- `X402_BASE_RPC_URLS=https://your-private-base-rpc,https://mainnet.base.org`
+- `X402_BASE_RPC_URL=https://your-private-base-rpc`
 - `X402_BASE_RELAYER_PRIVATE_KEY=0x...`
+
+Use `X402_BASE_RPC_URLS` only when you intentionally want an ordered fallback list. During paid-test debugging, prefer one current private RPC URL and redeploy the facilitator after changing it so the live process cannot keep using an old endpoint or public fallback.
 
 Optional smoke/default value:
 

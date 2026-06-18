@@ -1858,22 +1858,49 @@ function isRetryableSettlementError(error: unknown): boolean {
 function classifyX402SettlementFailure(error: unknown): {
   code: string;
   retryable: boolean;
+  failureDomain: "facilitator_rpc" | "facilitator_transaction" | "facilitator_service" | "facilitator";
+  dependency?: "base_rpc" | "evm_rpc" | undefined;
+  retryClass: "same_payload_retry" | "retry_settlement_same_payload" | "operator_review";
+  recommendedRetryAfterMs?: number | undefined;
 } {
   const text = errorMessage(error, String(error ?? "")).toLowerCase();
   if (/rate limit|over rate limit|\b429\b/.test(text)) {
-    return { code: "x402_facilitator_rpc_rate_limited", retryable: true };
+    return {
+      code: "x402_facilitator_rpc_rate_limited",
+      retryable: true,
+      failureDomain: "facilitator_rpc",
+      dependency: text.includes("base") ? "base_rpc" : "evm_rpc",
+      retryClass: "same_payload_retry",
+      recommendedRetryAfterMs: 5000
+    };
   }
   if (/timeout|aborted|etimedout|temporarily unavailable|\b502\b|\b503\b|\b504\b/.test(text)) {
-    return { code: "x402_facilitator_temporarily_unavailable", retryable: true };
+    return {
+      code: "x402_facilitator_temporarily_unavailable",
+      retryable: true,
+      failureDomain: "facilitator_service",
+      retryClass: "same_payload_retry",
+      recommendedRetryAfterMs: 5000
+    };
   }
   if (/nonce too low|already known|underpriced|replacement transaction underpriced|settlement_pending/.test(text)) {
-    return { code: "x402_facilitator_transaction_retryable", retryable: true };
+    return {
+      code: "x402_facilitator_transaction_retryable",
+      retryable: true,
+      failureDomain: "facilitator_transaction",
+      retryClass: "retry_settlement_same_payload",
+      recommendedRetryAfterMs: 5000
+    };
   }
+  const retryable = isRetryableSettlementError(error);
   return {
-    code: isRetryableSettlementError(error)
+    code: retryable
       ? "x402_facilitator_retryable_failure"
       : "x402_facilitator_terminal_failure",
-    retryable: isRetryableSettlementError(error)
+    retryable,
+    failureDomain: "facilitator",
+    retryClass: retryable ? "same_payload_retry" : "operator_review",
+    ...(retryable ? { recommendedRetryAfterMs: 5000 } : {})
   };
 }
 
@@ -1882,15 +1909,25 @@ function isExpiredPaymentPayloadError(error: unknown): boolean {
 }
 
 function paymentSettlementFailureBody(error: unknown, extra: Record<string, unknown> = {}) {
+  const failure = classifyX402SettlementFailure(error);
   return {
     error: errorMessage(error, "Unable to settle x402 payment."),
+    code: failure.code,
+    failureDomain: failure.failureDomain,
+    retryClass: failure.retryClass,
+    ...(failure.dependency ? { dependency: failure.dependency } : {}),
+    ...(typeof failure.recommendedRetryAfterMs === "number"
+      ? { recommendedRetryAfterMs: failure.recommendedRetryAfterMs }
+      : {}),
+    freshPaymentForbidden: failure.retryable,
+    doNotCreateNewPayment: failure.retryable,
     operationalStatus: {
       paymentStatus: "failed",
       settlementStatus: "failed",
       relayDeliveryStatus: "not_attempted",
       agentExecutionStatus: "not_started"
     },
-    retryable: isRetryableSettlementError(error),
+    retryable: failure.retryable,
     ...extra
   };
 }
