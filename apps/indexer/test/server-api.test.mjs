@@ -6310,6 +6310,24 @@ async function testCompletionScorePrefersPaidDeliveryReliability() {
         returnStatus: "rejected"
       },
       {
+        ledgerId: "pay_seller_readiness_purpose_ignored",
+        createdAtIso: nowIso,
+        updatedAtIso: new Date(nowMs - 2500).toISOString(),
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        purpose: "seller_readiness_test",
+        resource: "https://api.santaclawz.ai/api/x402/proof?sessionId=session_agent_reputation",
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.25",
+        transactionHashes: [],
+        paymentStatus: "authorization_verified",
+        executionStatus: "submitted",
+        returnStatus: "none"
+      },
+      {
         ledgerId: "pay_platform_timeout_ignored",
         createdAtIso: nowIso,
         updatedAtIso: new Date(nowMs - 3000).toISOString(),
@@ -6325,6 +6343,23 @@ async function testCompletionScorePrefersPaidDeliveryReliability() {
         executionStatus: "failed",
         returnStatus: "none",
         errorCode: "relay_timeout"
+      },
+      {
+        ledgerId: "pay_legacy_activation_amount_ignored",
+        createdAtIso: nowIso,
+        updatedAtIso: new Date(nowMs - 3250).toISOString(),
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        resource: "https://api.santaclawz.ai/api/x402/proof?sessionId=session_agent_reputation",
+        pricingMode: "fixed-exact",
+        rail: "base-usdc",
+        networkId: "eip155:8453",
+        assetSymbol: "USDC",
+        amountUsd: "0.002001",
+        transactionHashes: [],
+        paymentStatus: "authorization_verified",
+        executionStatus: "submitted",
+        returnStatus: "none"
       },
       {
         ledgerId: "pay_settled_without_delivery_is_visible_unresolved",
@@ -6378,6 +6413,34 @@ async function testCompletionScorePrefersPaidDeliveryReliability() {
   assert.equal(score.pendingJobCount, undefined);
   assert.equal(score.successRatePct, 50);
   assert.equal(score.label, "2/4 paid deliveries");
+
+  const activationOnlyScore = buildAgentCompletionScore({
+    requests: [
+      {
+        requestId: "hire_activation_only",
+        agentId: "reputation-agent--session_agent_reputation",
+        sessionId,
+        requestType: "paid_execution",
+        submittedAtIso: nowIso,
+        status: "failed",
+        payment: {
+          status: "authorized",
+          activationLane: true
+        }
+      }
+    ]
+  }, sessionId, Date.now(), {
+    paymentLedgerFile: {
+      entries: paymentLedgerFile.entries.filter((entry) =>
+        entry.ledgerId === "pay_seller_readiness_purpose_ignored" ||
+        entry.ledgerId === "pay_legacy_activation_amount_ignored"
+      )
+    }
+  });
+  assert.equal(activationOnlyScore.evaluatedJobCount, 0);
+  assert.equal(activationOnlyScore.completedJobCount, 0);
+  assert.equal(activationOnlyScore.failedJobCount, 0);
+  assert.equal(activationOnlyScore.label, "No paid jobs yet");
 
   console.log("ok - completion score prefers paid delivery reliability");
 }

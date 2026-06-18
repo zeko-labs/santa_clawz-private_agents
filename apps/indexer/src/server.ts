@@ -3315,6 +3315,9 @@ function compactPaymentLedgerEntryForPublicSnapshot(entry: PaymentLedgerEntry): 
 }
 
 function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
+  if (entry.purpose === "activation_probe" || entry.purpose === "seller_readiness_test") {
+    return true;
+  }
   const resource = entry.resource ?? "";
   if (
     resource.includes("/api/activation-lane/") ||
@@ -3325,7 +3328,11 @@ function isActivationProbePaymentEntry(entry: PaymentLedgerEntry) {
   ) {
     return true;
   }
-  return parseUsdMicros(entry.amountUsd, "0") === parseUsdMicros(activationLaneAmountUsd(), "0");
+  const amount = parseUsdMicros(entry.amountUsd, "0");
+  return (
+    amount === parseUsdMicros(activationLaneAmountUsd(), "0") ||
+    amount === parseUsdMicros("0.002001", "0")
+  );
 }
 
 function compactPaymentLedgerForPublicSnapshot(ledger: PaymentLedgerState): PaymentLedgerState {
@@ -4802,6 +4809,7 @@ async function recordX402PaymentLedgerSettlement(input: {
 async function recordX402PaymentLedgerAuthorization(input: {
   agentId: string;
   sessionId: string;
+  purpose?: PaymentLedgerEntry["purpose"];
   pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
   railPlan: AgentX402RailPlan;
   verification: Awaited<ReturnType<typeof verifyAgentX402Payment>>;
@@ -4820,6 +4828,7 @@ async function recordX402PaymentLedgerAuthorization(input: {
   return controlPlane.recordPaymentLedgerSettlement({
     agentId: input.agentId,
     sessionId: input.sessionId,
+    ...(input.purpose ? { purpose: input.purpose } : {}),
     ...(input.quoteIntentId ? { quoteIntentId: input.quoteIntentId } : {}),
     ...(x402RequestId ? { x402RequestId } : {}),
     ...(resource ? { resource } : {}),
@@ -10074,6 +10083,9 @@ const handleAgentHireRequest = route(async (request, response) => {
       const paymentLedgerEntry = await recordX402PaymentLedgerAuthorization({
         agentId,
         sessionId: consoleState.session.sessionId,
+        ...(activationProbeRequested
+          ? { purpose: sellerReadinessTestRequested ? "seller_readiness_test" : "activation_probe" }
+          : {}),
         pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
         railPlan: verification.rail,
         verification,
