@@ -3,7 +3,7 @@
 
 This service accepts a SantaClawz /hire payload, produces a private code-audit
 report, and returns a santaclawz-return/1.0 package with digest-addressed
-deliverables. It keeps durable per-client/repo memory when configured with a
+deliverables. It keeps durable buyer-scoped repo memory when configured with a
 persistent memory directory, while staying deterministic if model access is not
 available.
 """
@@ -457,6 +457,13 @@ def nested_string(*values: Any, default: str = "") -> str:
     return default
 
 
+def labeled_string(candidates: list[tuple[str, Any]]) -> tuple[str, str]:
+    for label, value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip(), label
+    return "", ""
+
+
 def find_nested_string(value: Any, keys: set[str], *, depth: int = 0) -> str:
     if depth > 4:
         return ""
@@ -476,22 +483,62 @@ def find_nested_string(value: Any, keys: set[str], *, depth: int = 0) -> str:
     return ""
 
 
+def github_repo_id_from_payload(payload: dict[str, Any]) -> str:
+    for url in extract_urls(payload):
+        target = parse_github_repo_url(url)
+        if not target:
+            continue
+        repo_id = f"github:{target['owner']}/{target['repo']}"
+        if target.get("ref"):
+            repo_id = f"{repo_id}@{target['ref']}"
+        return repo_id
+    return ""
+
+
 def extract_namespace(payload: dict[str, Any], normalized: dict[str, Any]) -> dict[str, Any]:
     input_block = as_dict(payload.get("input") or payload.get("job") or payload.get("request"))
     requester = as_dict(payload.get("requester") or payload.get("buyer") or input_block.get("requester"))
-    client_id = nested_string(
-        input_block.get("client_id"),
-        input_block.get("clientId"),
-        input_block.get("tenant"),
-        input_block.get("organization"),
-        payload.get("client_id"),
-        payload.get("clientId"),
-        requester.get("id"),
-        requester.get("name"),
-        payload.get("requester_contact"),
-        payload.get("requesterContact"),
-        default=find_nested_string(payload, {"client_id", "clientid", "tenant", "organization", "org_id", "orgid"}),
+    nested_buyer_identity = find_nested_string(
+        payload,
+        {
+            "buyer_agent_id",
+            "buyeragentid",
+            "buyer_id",
+            "buyerid",
+            "requester_agent_id",
+            "requesteragentid",
+            "requester_contact",
+            "requestercontact",
+        },
     )
+    buyer_identity, buyer_identity_source = labeled_string(
+        [
+            ("payload.buyerAgentId", payload.get("buyerAgentId")),
+            ("payload.buyer_agent_id", payload.get("buyer_agent_id")),
+            ("payload.buyerId", payload.get("buyerId")),
+            ("payload.buyer_id", payload.get("buyer_id")),
+            ("input.buyerAgentId", input_block.get("buyerAgentId")),
+            ("input.buyer_agent_id", input_block.get("buyer_agent_id")),
+            ("input.buyerId", input_block.get("buyerId")),
+            ("input.buyer_id", input_block.get("buyer_id")),
+            ("requester.agentId", requester.get("agentId")),
+            ("requester.agent_id", requester.get("agent_id")),
+            ("requester.id", requester.get("id")),
+            ("requester.name", requester.get("name")),
+            ("payload.requesterContact", payload.get("requesterContact")),
+            ("payload.requester_contact", payload.get("requester_contact")),
+            ("input.requesterContact", input_block.get("requesterContact")),
+            ("input.requester_contact", input_block.get("requester_contact")),
+            ("nested.buyer_identity", nested_buyer_identity),
+        ]
+    )
+    if buyer_identity:
+        buyer_scope_id = f"buyer-{short_digest(buyer_identity, 16)}"
+        buyer_scope_mode = "buyer_agent"
+    else:
+        buyer_scope_id = f"isolated-{short_digest(normalized['request_id'] + normalized['raw_body_digest_sha256'], 16)}"
+        buyer_identity_source = "isolated_request_fallback"
+        buyer_scope_mode = "isolated_request"
     repo_id = nested_string(
         input_block.get("repo"),
         input_block.get("repo_id"),
@@ -503,6 +550,8 @@ def extract_namespace(payload: dict[str, Any], normalized: dict[str, Any]) -> di
         payload.get("repository"),
         default=find_nested_string(payload, {"repo", "repo_id", "repoid", "repository", "repository_url", "repositoryurl"}),
     )
+    if not repo_id:
+        repo_id = github_repo_id_from_payload(payload)
     project_id = nested_string(
         input_block.get("project"),
         input_block.get("project_id"),
@@ -510,14 +559,18 @@ def extract_namespace(payload: dict[str, Any], normalized: dict[str, Any]) -> di
         payload.get("project"),
         default=find_nested_string(payload, {"project", "project_id", "projectid"}),
     )
-    if not client_id:
-        client_id = f"client-{short_digest(normalized['title'] + normalized['raw_body_digest_sha256'], 10)}"
     if not repo_id:
         repo_id = f"repo-{short_digest(normalized['text_digest_sha256'], 10)}"
-    namespace_key = safe_slug(f"{client_id}-{repo_id}-{project_id}", "default")
+    namespace_key = safe_slug(f"{buyer_scope_id}-{repo_id}-{project_id}", "default")
     return {
-        "schema_version": "code-audit-namespace/1.0",
-        "client_id": client_id,
+        "schema_version": "code-audit-namespace/1.1",
+        "client_id": buyer_scope_id,
+        "buyer_scope": {
+            "id": buyer_scope_id,
+            "mode": buyer_scope_mode,
+            "identity_present": bool(buyer_identity),
+            "identity_source": buyer_identity_source,
+        },
         "repo_id": repo_id,
         "project_id": project_id,
         "namespace_key": namespace_key,
@@ -741,28 +794,21 @@ def load_memory() -> dict[str, Any]:
     return memory
 
 
-def rejected_finding_titles(memory: dict[str, Any]) -> set[str]:
-    rejected: set[str] = set()
-    for item in as_list(memory.get("rejected")):
-        if isinstance(item, str):
-            rejected.add(item.strip().lower())
-        elif isinstance(item, dict):
-            title = first_string(item.get("title"), item.get("finding_title"), default="")
-            if title:
-                rejected.add(title.lower())
-    return rejected
-
-
-def accepted_finding_titles(memory: dict[str, Any]) -> set[str]:
+def namespace_feedback_title_sets(record: dict[str, Any]) -> tuple[set[str], set[str]]:
     accepted: set[str] = set()
-    for item in as_list(memory.get("accepted")):
-        if isinstance(item, str):
-            accepted.add(item.strip().lower())
-        elif isinstance(item, dict):
-            title = first_string(item.get("title"), item.get("finding_title"), default="")
-            if title:
-                accepted.add(title.lower())
-    return accepted
+    rejected: set[str] = set()
+    for item in as_list(record.get("feedback")):
+        if not isinstance(item, dict):
+            continue
+        title = first_string(item.get("title"), item.get("finding_title"), default="")
+        if not title:
+            continue
+        label = first_string(item.get("label"), item.get("outcome"), default="").lower()
+        if label in {"accepted", "useful", "resolved"}:
+            accepted.add(title.lower())
+        elif label in {"rejected", "noisy", "false_positive"}:
+            rejected.add(title.lower())
+    return accepted, rejected
 
 
 def namespace_record(memory: dict[str, Any], namespace: dict[str, Any]) -> dict[str, Any]:
@@ -793,8 +839,7 @@ def namespace_record(memory: dict[str, Any], namespace: dict[str, Any]) -> dict[
 def apply_memory_to_findings(findings: dict[str, Any], memory: dict[str, Any], namespace: dict[str, Any]) -> dict[str, Any]:
     record = namespace_record(memory, namespace)
     known = as_dict(record.get("finding_fingerprints"))
-    rejected_titles = rejected_finding_titles(memory)
-    accepted_titles = accepted_finding_titles(memory)
+    accepted_titles, rejected_titles = namespace_feedback_title_sets(record)
     active: list[dict[str, Any]] = []
     suppressed: list[dict[str, Any]] = []
     for finding in as_list(findings.get("findings")):
@@ -866,7 +911,7 @@ def select_findings_for_delivery(findings: dict[str, Any]) -> dict[str, Any]:
         "has_more_findings": deferred_count > 0,
         "finding_limit": FINDING_LIMIT,
         "next_batch_hint": (
-            "Run the audit again with the same client/repo namespace to continue with the next prioritized findings."
+            "Run the audit again with the same buyer/repo namespace to continue with the next prioritized findings."
             if deferred_count > 0
             else ""
         ),
@@ -1087,7 +1132,7 @@ def render_report(
         f"- Batch limit: {findings.get('finding_limit', FINDING_LIMIT)} findings per run",
         f"- Deferred findings for a follow-up run: {findings.get('deferred_count', 0)}",
         f"- Input digest: `{normalized['text_digest_sha256']}`",
-        f"- Client/repo namespace: `{as_dict(normalized.get('namespace')).get('namespace_key', 'default')}`",
+        f"- Buyer/repo namespace: `{as_dict(normalized.get('namespace')).get('namespace_key', 'default')}`",
         f"- Prior namespace runs: {memory_context.get('namespace_run_count', 0)}",
         f"- Target materialization: {target_summary.get('status')}",
         f"- Files scanned: {target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered",
@@ -1114,7 +1159,7 @@ def render_report(
         "",
         (
             f"This run returns up to {findings.get('finding_limit', FINDING_LIMIT)} prioritized findings so the audit stays bounded. "
-            "Run the same agent again with the same client/repo namespace to continue with the next batch."
+            "Run the same agent again with the same buyer/repo namespace to continue with the next batch."
         ),
         "",
         "## Memory Context",
@@ -1679,6 +1724,8 @@ def apply_feedback(payload: dict[str, Any]) -> dict[str, Any]:
     note = first_string(payload.get("note"), default="")
     if label not in {"accepted", "useful", "rejected", "noisy", "false_positive", "resolved"}:
         raise WorkerError("feedback label must be accepted, useful, rejected, noisy, false_positive, or resolved", 400)
+    if not namespace_key:
+        raise WorkerError("namespace_key is required so feedback stays scoped to one buyer/repo namespace", 400)
     bucket = "accepted" if label in {"accepted", "useful", "resolved"} else "rejected"
     entry = {
         "schema_version": "code-audit-feedback/1.0",
@@ -1689,26 +1736,24 @@ def apply_feedback(payload: dict[str, Any]) -> dict[str, Any]:
         "fingerprint": fingerprint,
         "note": note,
     }
-    items = as_list(memory.setdefault(bucket, []))
-    items.append(entry)
-    memory[bucket] = items[-200:]
     memory["updated_at"] = now_iso()
     write_json_atomic(memory_path(), memory)
-    if namespace_key:
-        namespace_file = namespace_memory_path(namespace_key)
-        record = read_json(namespace_file, {})
-        if isinstance(record, dict):
-            feedback = as_list(record.setdefault("feedback", []))
-            feedback.append(entry)
-            record["feedback"] = feedback[-200:]
-            record["updated_at"] = now_iso()
-            write_json_atomic(namespace_file, record)
+    namespace_file = namespace_memory_path(namespace_key)
+    record = read_json(namespace_file, {})
+    if not isinstance(record, dict):
+        record = {}
+    feedback = as_list(record.setdefault("feedback", []))
+    feedback.append(entry)
+    record["feedback"] = feedback[-200:]
+    record["updated_at"] = now_iso()
+    write_json_atomic(namespace_file, record)
     return {
         "ok": True,
         "schema_version": "code-audit-feedback-response/1.0",
         "bucket": bucket,
         "label": label,
         "memory_path": str(memory_path()),
+        "namespace_memory_path": str(namespace_file),
     }
 
 

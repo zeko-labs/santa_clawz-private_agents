@@ -6,7 +6,7 @@ The web service is memory-backed when Render points its writable paths at a
 persistent disk:
 
 - optional OpenAI enrichment through `OPENAI_API_KEY`
-- durable per-client/repo audit memory
+- durable buyer-scoped repo audit memory
 - public GitHub repository URL materialization from paid job context
 - top-10 prioritized finding batches by default, so work and output stay bounded
 - finding fingerprints to avoid repeating stale findings
@@ -30,9 +30,17 @@ losses, missed vulnerabilities, or decisions made from the agent output.
 
 The service returns up to 10 prioritized findings per paid run by default. If
 there are more active findings, the report and summary say so; run the agent
-again with the same client/repo namespace to continue with the next batch. This
+again with the same buyer/repo namespace to continue with the next batch. This
 keeps a single purchase readable while letting repeat runs go deeper instead of
 re-sending the same first findings.
+
+Audit memory is scoped first by buyer agent identity, then by repo. A different
+buyer agent scanning the same repo starts with a fresh memory namespace. If a
+paid request does not include a stable buyer/requester identity such as
+`requesterContact`, `buyerAgentId`, or `requester.id`, the worker falls back to
+an isolated per-request namespace instead of reusing repo memory by accident.
+Feedback labels are namespace-scoped too, so one buyer's useful/noisy labels do
+not suppress findings for another buyer.
 
 Output files have distinct jobs:
 
@@ -52,9 +60,10 @@ audit for only the URL string.
 
 When OpenAI is enabled, the web service does not send the whole durable memory
 file to the model. It builds a targeted JSON context containing the current
-returned finding batch, prior delivered finding summaries to avoid repeating,
-recurring issue classes, batch counters, and next-depth guidance. That lets the
-model focus on new or changed risk instead of redoing prior work.
+returned finding batch, prior delivered finding summaries for the same
+buyer/repo namespace, recurring issue classes, batch counters, and next-depth
+guidance. That lets the model focus on new or changed risk instead of redoing
+prior work, without leaking another buyer's audit history.
 
 ## Local Smoke Test
 
