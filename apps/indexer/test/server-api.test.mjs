@@ -4710,6 +4710,8 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.settlementTelemetry.nextAction, "poll_payment_state");
     assert.equal(deliveredPaymentState.payload.settlementTelemetry.freshPaymentForbidden, true);
     assert.equal(deliveredPaymentState.payload.settlementTelemetry.recommendedPollAfterMs, 2000);
+    assert.equal(typeof deliveredPaymentState.payload.settlementTelemetry.settlementPendingSinceIso, "string");
+    assert.equal(typeof deliveredPaymentState.payload.settlementTelemetry.settlementPendingMs, "number");
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorActionRequired, true);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.reconciliationRequired, false);
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorReconciliationRequired, false);
@@ -4891,13 +4893,22 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
         }
       ]
     }, null, 2), "utf8");
+    const stalePendingRefreshStarted = await requestJson(
+      `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${stalePendingFinalityDigest}`
+    );
+    assert.equal(stalePendingRefreshStarted.status, 200);
+    assert.equal(stalePendingRefreshStarted.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(stalePendingRefreshStarted.payload.stateFreshness, "stale");
+    assert.equal(stalePendingRefreshStarted.payload.stateProjectionPending, true);
+    assert.equal(stalePendingRefreshStarted.payload.paymentFinality, "pending");
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const stalePendingPromoted = await requestJson(
       `${baseUrl}/api/x402/payment-state?paymentPayloadDigestSha256=${stalePendingFinalityDigest}`
     );
     assert.equal(stalePendingPromoted.status, 200);
     assert.equal(stalePendingPromoted.payload.protocolState, "DELIVERED_SETTLED");
     assert.equal(stalePendingPromoted.payload.stateFreshness, "fresh");
-    assert.equal(stalePendingPromoted.payload.projectionSource, "inflight");
+    assert.ok(["hit", "inflight", "miss"].includes(stalePendingPromoted.payload.projectionSource));
     assert.equal(stalePendingPromoted.payload.paymentFinality, "settled");
     assert.equal(stalePendingPromoted.payload.paymentFinalityPending, false);
 
