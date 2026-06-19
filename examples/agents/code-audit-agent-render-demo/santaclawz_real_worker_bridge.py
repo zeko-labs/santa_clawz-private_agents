@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -21,7 +22,9 @@ import secrets
 import sys
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -47,6 +50,10 @@ DEFAULT_MEMORY_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_MEMORY_DIR",
 DEFAULT_STATE_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_STATE_DIR", str(ROOT / "state"))).expanduser()
 DEFAULT_TIMEOUT_SECONDS = 45
 MAX_TEXT_CHARS = 120_000
+MAX_MATERIALIZED_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS", 700000, minimum=50000, maximum=2_000_000)
+MAX_REPO_ARCHIVE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_ARCHIVE_BYTES", 30_000_000, minimum=1_000_000, maximum=100_000_000)
+MAX_REPO_FILES_SCANNED = env_int("CLAWZ_CODE_AUDIT_REPO_FILES", 250, minimum=10, maximum=1000)
+MAX_REPO_FILE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_FILE_BYTES", 120000, minimum=2000, maximum=500000)
 MAX_MODEL_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MODEL_TEXT_CHARS", 24000, minimum=2000, maximum=60000)
 MAX_MEMORY_RUNS_PER_NAMESPACE = 40
 MAX_MEMORY_FINDINGS_PER_NAMESPACE = 200
@@ -72,6 +79,44 @@ STANDARD_AUDIT_DISCLAIMER = (
     "nor their contributors or operators are responsible for hacks, losses, missed "
     "vulnerabilities, or decisions made from this output."
 )
+SOURCE_EXTENSIONS = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".html",
+    ".java",
+    ".js",
+    ".jsx",
+    ".json",
+    ".mjs",
+    ".py",
+    ".rs",
+    ".sh",
+    ".sol",
+    ".sql",
+    ".svelte",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".yaml",
+    ".yml",
+}
+SKIP_PATH_PARTS = {
+    ".git",
+    ".next",
+    ".turbo",
+    ".venv",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "vendor",
+}
 
 
 class WorkerError(Exception):
@@ -176,6 +221,233 @@ def collect_text(value: Any, *, depth: int = 0) -> list[tuple[str, str]]:
             elif depth < 2:
                 chunks.extend(collect_text(item, depth=depth + 1))
     return chunks
+
+
+def extract_urls(value: Any, *, depth: int = 0) -> list[str]:
+    if depth > 6:
+        return []
+    urls: list[str] = []
+    if isinstance(value, str):
+        urls.extend(re.findall(r"https?://[^\s<>'\")\]]+", value))
+    elif isinstance(value, list):
+        for item in value[:100]:
+            urls.extend(extract_urls(item, depth=depth + 1))
+    elif isinstance(value, dict):
+        for item in value.values():
+            urls.extend(extract_urls(item, depth=depth + 1))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        cleaned = url.rstrip(".,;:")
+        if cleaned not in seen:
+            seen.add(cleaned)
+            deduped.append(cleaned)
+    return deduped
+
+
+def parse_github_repo_url(url: str) -> dict[str, str] | None:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if host not in {"github.com", "www.github.com"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2:
+        return None
+    owner = parts[0]
+    repo = parts[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    ref = ""
+    if len(parts) >= 4 and parts[2] in {"tree", "commit"}:
+        ref = "/".join(parts[3:])
+    if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or not re.match(r"^[A-Za-z0-9_.-]+$", repo):
+        return None
+    return {"owner": owner, "repo": repo, "ref": ref, "url": url}
+
+
+def fetch_limited_bytes(url: str, *, max_bytes: int, timeout: int = 20) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "accept": "application/zip,application/octet-stream,*/*",
+            "user-agent": "santaclawz-code-audit-agent/1.2",
+        },
+    )
+    chunks: list[bytes] = []
+    total = 0
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        while True:
+            chunk = response.read(128 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise WorkerError(f"repository archive exceeded {max_bytes} bytes", 413)
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def github_archive_candidates(target: dict[str, str]) -> list[str]:
+    owner = urllib.parse.quote(target["owner"], safe="")
+    repo = urllib.parse.quote(target["repo"], safe="")
+    candidates: list[str] = []
+    ref = target.get("ref", "").strip()
+    if ref:
+        quoted_ref = urllib.parse.quote(ref, safe="/")
+        candidates.extend(
+            [
+                f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{quoted_ref}",
+                f"https://codeload.github.com/{owner}/{repo}/zip/{quoted_ref}",
+            ]
+        )
+    candidates.extend(
+        [
+            f"https://codeload.github.com/{owner}/{repo}/zip/HEAD",
+            f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/main",
+            f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/master",
+        ]
+    )
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            deduped.append(candidate)
+    return deduped
+
+
+def should_scan_repo_path(path: str) -> bool:
+    parts = [part for part in path.split("/") if part]
+    if any(part in SKIP_PATH_PARTS for part in parts):
+        return False
+    suffix = pathlib.PurePosixPath(path).suffix.lower()
+    if suffix in SOURCE_EXTENSIONS:
+        return True
+    return pathlib.PurePosixPath(path).name in {"Dockerfile", "Makefile", "Procfile"}
+
+
+def line_for_offset(text: str, offset: int) -> int:
+    return text.count("\n", 0, max(0, offset)) + 1
+
+
+def strip_archive_root(path: str) -> str:
+    parts = [part for part in path.split("/") if part]
+    if len(parts) > 1:
+        return "/".join(parts[1:])
+    return path
+
+
+def decode_source_bytes(data: bytes) -> str:
+    if b"\x00" in data[:4096]:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
+    errors: list[str] = []
+    archive_bytes: bytes | None = None
+    archive_url = ""
+    for candidate in github_archive_candidates(target):
+        try:
+            archive_bytes = fetch_limited_bytes(candidate, max_bytes=MAX_REPO_ARCHIVE_BYTES)
+            archive_url = candidate
+            break
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{candidate} -> HTTP {exc.code}")
+        except Exception as exc:
+            errors.append(f"{candidate} -> {str(exc)[:160]}")
+    if archive_bytes is None:
+        return {
+            "kind": "github_repo_archive",
+            "source_url": target["url"],
+            "owner": target["owner"],
+            "repo": target["repo"],
+            "status": "failed",
+            "errors": errors[-5:],
+            "files": [],
+        }
+
+    files: list[dict[str, Any]] = []
+    considered = 0
+    truncated = False
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            path = strip_archive_root(info.filename)
+            if not path or not should_scan_repo_path(path):
+                continue
+            considered += 1
+            if len(files) >= MAX_REPO_FILES_SCANNED:
+                truncated = True
+                continue
+            if info.file_size > MAX_REPO_FILE_BYTES:
+                continue
+            data = archive.read(info)
+            text = decode_source_bytes(data)
+            if not text.strip():
+                continue
+            files.append(
+                {
+                    "path": path,
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "line_count": text.count("\n") + 1,
+                    "content": text,
+                }
+            )
+    return {
+        "kind": "github_repo_archive",
+        "source_url": target["url"],
+        "archive_url": archive_url,
+        "owner": target["owner"],
+        "repo": target["repo"],
+        "status": "materialized",
+        "archive_bytes": len(archive_bytes),
+        "files_considered": considered,
+        "files_scanned": len(files),
+        "scan_truncated": truncated,
+        "max_files_scanned": MAX_REPO_FILES_SCANNED,
+        "files": files,
+    }
+
+
+def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
+    urls = extract_urls(payload)
+    github_targets: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for url in urls:
+        target = parse_github_repo_url(url)
+        if not target:
+            continue
+        key = f"{target['owner']}/{target['repo']}@{target.get('ref', '')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        github_targets.append(target)
+    targets = [materialize_github_target(target) for target in github_targets[:2]]
+    files = [file for target in targets for file in as_list(target.get("files")) if isinstance(file, dict)]
+    status = "not_requested"
+    if targets:
+        status = "materialized" if files else "failed"
+    return {
+        "schema_version": "code-audit-target-materialization/1.0",
+        "status": status,
+        "urls": urls,
+        "github_target_count": len(github_targets),
+        "targets": [
+            {
+                key: value
+                for key, value in target.items()
+                if key != "files"
+            }
+            for target in targets
+        ],
+        "files": files,
+        "files_scanned": len(files),
+        "files_considered": sum(int(target.get("files_considered", 0) or 0) for target in targets),
+        "scan_truncated": any(bool(target.get("scan_truncated")) for target in targets),
+    }
 
 
 def nested_string(*values: Any, default: str = "") -> str:
@@ -295,9 +567,11 @@ AUDIT_RULES: list[tuple[str, str, str, str]] = [
     ("high", r"subprocess\.(Popen|run|call)|child_process\.(exec|spawn)", "Shell/process execution path detected.", "Guard command construction, sanitize arguments, and avoid shell=True."),
     ("high", r"verify\s*=\s*False|rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED", "TLS verification bypass detected.", "Do not disable TLS verification in production paths."),
     ("high", r"pickle\.loads?|yaml\.load\s*\(", "Unsafe deserialization pattern detected.", "Use safe parsers and trusted schemas."),
+    ("high", r"\.innerHTML\s*=|dangerouslySetInnerHTML", "Potential unsafe HTML sink detected.", "Avoid raw HTML sinks or prove strict sanitization before rendering untrusted content."),
+    ("high", r"payment[_-]?status[\"']?\s*[:=]\s*[\"']?(quote_requested|authorized)|settlement[_-]?status[\"']?\s*[:=]\s*[\"']?authorized", "Payment lifecycle state requires settlement validation.", "Ensure paid execution is gated on the intended authorization, settlement, or escrow invariant."),
     ("medium", r"SELECT\s+.*\+|query\s*\(.*\+", "Possible SQL/string query construction.", "Use parameterized queries and typed query builders."),
-    ("medium", r"password|api[_-]?key|secret|token|private[_-]?key", "Secret-sensitive terms detected in submitted material.", "Keep secrets out of source, logs, prompts, and public artifacts."),
-    ("medium", r"TODO|FIXME|HACK", "Unresolved implementation marker detected.", "Track and resolve before production release."),
+    ("medium", r"\b(password|api[_-]?key|secret|token|private[_-]?key)\b\s*[:=]\s*[\"'][^\"'\n]{12,}[\"']", "Possible hardcoded secret detected.", "Keep secrets out of source, logs, prompts, and public artifacts."),
+    ("medium", r"\b(TODO|FIXME|HACK)\b", "Unresolved implementation marker detected.", "Track and resolve before production release."),
     ("low", r"console\.log|print\s*\(", "Debug logging detected.", "Confirm logs cannot expose private inputs or credentials."),
 ]
 
@@ -316,37 +590,104 @@ def finding_fingerprint(finding: dict[str, Any]) -> str:
     return canonical_digest(basis)[:24]
 
 
-def audit_text(text: str) -> dict[str, Any]:
-    findings: list[dict[str, Any]] = []
-    lowered = text.lower()
-    for severity, pattern, title, recommendation in AUDIT_RULES:
-        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE | re.MULTILINE))
-        if not matches:
+def is_likely_rule_self_match(snippet: str, title: str, recommendation: str) -> bool:
+    lowered = snippet.lower()
+    title_key = title.lower().rstrip(".")
+    recommendation_key = recommendation.lower().rstrip(".")[:48]
+    return title_key in lowered or (len(recommendation_key) > 20 and recommendation_key in lowered)
+
+
+def scan_units_from_target(normalized: dict[str, Any], materialized: dict[str, Any]) -> list[dict[str, str]]:
+    units: list[dict[str, str]] = []
+    total_chars = 0
+    for file in as_list(materialized.get("files")):
+        if not isinstance(file, dict):
             continue
-        snippets = []
-        for match in matches[:3]:
-            start = max(0, match.start() - 80)
-            end = min(len(text), match.end() + 80)
-            snippets.append(re.sub(r"\s+", " ", text[start:end]).strip()[:240])
+        content = first_string(file.get("content"), default="")
+        if not content:
+            continue
+        if total_chars >= MAX_MATERIALIZED_TEXT_CHARS:
+            break
+        remaining = MAX_MATERIALIZED_TEXT_CHARS - total_chars
+        clipped = content[:remaining]
+        total_chars += len(clipped)
+        units.append({"path": first_string(file.get("path"), default="repo-file"), "content": clipped})
+    if units:
+        return units
+    return [{"path": "submitted_payload", "content": normalized["text"]}]
+
+
+def audit_units(units: list[dict[str, str]]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    for severity, pattern, title, recommendation in AUDIT_RULES:
+        locations: list[dict[str, Any]] = []
+        match_count = 0
+        for unit in units:
+            text = unit.get("content", "")
+            path = unit.get("path", "submitted_payload")
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE | re.MULTILINE):
+                start = max(0, match.start() - 80)
+                end = min(len(text), match.end() + 80)
+                snippet = re.sub(r"\s+", " ", text[start:end]).strip()[:240]
+                if is_likely_rule_self_match(snippet, title, recommendation):
+                    continue
+                match_count += 1
+                if len(locations) < 8:
+                    locations.append(
+                        {
+                            "path": path,
+                            "line": line_for_offset(text, match.start()),
+                            "snippet": snippet,
+                        }
+                    )
+        if match_count <= 0:
+            continue
         finding = {
             "id": f"CAD-{len(findings) + 1:03d}",
             "severity": severity,
             "category": slug(title),
             "title": title,
-            "match_count": len(matches),
-            "evidence_snippets": snippets,
+            "match_count": match_count,
+            "locations": locations,
+            "evidence_snippets": [
+                f"{item['path']}:{item['line']} - {item['snippet']}"
+                for item in locations[:3]
+            ],
             "recommendation": recommendation,
         }
         finding["fingerprint"] = finding_fingerprint(finding)
         findings.append(finding)
-    if "http://" in lowered:
+    plain_http_count = 0
+    plain_http_locations: list[dict[str, Any]] = []
+    for unit in units:
+        text = unit.get("content", "")
+        path = unit.get("path", "submitted_payload")
+        lowered = text.lower()
+        plain_http_count += lowered.count("http://")
+        for match in re.finditer(r"http://", text, flags=re.IGNORECASE):
+            if len(plain_http_locations) >= 8:
+                break
+            start = max(0, match.start() - 80)
+            end = min(len(text), match.end() + 80)
+            plain_http_locations.append(
+                {
+                    "path": path,
+                    "line": line_for_offset(text, match.start()),
+                    "snippet": re.sub(r"\s+", " ", text[start:end]).strip()[:240],
+                }
+            )
+    if plain_http_count > 0:
         finding = {
             "id": f"CAD-{len(findings) + 1:03d}",
             "severity": "low",
             "category": "plain-http-reference-detected",
             "title": "Plain HTTP reference detected.",
-            "match_count": lowered.count("http://"),
-            "evidence_snippets": [],
+            "match_count": plain_http_count,
+            "locations": plain_http_locations,
+            "evidence_snippets": [
+                f"{item['path']}:{item['line']} - {item['snippet']}"
+                for item in plain_http_locations[:3]
+            ],
             "recommendation": "Prefer HTTPS endpoints unless an internal/private network policy explicitly allows HTTP.",
         }
         finding["fingerprint"] = finding_fingerprint(finding)
@@ -360,6 +701,10 @@ def audit_text(text: str) -> dict[str, Any]:
         "highest_severity": highest,
         "findings": findings,
     }
+
+
+def audit_text(text: str) -> dict[str, Any]:
+    return audit_units([{"path": "submitted_payload", "content": text}])
 
 
 def empty_memory() -> dict[str, Any]:
@@ -660,7 +1005,67 @@ def compact_memory_context(memory: dict[str, Any], namespace: dict[str, Any]) ->
     }
 
 
-def render_report(normalized: dict[str, Any], findings: dict[str, Any], memory_context: dict[str, Any], ai_insights: dict[str, Any]) -> str:
+def compact_target_materialization(materialized: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": materialized.get("schema_version", "code-audit-target-materialization/1.0"),
+        "status": materialized.get("status"),
+        "github_target_count": materialized.get("github_target_count", 0),
+        "files_scanned": materialized.get("files_scanned", 0),
+        "files_considered": materialized.get("files_considered", 0),
+        "scan_truncated": materialized.get("scan_truncated", False),
+        "targets": as_list(materialized.get("targets")),
+        "urls": as_list(materialized.get("urls"))[:10],
+    }
+
+
+def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], memory_context: dict[str, Any], materialized: dict[str, Any]) -> str:
+    target_summary = compact_target_materialization(materialized)
+    target_status = str(target_summary.get("status") or "not_requested")
+    lines = [
+        (
+            f"Memory-backed code audit completed. Returned {findings['finding_count']} "
+            f"of {findings.get('total_active_finding_count', findings['finding_count'])} prioritized findings; "
+            f"highest severity: {findings['highest_severity']}; "
+            f"prior namespace runs: {memory_context.get('namespace_run_count', 0)}."
+        ),
+        (
+            f"Target materialization: {target_status}; files scanned: "
+            f"{target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered."
+        ),
+    ]
+    if target_status == "failed":
+        lines.append("The requested source target could not be fetched, so the audit is scoped to the submitted prompt/context only.")
+    if findings.get("has_more_findings"):
+        lines.append(str(findings.get("next_batch_hint") or "Run again with the same namespace to continue the finding batch."))
+    returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
+    if returned:
+        lines.extend(["", "Top returned findings:"])
+        for finding in returned[:5]:
+            location = as_dict(as_list(finding.get("locations"))[0] if as_list(finding.get("locations")) else {})
+            location_text = ""
+            if location:
+                location_text = f" ({location.get('path')}:{location.get('line')})"
+            lines.append(f"- {str(finding.get('severity', 'unknown')).upper()}: {finding.get('title', 'Finding')}{location_text}")
+    else:
+        lines.extend(["", "No deterministic rule findings were detected in the inspected material."])
+    lines.extend(
+        [
+            "",
+            f"Input digest: {normalized['text_digest_sha256']}.",
+            "Full report, findings JSON, target scope, memory context, and verification manifest are included in the verified output package.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_report(
+    normalized: dict[str, Any],
+    findings: dict[str, Any],
+    memory_context: dict[str, Any],
+    ai_insights: dict[str, Any],
+    materialized: dict[str, Any],
+) -> str:
+    target_summary = compact_target_materialization(materialized)
     lines = [
         "# Code Audit Report",
         "",
@@ -684,6 +1089,26 @@ def render_report(normalized: dict[str, Any], findings: dict[str, Any], memory_c
         f"- Input digest: `{normalized['text_digest_sha256']}`",
         f"- Client/repo namespace: `{as_dict(normalized.get('namespace')).get('namespace_key', 'default')}`",
         f"- Prior namespace runs: {memory_context.get('namespace_run_count', 0)}",
+        f"- Target materialization: {target_summary.get('status')}",
+        f"- Files scanned: {target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered",
+        "",
+        "## Target",
+        "",
+        f"- Status: {target_summary.get('status')}",
+        f"- GitHub targets: {target_summary.get('github_target_count', 0)}",
+        f"- Files scanned: {target_summary.get('files_scanned', 0)}",
+        f"- Files considered: {target_summary.get('files_considered', 0)}",
+        f"- Scan truncated: {target_summary.get('scan_truncated', False)}",
+        "",
+    ]
+    for target in as_list(target_summary.get("targets")):
+        if isinstance(target, dict):
+            lines.append(
+                f"- {target.get('kind', 'target')}: {target.get('source_url', '')} "
+                f"({target.get('status', 'unknown')})"
+            )
+    lines.extend(
+        [
         "",
         "## Batch Behavior",
         "",
@@ -697,7 +1122,8 @@ def render_report(normalized: dict[str, Any], findings: dict[str, Any], memory_c
         f"- Known finding fingerprints for this namespace: {memory_context.get('known_finding_count', 0)}",
         f"- Recent completed runs tracked: {len(as_list(memory_context.get('recent_runs')))}",
         "",
-    ]
+        ]
+    )
     depth_plan = as_list(memory_context.get("depth_plan"))
     if depth_plan:
         lines.extend(["Next-depth plan:", ""])
@@ -737,7 +1163,7 @@ def render_report(normalized: dict[str, Any], findings: dict[str, Any], memory_c
         ]
     )
     if not findings["findings"]:
-        lines.append("No deterministic rule findings were detected in the submitted material.")
+        lines.append("No deterministic rule findings were detected in the inspected material.")
     for finding in findings["findings"]:
         memory_status = as_dict(finding.get("memory")).get("status", "new")
         prior_count = as_dict(finding.get("memory")).get("prior_count", 0)
@@ -753,6 +1179,11 @@ def render_report(normalized: dict[str, Any], findings: dict[str, Any], memory_c
                 "",
             ]
         )
+        for location in as_list(finding.get("locations"))[:5]:
+            if isinstance(location, dict):
+                lines.append(f"- Location: `{location.get('path')}:{location.get('line')}`")
+        if finding.get("locations"):
+            lines.append("")
         for snippet in finding.get("evidence_snippets", []):
             lines.extend([f"> {snippet}", ""])
     lines.extend(
@@ -784,7 +1215,38 @@ def finding_for_model(finding: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_openai_audit_context(normalized: dict[str, Any], findings: dict[str, Any], memory_context: dict[str, Any]) -> dict[str, Any]:
+def source_excerpt_for_model(units: list[dict[str, str]], findings: dict[str, Any]) -> str:
+    priority_paths: list[str] = []
+    for finding in as_list(findings.get("findings")):
+        if not isinstance(finding, dict):
+            continue
+        for location in as_list(finding.get("locations")):
+            if isinstance(location, dict) and location.get("path"):
+                priority_paths.append(str(location["path"]))
+    seen: set[str] = set()
+    excerpts: list[str] = []
+    for unit in units:
+        path = unit.get("path", "submitted_payload")
+        if path in seen:
+            continue
+        if priority_paths and path not in priority_paths and len(excerpts) >= 4:
+            continue
+        seen.add(path)
+        content = unit.get("content", "")
+        if not content.strip():
+            continue
+        excerpts.append(f"## {path}\n{content[:4000]}")
+        if len("\n\n".join(excerpts)) >= MAX_MODEL_TEXT_CHARS:
+            break
+    return "\n\n".join(excerpts)[:MAX_MODEL_TEXT_CHARS]
+
+
+def build_openai_audit_context(
+    normalized: dict[str, Any],
+    findings: dict[str, Any],
+    memory_context: dict[str, Any],
+    materialized: dict[str, Any],
+) -> dict[str, Any]:
     current_fingerprints = {
         str(finding.get("fingerprint"))
         for finding in as_list(findings.get("findings"))
@@ -812,6 +1274,7 @@ def build_openai_audit_context(normalized: dict[str, Any], findings: dict[str, A
             "has_more_findings": findings.get("has_more_findings"),
             "next_batch_hint": findings.get("next_batch_hint"),
         },
+        "target_materialization": compact_target_materialization(materialized),
         "current_returned_findings": [
             finding_for_model(finding)
             for finding in as_list(findings.get("findings"))
@@ -846,8 +1309,14 @@ def extract_response_text(payload: dict[str, Any]) -> str:
     return "\n".join(parts).strip()
 
 
-def call_openai_for_insights(normalized: dict[str, Any], findings: dict[str, Any], memory_context: dict[str, Any]) -> dict[str, Any]:
-    openai_context = build_openai_audit_context(normalized, findings, memory_context)
+def call_openai_for_insights(
+    normalized: dict[str, Any],
+    findings: dict[str, Any],
+    memory_context: dict[str, Any],
+    materialized: dict[str, Any],
+    scan_units: list[dict[str, str]],
+) -> dict[str, Any]:
+    openai_context = build_openai_audit_context(normalized, findings, memory_context, materialized)
     context_digest = canonical_digest(openai_context)
     if not OPENAI_ENABLED:
         return {
@@ -867,7 +1336,8 @@ def call_openai_for_insights(normalized: dict[str, Any], findings: dict[str, Any
         "Identify security-relevant insights from the supplied text, prioritize the returned batch, "
         "call out likely false positives, and suggest what to inspect in the next paid run.\n\n"
         f"Client request:\n{normalized['client_request'][:3000]}\n\n"
-        f"Submitted text excerpt:\n{normalized['text'][:MAX_MODEL_TEXT_CHARS]}\n\n"
+        f"Submitted text excerpt:\n{normalized['text'][:6000]}\n\n"
+        f"Materialized source excerpt:\n{source_excerpt_for_model(scan_units, findings)}\n\n"
         f"Targeted audit context JSON:\n{stable_json(openai_context)}\n\n"
         "Return JSON with keys: audit_insights (array of objects with severity, title, rationale, "
         "recommendation, confidence), prioritized_notes (array of strings), next_run_focus (string), "
@@ -956,25 +1426,26 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
 
     memory = load_memory()
     memory_context = compact_memory_context(memory, as_dict(normalized["namespace"]))
-    raw_findings = audit_text(normalized["text"])
+    materialized = materialize_external_targets(payload)
+    scan_units = scan_units_from_target(normalized, materialized)
+    raw_findings = audit_units(scan_units)
     memory_ranked_findings = apply_memory_to_findings(raw_findings, memory, as_dict(normalized["namespace"]))
     findings = select_findings_for_delivery(memory_ranked_findings)
-    ai_insights = call_openai_for_insights(normalized, findings, memory_context)
-    report = render_report(normalized, findings, memory_context, ai_insights)
-    summary = (
-        f"Memory-backed code audit completed. Returned {findings['finding_count']} "
-        f"of {findings.get('total_active_finding_count', findings['finding_count'])} prioritized findings; "
-        f"highest severity: {findings['highest_severity']}; "
-        f"prior namespace runs: {memory_context.get('namespace_run_count', 0)}. "
-        f"{findings.get('next_batch_hint') + ' ' if findings.get('has_more_findings') else ''}"
-        f"Input digest: {normalized['text_digest_sha256']}."
-    )
+    ai_insights = call_openai_for_insights(normalized, findings, memory_context, materialized, scan_units)
+    report = render_report(normalized, findings, memory_context, ai_insights, materialized)
+    target_summary = compact_target_materialization(materialized)
+    summary = render_buyer_summary(normalized, findings, memory_context, materialized)
 
     files = [
         ("audit_report.md", report, "text/markdown"),
         ("findings.json", json.dumps(findings, indent=2, sort_keys=True) + "\n", "application/json"),
         ("memory_context.json", json.dumps(memory_context, indent=2, sort_keys=True) + "\n", "application/json"),
         ("ai_insights.json", json.dumps(ai_insights, indent=2, sort_keys=True) + "\n", "application/json"),
+        (
+            "target_materialization.json",
+            json.dumps(target_summary, indent=2, sort_keys=True) + "\n",
+            "application/json",
+        ),
         (
             "scope_summary.json",
             json.dumps(
@@ -991,6 +1462,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
                     "total_active_finding_count": findings.get("total_active_finding_count"),
                     "deferred_count": findings.get("deferred_count"),
                     "has_more_findings": findings.get("has_more_findings"),
+                    "target_materialization": target_summary,
                     "memory_root": str(DEFAULT_MEMORY_ROOT),
                     "state_root": str(DEFAULT_STATE_ROOT),
                     "model_enrichment_status": ai_insights.get("status"),
@@ -1031,12 +1503,14 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
         "package_hash": package_hash,
         "checks_performed": [
             "deterministic_code_audit_rules_applied",
+            "external_targets_materialized",
             "durable_memory_context_applied",
             "learning_update_written",
             "deliverables_hashed",
             "manifest_written",
             "santaclawz_return_payload_written",
         ],
+        "target_materialization": target_summary,
         "model_enrichment_status": ai_insights.get("status"),
         "memory": {
             "namespace_key": learning_update["namespace_key"],
@@ -1059,6 +1533,8 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
             "deferred_count": findings.get("deferred_count"),
             "finding_limit": findings.get("finding_limit"),
             "highest_severity": findings["highest_severity"],
+            "target_files_scanned": target_summary.get("files_scanned", 0),
+            "target_status": target_summary.get("status"),
         },
     }
     verification_manifest_digest_sha256 = canonical_digest(manifest)
@@ -1077,6 +1553,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
         "package_hash": package_hash,
         "created_at": created_at,
         "memory": learning_update,
+        "target_materialization": target_summary,
     }
 
     write_json(run_dir / "verification_manifest.json", manifest)
@@ -1110,6 +1587,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
                 "depth_plan": learning_update["depth_plan"],
             },
             "model_enrichment_status": ai_insights.get("status"),
+            "target_materialization": target_summary,
             "finding_batch": {
                 "returned_finding_count": findings.get("returned_finding_count"),
                 "total_active_finding_count": findings.get("total_active_finding_count"),
@@ -1145,6 +1623,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
         "total_active_finding_count": findings.get("total_active_finding_count"),
         "deferred_count": findings.get("deferred_count"),
         "memory": learning_update,
+        "target_materialization": target_summary,
         "model_enrichment_status": ai_insights.get("status"),
     }
     log_event(
@@ -1158,6 +1637,8 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
             "namespace_key": learning_update["namespace_key"],
             "namespace_run_count": learning_update["namespace_run_count"],
             "model_enrichment_status": ai_insights.get("status"),
+            "target_status": target_summary.get("status"),
+            "target_files_scanned": target_summary.get("files_scanned", 0),
         }
     )
     return return_payload, quality

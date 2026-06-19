@@ -7,6 +7,7 @@ persistent disk:
 
 - optional OpenAI enrichment through `OPENAI_API_KEY`
 - durable per-client/repo audit memory
+- public GitHub repository URL materialization from paid job context
 - top-10 prioritized finding batches by default, so work and output stay bounded
 - finding fingerprints to avoid repeating stale findings
 - feedback for useful/noisy finding labels
@@ -37,9 +38,17 @@ Output files have distinct jobs:
 
 - `audit_report.md`: human-readable audit report
 - `findings.json`: deterministic finding batch returned for this run
+- `target_materialization.json`: fetched target summary, source URL, file counts, and scan caps
 - `memory_context.json`: private continuation/de-duplication context, not the audit report
 - `ai_insights.json`: optional OpenAI Responses API model review and audit guidance
 - `scope_summary.json`: hashes, namespace, and run metadata
+
+When the paid request includes a public GitHub URL through `jobContext.urls` or
+the prompt body, the hosted worker downloads the repository archive from
+GitHub, scans source-like files with bounded caps, and records how many files
+were considered and scanned. If the target cannot be fetched, the buyer-visible
+summary and report say that explicitly instead of silently returning a clean
+audit for only the URL string.
 
 When OpenAI is enabled, the web service does not send the whole durable memory
 file to the model. It builds a targeted JSON context containing the current
@@ -75,6 +84,10 @@ Create a Python private web service:
   - `CLAWZ_CODE_AUDIT_MEMORY_DIR=/var/data/memory`
   - `CLAWZ_CODE_AUDIT_STATE_DIR=/var/data/state`
   - `CODE_AUDIT_FINDING_LIMIT=10`
+  - `CLAWZ_CODE_AUDIT_REPO_FILES=250`
+  - `CLAWZ_CODE_AUDIT_REPO_ARCHIVE_BYTES=30000000`
+  - `CLAWZ_CODE_AUDIT_REPO_FILE_BYTES=120000`
+  - `CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS=700000`
   - `OPENAI_API_KEY=<secret, optional but recommended for model-assisted audit insights>`
   - `CODE_AUDIT_USE_OPENAI=true`
   - `CODE_AUDIT_OPENAI_MODEL=gpt-5.5`
