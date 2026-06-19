@@ -81,6 +81,7 @@ import {
   settleAgentX402Payment,
   verifyAgentX402Payment
 } from "./x402-adapter.js";
+import { WorkshopBetaControlPlane } from "./workshop-beta-control-plane.js";
 
 const app = express();
 const expressRaw = (express as unknown as { raw(options?: unknown): unknown }).raw;
@@ -610,6 +611,7 @@ function publicReadRoutePolicy(
     pathname === "/api/agents" ||
     pathname === "/api/agent-messages" ||
     pathname === "/api/workshop/receipt-ledger" ||
+    pathname === "/api/workshop-beta/dashboard" ||
     /^\/api\/workshops\/[^/]+\/(messages|state)(\/[^/]+)?$/.test(pathname) ||
     /^\/api\/social\/anchors\/anchor_[^/]+$/.test(pathname) ||
     pathname === "/api/social/anchors/public"
@@ -851,6 +853,7 @@ app.use((request: CacheInvalidationRequest, response: CacheInvalidationResponse,
 
 const clawzDataDir = process.env.CLAWZ_DATA_DIR?.trim() || path.join(process.cwd(), ".clawz-data");
 const controlPlane = await ClawzControlPlane.boot(clawzDataDir);
+const workshopBetaControlPlane = await WorkshopBetaControlPlane.boot(path.join(clawzDataDir, "workshop-beta"));
 controlPlane.startSharedSocialAnchorDrainer();
 startNetworkFacilitationFeeMonitor();
 const artifactStore = new ArtifactStore(process.env.CLAWZ_ARTIFACT_STORE_DIR?.trim() || path.join(clawzDataDir, "artifacts"));
@@ -6232,6 +6235,144 @@ function buildWorkshopTraceReadUrls(baseUrl: string, message: AgentBoardMessage,
     message: `${baseUrl}/api/workshops/${encodedWorkshopId}/messages/${encodeURIComponent(message.messageId)}`
   };
 }
+
+app.get("/api/workshop-beta/dashboard", route(async (_request, response) => {
+  try {
+    const [agents, agentBoard, socialAnchorQueue, paymentLedger] = await Promise.all([
+      controlPlane.listRegisteredAgents(),
+      controlPlane.listAgentBoardMessages({ includeWorkshopCoordination: true, limit: 100 }),
+      controlPlane.getSocialAnchorQueueState(undefined, {
+        itemLimit: 100,
+        batchLimit: 8
+      }),
+      controlPlane.listPaymentLedger({ limit: 100 })
+    ]);
+    response.json(await workshopBetaControlPlane.dashboard({
+      agents,
+      agentBoard,
+      socialAnchorQueue,
+      paymentLedger
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to load Workshop Beta dashboard."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/auth/start", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.createAuthSession({
+      email: body.email,
+      provider: body.provider
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to start Workshop Beta sign-in."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/auth/verify", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.verifyAuthSession({
+      sessionId: body.sessionId,
+      token: body.token
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to verify Workshop Beta sign-in."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/admin-challenges", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.issueAdminChallenge({
+      sessionId: body.sessionId,
+      workshopId: body.workshopId,
+      missionAuthAuthorityBaseUrl: body.missionAuthAuthorityBaseUrl
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to issue Workshop Beta admin challenge."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/admin-challenges/claim", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.claimAdminChallenge({
+      challengeId: body.challengeId,
+      agentId: body.agentId,
+      agentName: body.agentName,
+      signature: body.signature,
+      publicKey: body.publicKey,
+      claimDigestSha256: body.claimDigestSha256
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to claim Workshop Beta admin challenge."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/missions", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.createMission({
+      sessionId: body.sessionId,
+      adminBindingId: body.adminBindingId,
+      workspaceId: body.workspaceId,
+      title: body.title,
+      goal: body.goal,
+      visibility: body.visibility,
+      allowedAgentIds: body.allowedAgentIds,
+      dataRules: body.dataRules,
+      successCriteria: body.successCriteria,
+      budgetUsd: body.budgetUsd,
+      expiresAtIso: body.expiresAtIso
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to create Workshop Beta mission."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/missions/:missionId/transition", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.transitionMission({
+      missionId: request.params.missionId,
+      status: body.status
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to advance Workshop Beta mission."
+    });
+  }
+}));
+
+app.post("/api/workshop-beta/missions/:missionId/claims", route(async (request, response) => {
+  try {
+    const body = isRecord(request.body) ? request.body : {};
+    response.json(await workshopBetaControlPlane.claimMission({
+      missionId: request.params.missionId,
+      agentId: body.agentId,
+      role: body.role,
+      scope: body.scope
+    }));
+  } catch (error) {
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Unable to claim Workshop Beta mission."
+    });
+  }
+}));
 
 app.get("/api/workshop/receipt-ledger", route(async (request, response) => {
   try {
