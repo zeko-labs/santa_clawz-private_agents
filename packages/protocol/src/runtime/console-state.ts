@@ -1209,6 +1209,7 @@ export interface PaymentLedgerEntry {
   updatedAtIso: string;
   agentId: string;
   sessionId: string;
+  purpose?: "marketplace_work" | "activation_probe" | "seller_readiness_test";
   quoteIntentId?: string;
   hireRequestId?: string;
   x402RequestId?: string;

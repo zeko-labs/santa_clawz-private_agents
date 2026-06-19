@@ -143,6 +143,9 @@ const MAINNET_FREE_TEST_LIMIT_PER_AGENT_WITHOUT_PAYOUT =
   Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_AGENT_NO_PAYOUT_LIMIT_PER_DAY ?? "", 10) || 1;
 const MAINNET_FREE_TEST_LIMIT_GLOBAL =
   Number.parseInt(process.env.CLAWZ_MAINNET_FREE_TEST_GLOBAL_HIRE_LIMIT_PER_DAY ?? "", 10) || 20;
+const USD_MICRO_SCALE = 1_000_000n;
+const ACTIVATION_LANE_DEFAULT_MIN_USD = "0.002";
+const ACTIVATION_LANE_DEFAULT_EPSILON_USD = "0.000001";
 const ENROLLMENT_TICKET_TTL_MS = 15 * 60 * 1000;
 const ENROLLMENT_TICKET_SCHEMA_VERSION = "santaclawz-enrollment-ticket/1.0";
 const COORDINATION_SETUP_TICKET_TTL_MS = 15 * 60 * 1000;
@@ -964,6 +967,7 @@ interface PaymentLedgerAllTimeStats extends NonNullable<PaymentLedgerState["summ
 interface PaymentLedgerSettlementInput {
   agentId: string;
   sessionId: string;
+  purpose?: PaymentLedgerEntry["purpose"];
   quoteIntentId?: string;
   x402RequestId?: string;
   resource?: string;
@@ -3149,6 +3153,40 @@ function isSameUsdAmount(left: string | undefined, right: string | undefined) {
   return Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && Math.abs(leftNumber - rightNumber) < 0.000000001;
 }
 
+function parseUsdMicrosForActivationProbe(value: string | undefined, fallback: string) {
+  const trimmed = value?.trim();
+  const match = trimmed?.match(/^(\d+)(?:\.(\d{1,6}))?$/);
+  if (!match) {
+    return parseUsdMicrosForActivationProbe(fallback, "0");
+  }
+  const whole = BigInt(match[1] ?? "0") * USD_MICRO_SCALE;
+  const fractional = BigInt((match[2] ?? "").padEnd(6, "0"));
+  return whole + fractional;
+}
+
+function formatUsdMicrosForActivationProbe(value: bigint) {
+  const whole = value / USD_MICRO_SCALE;
+  const fraction = value % USD_MICRO_SCALE;
+  const fractionText = fraction.toString().padStart(6, "0").replace(/0+$/, "");
+  return fractionText.length > 0 ? `${whole}.${fractionText}` : whole.toString();
+}
+
+function activationLaneAmountUsdForLedgerClassification() {
+  const explicit = process.env.CLAWZ_ACTIVATION_LANE_AMOUNT_USD?.trim();
+  if (explicit) {
+    return formatUsdMicrosForActivationProbe(parseUsdMicrosForActivationProbe(explicit, "0.002001"));
+  }
+  const minimum = parseUsdMicrosForActivationProbe(
+    process.env.CLAWZ_MIN_PAID_JOB_AMOUNT_USD ?? process.env.CLAWZ_ACTIVATION_LANE_MIN_USD,
+    ACTIVATION_LANE_DEFAULT_MIN_USD
+  );
+  const epsilon = parseUsdMicrosForActivationProbe(
+    process.env.CLAWZ_ACTIVATION_LANE_EPSILON_USD,
+    ACTIVATION_LANE_DEFAULT_EPSILON_USD
+  );
+  return formatUsdMicrosForActivationProbe(minimum + epsilon);
+}
+
 function isActivationLanePaymentResource(resource: string | undefined) {
   return Boolean(
     resource?.includes("/api/activation-lane/") ||
@@ -3156,6 +3194,19 @@ function isActivationLanePaymentResource(resource: string | undefined) {
     resource?.includes("activationProbe=true") ||
     resource?.includes("sellerReadinessTest=true") ||
     resource?.includes("sellerTest=true")
+  );
+}
+
+function isActivationProbePaymentLedgerEntry(entry: PaymentLedgerEntry) {
+  if (entry.purpose === "activation_probe" || entry.purpose === "seller_readiness_test") {
+    return true;
+  }
+  if (isActivationLanePaymentResource(entry.resource)) {
+    return true;
+  }
+  return (
+    isSameUsdAmount(entry.amountUsd, activationLaneAmountUsdForLedgerClassification()) ||
+    isSameUsdAmount(entry.amountUsd, "0.002001")
   );
 }
 
@@ -3317,7 +3368,7 @@ function retainHireRequests(requests: HireRequestRecord[]) {
 type PaymentLedgerSellerOutcome = "completed" | "failed" | "pending";
 
 function paymentLedgerSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSellerOutcome {
-  if (isActivationLanePaymentResource(entry.resource)) {
+  if (isActivationProbePaymentLedgerEntry(entry)) {
     return "pending";
   }
   if (entry.returnStatus === "accepted") {
@@ -3351,7 +3402,7 @@ function paymentLedgerSellerOutcome(entry: PaymentLedgerEntry): PaymentLedgerSel
 }
 
 function paymentLedgerPendingNeedsAttention(entry: PaymentLedgerEntry) {
-  if (isActivationLanePaymentResource(entry.resource) || paymentLedgerSellerOutcome(entry) !== "pending") {
+  if (isActivationProbePaymentLedgerEntry(entry) || paymentLedgerSellerOutcome(entry) !== "pending") {
     return false;
   }
   if (entry.lifecycleStatus?.needsAttention === true || entry.lifecycleStatus?.paidButNotCompleted === true) {
@@ -3385,7 +3436,7 @@ function buildPaymentLedgerCompletionScore(
     return undefined;
   }
   const scored = paymentLedger.entries
-    .filter((entry) => entry.sessionId === sessionId)
+    .filter((entry) => entry.sessionId === sessionId && !isActivationProbePaymentLedgerEntry(entry))
     .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
     .map((entry) => ({
       entry,
@@ -7727,6 +7778,7 @@ export class ClawzControlPlane {
       updatedAtIso: nowIso,
       agentId: input.agentId,
       sessionId: input.sessionId,
+      ...(input.purpose ? { purpose: input.purpose } : existing?.purpose ? { purpose: existing.purpose } : {}),
       ...(input.quoteIntentId ? { quoteIntentId: input.quoteIntentId } : existing?.quoteIntentId ? { quoteIntentId: existing.quoteIntentId } : {}),
       ...(existing?.hireRequestId ? { hireRequestId: existing.hireRequestId } : {}),
       ...(input.x402RequestId ? { x402RequestId: input.x402RequestId } : existing?.x402RequestId ? { x402RequestId: existing.x402RequestId } : {}),
