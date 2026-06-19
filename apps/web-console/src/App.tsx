@@ -49,6 +49,7 @@ import {
   type ZekoHealthState
 } from "./api.js";
 import { BuyerWorkroom } from "./BuyerWorkroom.js";
+import { WorkshopBetaApp } from "./workshop-beta/WorkshopBetaApp.js";
 
 type AgentProfileDraft = AgentProfileState;
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
@@ -65,7 +66,7 @@ type ExploreActivityItem =
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
   | { kind: "proof"; id: string; occurredAtIso: string; proof: SocialAnchorCandidate };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
-type HiddenPageKey = "sdk" | "hire";
+type HiddenPageKey = "sdk" | "hire" | "workshopbeta";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationAgentRole = "admin" | "member";
 type WorkshopReceipt = WorkshopReceiptLedgerState["receipts"][number];
@@ -602,6 +603,16 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentFocus: "profile",
       hiddenPage: "hire",
       section: "explore",
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath === "/workshopbeta") {
+    return {
+      agentId: null,
+      agentFocus: "profile",
+      hiddenPage: "workshopbeta",
+      section: "workshop",
       sessionId: null,
       staticPage: null
     };
@@ -4286,6 +4297,10 @@ export function App() {
 
   if (activeHiddenPage === "hire") {
     return renderHirePage();
+  }
+
+  if (activeHiddenPage === "workshopbeta") {
+    return <WorkshopBetaApp />;
   }
 
   if (activeStaticPage) {
