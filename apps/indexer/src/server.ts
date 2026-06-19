@@ -4607,12 +4607,22 @@ function lifecyclePartyFinality(input: {
 }
 
 function lifecycleFinalityFields(lifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>) {
+  const deliveryCompleteSettlementPending = lifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT";
   return {
     paymentFinality: lifecycle.paymentFinality,
     paymentFinalityPending: lifecycle.paymentFinalityPending,
     statePollingRequired: lifecycle.statePollingRequired,
     ...(typeof lifecycle.recommendedPollAfterMs === "number"
       ? { recommendedPollAfterMs: lifecycle.recommendedPollAfterMs }
+      : {}),
+    ...(deliveryCompleteSettlementPending
+      ? {
+          settlementOwner: "platform",
+          settlementPhase: "platform_async_settlement",
+          buyerPaymentAction: "do_not_pay_poll_or_settle_same_payload",
+          buyerSettlementGuidance:
+            "Delivery is available and seller work is complete. Do not create a fresh payment; poll payment-state while SantaClawz finalizes settlement."
+        }
       : {})
   };
 }
@@ -9784,6 +9794,28 @@ const handleAgentHireRequest = route(async (request, response) => {
         "requester_contact_too_long",
         `requesterContact must be ${HIRE_REQUESTER_CONTACT_MAX_LENGTH} characters or less.`,
         { actualChars: requesterContact.length }
+      ));
+      return;
+    }
+    const missingExecutionFields = [
+      ...(taskPrompt ? [] : ["taskPrompt"]),
+      ...(requesterContact ? [] : ["requesterContact"])
+    ];
+    if (missingExecutionFields.length > 0) {
+      response.status(400).json(hireRequestErrorBody(
+        "missing_required_input",
+        "taskPrompt and requesterContact are required before payment authorization.",
+        {
+          paymentRequested: false,
+          nextAction: "provide_required_execution_fields",
+          missingExecutionFields,
+          operationalStatus: {
+            paymentStatus: "not_required",
+            settlementStatus: "not_attempted",
+            relayDeliveryStatus: "not_attempted",
+            agentExecutionStatus: "not_started"
+          }
+        }
       ));
       return;
     }

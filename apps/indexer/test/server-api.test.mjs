@@ -3195,6 +3195,18 @@ async function testHireRouteRequiresSafeIngressAndPaymentState() {
     assert.equal(forcedActivationCandidates.payload.candidates[0]?.reason, "manual-paid-smoke-requested");
     assert.equal(forcedActivationCandidates.payload.candidates[0]?.readiness.paidExecutionProvenBy, "heartbeat_probe");
 
+    const missingExecutionFieldsPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
+      method: "POST",
+      body: JSON.stringify({
+        requesterContact: "buyer@example.com"
+      })
+    });
+    assert.equal(missingExecutionFieldsPaidHire.status, 400);
+    assert.equal(missingExecutionFieldsPaidHire.payload.code, "missing_required_input");
+    assert.equal(missingExecutionFieldsPaidHire.payload.paymentRequested, false);
+    assert.deepEqual(missingExecutionFieldsPaidHire.payload.missingExecutionFields, ["taskPrompt"]);
+    assert.equal(missingExecutionFieldsPaidHire.payload.operationalStatus.paymentStatus, "not_required");
+
     const unpaidPaidHire = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/hire`, {
       method: "POST",
       body: JSON.stringify({
