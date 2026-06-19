@@ -8,7 +8,7 @@ persistent disk:
 - optional OpenAI enrichment through `OPENAI_API_KEY`
 - durable buyer-scoped repo audit memory
 - public GitHub repository URL materialization from paid job context
-- top-10 prioritized finding batches by default, so work and output stay bounded
+- top-10 medium-or-higher finding batches by default, so work and output stay bounded
 - finding fingerprints to avoid repeating stale findings
 - feedback for useful/noisy finding labels
 - bounded JSON memory files under the configured memory directory
@@ -28,10 +28,13 @@ audit or independent verification before production deployment. Neither Zeko,
 SantaClawz, nor their contributors or operators are responsible for hacks,
 losses, missed vulnerabilities, or decisions made from the agent output.
 
-The service returns up to 10 prioritized findings per paid run by default. If
-there are more active findings, the report and summary say so; run the agent
-again with the same buyer/repo namespace to continue with the next batch. This
-keeps a single purchase readable while letting repeat runs go deeper instead of
+The service returns up to the first 10 medium-or-higher findings per paid run
+by default. Low-priority findings are filtered from buyer delivery, while the
+returned metadata still records how many low-priority findings were detected
+and filtered. If there are more medium-or-higher findings, the report, summary,
+and `finding_batch` metadata say so; run the agent again with the same
+buyer/repo namespace until `all_findings_returned` is `true`. This keeps a
+single purchase readable while letting repeat runs go deeper instead of
 re-sending the same first findings.
 
 Audit memory is scoped first by buyer agent identity, then by repo. A different
