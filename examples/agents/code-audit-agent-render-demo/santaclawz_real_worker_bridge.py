@@ -49,10 +49,12 @@ DEFAULT_OUTPUT_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_OUTPUT_DIR",
 DEFAULT_MEMORY_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_MEMORY_DIR", str(ROOT / "memory"))).expanduser()
 DEFAULT_STATE_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_STATE_DIR", str(ROOT / "state"))).expanduser()
 DEFAULT_TIMEOUT_SECONDS = 45
+CODE_AUDIT_RULESET_VERSION = "code-audit-ruleset/1.3"
+CODE_AUDIT_SCAN_PROFILE = "hosted-standard-prioritized-bounded"
 MAX_TEXT_CHARS = 120_000
-MAX_MATERIALIZED_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS", 700000, minimum=50000, maximum=2_000_000)
+MAX_MATERIALIZED_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS", 900000, minimum=50000, maximum=2_000_000)
 MAX_REPO_ARCHIVE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_ARCHIVE_BYTES", 30_000_000, minimum=1_000_000, maximum=100_000_000)
-MAX_REPO_FILES_SCANNED = env_int("CLAWZ_CODE_AUDIT_REPO_FILES", 250, minimum=10, maximum=1000)
+MAX_REPO_FILES_SCANNED = env_int("CLAWZ_CODE_AUDIT_REPO_FILES", 400, minimum=10, maximum=1000)
 MAX_REPO_FILE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_FILE_BYTES", 120000, minimum=2000, maximum=500000)
 MAX_MODEL_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MODEL_TEXT_CHARS", 24000, minimum=2000, maximum=60000)
 MAX_MEMORY_RUNS_PER_NAMESPACE = 40
@@ -88,22 +90,76 @@ SOURCE_EXTENSIONS = {
     ".h",
     ".hpp",
     ".html",
+    ".ini",
     ".java",
     ".js",
     ".jsx",
     ".json",
     ".mjs",
+    ".php",
     ".py",
+    ".rb",
     ".rs",
     ".sh",
     ".sol",
     ".sql",
     ".svelte",
+    ".toml",
     ".ts",
     ".tsx",
     ".vue",
+    ".xml",
     ".yaml",
     ".yml",
+}
+HIGH_SIGNAL_FILE_NAMES = {
+    ".env",
+    ".env.example",
+    ".env.local",
+    "Dockerfile",
+    "Makefile",
+    "Procfile",
+    "package.json",
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "yarn.lock",
+    "pyproject.toml",
+    "requirements.txt",
+    "poetry.lock",
+    "cargo.toml",
+    "go.mod",
+    "go.sum",
+}
+HIGH_SIGNAL_PATH_TOKENS = {
+    "admin",
+    "api",
+    "auth",
+    "bridge",
+    "checkout",
+    "crypto",
+    "decrypt",
+    "encrypt",
+    "facilitator",
+    "hire",
+    "kms",
+    "middleware",
+    "payment",
+    "permission",
+    "policy",
+    "private",
+    "relay",
+    "route",
+    "secret",
+    "security",
+    "server",
+    "session",
+    "settlement",
+    "token",
+    "upload",
+    "wallet",
+    "webhook",
+    "worker",
+    "x402",
 }
 SKIP_PATH_PARTS = {
     ".git",
@@ -326,6 +382,22 @@ def should_scan_repo_path(path: str) -> bool:
     return pathlib.PurePosixPath(path).name in {"Dockerfile", "Makefile", "Procfile"}
 
 
+def scan_priority(path: str) -> int:
+    pure = pathlib.PurePosixPath(path)
+    lower_path = path.lower()
+    name = pure.name
+    lowered_name = name.lower()
+    if name in HIGH_SIGNAL_FILE_NAMES or lowered_name in HIGH_SIGNAL_FILE_NAMES:
+        return 0
+    if any(token in lower_path for token in HIGH_SIGNAL_PATH_TOKENS):
+        return 1
+    if pure.suffix.lower() in {".sol", ".ts", ".tsx", ".js", ".mjs", ".py", ".go", ".rs"}:
+        return 2
+    if any(part in {"test", "tests", "__tests__", "spec", "fixtures", "docs"} for part in lower_path.split("/")):
+        return 4
+    return 3
+
+
 def line_for_offset(text: str, offset: int) -> int:
     return text.count("\n", 0, max(0, offset)) + 1
 
@@ -378,6 +450,7 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
     }
     truncated = False
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        scan_candidates: list[tuple[int, str, zipfile.ZipInfo]] = []
         for info in archive.infolist():
             if info.is_dir():
                 continue
@@ -387,6 +460,9 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
                 skipped_counts["unsupported_path_or_extension"] += 1
                 continue
             considered += 1
+            scan_candidates.append((scan_priority(path), path, info))
+        scan_candidates.sort(key=lambda item: (item[0], item[1]))
+        for _, path, info in scan_candidates:
             if len(files) >= MAX_REPO_FILES_SCANNED:
                 truncated = True
                 skipped_counts["scan_file_limit"] += 1
@@ -416,6 +492,8 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
         "repo": target["repo"],
         "status": "materialized",
         "archive_bytes": len(archive_bytes),
+        "scan_profile": CODE_AUDIT_SCAN_PROFILE,
+        "ruleset_version": CODE_AUDIT_RULESET_VERSION,
         "files_seen": seen_files,
         "files_considered": considered,
         "files_scanned": len(files),
@@ -459,6 +537,8 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
         ],
         "files": files,
         "files_scanned": len(files),
+        "scan_profile": CODE_AUDIT_SCAN_PROFILE,
+        "ruleset_version": CODE_AUDIT_RULESET_VERSION,
         "files_considered": sum(int(target.get("files_considered", 0) or 0) for target in targets),
         "files_seen": sum(int(target.get("files_seen", 0) or 0) for target in targets),
         "files_skipped": {
@@ -650,13 +730,24 @@ def normalize_request(payload: dict[str, Any], raw_body: str) -> dict[str, Any]:
 
 AUDIT_RULES: list[tuple[str, str, str, str]] = [
     ("critical", r"\beval\s*\(|exec\s*\(|Function\s*\(", "Dynamic code execution detected.", "Avoid runtime code execution on untrusted input."),
+    ("critical", r"\b(private[_-]?key|mnemonic|seed[_-]?phrase)\b\s*[:=]\s*[\"'][^\"'\n]{16,}[\"']", "Private key or seed material may be hardcoded.", "Remove private key material from source and rotate exposed credentials."),
     ("high", r"subprocess\.(Popen|run|call)|child_process\.(exec|spawn)", "Shell/process execution path detected.", "Guard command construction, sanitize arguments, and avoid shell=True."),
     ("high", r"verify\s*=\s*False|rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED", "TLS verification bypass detected.", "Do not disable TLS verification in production paths."),
     ("high", r"pickle\.loads?|yaml\.load\s*\(", "Unsafe deserialization pattern detected.", "Use safe parsers and trusted schemas."),
     ("high", r"\.innerHTML\s*=|dangerouslySetInnerHTML", "Potential unsafe HTML sink detected.", "Avoid raw HTML sinks or prove strict sanitization before rendering untrusted content."),
     ("high", r"payment[_-]?status[\"']?\s*[:=]\s*[\"']?(quote_requested|authorized)|settlement[_-]?status[\"']?\s*[:=]\s*[\"']?authorized", "Payment lifecycle state requires settlement validation.", "Ensure paid execution is gated on the intended authorization, settlement, or escrow invariant."),
+    ("high", r"\btx\.origin\b", "Solidity authorization may depend on tx.origin.", "Use msg.sender and explicit role checks instead of tx.origin authorization."),
+    ("high", r"\bdelegatecall\s*\(", "Delegatecall usage detected.", "Constrain delegatecall targets and storage assumptions or avoid delegatecall in privileged paths."),
+    ("high", r"\bselfdestruct\s*\(", "Selfdestruct usage detected.", "Avoid selfdestruct unless the contract lifecycle and upgrade path are formally constrained."),
+    ("high", r"(Access-Control-Allow-Origin\s*[:=]\s*[\"']\*|allow_origins\s*=\s*\[[^\]]*[\"']\*[\"']|cors\s*\(\s*\{[^}\n]{0,400}origin\s*:\s*[\"']\*)", "Permissive CORS policy detected.", "Restrict browser origins and credentials to explicit trusted domains."),
+    ("high", r"(sendFile|send_file|readFileSync|readFile|writeFileSync|writeFile|open\s*\()[^;\n]{0,180}(req\.|request\.|params|query|body|path)", "Filesystem access appears derived from request input.", "Normalize and allow-list file paths before reading or writing files from buyer/user input."),
+    ("high", r"(fetch|axios\.(get|post|request)|requests\.(get|post|request)|urllib\.request\.urlopen)[^;\n]{0,180}(req\.|request\.|params|query|body|url)", "Outbound request appears derived from user input.", "Validate and allow-list outbound hosts to avoid SSRF and metadata-service access."),
     ("medium", r"SELECT\s+.*\+|query\s*\(.*\+", "Possible SQL/string query construction.", "Use parameterized queries and typed query builders."),
     ("medium", r"\b(password|api[_-]?key|secret|token|private[_-]?key)\b\s*[:=]\s*[\"'][^\"'\n]{12,}[\"']", "Possible hardcoded secret detected.", "Keep secrets out of source, logs, prompts, and public artifacts."),
+    ("medium", r"(console\.log|print|logger\.\w+)\s*\([^;\n]*(password|secret|token|private[_-]?key|api[_-]?key)", "Sensitive value may be logged.", "Remove secret-bearing logs or redact sensitive fields before logging."),
+    ("medium", r"(createHash\s*\(\s*[\"'](md5|sha1)[\"']|\b(md5|sha1)\s*\()", "Weak hash primitive detected.", "Use SHA-256 or a purpose-built password/key derivation primitive as appropriate."),
+    ("medium", r"(Math\.random|random\.random)\s*\([^;\n]*(token|secret|password|key|nonce|session)|(token|secret|password|key|nonce|session)[^;\n]{0,80}(Math\.random|random\.random)", "Non-cryptographic randomness may protect a sensitive value.", "Use a cryptographically secure random source for tokens, keys, nonces, and sessions."),
+    ("medium", r"(csrf\s*:\s*false|disableCSRF|csrfProtection\s*=\s*False)", "CSRF protection appears disabled.", "Require CSRF or equivalent origin/session protections for browser-authenticated mutation routes."),
     ("medium", r"\b(TODO|FIXME|HACK)\b", "Unresolved implementation marker detected.", "Track and resolve before production release."),
     ("low", r"console\.log|print\s*\(", "Debug logging detected.", "Confirm logs cannot expose private inputs or credentials."),
 ]
@@ -1151,6 +1242,8 @@ def compact_target_materialization(materialized: dict[str, Any]) -> dict[str, An
     return {
         "schema_version": materialized.get("schema_version", "code-audit-target-materialization/1.0"),
         "status": materialized.get("status"),
+        "scan_profile": materialized.get("scan_profile", CODE_AUDIT_SCAN_PROFILE),
+        "ruleset_version": materialized.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         "github_target_count": materialized.get("github_target_count", 0),
         "files_seen": materialized.get("files_seen", 0),
         "files_scanned": materialized.get("files_scanned", 0),
@@ -1162,7 +1255,13 @@ def compact_target_materialization(materialized: dict[str, Any]) -> dict[str, An
     }
 
 
-def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], memory_context: dict[str, Any], materialized: dict[str, Any]) -> str:
+def render_buyer_summary(
+    normalized: dict[str, Any],
+    findings: dict[str, Any],
+    memory_context: dict[str, Any],
+    materialized: dict[str, Any],
+    ai_insights: dict[str, Any],
+) -> str:
     target_summary = compact_target_materialization(materialized)
     target_status = str(target_summary.get("status") or "not_requested")
     memory_batch = as_dict(findings.get("memory_batch"))
@@ -1182,9 +1281,10 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
             "medium-or-higher findings for this buyer/repo namespace."
         ),
         (
-            "Scan mode: lightweight hosted bounded scan with deterministic rules"
+            "Scan mode: hosted standard prioritized bounded scan with deterministic rules"
             f"{' and private model enrichment' if OPENAI_ENABLED else ''}."
         ),
+        f"Ruleset: {target_summary.get('ruleset_version', CODE_AUDIT_RULESET_VERSION)}.",
         (
             f"Memory batch: {memory_batch.get('new_findings_returned', 0)} new, "
             f"{memory_batch.get('repeated_findings_returned', 0)} repeated; "
@@ -1229,6 +1329,17 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
                 "No medium-or-higher deterministic findings were returned in this batch.",
             ]
         )
+    if ai_insights.get("status") == "completed":
+        model_items = [item for item in as_list(ai_insights.get("audit_insights")) if isinstance(item, dict)]
+        if model_items:
+            lines.extend(["", "Supplemental model review:"])
+            for item in model_items[:3]:
+                title = first_string(item.get("title"), default="Model insight")
+                severity = first_string(item.get("severity"), default="informational").upper()
+                recommendation = first_string(item.get("recommendation"), default="")
+                lines.append(f"- {severity}: {title}{f' - {recommendation}' if recommendation else ''}")
+    elif ai_insights.get("status") in {"skipped", "error"}:
+        lines.append(f"Supplemental model review: {ai_insights.get('status')} ({ai_insights.get('reason', 'not available')}).")
     lines.extend(
         [
             "",
@@ -1268,6 +1379,8 @@ def render_report(
         f"- Low-priority findings filtered from buyer delivery: {findings.get('low_priority_filtered_count', 0)}",
         f"- Highest severity: {findings['highest_severity']}",
         f"- Returned severity threshold: {findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}",
+        f"- Ruleset: {target_summary.get('ruleset_version', CODE_AUDIT_RULESET_VERSION)}",
+        f"- Scan profile: {target_summary.get('scan_profile', CODE_AUDIT_SCAN_PROFILE)}",
         f"- Batch limit: {findings.get('finding_limit', FINDING_LIMIT)} findings per run",
         f"- Deferred findings for a follow-up run: {findings.get('deferred_count', 0)}",
         f"- All medium-or-higher findings returned: {findings.get('all_findings_returned', False)}",
@@ -1408,7 +1521,7 @@ def buyer_structured_result(
     return {
         "schema_version": "code-audit-buyer-result/1.0",
         "audit_status": "completed",
-        "execution_mode": "lightweight_memory_backed_hosted_code_audit",
+        "execution_mode": "standard_memory_backed_hosted_code_audit",
         "request_id": normalized["request_id"],
         "input_digest_sha256": normalized["text_digest_sha256"],
         "package_hash": package_hash,
@@ -1424,7 +1537,9 @@ def buyer_structured_result(
             "github_target_count": target_summary.get("github_target_count", 0),
         },
         "scan": {
-            "mode": "deterministic_rules_with_optional_private_model_enrichment",
+            "mode": "hosted_standard_prioritized_bounded_scan",
+            "ruleset_version": target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
+            "scan_profile": target_summary.get("scan_profile", CODE_AUDIT_SCAN_PROFILE),
             "files_seen": target_summary.get("files_seen", 0),
             "files_considered": target_summary.get("files_considered", 0),
             "files_scanned": target_summary.get("files_scanned", 0),
@@ -1434,6 +1549,14 @@ def buyer_structured_result(
             "returned_severity_threshold": findings.get("returned_severity_threshold"),
             "returned_severities": findings.get("returned_severities"),
             "model_enrichment_status": ai_insights.get("status"),
+        },
+        "supplemental_model_review": {
+            "status": ai_insights.get("status"),
+            "model": ai_insights.get("model"),
+            "risk_confidence": ai_insights.get("risk_confidence"),
+            "insights": as_list(ai_insights.get("audit_insights"))[:5],
+            "prioritized_notes": as_list(ai_insights.get("prioritized_notes"))[:8],
+            "next_run_focus": ai_insights.get("next_run_focus"),
         },
         "memory": {
             "namespace": as_dict(normalized.get("namespace")),
@@ -1445,6 +1568,7 @@ def buyer_structured_result(
             "returned_finding_count": findings.get("returned_finding_count"),
             "total_active_finding_count": findings.get("total_active_finding_count"),
             "total_detected_finding_count": findings.get("total_detected_finding_count"),
+            "highest_severity": findings.get("highest_severity"),
             "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
             "deferred_count": findings.get("deferred_count"),
             "has_more_findings": findings.get("has_more_findings"),
@@ -1714,7 +1838,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
     ai_insights = call_openai_for_insights(normalized, findings, memory_context, materialized, scan_units)
     report = render_report(normalized, findings, memory_context, ai_insights, materialized)
     target_summary = compact_target_materialization(materialized)
-    summary = render_buyer_summary(normalized, findings, memory_context, materialized)
+    summary = render_buyer_summary(normalized, findings, memory_context, materialized, ai_insights)
 
     files = [
         ("audit_report.md", report, "text/markdown"),
