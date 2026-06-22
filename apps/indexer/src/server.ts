@@ -3806,6 +3806,51 @@ function x402PaymentStatePartyProjection(input: {
   };
 }
 
+const X402_SETTLEMENT_EXPECTED_WITHIN_MS = 60_000;
+const X402_SETTLEMENT_ALERT_AFTER_MS = 300_000;
+
+function x402BuyerProtocolState(input: {
+  protocolLifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>;
+  paymentSettled: boolean;
+}) {
+  if (input.protocolLifecycle.protocolState === "DELIVERED_SETTLED" || input.paymentSettled) {
+    return {
+      buyerProtocolState: "BUYER_DELIVERED_SETTLED",
+      buyerProtocolStateDescription: "Buyer delivery is available and payment settlement is final."
+    };
+  }
+  if (input.protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT") {
+    return {
+      buyerProtocolState: "BUYER_DELIVERED_PLATFORM_SETTLEMENT_PENDING",
+      buyerProtocolStateDescription:
+        "Buyer delivery is available and seller work is complete; SantaClawz is finalizing settlement. Do not create a fresh payment."
+    };
+  }
+  if (input.protocolLifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION") {
+    return {
+      buyerProtocolState: "BUYER_DELIVERED_SETTLEMENT_RECONCILE",
+      buyerProtocolStateDescription:
+        "Buyer delivery is available, but settlement needs SantaClawz reconciliation. Do not create a fresh payment."
+    };
+  }
+  if (input.protocolLifecycle.buyerAnswer.canCreateFreshPayment) {
+    return {
+      buyerProtocolState: "BUYER_TERMINAL_SAFE_TO_CREATE_FRESH_PAYMENT",
+      buyerProtocolStateDescription: "This payment path is terminal for buyer safety; a fresh payment is allowed for a new attempt."
+    };
+  }
+  if (input.protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload) {
+    return {
+      buyerProtocolState: "BUYER_WAIT_OR_RETRY_SAME_PAYMENT_PAYLOAD",
+      buyerProtocolStateDescription: "Use the same saved payment payload or poll state; do not create a fresh payment."
+    };
+  }
+  return {
+    buyerProtocolState: `BUYER_${input.protocolLifecycle.protocolState}`,
+    buyerProtocolStateDescription: "Inspect buyerAction, partyFinality, and retryResume for the safe next action."
+  };
+}
+
 function x402SettlementTelemetry(input: {
   latestLedger?: PaymentLedgerEntry;
   paymentAuthorized: boolean;
@@ -3843,6 +3888,22 @@ function x402SettlementTelemetry(input: {
   const settlementPendingMs = settlementPendingSinceIso
     ? Math.max(0, Date.now() - Date.parse(settlementPendingSinceIso))
     : undefined;
+  const settlementSla = !input.paymentSettled && input.settlementCompletionRequired
+    ? {
+        expectedWithinMs: X402_SETTLEMENT_EXPECTED_WITHIN_MS,
+        alertAfterMs: X402_SETTLEMENT_ALERT_AFTER_MS,
+        ...(settlementPendingMs !== undefined ? { currentAgeMs: settlementPendingMs } : {}),
+        status:
+          settlementPendingMs !== undefined && settlementPendingMs >= X402_SETTLEMENT_ALERT_AFTER_MS
+            ? "alert_operator"
+            : settlementPendingMs !== undefined && settlementPendingMs >= X402_SETTLEMENT_EXPECTED_WITHIN_MS
+              ? "delayed_poll_payment_state"
+              : "within_expected_window",
+        workerHealth: "not_reported_by_payment_state",
+        buyerCanConsiderDeliveryComplete: true,
+        sellerCanConsiderWorkComplete: true
+      }
+    : undefined;
   return {
     status: input.platformSettlementStatus,
     owner,
@@ -3860,6 +3921,7 @@ function x402SettlementTelemetry(input: {
     ...(input.latestLedger?.settlementRecovery?.nextSettlementAction
       ? { ledgerNextSettlementAction: input.latestLedger.settlementRecovery.nextSettlementAction }
       : {}),
+    ...(settlementSla ? { settlementSla } : {}),
     ...(input.settlementActionEndpoint ? { retryEndpoint: input.settlementActionEndpoint } : {}),
     ...(input.paymentSettled ? {} : { recommendedPollAfterMs: 2000 })
   };
@@ -4065,6 +4127,10 @@ async function buildX402PaymentStateResponse(input: {
     lifecycle: protocolLifecycle,
     paymentSettled
   });
+  const buyerProtocolState = x402BuyerProtocolState({
+    protocolLifecycle,
+    paymentSettled
+  });
   const settlementCompletionRequired = Boolean(
     latestLedger &&
       protocolLifecycle.operatorObligation === "settle_payment" &&
@@ -4154,11 +4220,15 @@ async function buildX402PaymentStateResponse(input: {
     },
     protocolLifecycle,
     protocolState: protocolLifecycle.protocolState,
+    ...buyerProtocolState,
     buyerAction: protocolLifecycle.buyerAction,
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
     ...partyProjection,
     ...(settlementTelemetry ? { settlementTelemetry } : {}),
+    ...(settlementTelemetry && "settlementSla" in settlementTelemetry
+      ? { settlementSla: settlementTelemetry.settlementSla }
+      : {}),
     ...lifecycleFinalityFields(protocolLifecycle),
     partyFinality,
     paymentStatus: paymentStatePaymentStatus,
@@ -4741,6 +4811,10 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     redacted: true,
     ...(protocolLifecycle ? { protocolLifecycle } : {}),
     ...(typeof payload.protocolState === "string" ? { protocolState: payload.protocolState } : {}),
+    ...(typeof payloadRecord.buyerProtocolState === "string" ? { buyerProtocolState: payloadRecord.buyerProtocolState } : {}),
+    ...(typeof payloadRecord.buyerProtocolStateDescription === "string"
+      ? { buyerProtocolStateDescription: payloadRecord.buyerProtocolStateDescription }
+      : {}),
     ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
     ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
     ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
@@ -4756,6 +4830,7 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payloadRecord.settlementFinality === "string" ? { settlementFinality: payloadRecord.settlementFinality } : {}),
     ...(typeof payloadRecord.settlementOwner === "string" ? { settlementOwner: payloadRecord.settlementOwner } : {}),
     ...(isRecord(payloadRecord.settlementTelemetry) ? { settlementTelemetry: payloadRecord.settlementTelemetry } : {}),
+    ...(isRecord(payloadRecord.settlementSla) ? { settlementSla: payloadRecord.settlementSla } : {}),
     ...(typeof payload.paymentFinality === "string" ? { paymentFinality: payload.paymentFinality } : {}),
     ...(typeof payload.paymentFinalityPending === "boolean" ? { paymentFinalityPending: payload.paymentFinalityPending } : {}),
     ...(typeof payload.statePollingRequired === "boolean" ? { statePollingRequired: payload.statePollingRequired } : {}),

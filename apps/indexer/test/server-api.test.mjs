@@ -4696,6 +4696,8 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.stateFreshness, "fresh");
     assert.equal(deliveredPaymentState.payload.projectionSource, "miss");
     assert.equal(deliveredPaymentState.payload.protocolState, "DELIVERED_AWAITING_SETTLEMENT");
+    assert.equal(deliveredPaymentState.payload.buyerProtocolState, "BUYER_DELIVERED_PLATFORM_SETTLEMENT_PENDING");
+    assert.match(deliveredPaymentState.payload.buyerProtocolStateDescription, /Delivery is available/i);
     assert.equal(deliveredPaymentState.payload.buyerAction, "view_delivery");
     assert.equal(deliveredPaymentState.payload.operatorObligation, "settle_payment");
     assert.equal(deliveredPaymentState.payload.buyerWorkStatus, "delivered");
@@ -4718,6 +4720,10 @@ async function testRelayHireFailureCreatesDurableExecutionRecord() {
     assert.equal(deliveredPaymentState.payload.settlementTelemetry.nextAction, "poll_payment_state");
     assert.equal(deliveredPaymentState.payload.settlementTelemetry.freshPaymentForbidden, true);
     assert.equal(deliveredPaymentState.payload.settlementTelemetry.recommendedPollAfterMs, 2000);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.settlementSla.expectedWithinMs, 60000);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.settlementSla.alertAfterMs, 300000);
+    assert.equal(deliveredPaymentState.payload.settlementTelemetry.settlementSla.buyerCanConsiderDeliveryComplete, true);
+    assert.equal(deliveredPaymentState.payload.settlementSla.expectedWithinMs, 60000);
     assert.equal(typeof deliveredPaymentState.payload.settlementTelemetry.settlementPendingSinceIso, "string");
     assert.equal(typeof deliveredPaymentState.payload.settlementTelemetry.settlementPendingMs, "number");
     assert.equal(deliveredPaymentState.payload.protocolLifecycle.operatorAnswer.operatorActionRequired, true);
