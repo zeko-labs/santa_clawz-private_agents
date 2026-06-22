@@ -159,6 +159,13 @@
   min-width: 0;
 }
 
+.workshop-beta-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .workshop-beta-section-head h2,
 .workshop-beta-panel h2 {
   margin: 0;
@@ -214,6 +221,15 @@
 
 .workshop-beta-grid.dashboard {
   grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.35fr) minmax(260px, 0.9fr);
+}
+
+.workshop-beta-grid.explainer,
+.workshop-beta-grid.login-options {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.workshop-beta-grid.login-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .workshop-beta-grid.wide {
@@ -309,6 +325,33 @@
 .workshop-beta-form textarea {
   min-height: 76px;
   resize: vertical;
+}
+
+.workshop-beta-explainer-card,
+.workshop-beta-login-option {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--beta-line);
+  border-radius: 8px;
+  background: rgba(250, 250, 246, 0.88);
+  box-shadow: 0 12px 28px rgba(18, 35, 54, 0.045);
+}
+
+.workshop-beta-explainer-card strong {
+  display: block;
+  color: var(--beta-ink);
+  font-size: 1rem;
+}
+
+.workshop-beta-explainer-card p {
+  margin: 8px 0 0;
+  color: var(--beta-muted);
+  line-height: 1.38;
+}
+
+.workshop-beta-login-option.active {
+  border-color: rgba(47, 122, 82, 0.22);
+  background: rgba(228, 243, 235, 0.82);
 }
 
 .workshop-beta-inline-control {
@@ -417,10 +460,25 @@
   background: rgba(255, 255, 255, 0.5);
 }
 
+.workshop-beta-empty p {
+  margin: 8px 0 0;
+}
+
+.workshop-beta-text-link {
+  display: inline-flex;
+  margin-top: 10px;
+  color: var(--beta-green);
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
 @media (max-width: 1120px) {
   .workshop-beta-metrics,
   .workshop-beta-grid,
   .workshop-beta-grid.dashboard,
+  .workshop-beta-grid.explainer,
+  .workshop-beta-grid.login-options,
   .workshop-beta-grid.wide {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -440,6 +498,7 @@
 
   .workshop-beta-hero-card,
   .workshop-beta-section-head,
+  .workshop-beta-header-actions,
   .workshop-beta-inline-control {
     align-items: stretch;
     flex-direction: column;
@@ -448,6 +507,8 @@
   .workshop-beta-metrics,
   .workshop-beta-grid,
   .workshop-beta-grid.dashboard,
+  .workshop-beta-grid.explainer,
+  .workshop-beta-grid.login-options,
   .workshop-beta-grid.wide,
   .workshop-beta-list-card {
     grid-template-columns: 1fr;

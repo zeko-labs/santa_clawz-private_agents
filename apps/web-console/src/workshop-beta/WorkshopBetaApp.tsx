@@ -92,6 +92,15 @@ function metricCard(label: string, value: string | number, detail: string) {
   );
 }
 
+function explainerCard(title: string, body: string) {
+  return (
+    <article className="workshop-beta-explainer-card">
+      <strong>{title}</strong>
+      <p>{body}</p>
+    </article>
+  );
+}
+
 function currentMissionStage(snapshot: WorkshopBetaDashboardSnapshot | null) {
   const active = snapshot?.missions.find((mission) =>
     !["completed", "expired", "revoked", "agent_rejected", "receipt_failed", "verification_failed"].includes(mission.status)
@@ -216,6 +225,7 @@ export function WorkshopBetaApp() {
   }, []);
 
   const nextActions = useMemo(() => snapshot?.recommendedNextActions ?? [], [snapshot]);
+  const loginCtaCopy = authReady ? "Continue setup" : "Admin login";
 
   async function runAction(label: string, action: () => Promise<unknown>) {
     setPendingAction(label);
@@ -327,12 +337,12 @@ export function WorkshopBetaApp() {
             <p className="workshop-beta-eyebrow">Workshop Beta</p>
             <h1>Workshop, where agents get work done</h1>
             <p>
-              A private mission dashboard for agent teams: bind an admin agent, issue scoped work, and read back
-              proof receipts without turning the current Workshop into a lab bench.
+              A private mission control room for agent teams: bind an admin agent, issue scoped work, and read back
+              proof receipts while the current Workshop stays untouched.
             </p>
           </div>
           <a className="workshop-beta-button" href={isLoginRoute ? "/workshopbeta" : "/workshopbeta/login"}>
-            {isLoginRoute ? "Back to dashboard" : "Admin login"}
+            {isLoginRoute ? "Back to beta dashboard" : loginCtaCopy}
           </a>
         </section>
       </header>
@@ -347,10 +357,17 @@ export function WorkshopBetaApp() {
               <div>
                 <p className="workshop-beta-eyebrow">Dashboard</p>
                 <h2>Agent team control plane</h2>
+                <p className="workshop-beta-copy">
+                  Start with Admin login. The beta dashboard then shows the human admin session, admin-agent binding,
+                  mission state, receipt health, and live network signals in one place.
+                </p>
               </div>
-              <button type="button" onClick={() => void refresh()} disabled={pendingAction === "refresh"}>
-                Refresh
-              </button>
+              <div className="workshop-beta-header-actions">
+                <a className="workshop-beta-button" href="/workshopbeta/login">{loginCtaCopy}</a>
+                <button type="button" onClick={() => void refresh()} disabled={pendingAction === "refresh"}>
+                  Refresh
+                </button>
+              </div>
             </div>
             <div className="workshop-beta-metrics">
               {metricCard("Agents", snapshot?.liveNetwork.totalAgentCount ?? "-", `${snapshot?.liveNetwork.onlineAgentCount ?? 0} online`)}
@@ -358,6 +375,25 @@ export function WorkshopBetaApp() {
               {metricCard("Proofs", snapshot?.liveNetwork.confirmedProofCount ?? "-", `${snapshot?.liveNetwork.pendingProofCount ?? 0} pending`)}
               {metricCard("Missions", snapshot?.controlPlane.missionCount ?? "-", `${snapshot?.controlPlane.activeMissionCount ?? 0} active`)}
             </div>
+          </section>
+
+          <section className="workshop-beta-grid explainer">
+            {explainerCard(
+              "1. Human signs in",
+              "A company admin verifies an email session first. Google OIDC is the next provider slot; email secure-link is the active beta path."
+            )}
+            {explainerCard(
+              "2. Admin agent binds",
+              "The admin agent claims a runtime challenge, making the human-agent authority relationship explicit instead of guessed."
+            )}
+            {explainerCard(
+              "3. Mission starts",
+              "The admin creates a scoped mission with visibility, data rules, allowed agents, budget, and success criteria."
+            )}
+            {explainerCard(
+              "4. Receipts prove state",
+              "Agents coordinate privately, while Workshop records machine-readable state and proof receipts for verification."
+            )}
           </section>
 
           <section className="workshop-beta-grid dashboard">
@@ -387,7 +423,9 @@ export function WorkshopBetaApp() {
               <ol className="workshop-beta-actions">
                 {nextActions.length ? nextActions.map((action) => (
                   <li key={action}>{action}</li>
-                )) : <li>Control plane looks complete for the current beta mission.</li>}
+                )) : authReady
+                  ? <li>Control plane looks complete for the current beta mission.</li>
+                  : <li>Use Admin login to create the first beta session and admin-agent challenge.</li>}
               </ol>
             </article>
           </section>
@@ -414,7 +452,13 @@ export function WorkshopBetaApp() {
                     onTransition={handleTransition}
                     onClaim={handleClaimMission}
                   />
-                )) : <p className="workshop-beta-empty">No missions yet. Use Admin login to create the first beta mission.</p>}
+                )) : (
+                  <div className="workshop-beta-empty">
+                    <strong>No beta missions yet.</strong>
+                    <p>Use Admin login to verify a human admin, bind an admin agent, and draft the first mission.</p>
+                    <a className="workshop-beta-text-link" href="/workshopbeta/login">Open admin login</a>
+                  </div>
+                )}
               </div>
             </article>
 
@@ -449,8 +493,28 @@ export function WorkshopBetaApp() {
               <span className="workshop-beta-pill">Beta</span>
             </div>
             <p className="workshop-beta-copy">
-              Keep the flow simple: verify the admin email, issue a runtime challenge, then let the admin agent claim it.
+              Verify the admin, issue a runtime challenge, then let the admin agent claim it. This is the clean
+              beta path for proving who controls a workshop mission.
             </p>
+          </section>
+
+          <section className="workshop-beta-grid login-options">
+            <article className="workshop-beta-panel workshop-beta-login-option active">
+              <p className="workshop-beta-eyebrow">Active beta path</p>
+              <h2>Email secure link</h2>
+              <p className="workshop-beta-copy">
+                Use a one-time email token to create the human admin session. In the hidden beta, the token is shown
+                locally until an email sender is connected.
+              </p>
+            </article>
+            <article className="workshop-beta-panel workshop-beta-login-option">
+              <p className="workshop-beta-eyebrow">Provider slot</p>
+              <h2>Google account</h2>
+              <p className="workshop-beta-copy">
+                Google OIDC belongs here once client credentials are configured. The control plane already has a
+                provider field, but the live beta should not fake the redirect.
+              </p>
+            </article>
           </section>
 
           <section className="workshop-beta-grid login">
