@@ -1289,6 +1289,47 @@ function optionalNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function recordPathValue(value: Record<string, unknown>, pathSegments: string[]): unknown {
+  let cursor: unknown = value;
+  for (const segment of pathSegments) {
+    if (!isRecord(cursor)) {
+      return undefined;
+    }
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+function timestampCandidateToIso(value: unknown): string | undefined {
+  const numeric = optionalNumber(value);
+  if (typeof numeric === "number") {
+    const timestampMs = numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    const parsed = new Date(timestampMs);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }
+  const text = optionalString(value);
+  if (!text) {
+    return undefined;
+  }
+  const parsedMs = Date.parse(text);
+  return Number.isNaN(parsedMs) ? undefined : new Date(parsedMs).toISOString();
+}
+
+function x402PaymentPayloadExpiresAtIso(paymentPayload: Record<string, unknown>): string | undefined {
+  const candidates = [
+    paymentPayload.expiresAtIso,
+    paymentPayload.expiresAt,
+    recordPathValue(paymentPayload, ["payload", "authorization", "validBefore"]),
+    recordPathValue(paymentPayload, ["payload", "authorization", "authorization", "validBefore"]),
+    recordPathValue(paymentPayload, ["authorization", "typedData", "message", "validBefore"]),
+    recordPathValue(paymentPayload, ["authorization", "authorization", "validBefore"])
+  ]
+    .map(timestampCandidateToIso)
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .sort((left, right) => Date.parse(left) - Date.parse(right));
+  return candidates[0];
+}
+
 function tokenQuery(request: IndexerRequest) {
   return queryString(request.query, "token");
 }
@@ -5051,6 +5092,7 @@ async function settleCompletedAgentHirePayment(input: {
     transactionHashes: settledLedger.transactionHashes,
     paymentResponseDigestSha256: jsonDigestSha256(settlement.paymentResponse)
   });
+  await controlPlane.deleteX402PaymentPayload(jsonDigestSha256(input.paymentPayload));
   return { settlement, settledLedger };
 }
 
@@ -5082,6 +5124,192 @@ async function settleCompletedAgentHirePaymentOutcome(input: Parameters<typeof s
     }));
     return { status: "failed", error };
   }
+}
+
+const activeX402SettlementFinalizers = new Set<string>();
+
+function x402SettlementFinalizerKey(input: {
+  paymentPayloadDigestSha256?: string;
+  ledgerId?: string;
+  requestId: string;
+}) {
+  return input.paymentPayloadDigestSha256
+    ? `digest:${input.paymentPayloadDigestSha256}`
+    : input.ledgerId
+      ? `ledger:${input.ledgerId}`
+      : `request:${input.requestId}`;
+}
+
+function launchCompletedHireSettlementFinalizer(input: {
+  apiBase: string;
+  trigger: string;
+  agentId: string;
+  sessionId: string;
+  pricingMode: AgentProfileState["paymentProfile"]["pricingMode"];
+  runtime?: Parameters<typeof settleCompletedAgentHirePayment>[0]["runtime"];
+  paymentPayload?: Record<string, unknown>;
+  paymentPayloadDigestSha256?: string;
+  requestId: string;
+  authorizationId?: string;
+  ledgerId?: string;
+  amountUsd?: string;
+  protocolFeeBps?: number;
+}) {
+  const key = x402SettlementFinalizerKey(input);
+  if (activeX402SettlementFinalizers.has(key)) {
+    console.info(JSON.stringify({
+      event: "x402_settlement_finalizer_already_running",
+      key,
+      trigger: input.trigger,
+      requestId: input.requestId,
+      ...(input.ledgerId ? { ledgerId: input.ledgerId } : {})
+    }));
+    return;
+  }
+  activeX402SettlementFinalizers.add(key);
+  void (async () => {
+    try {
+      await controlPlane.markPaymentLedgerSettlementFinalizer({
+        ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+        status: "running"
+      });
+      const paymentPayloadDigestSha256 =
+        input.paymentPayloadDigestSha256 ??
+        (input.paymentPayload ? jsonDigestSha256(input.paymentPayload) : undefined);
+      const storedPayloadRecord =
+        input.paymentPayload || !paymentPayloadDigestSha256
+          ? undefined
+          : await controlPlane.getX402PaymentPayload(paymentPayloadDigestSha256);
+      const paymentPayload = input.paymentPayload ?? storedPayloadRecord?.paymentPayload;
+      if (!paymentPayload) {
+        const message = "Stored signed x402 payment payload is unavailable; settlement requires same-payload retry.";
+        await controlPlane.markPaymentLedgerSettlementFinalizer({
+          ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+          status: "failed",
+          errorMessage: message
+        });
+        console.warn(JSON.stringify({
+          event: "x402_settlement_finalizer_payload_missing",
+          trigger: input.trigger,
+          requestId: input.requestId,
+          ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+          ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+        }));
+        return;
+      }
+      const settlementRuntime = input.runtime ?? (await (async () => {
+        const { consoleState, plan } = await buildX402PlanFromOptions(input.apiBase, { agentId: input.agentId });
+        return buildAgentX402RuntimeContext({
+          baseUrl: input.apiBase,
+          plan,
+          serviceNetworkId: consoleState.deployment.networkId
+        });
+      })());
+      if (!settlementRuntime) {
+        const message = "No live exact-price x402 rail is configured for this settlement.";
+        await controlPlane.markPaymentLedgerSettlementFinalizer({
+          ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+          status: "failed",
+          errorMessage: message
+        });
+        console.warn(JSON.stringify({
+          event: "x402_settlement_finalizer_runtime_unavailable",
+          trigger: input.trigger,
+          requestId: input.requestId,
+          ...(input.ledgerId ? { ledgerId: input.ledgerId } : {})
+        }));
+        return;
+      }
+      console.info(JSON.stringify({
+        event: "x402_settlement_finalizer_started",
+        trigger: input.trigger,
+        requestId: input.requestId,
+        ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+        ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+      }));
+      const outcome = await settleCompletedAgentHirePaymentOutcome({
+        agentId: input.agentId,
+        sessionId: input.sessionId,
+        pricingMode: input.pricingMode,
+        runtime: settlementRuntime,
+        paymentPayload,
+        requestId: input.requestId,
+        ...(input.authorizationId ? { authorizationId: input.authorizationId } : {}),
+        ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+        ...(input.amountUsd ? { amountUsd: input.amountUsd } : {}),
+        ...(typeof input.protocolFeeBps === "number" ? { protocolFeeBps: input.protocolFeeBps } : {})
+      });
+      console.info(JSON.stringify({
+        event: "x402_settlement_finalizer_completed",
+        trigger: input.trigger,
+        status: outcome.status,
+        requestId: input.requestId,
+        ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+        ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {})
+      }));
+    } catch (error) {
+      const message = errorMessage(error, "Unable to finalize x402 settlement.");
+      await controlPlane.markPaymentLedgerSettlementFinalizer({
+        ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+        status: "failed",
+        errorMessage: message
+      });
+      console.warn(JSON.stringify({
+        event: "x402_settlement_finalizer_failed",
+        trigger: input.trigger,
+        requestId: input.requestId,
+        ...(input.ledgerId ? { ledgerId: input.ledgerId } : {}),
+        error: message
+      }));
+    } finally {
+      activeX402SettlementFinalizers.delete(key);
+    }
+  })();
+}
+
+function launchSettlementFinalizerForCompletedHire(input: {
+  apiBase: string;
+  trigger: string;
+  hireRequest: Awaited<ReturnType<ClawzControlPlane["getHireRequest"]>>;
+}) {
+  if (input.hireRequest.protocolReturn?.status !== "completed" || !protocolReturnHasBuyerDelivery(input.hireRequest.protocolReturn)) {
+    return;
+  }
+  void (async () => {
+    const paymentLedger = await controlPlane.listPaymentLedger({
+      hireRequestId: input.hireRequest.requestId,
+      limit: 5
+    });
+    const ledger = paymentLedger.entries.find((entry) => (
+      entry.paymentPayloadDigestSha256 &&
+      entry.executionStatus === "completed" &&
+      entry.returnStatus === "accepted" &&
+      !ledgerHasSettledPayment(entry)
+    )) ?? paymentLedger.entries.find((entry) => entry.paymentPayloadDigestSha256 && !ledgerHasSettledPayment(entry));
+    if (!ledger || !ledger.paymentPayloadDigestSha256) {
+      return;
+    }
+    launchCompletedHireSettlementFinalizer({
+      apiBase: input.apiBase,
+      trigger: input.trigger,
+      agentId: ledger.agentId,
+      sessionId: ledger.sessionId,
+      pricingMode: ledger.pricingMode,
+      paymentPayloadDigestSha256: ledger.paymentPayloadDigestSha256,
+      requestId: input.hireRequest.requestId,
+      authorizationId: ledger.authorizationId ?? ledger.paymentPayloadDigestSha256,
+      ledgerId: ledger.ledgerId,
+      amountUsd: ledger.amountUsd,
+      ...(typeof ledger.protocolFeeBps === "number" ? { protocolFeeBps: ledger.protocolFeeBps } : {})
+    });
+  })().catch((error) => {
+    console.warn(JSON.stringify({
+      event: "x402_settlement_finalizer_launch_failed",
+      trigger: input.trigger,
+      requestId: input.hireRequest.requestId,
+      error: errorMessage(error, "Unable to launch x402 settlement finalizer.")
+    }));
+  });
 }
 
 async function fetchBaseRelayerTransactions(input: {
@@ -6795,6 +7023,11 @@ app.post("/api/executions/:requestId/late-completion", route(async (request, res
       ...(boundedNumber(body.relayBodyBytes) !== undefined ? { relayBodyBytes: boundedNumber(body.relayBodyBytes)! } : {}),
       ...(validSha256(body.relayBodyDigestSha256) ? { relayBodyDigestSha256: validSha256(body.relayBodyDigestSha256)! } : {}),
       ...(typeof body.source === "string" ? { source: body.source.slice(0, 80) } : {})
+    });
+    launchSettlementFinalizerForCompletedHire({
+      apiBase: getBaseUrl(request),
+      trigger: "late_completion_recorded",
+      hireRequest
     });
     response.json({
       ok: true,
@@ -8798,6 +9031,14 @@ app.post("/api/x402/quote-intent", route(async (request, response) => {
         ? { protocolFeeBps: context.consoleState.protocolOwnerFeePolicy.feeBps }
         : {})
     });
+    await controlPlane.storeX402PaymentPayload({
+      paymentPayloadDigestSha256,
+      paymentPayload,
+      agentId: context.intent.agentId,
+      sessionId: context.intent.sessionId,
+      ledgerId: authorizationLedgerEntry.ledgerId,
+      ...(x402PaymentPayloadExpiresAtIso(paymentPayload) ? { expiresAtIso: x402PaymentPayloadExpiresAtIso(paymentPayload)! } : {})
+    });
     const approvedIntent =
       context.intent.status === "pending"
         ? await controlPlane.approveExecutionIntent({
@@ -10384,6 +10625,14 @@ const handleAgentHireRequest = route(async (request, response) => {
           ? { protocolFeeBps: consoleState.protocolOwnerFeePolicy.feeBps }
           : {})
       });
+      await controlPlane.storeX402PaymentPayload({
+        paymentPayloadDigestSha256,
+        paymentPayload,
+        agentId,
+        sessionId: consoleState.session.sessionId,
+        ledgerId: paymentLedgerEntry.ledgerId,
+        ...(x402PaymentPayloadExpiresAtIso(paymentPayload) ? { expiresAtIso: x402PaymentPayloadExpiresAtIso(paymentPayload)! } : {})
+      });
       if (
         paymentLedgerEntry.hireRequestId &&
         paymentLedgerEntry.executionStatus === "completed" &&
@@ -10395,12 +10644,15 @@ const handleAgentHireRequest = route(async (request, response) => {
           const buyerDeliveryAvailable = protocolReturnHasBuyerDelivery(completedHire.protocolReturn);
           const returnValidated = Boolean(completedHire.protocolReturn?.verifiedOutput);
           if (buyerDeliveryAvailable) {
-            void settleCompletedAgentHirePaymentOutcome({
+            launchCompletedHireSettlementFinalizer({
+              apiBase: getBaseUrl(request),
+              trigger: "payment_authorization_resumed_completed_hire",
               agentId,
               sessionId: consoleState.session.sessionId,
               pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
               runtime,
               paymentPayload,
+              paymentPayloadDigestSha256,
               requestId: completedHire.requestId,
               authorizationId: paymentPayloadDigestSha256,
               ledgerId: paymentLedgerEntry.ledgerId,
@@ -10504,6 +10756,22 @@ const handleAgentHireRequest = route(async (request, response) => {
         ...(paymentAuthorization ? { paymentAuthorization } : {})
       });
       if (
+        paymentAuthorization?.paymentPayloadDigestSha256 &&
+        paymentPayloadForDeferredSettlement
+      ) {
+        await controlPlane.storeX402PaymentPayload({
+          paymentPayloadDigestSha256: paymentAuthorization.paymentPayloadDigestSha256,
+          paymentPayload: paymentPayloadForDeferredSettlement,
+          agentId,
+          sessionId: consoleState.session.sessionId,
+          ...(authorizationLedgerId ? { ledgerId: authorizationLedgerId } : {}),
+          requestId: hireReceipt.requestId,
+          ...(x402PaymentPayloadExpiresAtIso(paymentPayloadForDeferredSettlement)
+            ? { expiresAtIso: x402PaymentPayloadExpiresAtIso(paymentPayloadForDeferredSettlement)! }
+            : {})
+        });
+      }
+      if (
         paymentAuthorization &&
         paymentPayloadForDeferredSettlement &&
         runtimeForDeferredSettlement &&
@@ -10522,12 +10790,15 @@ const handleAgentHireRequest = route(async (request, response) => {
         const buyerDeliveryAvailable = protocolReturnHasBuyerDelivery(hireReceipt.protocolReturn);
         const returnValidated = Boolean(hireReceipt.protocolReturn?.verifiedOutput);
         if (buyerDeliveryAvailable) {
-          void settleCompletedAgentHirePaymentOutcome({
+          launchCompletedHireSettlementFinalizer({
+            apiBase: getBaseUrl(request),
+            trigger: "paid_submit_completed_hire",
             agentId,
             sessionId: consoleState.session.sessionId,
             pricingMode: activationProbeRequested ? "fixed-exact" : consoleState.profile.paymentProfile.pricingMode,
             runtime: runtimeForDeferredSettlement,
             paymentPayload: paymentPayloadForDeferredSettlement,
+            ...(paymentPayloadDigestSha256 ? { paymentPayloadDigestSha256 } : {}),
             requestId: hireReceipt.requestId,
             ...(paymentAuthorization.authorizationId ? { authorizationId: paymentAuthorization.authorizationId } : {}),
             ...(authorizationLedgerId ? { ledgerId: authorizationLedgerId } : {}),

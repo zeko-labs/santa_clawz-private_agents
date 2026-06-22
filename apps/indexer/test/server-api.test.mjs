@@ -6322,6 +6322,76 @@ async function testPaymentLedgerExecutionUpdatesAreMonotonic() {
   }
 }
 
+async function testX402PayloadVaultAndFinalizerMarkers() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-x402-finalizer-"));
+  try {
+    const { ClawzControlPlane } = await import(pathToFileURL(controlPlaneEntry).href);
+    const controlPlane = new ClawzControlPlane(path.join(workspaceDir, ".clawz-data"));
+    const paymentPayload = {
+      protocol: "x402",
+      networkId: "eip155:8453",
+      settlementRail: "base-usdc",
+      payTo: "0x1111111111111111111111111111111111111111",
+      idempotencyKey: "test-finalizer",
+      expiresAt: Math.floor((Date.now() + 60_000) / 1000)
+    };
+    const paymentPayloadDigestSha256 = createHash("sha256").update(JSON.stringify(paymentPayload)).digest("hex");
+    const ledger = await controlPlane.recordPaymentLedgerSettlement({
+      agentId: "finalizer-agent--session_agent_finalizer",
+      sessionId: "session_agent_finalizer",
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      paymentPayloadDigestSha256,
+      paymentStatus: "authorization_verified"
+    });
+    await controlPlane.storeX402PaymentPayload({
+      paymentPayloadDigestSha256,
+      paymentPayload,
+      agentId: ledger.agentId,
+      sessionId: ledger.sessionId,
+      ledgerId: ledger.ledgerId,
+      requestId: "hire_finalizer",
+      expiresAtIso: new Date(Date.now() + 60_000).toISOString()
+    });
+    const stored = await controlPlane.getX402PaymentPayload(paymentPayloadDigestSha256);
+    assert.equal(stored.ledgerId, ledger.ledgerId);
+    assert.deepEqual(stored.paymentPayload, paymentPayload);
+
+    const running = await controlPlane.markPaymentLedgerSettlementFinalizer({
+      ledgerId: ledger.ledgerId,
+      status: "running"
+    });
+    assert.equal(running.settlementRecovery.settlementFinalizerStatus, "running");
+    assert.equal(running.settlementRecovery.settlementFinalizerAttemptCount, 1);
+    assert.equal(running.settlementRecovery.nextSettlementAction, "retry_settlement");
+
+    const settled = await controlPlane.recordPaymentLedgerSettlement({
+      agentId: ledger.agentId,
+      sessionId: ledger.sessionId,
+      pricingMode: "fixed-exact",
+      rail: "base-usdc",
+      networkId: "eip155:8453",
+      assetSymbol: "USDC",
+      amountUsd: "0.25",
+      paymentPayloadDigestSha256,
+      sellerSettlementTxHash: `0x${"1".repeat(64)}`,
+      transactionHashes: [`0x${"1".repeat(64)}`]
+    });
+    assert.equal(settled.paymentStatus, "seller_settled");
+    assert.equal(settled.settlementRecovery, undefined);
+    assert.equal(settled.errorMessage, undefined);
+    assert.equal(await controlPlane.deleteX402PaymentPayload(paymentPayloadDigestSha256), true);
+    assert.equal(await controlPlane.getX402PaymentPayload(paymentPayloadDigestSha256), undefined);
+
+    console.log("ok - x402 payload vault drives settlement finalizer markers");
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testCompletionScorePrefersPaidDeliveryReliability() {
   const { buildAgentCompletionScore } = await import(pathToFileURL(controlPlaneEntry).href);
   const nowMs = Date.now();
@@ -7046,6 +7116,7 @@ async function main() {
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
   await testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline();
   await testPaymentLedgerExecutionUpdatesAreMonotonic();
+  await testX402PayloadVaultAndFinalizerMarkers();
   await testCompletionScorePrefersPaidDeliveryReliability();
   await testArtifactReceiptsUseRequestIndexInsteadOfGlobalScan();
   await testHostedBasePaymentsRequireMinimumFacilitationFee();
