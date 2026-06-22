@@ -75,6 +75,13 @@ function titleize(value: string) {
   return value.replaceAll("_", " ");
 }
 
+function friendlyError(nextError: unknown) {
+  if (nextError instanceof Error && nextError.message && nextError.message !== "Failed to fetch") {
+    return nextError.message;
+  }
+  return "Workshop Beta is loading. Refresh the page or try again shortly.";
+}
+
 function metricCard(label: string, value: string | number, detail: string) {
   return (
     <article className="workshop-beta-metric">
@@ -93,12 +100,15 @@ function currentMissionStage(snapshot: WorkshopBetaDashboardSnapshot | null) {
 }
 
 function StageRail({ snapshot }: { snapshot: WorkshopBetaDashboardSnapshot | null }) {
+  if (!snapshot) {
+    return <p className="workshop-beta-empty">Waiting for control plane state.</p>;
+  }
   const current = currentMissionStage(snapshot);
-  const currentIndex = snapshot?.stageOrder.indexOf(current) ?? 0;
+  const currentIndex = snapshot.stageOrder.indexOf(current);
 
   return (
     <div className="workshop-beta-stage-rail" aria-label="Workshop Beta mission state machine">
-      {(snapshot?.stageOrder ?? []).map((stage, index) => (
+      {snapshot.stageOrder.map((stage, index) => (
         <div
           key={stage}
           className={`workshop-beta-stage${index <= currentIndex ? " active" : ""}${stage === current ? " current" : ""}`}
@@ -181,6 +191,14 @@ export function WorkshopBetaApp() {
 
   const latestChallenge = snapshot?.adminChallenges[0];
   const latestBinding = snapshot?.adminBindings[0];
+  const normalizedPath = window.location.pathname.replace(/\/+$/, "") || "/";
+  const isLoginRoute = normalizedPath === "/workshopbeta/login";
+  const authReady = Boolean(sessionId && authToken);
+  const adminBindingCopy = latestBinding
+    ? `${latestBinding.agentName || latestBinding.agentId} · ${latestBinding.status}`
+    : latestChallenge
+      ? `Challenge ${shortHash(latestChallenge.challengeId)} · ${latestChallenge.status}`
+      : "No admin agent bound yet";
 
   const refresh = async () => {
     const next = await fetchWorkshopBetaDashboard();
@@ -189,7 +207,7 @@ export function WorkshopBetaApp() {
 
   useEffect(() => {
     void refresh().catch((nextError) => {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load Workshop Beta.");
+      setError(friendlyError(nextError));
     });
     const intervalId = window.setInterval(() => {
       void refresh().catch(() => undefined);
@@ -206,7 +224,7 @@ export function WorkshopBetaApp() {
       await action();
       await refresh();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Action failed.");
+      setError(friendlyError(nextError));
     } finally {
       setPendingAction("");
     }
@@ -301,212 +319,238 @@ export function WorkshopBetaApp() {
   return (
     <main className="app-shell workshop-beta-shell">
       <header className="workshop-beta-hero">
-        <a href="/activate" className="workshop-beta-brand">
+        <a href="/workshop" className="workshop-beta-brand">
           <img src="/santaclawz-logo.svg" alt="SantaClawz" />
         </a>
-        <div className="workshop-beta-hero-card">
-          <p className="workshop-beta-eyebrow">Workshop Beta</p>
-          <h1>Mission control for agent teams</h1>
-          <p>
-            Bind a human admin to an admin agent, issue mission-scoped claims, and watch proof receipts move through a
-            lightweight control plane. Current Workshop stays untouched.
-          </p>
-        </div>
+        <section className="workshop-beta-hero-card">
+          <div>
+            <p className="workshop-beta-eyebrow">Workshop Beta</p>
+            <h1>Workshop, where agents get work done</h1>
+            <p>
+              A private mission dashboard for agent teams: bind an admin agent, issue scoped work, and read back
+              proof receipts without turning the current Workshop into a lab bench.
+            </p>
+          </div>
+          <a className="workshop-beta-button" href={isLoginRoute ? "/workshopbeta" : "/workshopbeta/login"}>
+            {isLoginRoute ? "Back to dashboard" : "Admin login"}
+          </a>
+        </section>
       </header>
 
       {error ? <div className="workshop-beta-banner danger">{error}</div> : null}
       {status ? <div className="workshop-beta-banner">{status}</div> : null}
 
-      <section className="workshop-beta-panel workshop-beta-overview">
-        <div className="workshop-beta-section-head">
-          <div>
-            <p className="workshop-beta-eyebrow">Control plane</p>
-            <h2>Beta dashboard</h2>
-          </div>
-          <button type="button" onClick={() => void refresh()} disabled={pendingAction === "refresh"}>
-            Refresh
-          </button>
-        </div>
-        <div className="workshop-beta-metrics">
-          {metricCard("Agents", snapshot?.liveNetwork.totalAgentCount ?? "-", `${snapshot?.liveNetwork.onlineAgentCount ?? 0} online`)}
-          {metricCard("Receipts", snapshot?.liveNetwork.workshopReceiptCount ?? "-", `${snapshot?.liveNetwork.recentWorkshopReceiptCount ?? 0} recent`)}
-          {metricCard("Proofs", snapshot?.liveNetwork.confirmedProofCount ?? "-", `${snapshot?.liveNetwork.pendingProofCount ?? 0} pending`)}
-          {metricCard("Missions", snapshot?.controlPlane.missionCount ?? "-", `${snapshot?.controlPlane.activeMissionCount ?? 0} active`)}
-        </div>
-        <StageRail snapshot={snapshot} />
-      </section>
-
-      <section className="workshop-beta-grid">
-        <article className="workshop-beta-panel">
-          <p className="workshop-beta-eyebrow">Step 1</p>
-          <h2>Human admin sign-in</h2>
-          <p className="workshop-beta-copy">
-            V1 supports an email secure-link shape. Google/OIDC can use the same beta session boundary.
-          </p>
-          <form onSubmit={handleAuthStart} className="workshop-beta-form">
-            <label>
-              Email
-              <input value={email} onChange={(event: unknown) => setEmail(eventValue(event))} placeholder="admin@company.com" />
-            </label>
-            <button type="submit" disabled={pendingAction === "auth-start"}>
-              Issue secure link
-            </button>
-          </form>
-          <div className="workshop-beta-inline-control">
-            <input value={authToken} onChange={(event: unknown) => setAuthToken(eventValue(event))} placeholder="secure link token" />
-            <button type="button" onClick={handleAuthVerify} disabled={!sessionId || !authToken || pendingAction === "auth-verify"}>
-              Verify
-            </button>
-          </div>
-          {auth ? <small>Beta token expires {formatTime(auth.expiresAtIso)}.</small> : null}
-        </article>
-
-        <article className="workshop-beta-panel">
-          <p className="workshop-beta-eyebrow">Step 2</p>
-          <h2>Bind admin agent</h2>
-          <p className="workshop-beta-copy">
-            The dashboard issues a challenge. The admin agent claims it from runtime; mission-bound OAuth can verify the claim.
-          </p>
-          <form onSubmit={handleIssueChallenge} className="workshop-beta-form">
-            <label>
-              Workspace
-              <input value={workshopId} onChange={(event: unknown) => setWorkshopId(eventValue(event))} />
-            </label>
-            <label>
-              Mission-bound OAuth authority
-              <input value={authorityBaseUrl} onChange={(event: unknown) => setAuthorityBaseUrl(eventValue(event))} />
-            </label>
-            <button type="submit" disabled={!sessionId || pendingAction === "issue-challenge"}>
-              Issue challenge
-            </button>
-          </form>
-          <form onSubmit={handleClaimChallenge} className="workshop-beta-form compact">
-            <label>
-              Admin agent ID
-              <input value={challengeAgentId} onChange={(event: unknown) => setChallengeAgentId(eventValue(event))} placeholder="agent--session_agent_..." />
-            </label>
-            <label>
-              Agent label
-              <input value={challengeAgentName} onChange={(event: unknown) => setChallengeAgentName(eventValue(event))} placeholder="Ops coordinator" />
-            </label>
-            <button type="submit" disabled={!latestChallenge || !challengeAgentId || pendingAction === "claim-challenge"}>
-              Claim challenge
-            </button>
-          </form>
-          {latestChallenge ? (
-            <small>
-              Latest challenge {shortHash(latestChallenge.challengeId)} · {latestChallenge.status} · nonce {shortHash(latestChallenge.nonce)}
-            </small>
-          ) : null}
-        </article>
-
-        <article className="workshop-beta-panel">
-          <p className="workshop-beta-eyebrow">Step 3</p>
-          <h2>Mission builder</h2>
-          <form onSubmit={handleCreateMission} className="workshop-beta-form">
-            <label>
-              Mission title
-              <input value={missionTitle} onChange={(event: unknown) => setMissionTitle(eventValue(event))} />
-            </label>
-            <label>
-              Goal
-              <textarea value={missionGoal} onChange={(event: unknown) => setMissionGoal(eventValue(event))} />
-            </label>
-            <label>
-              Visibility
-              <select value={visibility} onChange={(event: unknown) => setVisibility(eventValue(event) as WorkshopBetaVisibilityMode)}>
-                <option value="private">Private</option>
-                <option value="company">Company-visible</option>
-                <option value="proof_only_public">Proof-only public</option>
-                <option value="public_collaboration">Public collaboration</option>
-              </select>
-            </label>
-            <label>
-              Allowed agents
-              <input value={allowedAgents} onChange={(event: unknown) => setAllowedAgents(eventValue(event))} placeholder="comma-separated agent IDs" />
-            </label>
-            <label>
-              Data rules
-              <textarea value={dataRules} onChange={(event: unknown) => setDataRules(eventValue(event))} />
-            </label>
-            <label>
-              Success criteria
-              <textarea value={successCriteria} onChange={(event: unknown) => setSuccessCriteria(eventValue(event))} />
-            </label>
-            <label>
-              Budget
-              <input value={budgetUsd} onChange={(event: unknown) => setBudgetUsd(eventValue(event))} />
-            </label>
-            <button type="submit" disabled={pendingAction === "create-mission"}>
-              Draft mission
-            </button>
-          </form>
-        </article>
-      </section>
-
-      <section className="workshop-beta-grid wide">
-        <article className="workshop-beta-panel">
-          <div className="workshop-beta-section-head">
-            <div>
-              <p className="workshop-beta-eyebrow">Mission state machine</p>
-              <h2>Active missions</h2>
-            </div>
-            <input
-              className="workshop-beta-small-input"
-              value={claimAgentId}
-              onChange={(event: unknown) => setClaimAgentId(eventValue(event))}
-              placeholder="agent ID for claim"
-            />
-          </div>
-          <div className="workshop-beta-list">
-            {snapshot?.missions.length ? snapshot.missions.map((mission) => (
-              <MissionCard
-                key={mission.missionId}
-                mission={mission}
-                onTransition={handleTransition}
-                onClaim={handleClaimMission}
-              />
-            )) : <p className="workshop-beta-empty">No missions yet. Draft one above to start the beta control plane.</p>}
-          </div>
-        </article>
-
-        <article className="workshop-beta-panel">
-          <p className="workshop-beta-eyebrow">Live protocol readback</p>
-          <h2>Receipts and proof health</h2>
-          <div className="workshop-beta-list">
-            {snapshot?.recentReceipts.length ? snapshot.recentReceipts.map((receipt) => (
-              <div className="workshop-beta-list-card compact" key={receipt.messageId}>
-                <div>
-                  <strong>{receipt.agentName} · {receipt.messageType}</strong>
-                  <p>{receipt.body}</p>
-                  <small>
-                    {formatTime(receipt.createdAtIso)} · root {shortHash(receipt.batchRootDigestSha256)} · tx {shortHash(receipt.batchTxHash)}
-                  </small>
-                </div>
-                <span className="workshop-beta-pill">{receipt.anchorStatus ?? "receipt"}</span>
+      {!isLoginRoute ? (
+        <>
+          <section className="workshop-beta-panel workshop-beta-overview">
+            <div className="workshop-beta-section-head">
+              <div>
+                <p className="workshop-beta-eyebrow">Dashboard</p>
+                <h2>Agent team control plane</h2>
               </div>
-            )) : <p className="workshop-beta-empty">No receipts returned yet.</p>}
-          </div>
-        </article>
+              <button type="button" onClick={() => void refresh()} disabled={pendingAction === "refresh"}>
+                Refresh
+              </button>
+            </div>
+            <div className="workshop-beta-metrics">
+              {metricCard("Agents", snapshot?.liveNetwork.totalAgentCount ?? "-", `${snapshot?.liveNetwork.onlineAgentCount ?? 0} online`)}
+              {metricCard("Receipts", snapshot?.liveNetwork.workshopReceiptCount ?? "-", `${snapshot?.liveNetwork.recentWorkshopReceiptCount ?? 0} recent`)}
+              {metricCard("Proofs", snapshot?.liveNetwork.confirmedProofCount ?? "-", `${snapshot?.liveNetwork.pendingProofCount ?? 0} pending`)}
+              {metricCard("Missions", snapshot?.controlPlane.missionCount ?? "-", `${snapshot?.controlPlane.activeMissionCount ?? 0} active`)}
+            </div>
+          </section>
 
-        <article className="workshop-beta-panel">
-          <p className="workshop-beta-eyebrow">Next actions</p>
-          <h2>What to do now</h2>
-          <ol className="workshop-beta-actions">
-            {nextActions.length ? nextActions.map((action) => (
-              <li key={action}>{action}</li>
-            )) : <li>Control plane looks complete for the current beta mission.</li>}
-          </ol>
-          <div className="workshop-beta-ledger">
-            <strong>Admin bindings</strong>
-            <span>{snapshot?.controlPlane.adminBindingCount ?? 0}</span>
-            <strong>Agent claims</strong>
-            <span>{snapshot?.controlPlane.agentClaimCount ?? 0}</span>
-            <strong>Seller payouts observed</strong>
-            <span>${snapshot?.liveNetwork.completedSellerPayoutUsd ?? "0"}</span>
-          </div>
-        </article>
-      </section>
+          <section className="workshop-beta-grid dashboard">
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">Admin</p>
+              <h2>Human + agent control</h2>
+              <p className="workshop-beta-copy">
+                Sign in, then bind the human admin to an admin agent that can claim mission authority from its runtime.
+              </p>
+              <div className="workshop-beta-ledger">
+                <strong>Human session</strong>
+                <span>{authReady ? "Ready" : "Not signed in"}</span>
+                <strong>Admin agent</strong>
+                <span>{adminBindingCopy}</span>
+              </div>
+            </article>
+
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">Mission state</p>
+              <h2>Workflow readback</h2>
+              <StageRail snapshot={snapshot} />
+            </article>
+
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">Next actions</p>
+              <h2>Keep it moving</h2>
+              <ol className="workshop-beta-actions">
+                {nextActions.length ? nextActions.map((action) => (
+                  <li key={action}>{action}</li>
+                )) : <li>Control plane looks complete for the current beta mission.</li>}
+              </ol>
+            </article>
+          </section>
+
+          <section className="workshop-beta-grid wide">
+            <article className="workshop-beta-panel">
+              <div className="workshop-beta-section-head">
+                <div>
+                  <p className="workshop-beta-eyebrow">Missions</p>
+                  <h2>Active work</h2>
+                </div>
+                <input
+                  className="workshop-beta-small-input"
+                  value={claimAgentId}
+                  onChange={(event: unknown) => setClaimAgentId(eventValue(event))}
+                  placeholder="agent ID for claim"
+                />
+              </div>
+              <div className="workshop-beta-list">
+                {snapshot?.missions.length ? snapshot.missions.map((mission) => (
+                  <MissionCard
+                    key={mission.missionId}
+                    mission={mission}
+                    onTransition={handleTransition}
+                    onClaim={handleClaimMission}
+                  />
+                )) : <p className="workshop-beta-empty">No missions yet. Use Admin login to create the first beta mission.</p>}
+              </div>
+            </article>
+
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">Receipts</p>
+              <h2>Proof health</h2>
+              <div className="workshop-beta-list">
+                {snapshot?.recentReceipts.length ? snapshot.recentReceipts.map((receipt) => (
+                  <div className="workshop-beta-list-card compact" key={receipt.messageId}>
+                    <div>
+                      <strong>{receipt.agentName} · {receipt.messageType}</strong>
+                      <p>{receipt.body}</p>
+                      <small>
+                        {formatTime(receipt.createdAtIso)} · root {shortHash(receipt.batchRootDigestSha256)} · tx {shortHash(receipt.batchTxHash)}
+                      </small>
+                    </div>
+                    <span className="workshop-beta-pill">{receipt.anchorStatus ?? "receipt"}</span>
+                  </div>
+                )) : <p className="workshop-beta-empty">No receipts returned yet.</p>}
+              </div>
+            </article>
+          </section>
+        </>
+      ) : (
+        <>
+          <section className="workshop-beta-panel workshop-beta-overview login">
+            <div className="workshop-beta-section-head">
+              <div>
+                <p className="workshop-beta-eyebrow">Admin login</p>
+                <h2>Bind a human to an admin agent</h2>
+              </div>
+              <span className="workshop-beta-pill">Beta</span>
+            </div>
+            <p className="workshop-beta-copy">
+              Keep the flow simple: verify the admin email, issue a runtime challenge, then let the admin agent claim it.
+            </p>
+          </section>
+
+          <section className="workshop-beta-grid login">
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">1 · Human</p>
+              <h2>Email secure link</h2>
+              <form onSubmit={handleAuthStart} className="workshop-beta-form">
+                <label>
+                  Email
+                  <input value={email} onChange={(event: unknown) => setEmail(eventValue(event))} placeholder="admin@company.com" />
+                </label>
+                <button type="submit" disabled={pendingAction === "auth-start"}>
+                  Issue secure link
+                </button>
+              </form>
+              <div className="workshop-beta-inline-control">
+                <input value={authToken} onChange={(event: unknown) => setAuthToken(eventValue(event))} placeholder="secure link token" />
+                <button type="button" onClick={handleAuthVerify} disabled={!sessionId || !authToken || pendingAction === "auth-verify"}>
+                  Verify
+                </button>
+              </div>
+              {auth ? <small>Beta token expires {formatTime(auth.expiresAtIso)}.</small> : null}
+            </article>
+
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">2 · Agent</p>
+              <h2>Admin challenge</h2>
+              <form onSubmit={handleIssueChallenge} className="workshop-beta-form">
+                <label>
+                  Workspace
+                  <input value={workshopId} onChange={(event: unknown) => setWorkshopId(eventValue(event))} />
+                </label>
+                <label>
+                  Mission-bound OAuth authority
+                  <input value={authorityBaseUrl} onChange={(event: unknown) => setAuthorityBaseUrl(eventValue(event))} />
+                </label>
+                <button type="submit" disabled={!sessionId || pendingAction === "issue-challenge"}>
+                  Issue challenge
+                </button>
+              </form>
+              <form onSubmit={handleClaimChallenge} className="workshop-beta-form compact">
+                <label>
+                  Admin agent ID
+                  <input value={challengeAgentId} onChange={(event: unknown) => setChallengeAgentId(eventValue(event))} placeholder="agent--session_agent_..." />
+                </label>
+                <label>
+                  Agent label
+                  <input value={challengeAgentName} onChange={(event: unknown) => setChallengeAgentName(eventValue(event))} placeholder="Ops coordinator" />
+                </label>
+                <button type="submit" disabled={!latestChallenge || !challengeAgentId || pendingAction === "claim-challenge"}>
+                  Claim challenge
+                </button>
+              </form>
+            </article>
+
+            <article className="workshop-beta-panel">
+              <p className="workshop-beta-eyebrow">3 · Mission</p>
+              <h2>First work scope</h2>
+              <form onSubmit={handleCreateMission} className="workshop-beta-form">
+                <label>
+                  Mission title
+                  <input value={missionTitle} onChange={(event: unknown) => setMissionTitle(eventValue(event))} />
+                </label>
+                <label>
+                  Goal
+                  <textarea value={missionGoal} onChange={(event: unknown) => setMissionGoal(eventValue(event))} />
+                </label>
+                <label>
+                  Visibility
+                  <select value={visibility} onChange={(event: unknown) => setVisibility(eventValue(event) as WorkshopBetaVisibilityMode)}>
+                    <option value="private">Private</option>
+                    <option value="company">Company-visible</option>
+                    <option value="proof_only_public">Proof-only public</option>
+                    <option value="public_collaboration">Public collaboration</option>
+                  </select>
+                </label>
+                <label>
+                  Allowed agents
+                  <input value={allowedAgents} onChange={(event: unknown) => setAllowedAgents(eventValue(event))} placeholder="comma-separated agent IDs" />
+                </label>
+                <label>
+                  Data rules
+                  <textarea value={dataRules} onChange={(event: unknown) => setDataRules(eventValue(event))} />
+                </label>
+                <label>
+                  Success criteria
+                  <textarea value={successCriteria} onChange={(event: unknown) => setSuccessCriteria(eventValue(event))} />
+                </label>
+                <label>
+                  Budget
+                  <input value={budgetUsd} onChange={(event: unknown) => setBudgetUsd(eventValue(event))} />
+                </label>
+                <button type="submit" disabled={pendingAction === "create-mission"}>
+                  Draft mission
+                </button>
+              </form>
+            </article>
+          </section>
+        </>
+      )}
     </main>
   );
 }

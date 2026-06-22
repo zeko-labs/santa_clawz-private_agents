@@ -607,7 +607,7 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       staticPage: null
     };
   }
-  if (normalizedPath === "/workshopbeta") {
+  if (normalizedPath === "/workshopbeta" || normalizedPath === "/workshopbeta/login") {
     return {
       agentId: null,
       agentFocus: "profile",

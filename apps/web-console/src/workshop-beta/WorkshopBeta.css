@@ -2,26 +2,31 @@
   --beta-ink: #132237;
   --beta-muted: #607187;
   --beta-panel: rgba(250, 250, 246, 0.92);
-  --beta-line: rgba(34, 49, 64, 0.12);
-  --beta-green: #2e7d54;
-  --beta-mint: #dff2e8;
-  --beta-blue: #dfeaf6;
-  --beta-gold: #8a641b;
+  --beta-line: rgba(18, 35, 54, 0.11);
+  --beta-green: #2f7a52;
+  --beta-mint: #e4f3eb;
+  --beta-danger: #9a3b2b;
   color: var(--beta-ink);
   padding-bottom: 72px;
 }
 
+.workshop-beta-hero,
+.workshop-beta-overview,
+.workshop-beta-grid,
+.workshop-beta-banner {
+  width: min(1440px, calc(100% - 48px));
+  margin-inline: auto;
+}
+
 .workshop-beta-hero {
   display: grid;
-  gap: 24px;
-  margin: 0 auto;
-  max-width: 1440px;
-  padding: 24px clamp(16px, 5vw, 64px) 0;
+  gap: 18px;
+  padding-top: 22px;
 }
 
 .workshop-beta-brand {
   display: inline-flex;
-  width: min(320px, 68vw);
+  width: min(300px, 62vw);
 }
 
 .workshop-beta-brand img {
@@ -29,74 +34,119 @@
   width: 100%;
 }
 
-.workshop-beta-hero-card,
-.workshop-beta-panel {
-  border: 1px solid var(--beta-line);
-  border-radius: 28px;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(71, 128, 108, 0.12), transparent 28%),
-    radial-gradient(circle at 80% 4%, rgba(87, 115, 151, 0.13), transparent 26%),
-    var(--beta-panel);
-  box-shadow: 0 24px 50px rgba(17, 31, 44, 0.08);
-}
-
 .workshop-beta-hero-card {
-  padding: clamp(26px, 4vw, 54px);
+  display: flex;
+  gap: 22px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+  padding: clamp(24px, 4vw, 46px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 32px;
+  background: rgba(8, 18, 30, 0.74);
+  box-shadow: 0 24px 80px rgba(4, 10, 18, 0.28);
+  backdrop-filter: blur(12px);
 }
 
 .workshop-beta-hero-card h1 {
   margin: 0;
-  max-width: 900px;
+  max-width: 940px;
+  color: var(--white, #fff8ef);
   font-family: var(--display-font, serif);
-  font-size: clamp(42px, 7vw, 84px);
-  line-height: 0.92;
-  letter-spacing: -0.045em;
+  font-size: clamp(2.1rem, 4.4vw, 4.4rem);
+  line-height: 0.96;
+  letter-spacing: -0.058em;
 }
 
 .workshop-beta-hero-card p {
-  max-width: 880px;
-  margin: 18px 0 0;
-  color: var(--beta-muted);
-  font-size: clamp(18px, 2vw, 25px);
-  line-height: 1.42;
+  max-width: 900px;
+  margin: 16px 0 0;
+  color: rgba(255, 247, 237, 0.8);
+  font-size: clamp(0.95rem, 1.4vw, 1.15rem);
+  line-height: 1.46;
 }
 
 .workshop-beta-eyebrow {
   margin: 0 0 10px;
   color: #708095;
   font-family: var(--mono-font, monospace);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 0.72rem;
+  font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
+.workshop-beta-hero-card .workshop-beta-eyebrow {
+  color: rgba(255, 247, 237, 0.7);
+}
+
+.workshop-beta-button,
+.workshop-beta-form button,
+.workshop-beta-panel button,
+.workshop-beta-card-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid rgba(47, 122, 82, 0.28);
+  border-radius: 999px;
+  background: var(--beta-mint);
+  color: var(--beta-green);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+  padding: 10px 16px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.workshop-beta-button:hover,
+.workshop-beta-form button:hover:not(:disabled),
+.workshop-beta-panel button:hover:not(:disabled),
+.workshop-beta-card-actions button:hover:not(:disabled) {
+  border-color: rgba(47, 122, 82, 0.42);
+  background: #dceddf;
+}
+
+.workshop-beta-form button:disabled,
+.workshop-beta-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .workshop-beta-banner {
-  max-width: 1440px;
-  margin: 20px auto 0;
-  padding: 14px 18px;
-  border: 1px solid rgba(67, 126, 90, 0.22);
-  border-radius: 18px;
-  background: rgba(224, 244, 234, 0.92);
-  color: #286846;
+  margin-top: 18px;
+  padding: 13px 16px;
+  border: 1px solid rgba(47, 122, 82, 0.2);
+  border-radius: 8px;
+  background: rgba(228, 243, 235, 0.96);
+  color: var(--beta-green);
   font-weight: 800;
 }
 
 .workshop-beta-banner.danger {
-  border-color: rgba(181, 81, 65, 0.25);
-  background: rgba(255, 235, 228, 0.94);
-  color: #994330;
+  border-color: rgba(154, 59, 43, 0.2);
+  background: rgba(255, 240, 235, 0.96);
+  color: var(--beta-danger);
 }
 
 .workshop-beta-overview,
-.workshop-beta-grid,
-.workshop-beta-grid.wide {
-  max-width: 1440px;
-  margin: 20px auto 0;
+.workshop-beta-grid {
+  margin-top: 18px;
 }
 
 .workshop-beta-panel {
-  padding: clamp(20px, 3vw, 34px);
+  min-width: 0;
+  padding: clamp(20px, 3vw, 30px);
+  border: 1px solid var(--beta-line);
+  border-radius: 8px;
+  background: var(--beta-panel);
+  box-shadow: 0 16px 36px rgba(18, 35, 54, 0.06);
+}
+
+.workshop-beta-overview.login {
+  display: grid;
+  gap: 10px;
 }
 
 .workshop-beta-section-head,
@@ -106,13 +156,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
 }
 
 .workshop-beta-section-head h2,
 .workshop-beta-panel h2 {
   margin: 0;
-  font-size: clamp(24px, 3vw, 36px);
-  line-height: 1;
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  line-height: 1.05;
 }
 
 .workshop-beta-copy,
@@ -124,16 +175,16 @@
 .workshop-beta-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 22px;
+  gap: 12px;
+  margin-top: 18px;
 }
 
 .workshop-beta-metric {
-  min-height: 108px;
-  padding: 18px;
+  min-height: 94px;
+  padding: 16px;
   border: 1px solid var(--beta-line);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.64);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
 }
 
 .workshop-beta-metric span,
@@ -141,7 +192,7 @@
   display: block;
   color: var(--beta-muted);
   font-family: var(--mono-font, monospace);
-  font-size: 11px;
+  font-size: 0.66rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -149,51 +200,10 @@
 
 .workshop-beta-metric strong {
   display: block;
-  margin: 7px 0 6px;
+  margin: 6px 0 5px;
   color: var(--beta-ink);
-  font-size: 34px;
+  font-size: 1.85rem;
   line-height: 1;
-}
-
-.workshop-beta-stage-rail {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 24px;
-}
-
-.workshop-beta-stage {
-  min-height: 78px;
-  padding: 12px;
-  border: 1px solid var(--beta-line);
-  border-radius: 16px;
-  background: rgba(245, 246, 244, 0.72);
-  color: #8390a1;
-}
-
-.workshop-beta-stage.active {
-  border-color: rgba(46, 125, 84, 0.24);
-  background: rgba(223, 242, 232, 0.86);
-  color: var(--beta-green);
-}
-
-.workshop-beta-stage.current {
-  outline: 2px solid rgba(46, 125, 84, 0.2);
-}
-
-.workshop-beta-stage span {
-  display: block;
-  margin-bottom: 7px;
-  font-family: var(--mono-font, monospace);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.workshop-beta-stage strong {
-  display: block;
-  font-size: 12px;
-  line-height: 1.15;
-  text-transform: capitalize;
 }
 
 .workshop-beta-grid {
@@ -202,8 +212,57 @@
   gap: 18px;
 }
 
+.workshop-beta-grid.dashboard {
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.35fr) minmax(260px, 0.9fr);
+}
+
 .workshop-beta-grid.wide {
-  grid-template-columns: 1.25fr 1fr 0.8fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+}
+
+.workshop-beta-grid.login {
+  align-items: start;
+}
+
+.workshop-beta-stage-rail {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.workshop-beta-stage {
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--beta-line);
+  border-radius: 8px;
+  background: rgba(245, 246, 244, 0.72);
+  color: #8390a1;
+}
+
+.workshop-beta-stage.active {
+  border-color: rgba(47, 122, 82, 0.24);
+  background: rgba(228, 243, 235, 0.9);
+  color: var(--beta-green);
+}
+
+.workshop-beta-stage.current {
+  outline: 2px solid rgba(47, 122, 82, 0.18);
+}
+
+.workshop-beta-stage span {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--mono-font, monospace);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.workshop-beta-stage strong {
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.15;
+  text-transform: capitalize;
 }
 
 .workshop-beta-form {
@@ -213,8 +272,8 @@
 }
 
 .workshop-beta-form.compact {
-  margin-top: 20px;
-  padding-top: 18px;
+  margin-top: 18px;
+  padding-top: 16px;
   border-top: 1px solid var(--beta-line);
 }
 
@@ -223,7 +282,7 @@
   gap: 7px;
   color: #6b7b8d;
   font-family: var(--mono-font, monospace);
-  font-size: 11px;
+  font-size: 0.66rem;
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -236,39 +295,20 @@
 .workshop-beta-card-actions select,
 .workshop-beta-small-input {
   width: 100%;
-  min-height: 46px;
+  min-height: 44px;
   border: 1px solid rgba(26, 43, 60, 0.13);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
   color: var(--beta-ink);
   font: inherit;
-  font-size: 15px;
+  font-size: 0.92rem;
   outline: none;
-  padding: 10px 13px;
+  padding: 10px 12px;
 }
 
 .workshop-beta-form textarea {
-  min-height: 86px;
+  min-height: 76px;
   resize: vertical;
-}
-
-.workshop-beta-form button,
-.workshop-beta-panel button,
-.workshop-beta-card-actions button {
-  min-height: 44px;
-  border: 1px solid rgba(46, 125, 84, 0.25);
-  border-radius: 999px;
-  background: linear-gradient(180deg, #e4f7ed, #ccebdc);
-  color: #235f41;
-  cursor: pointer;
-  font-weight: 900;
-  padding: 10px 18px;
-}
-
-.workshop-beta-form button:disabled,
-.workshop-beta-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
 }
 
 .workshop-beta-inline-control {
@@ -278,7 +318,7 @@
 .workshop-beta-inline-control input {
   min-width: 0;
   font-family: var(--mono-font, monospace);
-  font-size: 12px;
+  font-size: 0.78rem;
 }
 
 .workshop-beta-list {
@@ -290,11 +330,11 @@
 .workshop-beta-list-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: 14px;
   align-items: start;
-  padding: 16px;
+  padding: 14px;
   border: 1px solid var(--beta-line);
-  border-radius: 20px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -311,7 +351,7 @@
 .workshop-beta-panel small {
   color: var(--beta-muted);
   font-family: var(--mono-font, monospace);
-  font-size: 12px;
+  font-size: 0.74rem;
 }
 
 .workshop-beta-pill {
@@ -319,12 +359,12 @@
   align-items: center;
   justify-content: center;
   min-height: 28px;
-  border: 1px solid rgba(46, 125, 84, 0.18);
+  border: 1px solid rgba(47, 122, 82, 0.2);
   border-radius: 999px;
   background: var(--beta-mint);
   color: var(--beta-green);
   font-family: var(--mono-font, monospace);
-  font-size: 11px;
+  font-size: 0.66rem;
   font-weight: 900;
   letter-spacing: 0.06em;
   padding: 5px 10px;
@@ -335,14 +375,14 @@
 .workshop-beta-card-actions {
   display: grid;
   gap: 8px;
-  min-width: 180px;
+  min-width: 172px;
 }
 
 .workshop-beta-actions {
   display: grid;
-  gap: 12px;
-  margin: 18px 0 0;
-  padding-left: 21px;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding-left: 20px;
 }
 
 .workshop-beta-actions li {
@@ -352,52 +392,62 @@
 
 .workshop-beta-ledger {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px 14px;
-  margin-top: 20px;
-  padding-top: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px 14px;
+  margin-top: 18px;
+  padding-top: 16px;
   border-top: 1px solid var(--beta-line);
 }
 
 .workshop-beta-ledger span {
+  min-width: 0;
   color: var(--beta-green);
   font-weight: 900;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workshop-beta-empty {
   margin: 0;
-  padding: 18px;
+  padding: 16px;
   border: 1px dashed rgba(26, 43, 60, 0.18);
-  border-radius: 18px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.5);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1120px) {
   .workshop-beta-metrics,
   .workshop-beta-grid,
+  .workshop-beta-grid.dashboard,
   .workshop-beta-grid.wide {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workshop-beta-stage-rail {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
-  .workshop-beta-hero {
-    padding-inline: 12px;
-  }
-
+  .workshop-beta-hero,
   .workshop-beta-overview,
   .workshop-beta-grid,
-  .workshop-beta-grid.wide,
   .workshop-beta-banner {
-    margin-inline: 12px;
+    width: calc(100% - 24px);
+  }
+
+  .workshop-beta-hero-card,
+  .workshop-beta-section-head,
+  .workshop-beta-inline-control {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .workshop-beta-metrics,
   .workshop-beta-grid,
+  .workshop-beta-grid.dashboard,
   .workshop-beta-grid.wide,
   .workshop-beta-list-card {
     grid-template-columns: 1fr;
@@ -407,9 +457,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .workshop-beta-section-head,
-  .workshop-beta-inline-control {
-    align-items: stretch;
-    flex-direction: column;
+  .workshop-beta-card-actions {
+    min-width: 0;
   }
 }

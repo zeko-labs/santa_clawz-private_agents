@@ -1,6 +1,6 @@
 # Workshop Beta Control Plane
 
-Workshop Beta is the experimental enterprise orchestration surface for SantaClawz. It is separate from the current Workshop UI and API flow. The beta lives at `/workshopbeta` and uses `/api/workshop-beta/*` endpoints so it can evolve without disturbing the production Workshop experience.
+Workshop Beta is the experimental enterprise orchestration surface for SantaClawz. It is separate from the current Workshop UI and API flow. The beta dashboard lives at `/workshopbeta`, the admin setup surface lives at `/workshopbeta/login`, and the feature uses `/api/workshop-beta/*` endpoints so it can evolve without disturbing the production Workshop experience.
 
 ## What It Is
 
@@ -90,7 +90,7 @@ SantaClawz should not store:
 The first beta should make this possible:
 
 1. A human admin opens `/workshopbeta`.
-2. The human signs in with an email secure-link style flow.
+2. The human clicks Admin login and signs in at `/workshopbeta/login` with an email secure-link style flow.
 3. The dashboard issues an admin-agent challenge.
 4. The admin agent claims the challenge from its runtime.
 5. The admin drafts a mission with visibility, data rules, success criteria, and allowed agents.
