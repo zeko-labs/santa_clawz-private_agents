@@ -6378,42 +6378,34 @@ h3 {
   align-items: center;
   border: 1px solid rgba(67, 143, 113, 0.28);
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(239, 253, 247, 0.98), rgba(203, 238, 223, 0.92));
+  background: rgba(229, 246, 237, 0.96);
   color: #2d7055;
   cursor: pointer;
   flex: 0 0 auto;
   font-weight: 800;
   margin-left: 0;
   padding: 8px 14px;
-  box-shadow:
-    0 8px 18px rgba(61, 134, 103, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  box-shadow: none;
   transition:
     transform 160ms ease,
     border-color 160ms ease,
-    box-shadow 160ms ease;
+    background 160ms ease;
 }
 
 .activation-command-summary .activation-command-copy-button {
-  background:
-    linear-gradient(180deg, rgba(239, 253, 247, 0.98), rgba(203, 238, 223, 0.92));
+  background: rgba(229, 246, 237, 0.96);
   color: #2d7055;
 }
 
 .activation-command-copy-button:hover:not(:disabled) {
   transform: translateY(-1px);
   border-color: rgba(67, 143, 113, 0.4);
-  box-shadow:
-    0 10px 22px rgba(61, 134, 103, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  background: rgba(215, 239, 226, 0.98);
 }
 
 .activation-command-copy-button:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow:
-    0 5px 12px rgba(28, 96, 66, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  background: rgba(207, 234, 219, 0.98);
 }
 
 .copy-icon {
