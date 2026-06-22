@@ -534,6 +534,24 @@ export interface PublicMarketplaceSnapshot {
   agentBoard: AgentBoardState;
   paymentLedger: PaymentLedgerState;
   publicSocialAnchorQueue: SocialAnchorQueueState;
+  workshopReceiptSummary?: {
+    schemaVersion: "santaclawz-workshop-receipt-summary/1.0";
+    generatedAtIso: string;
+    publicDisclosure: "proof-receipts-only";
+    totalReceiptCount: number;
+  };
+  publicActivitySummary?: {
+    schemaVersion: "santaclawz-public-activity-summary/1.0";
+    generatedAtIso: string;
+    publicDisclosure: "aggregate-counts-only";
+    totalActivityCount: number;
+    categoryCounts: {
+      publicBoardMessages: number;
+      paymentActivity: number;
+      proofAnchors: number;
+      workshopReceipts: number;
+    };
+  };
 }
 
 export function fetchPublicMarketplaceSnapshot(): Promise<PublicMarketplaceSnapshot> {

@@ -1126,6 +1126,14 @@ async function testProtectedApiAuth() {
     const publicMarketplaceSnapshot = await requestJson(`${baseUrl}/api/public/marketplace-snapshot`, { method: "GET" });
     assert.equal(publicMarketplaceSnapshot.status, 200);
     assert.equal(publicMarketplaceSnapshot.payload.schemaVersion, "santaclawz-public-marketplace-snapshot/1.0");
+    assert.equal(publicMarketplaceSnapshot.payload.publicActivitySummary.schemaVersion, "santaclawz-public-activity-summary/1.0");
+    assert.equal(
+      publicMarketplaceSnapshot.payload.publicActivitySummary.totalActivityCount,
+      publicMarketplaceSnapshot.payload.publicActivitySummary.categoryCounts.publicBoardMessages +
+        publicMarketplaceSnapshot.payload.publicActivitySummary.categoryCounts.paymentActivity +
+        publicMarketplaceSnapshot.payload.publicActivitySummary.categoryCounts.proofAnchors +
+        publicMarketplaceSnapshot.payload.publicActivitySummary.categoryCounts.workshopReceipts
+    );
     const searchedAgentId = publicAgentSearch.payload.agents[0]?.agentId;
     if (searchedAgentId) {
       const publicAgentReady = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(searchedAgentId)}/ready`, {
@@ -6079,6 +6087,48 @@ async function testPublicPayoutSummaryUsesAllTimeLedgerStats() {
   }
 }
 
+async function testPublicActivitySummaryKeepsAdditiveTotals() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-public-activity-summary-"));
+  const stateDir = path.join(workspaceDir, ".clawz-data", "state");
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(path.join(stateDir, "public-activity-summary.json"), JSON.stringify({
+    schemaVersion: "santaclawz-public-activity-summary/1.0",
+    generatedAtIso: "2026-06-12T00:00:00.000Z",
+    publicDisclosure: "aggregate-counts-only",
+    totalActivityCount: 36,
+    categoryCounts: {
+      publicBoardMessages: 5,
+      paymentActivity: 7,
+      proofAnchors: 11,
+      workshopReceipts: 13
+    },
+    initializedAtIso: "2026-06-12T00:00:00.000Z",
+    updatedAtIso: "2026-06-12T00:00:00.000Z",
+    countedIds: {
+      publicBoardMessageIds: [],
+      paymentActivityKeys: [],
+      proofAnchorCandidateIds: [],
+      workshopReceiptIds: []
+    }
+  }, null, 2), "utf8");
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port);
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+    const publicMarketplaceSnapshot = await requestJson(`${baseUrl}/api/public/marketplace-snapshot`, { method: "GET" });
+    assert.equal(publicMarketplaceSnapshot.status, 200);
+    assert.ok(publicMarketplaceSnapshot.payload.publicActivitySummary.totalActivityCount >= 36);
+    assert.ok(publicMarketplaceSnapshot.payload.publicActivitySummary.categoryCounts.workshopReceipts >= 13);
+
+    console.log("ok - public activity summary preserves additive totals including workshop receipts");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-payment-ledger-rollup-"));
   try {
@@ -6975,6 +7025,7 @@ async function main() {
   await testHostedWorkspaceRunApi();
   await testLegacyDemoProfileCanEnableBasePayments();
   await testPublicPayoutSummaryUsesAllTimeLedgerStats();
+  await testPublicActivitySummaryKeepsAdditiveTotals();
   await testPaymentLedgerPersistenceKeepsCumulativePayoutStatsWhenRowsArePruned();
   await testProductionPaymentLedgerUsesVerifiedBasePayoutBaseline();
   await testPaymentLedgerExecutionUpdatesAreMonotonic();
