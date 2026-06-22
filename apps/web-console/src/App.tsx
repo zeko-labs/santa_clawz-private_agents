@@ -49,6 +49,7 @@ import {
   type ZekoHealthState
 } from "./api.js";
 import { BuyerWorkroom } from "./BuyerWorkroom.js";
+import { WorkshopBetaApp } from "./workshop-beta/WorkshopBetaApp.js";
 
 type AgentProfileDraft = AgentProfileState;
 type IssuedOwnershipChallenge = OwnershipChallengeIssueResponse["issuedOwnershipChallenge"];
@@ -65,7 +66,7 @@ type ExploreActivityItem =
   | { kind: "payment"; id: string; occurredAtIso: string; payment: PaymentLedgerEntry }
   | { kind: "proof"; id: string; occurredAtIso: string; proof: SocialAnchorCandidate };
 type StaticPageKey = "terms-of-service" | "privacy-policy";
-type HiddenPageKey = "sdk" | "hire";
+type HiddenPageKey = "sdk" | "hire" | "workshopbeta";
 type CoordinationPrivacyMode = "public-summary" | "digest-only" | "recipient-encrypted" | "local-private";
 type CoordinationAgentRole = "admin" | "member";
 type WorkshopReceipt = WorkshopReceiptLedgerState["receipts"][number];
@@ -602,6 +603,16 @@ function parseRouteState(pathname: string, hash: string): AppRouteState {
       agentFocus: "profile",
       hiddenPage: "hire",
       section: "explore",
+      sessionId: null,
+      staticPage: null
+    };
+  }
+  if (normalizedPath === "/workshopbeta" || normalizedPath === "/workshopbeta/login") {
+    return {
+      agentId: null,
+      agentFocus: "profile",
+      hiddenPage: "workshopbeta",
+      section: "workshop",
       sessionId: null,
       staticPage: null
     };
@@ -2607,6 +2618,8 @@ export function App() {
   const [pendingPaymentLedger, setPendingPaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [pendingPublicSocialAnchorQueue, setPendingPublicSocialAnchorQueue] = useState<SocialAnchorQueueState | null>(null);
   const [workshopReceiptLedger, setWorkshopReceiptLedger] = useState<WorkshopReceiptLedgerState | null>(null);
+  const [workshopReceiptSummaryTotal, setWorkshopReceiptSummaryTotal] = useState(0);
+  const [publicActivitySummaryTotal, setPublicActivitySummaryTotal] = useState<number | null>(null);
   const [pendingExploreUpdateCount, setPendingExploreUpdateCount] = useState(0);
   const [profilePaymentLedger, setProfilePaymentLedger] = useState<PaymentLedgerState | null>(null);
   const [agentAvailability, setAgentAvailability] = useState<AgentRuntimeAvailabilityState | null>(null);
@@ -2955,6 +2968,8 @@ export function App() {
             const nextBoard = snapshot.agentBoard ?? emptyAgentBoardState();
             const nextLedger = snapshot.paymentLedger ?? emptyPaymentLedgerState();
             const nextAnchors = snapshot.publicSocialAnchorQueue ?? emptySocialAnchorQueueState();
+            setWorkshopReceiptSummaryTotal(snapshot.workshopReceiptSummary?.totalReceiptCount ?? 0);
+            setPublicActivitySummaryTotal(snapshot.publicActivitySummary?.totalActivityCount ?? null);
             if (!currentActivity.initialized) {
               publishExploreActivity(nextBoard, nextLedger, nextAnchors);
               clearBackgroundError();
@@ -3007,7 +3022,7 @@ export function App() {
   }, [activeSection, exploreActivitySnapshot, sharedAgentId]);
 
   useEffect(() => {
-    if ((activeSection !== "workshop" && activeSection !== "explore") || sharedAgentId) {
+    if (activeSection !== "workshop" || sharedAgentId) {
       setWorkshopReceiptLedger(null);
       return;
     }
@@ -4288,6 +4303,10 @@ export function App() {
     return renderHirePage();
   }
 
+  if (activeHiddenPage === "workshopbeta") {
+    return <WorkshopBetaApp />;
+  }
+
   if (activeStaticPage) {
     return renderLegalPage(activeStaticPage);
   }
@@ -4585,12 +4604,13 @@ export function App() {
       : visibleBasePayoutUsd;
   const publicPaymentActivityTotal = paymentLedger?.totalLedgerEntryCount ?? allPublicPaymentEntries.length;
   const publicProofActivityTotal = publicSocialAnchorQueue?.confirmedCount ?? allPublicProofAnchors.length;
-  const workshopReceiptActivityTotal = workshopReceiptLedger?.totalReceiptCount ?? 0;
-  const publicActivityTotal =
+  const workshopReceiptActivityTotal = Math.max(workshopReceiptSummaryTotal, workshopReceiptLedger?.totalReceiptCount ?? 0);
+  const visiblePublicActivityTotal =
     agentBoard.totalVisibleMessages +
     publicPaymentActivityTotal +
     publicProofActivityTotal +
     workshopReceiptActivityTotal;
+  const publicActivityTotal = publicActivitySummaryTotal ?? visiblePublicActivityTotal;
   const includeMixedActivity = selectedExploreFilter !== "agents" && selectedExploreFilter !== "payments";
   const exploreActivityItems: ExploreActivityItem[] = [
     ...filteredBoardMessages.map((message) => ({

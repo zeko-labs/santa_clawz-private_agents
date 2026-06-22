@@ -964,6 +964,30 @@ interface PaymentLedgerAllTimeStats extends NonNullable<PaymentLedgerState["summ
   countedPaymentKeys: string[];
 }
 
+interface PublicActivitySummary {
+  schemaVersion: "santaclawz-public-activity-summary/1.0";
+  generatedAtIso: string;
+  publicDisclosure: "aggregate-counts-only";
+  totalActivityCount: number;
+  categoryCounts: {
+    publicBoardMessages: number;
+    paymentActivity: number;
+    proofAnchors: number;
+    workshopReceipts: number;
+  };
+}
+
+interface PublicActivitySummaryFile extends PublicActivitySummary {
+  initializedAtIso: string;
+  updatedAtIso: string;
+  countedIds: {
+    publicBoardMessageIds: string[];
+    paymentActivityKeys: string[];
+    proofAnchorCandidateIds: string[];
+    workshopReceiptIds: string[];
+  };
+}
+
 interface PaymentLedgerSettlementInput {
   agentId: string;
   sessionId: string;
@@ -2735,6 +2759,18 @@ function socialAnchorStatusCounts(items: SocialAnchorCandidate[]) {
     failedCount: items.filter((item) => item.status === "failed").length,
     expiredCount: items.filter((item) => item.status === "expired_not_anchored").length
   };
+}
+
+function sanitizeCountedActivityIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0 && item.length <= 256)
+  ));
 }
 
 function executionIntentStatusCounts(intents: ExecutionIntentRecord[]) {
@@ -4760,6 +4796,7 @@ export class ClawzControlPlane {
   private readonly hostedWorkspacePath: string;
   private readonly socialAnchorQueuePath: string;
   private readonly agentBoardPath: string;
+  private readonly publicActivitySummaryPath: string;
   private readonly runtimeHeartbeatPath: string;
   private readonly keyBroker: TenantKeyBroker;
   private readonly keyBrokerRuntime: TenantKeyBrokerRuntimeDescriptor;
@@ -4772,6 +4809,7 @@ export class ClawzControlPlane {
   private readonly prioritySocialAnchorRuns = new Map<string, Promise<void>>();
   private agentBoardMutationLock: Promise<void> = Promise.resolve();
   private socialAnchorQueueMutationLock: Promise<void> = Promise.resolve();
+  private publicActivitySummaryMutationLock: Promise<void> = Promise.resolve();
   private relayRuntimeStatusProvider: RelayRuntimeStatusProvider | undefined;
   private relayHireDeliveryHandler: RelayHireDeliveryHandler | undefined;
 
@@ -4801,6 +4839,7 @@ export class ClawzControlPlane {
     this.hostedWorkspacePath = path.join(baseDir, "state", "hosted-workspaces.json");
     this.socialAnchorQueuePath = path.join(baseDir, "state", "social-anchor-queue.json");
     this.agentBoardPath = path.join(baseDir, "state", "agent-message-board.json");
+    this.publicActivitySummaryPath = path.join(baseDir, "state", "public-activity-summary.json");
     this.runtimeHeartbeatPath = path.join(baseDir, "state", "agent-runtime-heartbeats.json");
     const configuredSharedAnchorIntervalMs = Number(process.env.CLAWZ_SHARED_SOCIAL_ANCHOR_INTERVAL_MS ?? "10000");
     this.sharedSocialAnchorIntervalMs = Number.isFinite(configuredSharedAnchorIntervalMs)
@@ -5528,10 +5567,67 @@ export class ClawzControlPlane {
     await writeJsonFile(this.agentBoardPath, file);
   }
 
+  private async loadPublicActivitySummaryFile(): Promise<PublicActivitySummaryFile | undefined> {
+    await this.ensureDirs();
+    const file = await readJsonFile<PublicActivitySummaryFile>(this.publicActivitySummaryPath);
+    if (file?.schemaVersion !== "santaclawz-public-activity-summary/1.0") {
+      return undefined;
+    }
+    const categoryCounts = {
+      publicBoardMessages: Math.max(0, Math.floor(file.categoryCounts?.publicBoardMessages ?? 0)),
+      paymentActivity: Math.max(0, Math.floor(file.categoryCounts?.paymentActivity ?? 0)),
+      proofAnchors: Math.max(0, Math.floor(file.categoryCounts?.proofAnchors ?? 0)),
+      workshopReceipts: Math.max(0, Math.floor(file.categoryCounts?.workshopReceipts ?? 0))
+    };
+    return {
+      schemaVersion: "santaclawz-public-activity-summary/1.0",
+      generatedAtIso: file.generatedAtIso,
+      publicDisclosure: "aggregate-counts-only",
+      totalActivityCount: Math.max(
+        0,
+        Math.floor(
+          file.totalActivityCount ??
+            categoryCounts.publicBoardMessages +
+              categoryCounts.paymentActivity +
+              categoryCounts.proofAnchors +
+              categoryCounts.workshopReceipts
+        )
+      ),
+      categoryCounts,
+      initializedAtIso: file.initializedAtIso ?? file.generatedAtIso ?? new Date().toISOString(),
+      updatedAtIso: file.updatedAtIso ?? file.generatedAtIso ?? new Date().toISOString(),
+      countedIds: {
+        publicBoardMessageIds: sanitizeCountedActivityIds(file.countedIds?.publicBoardMessageIds),
+        paymentActivityKeys: sanitizeCountedActivityIds(file.countedIds?.paymentActivityKeys),
+        proofAnchorCandidateIds: sanitizeCountedActivityIds(file.countedIds?.proofAnchorCandidateIds),
+        workshopReceiptIds: sanitizeCountedActivityIds(file.countedIds?.workshopReceiptIds)
+      }
+    };
+  }
+
+  private async savePublicActivitySummaryFile(file: PublicActivitySummaryFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.publicActivitySummaryPath, file);
+  }
+
   private async withAgentBoardMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
     const previous = this.agentBoardMutationLock;
     let release: () => void = () => {};
     this.agentBoardMutationLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await mutation();
+    } finally {
+      release();
+    }
+  }
+
+  private async withPublicActivitySummaryMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
+    const previous = this.publicActivitySummaryMutationLock;
+    let release: () => void = () => {};
+    this.publicActivitySummaryMutationLock = new Promise<void>((resolve) => {
       release = resolve;
     });
     await previous;
@@ -8568,6 +8664,62 @@ export class ClawzControlPlane {
     return this.getSocialAnchorQueueState(sessionId);
   }
 
+  private publicCountableAgentBoardMessages(
+    file: AgentBoardFile,
+    state: ConsolePersistenceState,
+    options: AgentBoardListOptions = {}
+  ) {
+    return file.messages
+      .filter((message) => message.visibility === "public" && message.moderationStatus === "visible")
+      .filter(
+        (message) =>
+          !hasBlockedPublicTerm([
+            message.agentName,
+            message.representedPrincipal,
+            message.body,
+            ...message.topicTags,
+            ...(message.capabilityTags ?? [])
+          ])
+      )
+      .filter((message) => !options.agentId || message.agentId === options.agentId)
+      .filter((message) => !options.threadId || message.threadId === options.threadId)
+      .filter((message) => !options.swarmId || message.swarmId === options.swarmId)
+      .filter((message) => !options.messageId || message.messageId === options.messageId)
+      .filter((message) => !options.topic || message.topicTags.includes(options.topic))
+      .filter((message) => !options.capability || (message.capabilityTags ?? []).includes(options.capability))
+      .filter((message) => !options.outputDigestSha256 || message.outputDigestSha256 === options.outputDigestSha256)
+      .filter((message) => options.includeWorkshopCoordination || !isWorkshopCoordinationBoardMessage(message))
+      .filter((message) => {
+        const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId);
+        if (!sessionId) {
+          return true;
+        }
+        const profile = this.profileForSession(state, sessionId);
+        return !hasBlockedPublicTerm([
+          profile.agentName,
+          profile.representedPrincipal,
+          profile.headline
+        ]);
+      })
+      .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso));
+  }
+
+  private publicVisibleAgentBoardMessages(
+    file: AgentBoardFile,
+    state: ConsolePersistenceState,
+    options: AgentBoardListOptions = {}
+  ) {
+    return this.publicCountableAgentBoardMessages(file, state, options)
+      .filter((message) => {
+        const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId);
+        if (!sessionId) {
+          return false;
+        }
+        const profile = this.profileForSession(state, sessionId);
+        return profile.availability === "active";
+      });
+  }
+
   private buildSocialAnchorQueueState(
     queue: SocialAnchorQueueFile,
     sessionId?: string,
@@ -8611,39 +8763,7 @@ export class ClawzControlPlane {
     options: AgentBoardListOptions = {}
   ): AgentBoardState {
     const limit = Math.max(1, Math.min(options.limit ?? 24, 200));
-    const visibleMessages = file.messages
-      .filter((message) => message.visibility === "public" && message.moderationStatus === "visible")
-      .filter(
-        (message) =>
-          !hasBlockedPublicTerm([
-            message.agentName,
-            message.representedPrincipal,
-            message.body,
-            ...message.topicTags,
-            ...(message.capabilityTags ?? [])
-          ])
-      )
-      .filter((message) => !options.agentId || message.agentId === options.agentId)
-      .filter((message) => !options.threadId || message.threadId === options.threadId)
-      .filter((message) => !options.swarmId || message.swarmId === options.swarmId)
-      .filter((message) => !options.messageId || message.messageId === options.messageId)
-      .filter((message) => !options.topic || message.topicTags.includes(options.topic))
-      .filter((message) => !options.capability || (message.capabilityTags ?? []).includes(options.capability))
-      .filter((message) => !options.outputDigestSha256 || message.outputDigestSha256 === options.outputDigestSha256)
-      .filter((message) => options.includeWorkshopCoordination || !isWorkshopCoordinationBoardMessage(message))
-      .filter((message) => {
-        const sessionId = this.resolveSessionIdFromAgentId(state, message.agentId);
-        if (!sessionId) {
-          return false;
-        }
-        const profile = this.profileForSession(state, sessionId);
-        return profile.availability === "active" && !hasBlockedPublicTerm([
-          profile.agentName,
-          profile.representedPrincipal,
-          profile.headline
-        ]);
-      })
-      .sort((left, right) => right.createdAtIso.localeCompare(left.createdAtIso));
+    const visibleMessages = this.publicVisibleAgentBoardMessages(file, state, options);
 
     const candidateById = new Map<string, SocialAnchorCandidate>();
     for (const item of [...(queue.archivedItems ?? []), ...queue.items]) {
@@ -8835,6 +8955,194 @@ export class ClawzControlPlane {
       totalMessageCount: board.totalVisibleMessages,
       messages: board.messages,
       state: stateCursor
+    };
+  }
+
+  private publicActivitySummaryPayload(file: PublicActivitySummaryFile): PublicActivitySummary {
+    return {
+      schemaVersion: "santaclawz-public-activity-summary/1.0",
+      generatedAtIso: file.generatedAtIso,
+      publicDisclosure: "aggregate-counts-only",
+      totalActivityCount: file.totalActivityCount,
+      categoryCounts: file.categoryCounts
+    };
+  }
+
+  async getPublicActivitySummary(options: {
+    socialAnchorKinds?: SocialAnchorCandidateKind[];
+  } = {}): Promise<PublicActivitySummary> {
+    return this.withPublicActivitySummaryMutationLock(async () => {
+      const [existing, state, agentBoardFile, paymentLedgerFile, socialAnchorQueueFile] = await Promise.all([
+        this.loadPublicActivitySummaryFile(),
+        this.loadState(),
+        this.loadAgentBoardFile(),
+        this.loadPaymentLedgerFile(),
+        this.loadSocialAnchorQueueFile()
+      ]);
+      const nowIso = new Date().toISOString();
+      const socialAnchorKindFilter = options.socialAnchorKinds?.length
+        ? new Set(options.socialAnchorKinds)
+        : undefined;
+      const allCountableBoardMessages = this.publicCountableAgentBoardMessages(agentBoardFile, state, {
+        includeWorkshopCoordination: true
+      });
+      const publicBoardMessages = allCountableBoardMessages.filter((message) => !isWorkshopCoordinationBoardMessage(message));
+      const workshopReceiptMessages = allCountableBoardMessages.filter(isWorkshopCoordinationBoardMessage);
+      const paymentStats = this.buildPaymentLedgerAllTimeStats(paymentLedgerFile.allTimeStats, paymentLedgerFile.entries);
+      const proofAnchorItemsById = new Map<string, SocialAnchorCandidate>();
+      for (const item of [...(socialAnchorQueueFile.archivedItems ?? []), ...socialAnchorQueueFile.items]) {
+        proofAnchorItemsById.set(item.candidateId, item);
+      }
+      const proofAnchorItems = [...proofAnchorItemsById.values()].filter(
+        (item) =>
+          item.status === "confirmed" &&
+          (!socialAnchorKindFilter || socialAnchorKindFilter.has(item.kind))
+      );
+      const observed = {
+        publicBoardMessages: {
+          count: publicBoardMessages.length,
+          ids: publicBoardMessages.map((message) => message.messageId)
+        },
+        paymentActivity: {
+          count: paymentStats.completedPaymentCount,
+          ids: paymentStats.countedPaymentKeys
+        },
+        proofAnchors: {
+          count: proofAnchorItems.length,
+          ids: proofAnchorItems.map((item) => item.candidateId)
+        },
+        workshopReceipts: {
+          count: workshopReceiptMessages.length,
+          ids: workshopReceiptMessages.map((message) => message.messageId)
+        }
+      };
+
+      if (!existing) {
+        const categoryCounts = {
+          publicBoardMessages: observed.publicBoardMessages.count,
+          paymentActivity: observed.paymentActivity.count,
+          proofAnchors: observed.proofAnchors.count,
+          workshopReceipts: observed.workshopReceipts.count
+        };
+        const initialized: PublicActivitySummaryFile = {
+          schemaVersion: "santaclawz-public-activity-summary/1.0",
+          generatedAtIso: nowIso,
+          publicDisclosure: "aggregate-counts-only",
+          totalActivityCount:
+            categoryCounts.publicBoardMessages +
+            categoryCounts.paymentActivity +
+            categoryCounts.proofAnchors +
+            categoryCounts.workshopReceipts,
+          categoryCounts,
+          initializedAtIso: nowIso,
+          updatedAtIso: nowIso,
+          countedIds: {
+            publicBoardMessageIds: sanitizeCountedActivityIds(observed.publicBoardMessages.ids),
+            paymentActivityKeys: sanitizeCountedActivityIds(observed.paymentActivity.ids),
+            proofAnchorCandidateIds: sanitizeCountedActivityIds(observed.proofAnchors.ids),
+            workshopReceiptIds: sanitizeCountedActivityIds(observed.workshopReceipts.ids)
+          }
+        };
+        await this.savePublicActivitySummaryFile(initialized);
+        return this.publicActivitySummaryPayload(initialized);
+      }
+
+      const mergeCategory = (
+        currentCount: number,
+        currentIds: string[],
+        nextObserved: { count: number; ids: string[] }
+      ) => {
+        const counted = new Set(currentIds);
+        let added = 0;
+        for (const id of sanitizeCountedActivityIds(nextObserved.ids)) {
+          if (!counted.has(id)) {
+            counted.add(id);
+            added += 1;
+          }
+        }
+        return {
+          count: Math.max(currentCount + added, nextObserved.count),
+          ids: [...counted],
+          added
+        };
+      };
+
+      const publicBoardMessageCategory = mergeCategory(
+        existing.categoryCounts.publicBoardMessages,
+        existing.countedIds.publicBoardMessageIds,
+        observed.publicBoardMessages
+      );
+      const paymentActivityCategory = mergeCategory(
+        existing.categoryCounts.paymentActivity,
+        existing.countedIds.paymentActivityKeys,
+        observed.paymentActivity
+      );
+      const proofAnchorCategory = mergeCategory(
+        existing.categoryCounts.proofAnchors,
+        existing.countedIds.proofAnchorCandidateIds,
+        observed.proofAnchors
+      );
+      const workshopReceiptCategory = mergeCategory(
+        existing.categoryCounts.workshopReceipts,
+        existing.countedIds.workshopReceiptIds,
+        observed.workshopReceipts
+      );
+      const categoryCounts = {
+        publicBoardMessages: publicBoardMessageCategory.count,
+        paymentActivity: paymentActivityCategory.count,
+        proofAnchors: proofAnchorCategory.count,
+        workshopReceipts: workshopReceiptCategory.count
+      };
+      const totalActivityCount =
+        categoryCounts.publicBoardMessages +
+        categoryCounts.paymentActivity +
+        categoryCounts.proofAnchors +
+        categoryCounts.workshopReceipts;
+      const changed =
+        publicBoardMessageCategory.added > 0 ||
+        paymentActivityCategory.added > 0 ||
+        proofAnchorCategory.added > 0 ||
+        workshopReceiptCategory.added > 0 ||
+        totalActivityCount !== existing.totalActivityCount;
+      const nextFile: PublicActivitySummaryFile = {
+        ...existing,
+        generatedAtIso: changed ? nowIso : existing.generatedAtIso,
+        updatedAtIso: changed ? nowIso : existing.updatedAtIso,
+        totalActivityCount,
+        categoryCounts,
+        countedIds: {
+          publicBoardMessageIds: publicBoardMessageCategory.ids,
+          paymentActivityKeys: paymentActivityCategory.ids,
+          proofAnchorCandidateIds: proofAnchorCategory.ids,
+          workshopReceiptIds: workshopReceiptCategory.ids
+        }
+      };
+      if (changed) {
+        await this.savePublicActivitySummaryFile(nextFile);
+      }
+      return this.publicActivitySummaryPayload(nextFile);
+    });
+  }
+
+  async getWorkshopReceiptSummary(): Promise<{
+    schemaVersion: "santaclawz-workshop-receipt-summary/1.0";
+    generatedAtIso: string;
+    publicDisclosure: "proof-receipts-only";
+    totalReceiptCount: number;
+  }> {
+    const [state, file] = await Promise.all([
+      this.loadState(),
+      this.loadAgentBoardFile()
+    ]);
+    const workshopMessages = this.publicCountableAgentBoardMessages(file, state, {
+      includeWorkshopCoordination: true,
+      limit: 1
+    }).filter(isWorkshopCoordinationBoardMessage);
+    return {
+      schemaVersion: "santaclawz-workshop-receipt-summary/1.0",
+      generatedAtIso: new Date().toISOString(),
+      publicDisclosure: "proof-receipts-only",
+      totalReceiptCount: workshopMessages.length
     };
   }
 

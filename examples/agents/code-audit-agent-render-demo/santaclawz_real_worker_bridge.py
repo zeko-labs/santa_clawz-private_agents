@@ -630,6 +630,8 @@ AUDIT_RULES: list[tuple[str, str, str, str]] = [
 
 
 SEVERITY_SCORE = {"critical": 4, "high": 3, "medium": 2, "low": 1, "none": 0}
+RETURNED_FINDING_SEVERITIES = {"critical", "high", "medium"}
+RETURNED_SEVERITY_THRESHOLD = "medium"
 
 
 def finding_fingerprint(finding: dict[str, Any]) -> str:
@@ -887,15 +889,30 @@ def apply_memory_to_findings(findings: dict[str, Any], memory: dict[str, Any], n
 
 def select_findings_for_delivery(findings: dict[str, Any]) -> dict[str, Any]:
     active = [item for item in as_list(findings.get("findings")) if isinstance(item, dict)]
-    fresh = [item for item in active if not as_dict(item.get("memory")).get("delivered_before")]
-    repeats = [item for item in active if as_dict(item.get("memory")).get("delivered_before")]
+    reportable = [
+        item for item in active
+        if str(item.get("severity", "")).lower() in RETURNED_FINDING_SEVERITIES
+    ]
+    low_priority_filtered_count = max(0, len(active) - len(reportable))
+    fresh = [item for item in reportable if not as_dict(item.get("memory")).get("delivered_before")]
+    repeats = [item for item in reportable if as_dict(item.get("memory")).get("delivered_before")]
     selected = (fresh + repeats)[:FINDING_LIMIT]
-    deferred_count = max(0, len(active) - len(selected))
+    deferred_count = max(0, len(reportable) - len(selected))
+    has_more_findings = deferred_count > 0
+    completion_hint = (
+        "Keep running this audit with the same buyer identity and repo namespace "
+        "until all_findings_returned is true."
+        if has_more_findings
+        else "All medium-or-higher findings currently detected for this buyer/repo namespace have been returned."
+    )
     for index, finding in enumerate(selected, start=1):
         finding["delivery"] = {
             "status": "returned",
             "batch_position": index,
             "batch_limit": FINDING_LIMIT,
+            "total_reportable_findings": len(reportable),
+            "returned_severity_threshold": RETURNED_SEVERITY_THRESHOLD,
+            "is_final_batch": not has_more_findings,
             "prior_delivery_count": as_dict(finding.get("memory")).get("delivered_count", 0),
         }
     highest = "none"
@@ -906,15 +923,22 @@ def select_findings_for_delivery(findings: dict[str, Any]) -> dict[str, Any]:
         "schema_version": "code-audit-findings/1.2",
         "finding_count": len(selected),
         "returned_finding_count": len(selected),
-        "total_active_finding_count": len(active),
+        "total_active_finding_count": len(reportable),
+        "total_detected_finding_count": len(active),
+        "low_priority_filtered_count": low_priority_filtered_count,
         "deferred_count": deferred_count,
-        "has_more_findings": deferred_count > 0,
+        "has_more_findings": has_more_findings,
+        "all_findings_returned": not has_more_findings,
         "finding_limit": FINDING_LIMIT,
+        "returned_severity_threshold": RETURNED_SEVERITY_THRESHOLD,
+        "returned_severities": sorted(RETURNED_FINDING_SEVERITIES, key=lambda item: SEVERITY_SCORE[item], reverse=True),
         "next_batch_hint": (
-            "Run the audit again with the same buyer/repo namespace to continue with the next prioritized findings."
-            if deferred_count > 0
+            f"This run returned the first {len(selected)} of {len(reportable)} medium-or-higher findings. "
+            "Keep running the audit with the same buyer identity and repo namespace until all_findings_returned is true."
+            if has_more_findings
             else ""
         ),
+        "completion_hint": completion_hint,
         "highest_severity": highest,
         "findings": selected,
     }
@@ -989,7 +1013,11 @@ def update_memory_after_run(memory: dict[str, Any], normalized: dict[str, Any], 
         "highest_severity": findings["highest_severity"],
         "finding_limit": findings.get("finding_limit"),
         "total_active_finding_count": findings.get("total_active_finding_count"),
+        "total_detected_finding_count": findings.get("total_detected_finding_count"),
+        "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
         "deferred_count": findings.get("deferred_count", 0),
+        "has_more_findings": findings.get("has_more_findings"),
+        "all_findings_returned": findings.get("all_findings_returned"),
         "finding_fingerprints": [finding.get("fingerprint") for finding in as_list(findings.get("findings"))[:12]],
     }
     completed_runs = as_list(record.setdefault("completed_runs", []))
@@ -1069,9 +1097,15 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
     lines = [
         (
             f"Memory-backed code audit completed. Returned {findings['finding_count']} "
-            f"of {findings.get('total_active_finding_count', findings['finding_count'])} prioritized findings; "
+            f"of {findings.get('total_active_finding_count', findings['finding_count'])} "
+            f"{findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}-or-higher findings; "
             f"highest severity: {findings['highest_severity']}; "
+            f"low-priority filtered: {findings.get('low_priority_filtered_count', 0)}; "
             f"prior namespace runs: {memory_context.get('namespace_run_count', 0)}."
+        ),
+        (
+            f"This run returns only the first {findings.get('finding_limit', FINDING_LIMIT)} "
+            "medium-or-higher findings for this buyer/repo namespace."
         ),
         (
             f"Target materialization: {target_status}; files scanned: "
@@ -1082,6 +1116,8 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
         lines.append("The requested source target could not be fetched, so the audit is scoped to the submitted prompt/context only.")
     if findings.get("has_more_findings"):
         lines.append(str(findings.get("next_batch_hint") or "Run again with the same namespace to continue the finding batch."))
+    else:
+        lines.append(str(findings.get("completion_hint") or "All returned-scope findings have been returned."))
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     if returned:
         lines.extend(["", "Top returned findings:"])
@@ -1092,7 +1128,12 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
                 location_text = f" ({location.get('path')}:{location.get('line')})"
             lines.append(f"- {str(finding.get('severity', 'unknown')).upper()}: {finding.get('title', 'Finding')}{location_text}")
     else:
-        lines.extend(["", "No deterministic rule findings were detected in the inspected material."])
+        lines.extend(
+            [
+                "",
+                "No medium-or-higher deterministic findings were returned in this batch.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -1127,10 +1168,14 @@ def render_report(
         "",
         "## Summary",
         "",
-        f"- Findings returned this run: {findings['finding_count']} of {findings.get('total_active_finding_count', findings['finding_count'])}",
+        f"- Findings returned this run: {findings['finding_count']} of {findings.get('total_active_finding_count', findings['finding_count'])} medium-or-higher findings",
+        f"- Total deterministic findings detected: {findings.get('total_detected_finding_count', findings.get('total_active_finding_count', findings['finding_count']))}",
+        f"- Low-priority findings filtered from buyer delivery: {findings.get('low_priority_filtered_count', 0)}",
         f"- Highest severity: {findings['highest_severity']}",
+        f"- Returned severity threshold: {findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}",
         f"- Batch limit: {findings.get('finding_limit', FINDING_LIMIT)} findings per run",
         f"- Deferred findings for a follow-up run: {findings.get('deferred_count', 0)}",
+        f"- All medium-or-higher findings returned: {findings.get('all_findings_returned', False)}",
         f"- Input digest: `{normalized['text_digest_sha256']}`",
         f"- Buyer/repo namespace: `{as_dict(normalized.get('namespace')).get('namespace_key', 'default')}`",
         f"- Prior namespace runs: {memory_context.get('namespace_run_count', 0)}",
@@ -1158,9 +1203,13 @@ def render_report(
         "## Batch Behavior",
         "",
         (
-            f"This run returns up to {findings.get('finding_limit', FINDING_LIMIT)} prioritized findings so the audit stays bounded. "
-            "Run the same agent again with the same buyer/repo namespace to continue with the next batch."
+            f"This run returns up to the first {findings.get('finding_limit', FINDING_LIMIT)} medium-or-higher findings "
+            "so the audit stays bounded. Low-priority findings are filtered from buyer delivery. "
+            "Run the same agent again with the same buyer identity and repo namespace until "
+            "`all_findings_returned` is `true`."
         ),
+        "",
+        findings.get("completion_hint", ""),
         "",
         "## Memory Context",
         "",
@@ -1208,7 +1257,7 @@ def render_report(
         ]
     )
     if not findings["findings"]:
-        lines.append("No deterministic rule findings were detected in the inspected material.")
+        lines.append("No medium-or-higher deterministic findings were returned in this batch.")
     for finding in findings["findings"]:
         memory_status = as_dict(finding.get("memory")).get("status", "new")
         prior_count = as_dict(finding.get("memory")).get("prior_count", 0)
@@ -1315,9 +1364,14 @@ def build_openai_audit_context(
             "finding_limit": findings.get("finding_limit"),
             "returned_finding_count": findings.get("returned_finding_count"),
             "total_active_finding_count": findings.get("total_active_finding_count"),
+            "total_detected_finding_count": findings.get("total_detected_finding_count"),
+            "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
             "deferred_count": findings.get("deferred_count"),
+            "returned_severity_threshold": findings.get("returned_severity_threshold"),
             "has_more_findings": findings.get("has_more_findings"),
+            "all_findings_returned": findings.get("all_findings_returned"),
             "next_batch_hint": findings.get("next_batch_hint"),
+            "completion_hint": findings.get("completion_hint"),
         },
         "target_materialization": compact_target_materialization(materialized),
         "current_returned_findings": [
@@ -1505,8 +1559,14 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
                     "finding_limit": findings.get("finding_limit"),
                     "returned_finding_count": findings.get("returned_finding_count"),
                     "total_active_finding_count": findings.get("total_active_finding_count"),
+                    "total_detected_finding_count": findings.get("total_detected_finding_count"),
+                    "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
                     "deferred_count": findings.get("deferred_count"),
+                    "returned_severity_threshold": findings.get("returned_severity_threshold"),
+                    "returned_severities": findings.get("returned_severities"),
                     "has_more_findings": findings.get("has_more_findings"),
+                    "all_findings_returned": findings.get("all_findings_returned"),
+                    "completion_hint": findings.get("completion_hint"),
                     "target_materialization": target_summary,
                     "memory_root": str(DEFAULT_MEMORY_ROOT),
                     "state_root": str(DEFAULT_STATE_ROOT),
@@ -1575,8 +1635,15 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
             "finding_count": findings["finding_count"],
             "returned_finding_count": findings.get("returned_finding_count"),
             "total_active_finding_count": findings.get("total_active_finding_count"),
+            "total_detected_finding_count": findings.get("total_detected_finding_count"),
+            "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
             "deferred_count": findings.get("deferred_count"),
             "finding_limit": findings.get("finding_limit"),
+            "returned_severity_threshold": findings.get("returned_severity_threshold"),
+            "returned_severities": findings.get("returned_severities"),
+            "has_more_findings": findings.get("has_more_findings"),
+            "all_findings_returned": findings.get("all_findings_returned"),
+            "completion_hint": findings.get("completion_hint"),
             "highest_severity": findings["highest_severity"],
             "target_files_scanned": target_summary.get("files_scanned", 0),
             "target_status": target_summary.get("status"),
@@ -1636,10 +1703,16 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
             "finding_batch": {
                 "returned_finding_count": findings.get("returned_finding_count"),
                 "total_active_finding_count": findings.get("total_active_finding_count"),
+                "total_detected_finding_count": findings.get("total_detected_finding_count"),
+                "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
                 "deferred_count": findings.get("deferred_count"),
                 "finding_limit": findings.get("finding_limit"),
+                "returned_severity_threshold": findings.get("returned_severity_threshold"),
+                "returned_severities": findings.get("returned_severities"),
                 "has_more_findings": findings.get("has_more_findings"),
+                "all_findings_returned": findings.get("all_findings_returned"),
                 "next_batch_hint": findings.get("next_batch_hint"),
+                "completion_hint": findings.get("completion_hint"),
             },
             "deliverables": deliverables,
             "buyer_visible_outputs": [
@@ -1666,7 +1739,13 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
         "finding_count": findings["finding_count"],
         "returned_finding_count": findings.get("returned_finding_count"),
         "total_active_finding_count": findings.get("total_active_finding_count"),
+        "total_detected_finding_count": findings.get("total_detected_finding_count"),
+        "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
         "deferred_count": findings.get("deferred_count"),
+        "finding_limit": findings.get("finding_limit"),
+        "returned_severity_threshold": findings.get("returned_severity_threshold"),
+        "has_more_findings": findings.get("has_more_findings"),
+        "all_findings_returned": findings.get("all_findings_returned"),
         "memory": learning_update,
         "target_materialization": target_summary,
         "model_enrichment_status": ai_insights.get("status"),
