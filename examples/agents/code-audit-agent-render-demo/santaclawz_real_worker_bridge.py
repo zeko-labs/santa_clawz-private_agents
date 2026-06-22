@@ -49,10 +49,12 @@ DEFAULT_OUTPUT_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_OUTPUT_DIR",
 DEFAULT_MEMORY_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_MEMORY_DIR", str(ROOT / "memory"))).expanduser()
 DEFAULT_STATE_ROOT = pathlib.Path(os.environ.get("CLAWZ_CODE_AUDIT_STATE_DIR", str(ROOT / "state"))).expanduser()
 DEFAULT_TIMEOUT_SECONDS = 45
+CODE_AUDIT_RULESET_VERSION = "code-audit-ruleset/1.3"
+CODE_AUDIT_SCAN_PROFILE = "hosted-standard-prioritized-bounded"
 MAX_TEXT_CHARS = 120_000
-MAX_MATERIALIZED_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS", 700000, minimum=50000, maximum=2_000_000)
+MAX_MATERIALIZED_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS", 900000, minimum=50000, maximum=2_000_000)
 MAX_REPO_ARCHIVE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_ARCHIVE_BYTES", 30_000_000, minimum=1_000_000, maximum=100_000_000)
-MAX_REPO_FILES_SCANNED = env_int("CLAWZ_CODE_AUDIT_REPO_FILES", 250, minimum=10, maximum=1000)
+MAX_REPO_FILES_SCANNED = env_int("CLAWZ_CODE_AUDIT_REPO_FILES", 400, minimum=10, maximum=1000)
 MAX_REPO_FILE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_FILE_BYTES", 120000, minimum=2000, maximum=500000)
 MAX_MODEL_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MODEL_TEXT_CHARS", 24000, minimum=2000, maximum=60000)
 MAX_MEMORY_RUNS_PER_NAMESPACE = 40
@@ -88,22 +90,76 @@ SOURCE_EXTENSIONS = {
     ".h",
     ".hpp",
     ".html",
+    ".ini",
     ".java",
     ".js",
     ".jsx",
     ".json",
     ".mjs",
+    ".php",
     ".py",
+    ".rb",
     ".rs",
     ".sh",
     ".sol",
     ".sql",
     ".svelte",
+    ".toml",
     ".ts",
     ".tsx",
     ".vue",
+    ".xml",
     ".yaml",
     ".yml",
+}
+HIGH_SIGNAL_FILE_NAMES = {
+    ".env",
+    ".env.example",
+    ".env.local",
+    "Dockerfile",
+    "Makefile",
+    "Procfile",
+    "package.json",
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "yarn.lock",
+    "pyproject.toml",
+    "requirements.txt",
+    "poetry.lock",
+    "cargo.toml",
+    "go.mod",
+    "go.sum",
+}
+HIGH_SIGNAL_PATH_TOKENS = {
+    "admin",
+    "api",
+    "auth",
+    "bridge",
+    "checkout",
+    "crypto",
+    "decrypt",
+    "encrypt",
+    "facilitator",
+    "hire",
+    "kms",
+    "middleware",
+    "payment",
+    "permission",
+    "policy",
+    "private",
+    "relay",
+    "route",
+    "secret",
+    "security",
+    "server",
+    "session",
+    "settlement",
+    "token",
+    "upload",
+    "wallet",
+    "webhook",
+    "worker",
+    "x402",
 }
 SKIP_PATH_PARTS = {
     ".git",
@@ -326,6 +382,22 @@ def should_scan_repo_path(path: str) -> bool:
     return pathlib.PurePosixPath(path).name in {"Dockerfile", "Makefile", "Procfile"}
 
 
+def scan_priority(path: str) -> int:
+    pure = pathlib.PurePosixPath(path)
+    lower_path = path.lower()
+    name = pure.name
+    lowered_name = name.lower()
+    if name in HIGH_SIGNAL_FILE_NAMES or lowered_name in HIGH_SIGNAL_FILE_NAMES:
+        return 0
+    if any(token in lower_path for token in HIGH_SIGNAL_PATH_TOKENS):
+        return 1
+    if pure.suffix.lower() in {".sol", ".ts", ".tsx", ".js", ".mjs", ".py", ".go", ".rs"}:
+        return 2
+    if any(part in {"test", "tests", "__tests__", "spec", "fixtures", "docs"} for part in lower_path.split("/")):
+        return 4
+    return 3
+
+
 def line_for_offset(text: str, offset: int) -> int:
     return text.count("\n", 0, max(0, offset)) + 1
 
@@ -369,23 +441,39 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
 
     files: list[dict[str, Any]] = []
     considered = 0
+    seen_files = 0
+    skipped_counts = {
+        "unsupported_path_or_extension": 0,
+        "scan_file_limit": 0,
+        "file_size_limit": 0,
+        "binary_or_empty": 0,
+    }
     truncated = False
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        scan_candidates: list[tuple[int, str, zipfile.ZipInfo]] = []
         for info in archive.infolist():
             if info.is_dir():
                 continue
+            seen_files += 1
             path = strip_archive_root(info.filename)
             if not path or not should_scan_repo_path(path):
+                skipped_counts["unsupported_path_or_extension"] += 1
                 continue
             considered += 1
+            scan_candidates.append((scan_priority(path), path, info))
+        scan_candidates.sort(key=lambda item: (item[0], item[1]))
+        for _, path, info in scan_candidates:
             if len(files) >= MAX_REPO_FILES_SCANNED:
                 truncated = True
+                skipped_counts["scan_file_limit"] += 1
                 continue
             if info.file_size > MAX_REPO_FILE_BYTES:
+                skipped_counts["file_size_limit"] += 1
                 continue
             data = archive.read(info)
             text = decode_source_bytes(data)
             if not text.strip():
+                skipped_counts["binary_or_empty"] += 1
                 continue
             files.append(
                 {
@@ -404,8 +492,12 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
         "repo": target["repo"],
         "status": "materialized",
         "archive_bytes": len(archive_bytes),
+        "scan_profile": CODE_AUDIT_SCAN_PROFILE,
+        "ruleset_version": CODE_AUDIT_RULESET_VERSION,
+        "files_seen": seen_files,
         "files_considered": considered,
         "files_scanned": len(files),
+        "files_skipped": skipped_counts,
         "scan_truncated": truncated,
         "max_files_scanned": MAX_REPO_FILES_SCANNED,
         "files": files,
@@ -445,7 +537,28 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
         ],
         "files": files,
         "files_scanned": len(files),
+        "scan_profile": CODE_AUDIT_SCAN_PROFILE,
+        "ruleset_version": CODE_AUDIT_RULESET_VERSION,
         "files_considered": sum(int(target.get("files_considered", 0) or 0) for target in targets),
+        "files_seen": sum(int(target.get("files_seen", 0) or 0) for target in targets),
+        "files_skipped": {
+            "unsupported_path_or_extension": sum(
+                int(as_dict(target.get("files_skipped")).get("unsupported_path_or_extension", 0) or 0)
+                for target in targets
+            ),
+            "scan_file_limit": sum(
+                int(as_dict(target.get("files_skipped")).get("scan_file_limit", 0) or 0)
+                for target in targets
+            ),
+            "file_size_limit": sum(
+                int(as_dict(target.get("files_skipped")).get("file_size_limit", 0) or 0)
+                for target in targets
+            ),
+            "binary_or_empty": sum(
+                int(as_dict(target.get("files_skipped")).get("binary_or_empty", 0) or 0)
+                for target in targets
+            ),
+        },
         "scan_truncated": any(bool(target.get("scan_truncated")) for target in targets),
     }
 
@@ -617,13 +730,24 @@ def normalize_request(payload: dict[str, Any], raw_body: str) -> dict[str, Any]:
 
 AUDIT_RULES: list[tuple[str, str, str, str]] = [
     ("critical", r"\beval\s*\(|exec\s*\(|Function\s*\(", "Dynamic code execution detected.", "Avoid runtime code execution on untrusted input."),
+    ("critical", r"\b(private[_-]?key|mnemonic|seed[_-]?phrase)\b\s*[:=]\s*[\"'][^\"'\n]{16,}[\"']", "Private key or seed material may be hardcoded.", "Remove private key material from source and rotate exposed credentials."),
     ("high", r"subprocess\.(Popen|run|call)|child_process\.(exec|spawn)", "Shell/process execution path detected.", "Guard command construction, sanitize arguments, and avoid shell=True."),
     ("high", r"verify\s*=\s*False|rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED", "TLS verification bypass detected.", "Do not disable TLS verification in production paths."),
     ("high", r"pickle\.loads?|yaml\.load\s*\(", "Unsafe deserialization pattern detected.", "Use safe parsers and trusted schemas."),
     ("high", r"\.innerHTML\s*=|dangerouslySetInnerHTML", "Potential unsafe HTML sink detected.", "Avoid raw HTML sinks or prove strict sanitization before rendering untrusted content."),
     ("high", r"payment[_-]?status[\"']?\s*[:=]\s*[\"']?(quote_requested|authorized)|settlement[_-]?status[\"']?\s*[:=]\s*[\"']?authorized", "Payment lifecycle state requires settlement validation.", "Ensure paid execution is gated on the intended authorization, settlement, or escrow invariant."),
+    ("high", r"\btx\.origin\b", "Solidity authorization may depend on tx.origin.", "Use msg.sender and explicit role checks instead of tx.origin authorization."),
+    ("high", r"\bdelegatecall\s*\(", "Delegatecall usage detected.", "Constrain delegatecall targets and storage assumptions or avoid delegatecall in privileged paths."),
+    ("high", r"\bselfdestruct\s*\(", "Selfdestruct usage detected.", "Avoid selfdestruct unless the contract lifecycle and upgrade path are formally constrained."),
+    ("high", r"(Access-Control-Allow-Origin\s*[:=]\s*[\"']\*|allow_origins\s*=\s*\[[^\]]*[\"']\*[\"']|cors\s*\(\s*\{[^}\n]{0,400}origin\s*:\s*[\"']\*)", "Permissive CORS policy detected.", "Restrict browser origins and credentials to explicit trusted domains."),
+    ("high", r"(sendFile|send_file|readFileSync|readFile|writeFileSync|writeFile|open\s*\()[^;\n]{0,180}(req\.|request\.|params|query|body|path)", "Filesystem access appears derived from request input.", "Normalize and allow-list file paths before reading or writing files from buyer/user input."),
+    ("high", r"(fetch|axios\.(get|post|request)|requests\.(get|post|request)|urllib\.request\.urlopen)[^;\n]{0,180}(req\.|request\.|params|query|body|url)", "Outbound request appears derived from user input.", "Validate and allow-list outbound hosts to avoid SSRF and metadata-service access."),
     ("medium", r"SELECT\s+.*\+|query\s*\(.*\+", "Possible SQL/string query construction.", "Use parameterized queries and typed query builders."),
     ("medium", r"\b(password|api[_-]?key|secret|token|private[_-]?key)\b\s*[:=]\s*[\"'][^\"'\n]{12,}[\"']", "Possible hardcoded secret detected.", "Keep secrets out of source, logs, prompts, and public artifacts."),
+    ("medium", r"(console\.log|print|logger\.\w+)\s*\([^;\n]*(password|secret|token|private[_-]?key|api[_-]?key)", "Sensitive value may be logged.", "Remove secret-bearing logs or redact sensitive fields before logging."),
+    ("medium", r"(createHash\s*\(\s*[\"'](md5|sha1)[\"']|\b(md5|sha1)\s*\()", "Weak hash primitive detected.", "Use SHA-256 or a purpose-built password/key derivation primitive as appropriate."),
+    ("medium", r"(Math\.random|random\.random)\s*\([^;\n]*(token|secret|password|key|nonce|session)|(token|secret|password|key|nonce|session)[^;\n]{0,80}(Math\.random|random\.random)", "Non-cryptographic randomness may protect a sensitive value.", "Use a cryptographically secure random source for tokens, keys, nonces, and sessions."),
+    ("medium", r"(csrf\s*:\s*false|disableCSRF|csrfProtection\s*=\s*False)", "CSRF protection appears disabled.", "Require CSRF or equivalent origin/session protections for browser-authenticated mutation routes."),
     ("medium", r"\b(TODO|FIXME|HACK)\b", "Unresolved implementation marker detected.", "Track and resolve before production release."),
     ("low", r"console\.log|print\s*\(", "Debug logging detected.", "Confirm logs cannot expose private inputs or credentials."),
 ]
@@ -643,6 +767,11 @@ def finding_fingerprint(finding: dict[str, Any]) -> str:
         "snippet_digest": short_digest(snippets, 20),
     }
     return canonical_digest(basis)[:24]
+
+
+def stable_finding_id(fingerprint: str) -> str:
+    suffix = re.sub(r"[^a-f0-9]", "", fingerprint.lower())[:12]
+    return f"SC-AUDIT-{suffix.upper()}" if suffix else "SC-AUDIT-UNKNOWN"
 
 
 def is_likely_rule_self_match(snippet: str, title: str, recommendation: str) -> bool:
@@ -711,6 +840,7 @@ def audit_units(units: list[dict[str, str]]) -> dict[str, Any]:
             "recommendation": recommendation,
         }
         finding["fingerprint"] = finding_fingerprint(finding)
+        finding["stable_id"] = stable_finding_id(str(finding["fingerprint"]))
         findings.append(finding)
     plain_http_count = 0
     plain_http_locations: list[dict[str, Any]] = []
@@ -746,6 +876,7 @@ def audit_units(units: list[dict[str, str]]) -> dict[str, Any]:
             "recommendation": "Prefer HTTPS endpoints unless an internal/private network policy explicitly allows HTTP.",
         }
         finding["fingerprint"] = finding_fingerprint(finding)
+        finding["stable_id"] = stable_finding_id(str(finding["fingerprint"]))
         findings.append(finding)
     highest = "none"
     if findings:
@@ -853,11 +984,14 @@ def apply_memory_to_findings(findings: dict[str, Any], memory: dict[str, Any], n
         occurrence_count = int(prior.get("count", 0) or 0)
         delivered_count = int(prior.get("delivered_count", occurrence_count) or 0)
         finding["fingerprint"] = fingerprint
+        finding["stable_id"] = finding.get("stable_id") or stable_finding_id(fingerprint)
         finding["memory"] = {
             "status": "repeat" if occurrence_count > 0 else "new",
             "prior_count": occurrence_count,
             "delivered_before": delivered_count > 0,
             "delivered_count": delivered_count,
+            "first_seen_at": prior.get("first_seen_at"),
+            "last_delivered_at": prior.get("last_delivered_at"),
             "accepted_pattern": title in accepted_titles,
             "rejected_pattern": title in rejected_titles,
         }
@@ -897,15 +1031,22 @@ def select_findings_for_delivery(findings: dict[str, Any]) -> dict[str, Any]:
     fresh = [item for item in reportable if not as_dict(item.get("memory")).get("delivered_before")]
     repeats = [item for item in reportable if as_dict(item.get("memory")).get("delivered_before")]
     selected = (fresh + repeats)[:FINDING_LIMIT]
+    selected_fresh_count = sum(1 for item in selected if not as_dict(item.get("memory")).get("delivered_before"))
+    selected_repeat_count = len(selected) - selected_fresh_count
     deferred_count = max(0, len(reportable) - len(selected))
     has_more_findings = deferred_count > 0
     completion_hint = (
         "Keep running this audit with the same buyer identity and repo namespace "
         "until all_findings_returned is true."
         if has_more_findings
+        else "No new medium-or-higher findings were found for this buyer/repo namespace; repeated findings are returned for continuity."
+        if selected and selected_fresh_count == 0 and selected_repeat_count > 0
         else "All medium-or-higher findings currently detected for this buyer/repo namespace have been returned."
     )
     for index, finding in enumerate(selected, start=1):
+        memory = as_dict(finding.get("memory"))
+        finding["is_new_for_namespace"] = not memory.get("delivered_before")
+        finding["stable_id"] = finding.get("stable_id") or stable_finding_id(str(finding.get("fingerprint", "")))
         finding["delivery"] = {
             "status": "returned",
             "batch_position": index,
@@ -913,7 +1054,8 @@ def select_findings_for_delivery(findings: dict[str, Any]) -> dict[str, Any]:
             "total_reportable_findings": len(reportable),
             "returned_severity_threshold": RETURNED_SEVERITY_THRESHOLD,
             "is_final_batch": not has_more_findings,
-            "prior_delivery_count": as_dict(finding.get("memory")).get("delivered_count", 0),
+            "is_new_for_namespace": finding["is_new_for_namespace"],
+            "prior_delivery_count": memory.get("delivered_count", 0),
         }
     highest = "none"
     if selected:
@@ -932,6 +1074,20 @@ def select_findings_for_delivery(findings: dict[str, Any]) -> dict[str, Any]:
         "finding_limit": FINDING_LIMIT,
         "returned_severity_threshold": RETURNED_SEVERITY_THRESHOLD,
         "returned_severities": sorted(RETURNED_FINDING_SEVERITIES, key=lambda item: SEVERITY_SCORE[item], reverse=True),
+        "memory_batch": {
+            "dedupe_enabled": True,
+            "new_findings_returned": selected_fresh_count,
+            "repeated_findings_returned": selected_repeat_count,
+            "reportable_new_findings": len(fresh),
+            "reportable_repeated_findings": len(repeats),
+            "reason_repeated": (
+                "no_new_medium_or_higher_findings_available_repeated_for_continuity"
+                if selected and selected_fresh_count == 0 and selected_repeat_count > 0
+                else ""
+            ),
+            "has_more_findings": has_more_findings,
+            "next_cursor": f"batch_after_{len(selected)}" if has_more_findings else None,
+        },
         "next_batch_hint": (
             f"This run returned the first {len(selected)} of {len(reportable)} medium-or-higher findings. "
             "Keep running the audit with the same buyer identity and repo namespace until all_findings_returned is true."
@@ -982,6 +1138,7 @@ def update_memory_after_run(memory: dict[str, Any], normalized: dict[str, Any], 
         prior_delivered_count = int(prior.get("delivered_count", prior.get("count", 0)) or 0)
         known[fingerprint] = {
             "fingerprint": fingerprint,
+            "stable_id": finding.get("stable_id") or stable_finding_id(fingerprint),
             "title": finding.get("title"),
             "category": category,
             "severity": finding.get("severity"),
@@ -1019,6 +1176,8 @@ def update_memory_after_run(memory: dict[str, Any], normalized: dict[str, Any], 
         "has_more_findings": findings.get("has_more_findings"),
         "all_findings_returned": findings.get("all_findings_returned"),
         "finding_fingerprints": [finding.get("fingerprint") for finding in as_list(findings.get("findings"))[:12]],
+        "stable_finding_ids": [finding.get("stable_id") for finding in as_list(findings.get("findings"))[:12]],
+        "memory_batch": findings.get("memory_batch"),
     }
     completed_runs = as_list(record.setdefault("completed_runs", []))
     completed_runs.append(run_summary)
@@ -1065,6 +1224,7 @@ def compact_memory_context(memory: dict[str, Any], namespace: dict[str, Any]) ->
         "recent_delivered_findings": [
             {
                 "fingerprint": item.get("fingerprint"),
+                "stable_id": item.get("stable_id"),
                 "title": item.get("title"),
                 "severity": item.get("severity"),
                 "category": item.get("category"),
@@ -1082,18 +1242,31 @@ def compact_target_materialization(materialized: dict[str, Any]) -> dict[str, An
     return {
         "schema_version": materialized.get("schema_version", "code-audit-target-materialization/1.0"),
         "status": materialized.get("status"),
+        "scan_profile": materialized.get("scan_profile", CODE_AUDIT_SCAN_PROFILE),
+        "ruleset_version": materialized.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         "github_target_count": materialized.get("github_target_count", 0),
+        "files_seen": materialized.get("files_seen", 0),
         "files_scanned": materialized.get("files_scanned", 0),
         "files_considered": materialized.get("files_considered", 0),
+        "files_skipped": as_dict(materialized.get("files_skipped")),
         "scan_truncated": materialized.get("scan_truncated", False),
         "targets": as_list(materialized.get("targets")),
         "urls": as_list(materialized.get("urls"))[:10],
     }
 
 
-def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], memory_context: dict[str, Any], materialized: dict[str, Any]) -> str:
+def render_buyer_summary(
+    normalized: dict[str, Any],
+    findings: dict[str, Any],
+    memory_context: dict[str, Any],
+    materialized: dict[str, Any],
+    ai_insights: dict[str, Any],
+) -> str:
     target_summary = compact_target_materialization(materialized)
     target_status = str(target_summary.get("status") or "not_requested")
+    memory_batch = as_dict(findings.get("memory_batch"))
+    skipped = as_dict(target_summary.get("files_skipped"))
+    skipped_total = sum(int(value or 0) for value in skipped.values())
     lines = [
         (
             f"Memory-backed code audit completed. Returned {findings['finding_count']} "
@@ -1108,10 +1281,27 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
             "medium-or-higher findings for this buyer/repo namespace."
         ),
         (
+            "Scan mode: hosted standard prioritized bounded scan with deterministic rules"
+            f"{' and private model enrichment' if OPENAI_ENABLED else ''}."
+        ),
+        f"Ruleset: {target_summary.get('ruleset_version', CODE_AUDIT_RULESET_VERSION)}.",
+        (
+            f"Memory batch: {memory_batch.get('new_findings_returned', 0)} new, "
+            f"{memory_batch.get('repeated_findings_returned', 0)} repeated; "
+            f"has more: {bool(memory_batch.get('has_more_findings'))}."
+        ),
+        (
             f"Target materialization: {target_status}; files scanned: "
-            f"{target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered."
+            f"{target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered; "
+            f"skipped after filtering: {skipped_total}."
         ),
     ]
+    if skipped_total:
+        lines.append(
+            "Skipped files by reason: "
+            + ", ".join(f"{key}={value}" for key, value in skipped.items() if int(value or 0) > 0)
+            + "."
+        )
     if target_status == "failed":
         lines.append("The requested source target could not be fetched, so the audit is scoped to the submitted prompt/context only.")
     if findings.get("has_more_findings"):
@@ -1126,7 +1316,12 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
             location_text = ""
             if location:
                 location_text = f" ({location.get('path')}:{location.get('line')})"
-            lines.append(f"- {str(finding.get('severity', 'unknown')).upper()}: {finding.get('title', 'Finding')}{location_text}")
+            novelty = "new" if finding.get("is_new_for_namespace") else "repeated"
+            stable_id = finding.get("stable_id") or finding.get("id") or "finding"
+            lines.append(
+                f"- {stable_id} [{novelty}] {str(finding.get('severity', 'unknown')).upper()}: "
+                f"{finding.get('title', 'Finding')}{location_text}"
+            )
     else:
         lines.extend(
             [
@@ -1134,11 +1329,22 @@ def render_buyer_summary(normalized: dict[str, Any], findings: dict[str, Any], m
                 "No medium-or-higher deterministic findings were returned in this batch.",
             ]
         )
+    if ai_insights.get("status") == "completed":
+        model_items = [item for item in as_list(ai_insights.get("audit_insights")) if isinstance(item, dict)]
+        if model_items:
+            lines.extend(["", "Supplemental model review:"])
+            for item in model_items[:3]:
+                title = first_string(item.get("title"), default="Model insight")
+                severity = first_string(item.get("severity"), default="informational").upper()
+                recommendation = first_string(item.get("recommendation"), default="")
+                lines.append(f"- {severity}: {title}{f' - {recommendation}' if recommendation else ''}")
+    elif ai_insights.get("status") in {"skipped", "error"}:
+        lines.append(f"Supplemental model review: {ai_insights.get('status')} ({ai_insights.get('reason', 'not available')}).")
     lines.extend(
         [
             "",
             f"Input digest: {normalized['text_digest_sha256']}.",
-            "Full report, findings JSON, target scope, memory context, and verification manifest are included in the verified output package.",
+            "Buyer delivery includes inline Markdown and inline structured JSON. The full verified package is hashed internally; no downloadable artifact receipt is exposed unless SantaClawz artifact delivery is separately enabled.",
         ]
     )
     return "\n".join(lines)
@@ -1173,6 +1379,8 @@ def render_report(
         f"- Low-priority findings filtered from buyer delivery: {findings.get('low_priority_filtered_count', 0)}",
         f"- Highest severity: {findings['highest_severity']}",
         f"- Returned severity threshold: {findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}",
+        f"- Ruleset: {target_summary.get('ruleset_version', CODE_AUDIT_RULESET_VERSION)}",
+        f"- Scan profile: {target_summary.get('scan_profile', CODE_AUDIT_SCAN_PROFILE)}",
         f"- Batch limit: {findings.get('finding_limit', FINDING_LIMIT)} findings per run",
         f"- Deferred findings for a follow-up run: {findings.get('deferred_count', 0)}",
         f"- All medium-or-higher findings returned: {findings.get('all_findings_returned', False)}",
@@ -1181,6 +1389,8 @@ def render_report(
         f"- Prior namespace runs: {memory_context.get('namespace_run_count', 0)}",
         f"- Target materialization: {target_summary.get('status')}",
         f"- Files scanned: {target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered",
+        f"- Files seen in archive: {target_summary.get('files_seen', 0)}",
+        f"- Files skipped by reason: {json.dumps(target_summary.get('files_skipped', {}), sort_keys=True)}",
         "",
         "## Target",
         "",
@@ -1188,6 +1398,8 @@ def render_report(
         f"- GitHub targets: {target_summary.get('github_target_count', 0)}",
         f"- Files scanned: {target_summary.get('files_scanned', 0)}",
         f"- Files considered: {target_summary.get('files_considered', 0)}",
+        f"- Files seen: {target_summary.get('files_seen', 0)}",
+        f"- Files skipped: {json.dumps(target_summary.get('files_skipped', {}), sort_keys=True)}",
         f"- Scan truncated: {target_summary.get('scan_truncated', False)}",
         "",
     ]
@@ -1215,6 +1427,9 @@ def render_report(
         "",
         f"- Known finding fingerprints for this namespace: {memory_context.get('known_finding_count', 0)}",
         f"- Recent completed runs tracked: {len(as_list(memory_context.get('recent_runs')))}",
+        f"- This batch new findings: {as_dict(findings.get('memory_batch')).get('new_findings_returned', 0)}",
+        f"- This batch repeated findings: {as_dict(findings.get('memory_batch')).get('repeated_findings_returned', 0)}",
+        f"- Repeat reason: {as_dict(findings.get('memory_batch')).get('reason_repeated') or 'none'}",
         "",
         ]
     )
@@ -1263,10 +1478,12 @@ def render_report(
         prior_count = as_dict(finding.get("memory")).get("prior_count", 0)
         lines.extend(
             [
-                f"### {finding['id']} - {finding['title']}",
+                f"### {finding.get('stable_id', finding['id'])} - {finding['title']}",
                 "",
+                f"- Legacy batch ID: {finding['id']}",
                 f"- Severity: {finding['severity']}",
                 f"- Matches: {finding['match_count']}",
+                f"- New for namespace: {bool(finding.get('is_new_for_namespace'))}",
                 f"- Memory status: {memory_status} (prior count: {prior_count})",
                 f"- Fingerprint: `{finding.get('fingerprint', '')}`",
                 f"- Recommendation: {finding['recommendation']}",
@@ -1290,6 +1507,94 @@ def render_report(
         ]
     )
     return "\n".join(lines)
+
+
+def buyer_structured_result(
+    normalized: dict[str, Any],
+    findings: dict[str, Any],
+    memory_context: dict[str, Any],
+    materialized: dict[str, Any],
+    ai_insights: dict[str, Any],
+    package_hash: str,
+) -> dict[str, Any]:
+    target_summary = compact_target_materialization(materialized)
+    return {
+        "schema_version": "code-audit-buyer-result/1.0",
+        "audit_status": "completed",
+        "execution_mode": "standard_memory_backed_hosted_code_audit",
+        "request_id": normalized["request_id"],
+        "input_digest_sha256": normalized["text_digest_sha256"],
+        "package_hash": package_hash,
+        "delivery_surface": {
+            "inline_markdown": True,
+            "inline_structured_json": True,
+            "downloadable_artifacts": False,
+            "internal_verified_package": True,
+        },
+        "target": {
+            "status": target_summary.get("status"),
+            "urls": as_list(target_summary.get("urls")),
+            "github_target_count": target_summary.get("github_target_count", 0),
+        },
+        "scan": {
+            "mode": "hosted_standard_prioritized_bounded_scan",
+            "ruleset_version": target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
+            "scan_profile": target_summary.get("scan_profile", CODE_AUDIT_SCAN_PROFILE),
+            "files_seen": target_summary.get("files_seen", 0),
+            "files_considered": target_summary.get("files_considered", 0),
+            "files_scanned": target_summary.get("files_scanned", 0),
+            "files_skipped": as_dict(target_summary.get("files_skipped")),
+            "scan_truncated": target_summary.get("scan_truncated", False),
+            "finding_limit": findings.get("finding_limit"),
+            "returned_severity_threshold": findings.get("returned_severity_threshold"),
+            "returned_severities": findings.get("returned_severities"),
+            "model_enrichment_status": ai_insights.get("status"),
+        },
+        "supplemental_model_review": {
+            "status": ai_insights.get("status"),
+            "model": ai_insights.get("model"),
+            "risk_confidence": ai_insights.get("risk_confidence"),
+            "insights": as_list(ai_insights.get("audit_insights"))[:5],
+            "prioritized_notes": as_list(ai_insights.get("prioritized_notes"))[:8],
+            "next_run_focus": ai_insights.get("next_run_focus"),
+        },
+        "memory": {
+            "namespace": as_dict(normalized.get("namespace")),
+            "prior_namespace_runs": memory_context.get("namespace_run_count", 0),
+            "known_finding_count": memory_context.get("known_finding_count", 0),
+            **as_dict(findings.get("memory_batch")),
+        },
+        "batch": {
+            "returned_finding_count": findings.get("returned_finding_count"),
+            "total_active_finding_count": findings.get("total_active_finding_count"),
+            "total_detected_finding_count": findings.get("total_detected_finding_count"),
+            "highest_severity": findings.get("highest_severity"),
+            "low_priority_filtered_count": findings.get("low_priority_filtered_count"),
+            "deferred_count": findings.get("deferred_count"),
+            "has_more_findings": findings.get("has_more_findings"),
+            "all_findings_returned": findings.get("all_findings_returned"),
+            "completion_hint": findings.get("completion_hint"),
+        },
+        "findings": [
+            {
+                "id": finding.get("stable_id") or finding.get("id"),
+                "legacy_batch_id": finding.get("id"),
+                "fingerprint": finding.get("fingerprint"),
+                "severity": finding.get("severity"),
+                "title": finding.get("title"),
+                "category": finding.get("category"),
+                "confidence": "medium",
+                "is_new_for_namespace": finding.get("is_new_for_namespace") is True,
+                "prior_delivery_count": as_dict(finding.get("delivery")).get("prior_delivery_count", 0),
+                "match_count": finding.get("match_count", 0),
+                "locations": as_list(finding.get("locations")),
+                "evidence": as_list(finding.get("evidence_snippets"))[:3],
+                "recommendation": finding.get("recommendation"),
+            }
+            for finding in as_list(findings.get("findings"))
+            if isinstance(finding, dict)
+        ],
+    }
 
 
 def finding_for_model(finding: dict[str, Any]) -> dict[str, Any]:
@@ -1533,7 +1838,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
     ai_insights = call_openai_for_insights(normalized, findings, memory_context, materialized, scan_units)
     report = render_report(normalized, findings, memory_context, ai_insights, materialized)
     target_summary = compact_target_materialization(materialized)
-    summary = render_buyer_summary(normalized, findings, memory_context, materialized)
+    summary = render_buyer_summary(normalized, findings, memory_context, materialized, ai_insights)
 
     files = [
         ("audit_report.md", report, "text/markdown"),
@@ -1564,6 +1869,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
                     "deferred_count": findings.get("deferred_count"),
                     "returned_severity_threshold": findings.get("returned_severity_threshold"),
                     "returned_severities": findings.get("returned_severities"),
+                    "memory_batch": findings.get("memory_batch"),
                     "has_more_findings": findings.get("has_more_findings"),
                     "all_findings_returned": findings.get("all_findings_returned"),
                     "completion_hint": findings.get("completion_hint"),
@@ -1598,6 +1904,15 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
         )
 
     package_hash = sha256_text(stable_json(file_hashes))
+    structured_buyer_result = buyer_structured_result(
+        normalized,
+        findings,
+        memory_context,
+        materialized,
+        ai_insights,
+        package_hash,
+    )
+    structured_buyer_result_text = json.dumps(structured_buyer_result, indent=2, sort_keys=True) + "\n"
     learning_update = update_memory_after_run(memory, normalized, findings, package_hash)
     manifest = {
         "schema_version": "santaclawz-verification-manifest/1.0",
@@ -1641,6 +1956,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
             "finding_limit": findings.get("finding_limit"),
             "returned_severity_threshold": findings.get("returned_severity_threshold"),
             "returned_severities": findings.get("returned_severities"),
+            "memory_batch": findings.get("memory_batch"),
             "has_more_findings": findings.get("has_more_findings"),
             "all_findings_returned": findings.get("all_findings_returned"),
             "completion_hint": findings.get("completion_hint"),
@@ -1700,6 +2016,12 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
             },
             "model_enrichment_status": ai_insights.get("status"),
             "target_materialization": target_summary,
+            "delivery_surface": {
+                "inline_markdown": True,
+                "inline_structured_json": True,
+                "downloadable_artifacts": False,
+                "internal_verified_package": True,
+            },
             "finding_batch": {
                 "returned_finding_count": findings.get("returned_finding_count"),
                 "total_active_finding_count": findings.get("total_active_finding_count"),
@@ -1709,6 +2031,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
                 "finding_limit": findings.get("finding_limit"),
                 "returned_severity_threshold": findings.get("returned_severity_threshold"),
                 "returned_severities": findings.get("returned_severities"),
+                "memory_batch": findings.get("memory_batch"),
                 "has_more_findings": findings.get("has_more_findings"),
                 "all_findings_returned": findings.get("all_findings_returned"),
                 "next_batch_hint": findings.get("next_batch_hint"),
@@ -1721,6 +2044,12 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
                     "content_type": "text/markdown",
                     "text": summary,
                     "sha256": sha256_text(summary),
+                },
+                {
+                    "name": "code-audit-result.json",
+                    "content_type": "application/json",
+                    "text": structured_buyer_result_text,
+                    "sha256": sha256_text(structured_buyer_result_text),
                 }
             ],
         },

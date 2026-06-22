@@ -22,7 +22,11 @@ export type ClawzPlatformAgentExecutionStatus =
 
 export interface ClawzRetryablePlatformFailure {
   ok: false;
-  code: "relay_unavailable_retryable" | "post_payment_state_unavailable_retryable" | "platform_unavailable_retryable";
+  code:
+    | "relay_unavailable_retryable"
+    | "post_payment_state_unavailable_retryable"
+    | "platform_unavailable_retryable"
+    | "paid_submit_transport_unavailable_retryable";
   retryable: true;
   status: number;
   requestMethod?: string;
@@ -108,6 +112,8 @@ export function createRetryablePlatformFailure(input: {
       input.error ??
       (code === "post_payment_state_unavailable_retryable"
         ? "SantaClawz could not confirm post-payment execution state yet. Retry the same state lookup after service recovery; do not create a new payment or hire request."
+        : code === "paid_submit_transport_unavailable_retryable"
+          ? "Paid submit did not return before the client timeout. This does not mean the job failed or that a fresh payment is safe. Recover by polling payment-state with the saved payment payload digest."
         : code === "platform_unavailable_retryable"
           ? "SantaClawz platform availability was interrupted before the operation returned typed JSON. Retry the same idempotent operation after service recovery."
         : "SantaClawz could not confirm this job yet. The relay is temporarily unavailable. Wait until service is restored, then retry with the same payment payload so we can safely resume without duplicating payment."),

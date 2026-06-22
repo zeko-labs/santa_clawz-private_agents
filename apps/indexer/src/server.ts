@@ -132,6 +132,7 @@ const PUBLIC_READ_CACHE_MAX_ENTRIES = Math.max(
   Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_MAX_ENTRIES ?? "120"))
 );
 const HOT_READ_STALE_WHILE_REVALIDATE_MS = 60_000;
+const X402_PAYMENT_STATE_STALE_WHILE_REVALIDATE_MS = 15 * 60_000;
 const HOT_READ_PRODUCER_CONCURRENCY = Math.max(
   1,
   Math.trunc(Number(process.env.CLAWZ_HOT_READ_PRODUCER_CONCURRENCY ?? "2"))
@@ -313,8 +314,6 @@ function clearConsoleStateCache() {
   consoleStateInflight.clear();
   paymentLedgerCache.clear();
   paymentLedgerInflight.clear();
-  x402PaymentStateCache.clear();
-  x402PaymentStateInflight.clear();
   publicMarketplaceSnapshotCache.clear();
   publicMarketplaceSnapshotInflight.clear();
   publicReadCache.clear();
@@ -342,6 +341,11 @@ function clearX402PlanCacheForAgent(agentId: string) {
   }
 }
 
+function clearX402PaymentStateCache() {
+  x402PaymentStateCache.clear();
+  x402PaymentStateInflight.clear();
+}
+
 function agentIdFromHeartbeatPath(pathname: string) {
   const match = /^\/api\/agents\/([^/]+)\/heartbeat$/.exec(pathname);
   return match?.[1] ? decodeURIComponent(match[1]) : "";
@@ -351,6 +355,19 @@ function writeCanAffectX402Plan(pathname: string) {
   return (
     pathname === "/api/console/profile" ||
     /^\/api\/agents\/[^/]+\/readiness\/refresh$/.test(pathname)
+  );
+}
+
+function writeCanAffectX402PaymentState(pathname: string) {
+  return (
+    /^\/api\/agents\/[^/]+\/hire$/.test(pathname) ||
+    /^\/agent\/[^/]+\/hire$/.test(pathname) ||
+    /^\/api\/activation-lane\/agents\/[^/]+\/hire$/.test(pathname) ||
+    /^\/api\/executions\/[^/]+\/late-completion$/.test(pathname) ||
+    pathname === "/api/x402/quote-intent" ||
+    pathname === "/api/x402/settle" ||
+    pathname === "/api/admin/x402/reconcile" ||
+    pathname === "/api/admin/x402/reconciliation"
   );
 }
 
@@ -365,6 +382,9 @@ function invalidateCachesAfterWrite(pathname: string) {
   if (writeCanAffectX402Plan(pathname)) {
     clearX402PlanCache();
   }
+  if (writeCanAffectX402PaymentState(pathname)) {
+    clearX402PaymentStateCache();
+  }
 }
 
 function invalidateAgentRuntimeStatusCaches(agentId: string) {
@@ -377,8 +397,12 @@ function invalidateAgentRuntimeStatusCaches(agentId: string) {
   clearX402PlanCacheForAgent(agentId);
 }
 
-function hotReadRetainedUntilMs(ttlMs: number, nowMs = Date.now()) {
-  return nowMs + Math.max(ttlMs, HOT_READ_STALE_WHILE_REVALIDATE_MS);
+function hotReadRetainedUntilMs(
+  ttlMs: number,
+  nowMs = Date.now(),
+  staleWhileRevalidateMs = HOT_READ_STALE_WHILE_REVALIDATE_MS
+) {
+  return nowMs + Math.max(ttlMs, staleWhileRevalidateMs);
 }
 
 function setHotReadCacheEntry(
@@ -386,11 +410,12 @@ function setHotReadCacheEntry(
   cacheKey: string,
   ttlMs: number,
   payload: unknown,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  staleWhileRevalidateMs = HOT_READ_STALE_WHILE_REVALIDATE_MS
 ) {
   cache.set(cacheKey, {
     expiresAtMs: nowMs + ttlMs,
-    retainedUntilMs: hotReadRetainedUntilMs(ttlMs, nowMs),
+    retainedUntilMs: hotReadRetainedUntilMs(ttlMs, nowMs, staleWhileRevalidateMs),
     payload
   });
 }
@@ -401,6 +426,7 @@ function launchHotReadRefresh<T>(input: {
   cache: Map<string, HotReadCacheEntry>;
   inflight: Map<string, HotReadInflightEntry>;
   ttlMs: number;
+  staleWhileRevalidateMs?: number;
   producer: () => Promise<T>;
   currentCacheEpoch: () => number;
   prune: () => void;
@@ -409,7 +435,14 @@ function launchHotReadRefresh<T>(input: {
   const payloadPromise = runBoundedHotReadProducer(input.producer, input.lane)
     .then((payload) => {
       if (input.ttlMs > 0 && input.cacheEpoch === input.currentCacheEpoch()) {
-        setHotReadCacheEntry(input.cache, input.cacheKey, input.ttlMs, payload);
+        setHotReadCacheEntry(
+          input.cache,
+          input.cacheKey,
+          input.ttlMs,
+          payload,
+          Date.now(),
+          input.staleWhileRevalidateMs
+        );
         input.prune();
       }
       return payload;
@@ -3773,6 +3806,51 @@ function x402PaymentStatePartyProjection(input: {
   };
 }
 
+const X402_SETTLEMENT_EXPECTED_WITHIN_MS = 60_000;
+const X402_SETTLEMENT_ALERT_AFTER_MS = 300_000;
+
+function x402BuyerProtocolState(input: {
+  protocolLifecycle: ReturnType<typeof reduceSantaClawzPaidLifecycle>;
+  paymentSettled: boolean;
+}) {
+  if (input.protocolLifecycle.protocolState === "DELIVERED_SETTLED" || input.paymentSettled) {
+    return {
+      buyerProtocolState: "BUYER_DELIVERED_SETTLED",
+      buyerProtocolStateDescription: "Buyer delivery is available and payment settlement is final."
+    };
+  }
+  if (input.protocolLifecycle.protocolState === "DELIVERED_AWAITING_SETTLEMENT") {
+    return {
+      buyerProtocolState: "BUYER_DELIVERED_PLATFORM_SETTLEMENT_PENDING",
+      buyerProtocolStateDescription:
+        "Buyer delivery is available and seller work is complete; SantaClawz is finalizing settlement. Do not create a fresh payment."
+    };
+  }
+  if (input.protocolLifecycle.protocolState === "DELIVERED_SETTLEMENT_FAILED_REQUIRES_RECONCILIATION") {
+    return {
+      buyerProtocolState: "BUYER_DELIVERED_SETTLEMENT_RECONCILE",
+      buyerProtocolStateDescription:
+        "Buyer delivery is available, but settlement needs SantaClawz reconciliation. Do not create a fresh payment."
+    };
+  }
+  if (input.protocolLifecycle.buyerAnswer.canCreateFreshPayment) {
+    return {
+      buyerProtocolState: "BUYER_TERMINAL_SAFE_TO_CREATE_FRESH_PAYMENT",
+      buyerProtocolStateDescription: "This payment path is terminal for buyer safety; a fresh payment is allowed for a new attempt."
+    };
+  }
+  if (input.protocolLifecycle.buyerAnswer.canRetrySamePaymentPayload) {
+    return {
+      buyerProtocolState: "BUYER_WAIT_OR_RETRY_SAME_PAYMENT_PAYLOAD",
+      buyerProtocolStateDescription: "Use the same saved payment payload or poll state; do not create a fresh payment."
+    };
+  }
+  return {
+    buyerProtocolState: `BUYER_${input.protocolLifecycle.protocolState}`,
+    buyerProtocolStateDescription: "Inspect buyerAction, partyFinality, and retryResume for the safe next action."
+  };
+}
+
 function x402SettlementTelemetry(input: {
   latestLedger?: PaymentLedgerEntry;
   paymentAuthorized: boolean;
@@ -3803,6 +3881,29 @@ function x402SettlementTelemetry(input: {
         : input.paymentAuthorized
           ? "poll_payment_state"
           : "none";
+  const settlementPendingSinceIso =
+    !input.paymentSettled && input.settlementCompletionRequired
+      ? input.latestLedger?.updatedAtIso ?? input.latestLedger?.createdAtIso
+      : undefined;
+  const settlementPendingMs = settlementPendingSinceIso
+    ? Math.max(0, Date.now() - Date.parse(settlementPendingSinceIso))
+    : undefined;
+  const settlementSla = !input.paymentSettled && input.settlementCompletionRequired
+    ? {
+        expectedWithinMs: X402_SETTLEMENT_EXPECTED_WITHIN_MS,
+        alertAfterMs: X402_SETTLEMENT_ALERT_AFTER_MS,
+        ...(settlementPendingMs !== undefined ? { currentAgeMs: settlementPendingMs } : {}),
+        status:
+          settlementPendingMs !== undefined && settlementPendingMs >= X402_SETTLEMENT_ALERT_AFTER_MS
+            ? "alert_operator"
+            : settlementPendingMs !== undefined && settlementPendingMs >= X402_SETTLEMENT_EXPECTED_WITHIN_MS
+              ? "delayed_poll_payment_state"
+              : "within_expected_window",
+        workerHealth: "not_reported_by_payment_state",
+        buyerCanConsiderDeliveryComplete: true,
+        sellerCanConsiderWorkComplete: true
+      }
+    : undefined;
   return {
     status: input.platformSettlementStatus,
     owner,
@@ -3814,10 +3915,13 @@ function x402SettlementTelemetry(input: {
     freshPaymentForbidden: input.paymentAuthorized && !input.paymentSettled,
     ...(input.latestLedger?.ledgerId ? { ledgerId: input.latestLedger.ledgerId } : {}),
     ...(input.latestLedger?.updatedAtIso ? { ledgerUpdatedAtIso: input.latestLedger.updatedAtIso } : {}),
+    ...(settlementPendingSinceIso ? { settlementPendingSinceIso } : {}),
+    ...(settlementPendingMs !== undefined ? { settlementPendingMs } : {}),
     ...(input.latestLedger?.paymentStatus ? { ledgerPaymentStatus: input.latestLedger.paymentStatus } : {}),
     ...(input.latestLedger?.settlementRecovery?.nextSettlementAction
       ? { ledgerNextSettlementAction: input.latestLedger.settlementRecovery.nextSettlementAction }
       : {}),
+    ...(settlementSla ? { settlementSla } : {}),
     ...(input.settlementActionEndpoint ? { retryEndpoint: input.settlementActionEndpoint } : {}),
     ...(input.paymentSettled ? {} : { recommendedPollAfterMs: 2000 })
   };
@@ -4023,6 +4127,10 @@ async function buildX402PaymentStateResponse(input: {
     lifecycle: protocolLifecycle,
     paymentSettled
   });
+  const buyerProtocolState = x402BuyerProtocolState({
+    protocolLifecycle,
+    paymentSettled
+  });
   const settlementCompletionRequired = Boolean(
     latestLedger &&
       protocolLifecycle.operatorObligation === "settle_payment" &&
@@ -4112,11 +4220,15 @@ async function buildX402PaymentStateResponse(input: {
     },
     protocolLifecycle,
     protocolState: protocolLifecycle.protocolState,
+    ...buyerProtocolState,
     buyerAction: protocolLifecycle.buyerAction,
     sellerOutcome: protocolLifecycle.sellerOutcome,
     operatorObligation: protocolLifecycle.operatorObligation,
     ...partyProjection,
     ...(settlementTelemetry ? { settlementTelemetry } : {}),
+    ...(settlementTelemetry && "settlementSla" in settlementTelemetry
+      ? { settlementSla: settlementTelemetry.settlementSla }
+      : {}),
     ...lifecycleFinalityFields(protocolLifecycle),
     partyFinality,
     paymentStatus: paymentStatePaymentStatus,
@@ -4280,7 +4392,14 @@ function cacheCanonicalX402PaymentState(
   const cacheKeys = new Set(lookups.map(x402PaymentStateCacheKey));
   const nowMs = Date.now();
   for (const cacheKey of cacheKeys) {
-    setHotReadCacheEntry(x402PaymentStateCache, cacheKey, PAYMENT_LEDGER_CACHE_TTL_MS, payload, nowMs);
+    setHotReadCacheEntry(
+      x402PaymentStateCache,
+      cacheKey,
+      PAYMENT_LEDGER_CACHE_TTL_MS,
+      payload,
+      nowMs,
+      X402_PAYMENT_STATE_STALE_WHILE_REVALIDATE_MS
+    );
     x402PaymentStateInflight.delete(cacheKey);
   }
   pruneX402PaymentStateCache();
@@ -4384,17 +4503,6 @@ function x402PaymentStateTemporarilyUnavailable(input: {
   };
 }
 
-function x402PaymentStateNeedsFinalityRefresh(payload: unknown) {
-  if (!isRecord(payload)) {
-    return false;
-  }
-  return (
-    payload.statePollingRequired === true ||
-    payload.paymentFinalityPending === true ||
-    payload.protocolState === "DELIVERED_AWAITING_SETTLEMENT"
-  );
-}
-
 async function cachedX402PaymentState(input: {
   cacheKey: string;
   lookup: Record<string, string>;
@@ -4423,6 +4531,7 @@ async function cachedX402PaymentState(input: {
         cache: x402PaymentStateCache,
         inflight: x402PaymentStateInflight,
         ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
+        staleWhileRevalidateMs: X402_PAYMENT_STATE_STALE_WHILE_REVALIDATE_MS,
         producer: input.producer,
         currentCacheEpoch: () => paymentLedgerCacheEpoch,
         prune: pruneX402PaymentStateCache,
@@ -4432,17 +4541,6 @@ async function cachedX402PaymentState(input: {
     } else {
       refresh = inflight.promise as Promise<X402PaymentStateResponse>;
       fallbackStatus = "stale";
-    }
-    if (x402PaymentStateNeedsFinalityRefresh(cached.payload)) {
-      try {
-        const payload = await withColdReadBudget(refresh, X402_PAYMENT_STATE_COLD_READ_BUDGET_MS);
-        return {
-          payload: decorateX402PaymentStateResponse(payload, "inflight"),
-          cacheStatus: "inflight"
-        };
-      } catch {
-        // Keep retry safety available even if fresh finality cannot be produced inside the read budget.
-      }
     }
     return {
       payload: decorateX402PaymentStateResponse(cached.payload as X402PaymentStateResponse, fallbackStatus),
@@ -4458,6 +4556,7 @@ async function cachedX402PaymentState(input: {
           cache: x402PaymentStateCache,
           inflight: x402PaymentStateInflight,
           ttlMs: PAYMENT_LEDGER_CACHE_TTL_MS,
+          staleWhileRevalidateMs: X402_PAYMENT_STATE_STALE_WHILE_REVALIDATE_MS,
           producer: input.producer,
           currentCacheEpoch: () => paymentLedgerCacheEpoch,
           prune: pruneX402PaymentStateCache,
@@ -4712,6 +4811,10 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     redacted: true,
     ...(protocolLifecycle ? { protocolLifecycle } : {}),
     ...(typeof payload.protocolState === "string" ? { protocolState: payload.protocolState } : {}),
+    ...(typeof payloadRecord.buyerProtocolState === "string" ? { buyerProtocolState: payloadRecord.buyerProtocolState } : {}),
+    ...(typeof payloadRecord.buyerProtocolStateDescription === "string"
+      ? { buyerProtocolStateDescription: payloadRecord.buyerProtocolStateDescription }
+      : {}),
     ...(typeof payload.buyerAction === "string" ? { buyerAction: payload.buyerAction } : {}),
     ...(typeof payload.sellerOutcome === "string" ? { sellerOutcome: payload.sellerOutcome } : {}),
     ...(typeof payload.operatorObligation === "string" ? { operatorObligation: payload.operatorObligation } : {}),
@@ -4727,6 +4830,7 @@ function redactX402PaymentStateResponse(payload: X402PaymentStateResponse) {
     ...(typeof payloadRecord.settlementFinality === "string" ? { settlementFinality: payloadRecord.settlementFinality } : {}),
     ...(typeof payloadRecord.settlementOwner === "string" ? { settlementOwner: payloadRecord.settlementOwner } : {}),
     ...(isRecord(payloadRecord.settlementTelemetry) ? { settlementTelemetry: payloadRecord.settlementTelemetry } : {}),
+    ...(isRecord(payloadRecord.settlementSla) ? { settlementSla: payloadRecord.settlementSla } : {}),
     ...(typeof payload.paymentFinality === "string" ? { paymentFinality: payload.paymentFinality } : {}),
     ...(typeof payload.paymentFinalityPending === "boolean" ? { paymentFinalityPending: payload.paymentFinalityPending } : {}),
     ...(typeof payload.statePollingRequired === "boolean" ? { statePollingRequired: payload.statePollingRequired } : {}),

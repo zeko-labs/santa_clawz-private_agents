@@ -27,6 +27,8 @@ export function createRetryablePlatformFailure(status, responseText, overrides =
       overrides.error ??
       (code === "post_payment_state_unavailable_retryable"
         ? "SantaClawz could not confirm post-payment execution state yet. Retry the same state lookup after service recovery; do not create a new payment or hire request."
+        : code === "paid_submit_transport_unavailable_retryable"
+          ? "Paid submit did not return before the client timeout. This does not mean the job failed or that a fresh payment is safe. Recover by polling payment-state with the saved payment payload digest."
         : code === "platform_unavailable_retryable"
           ? "SantaClawz platform availability was interrupted before the operation returned typed JSON. Retry the same idempotent operation after service recovery."
         : "SantaClawz relay is temporarily unavailable and the payment or delivery state could not be confirmed. Retry with the same idempotent payment payload."),
