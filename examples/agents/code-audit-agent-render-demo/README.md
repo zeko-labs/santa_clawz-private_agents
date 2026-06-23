@@ -9,6 +9,7 @@ persistent disk:
 - durable buyer-scoped repo audit memory
 - public GitHub repository URL materialization from paid job context
 - top-10 medium-or-higher finding batches by default, so work and output stay bounded
+- buyer-visible verdict, evidence strength, and protocol-surface hints
 - finding fingerprints to avoid repeating stale findings
 - feedback for useful/noisy finding labels
 - bounded JSON memory files under the configured memory directory
@@ -50,6 +51,7 @@ Output files have distinct jobs:
 - `audit_report.md`: human-readable audit report
 - `findings.json`: deterministic finding batch returned for this run
 - `target_materialization.json`: fetched target summary, source URL, file counts, and scan caps
+- `protocol_surface.json`: SantaClawz/OpenClaw/x402/ZK surface hints that shaped audit focus
 - `memory_context.json`: private continuation/de-duplication context, not the audit report
 - `ai_insights.json`: optional OpenAI Responses API model review and audit guidance
 - `scope_summary.json`: hashes, namespace, and run metadata
@@ -117,6 +119,11 @@ memory context, deliverables, and verification manifests remain the stable
 SantaClawz delivery baseline. The service stays operational without
 `OPENAI_API_KEY`; it records model review as skipped and still returns
 deterministic proof-backed deliverables.
+
+The buyer-visible JSON explicitly marks supplemental model review as degraded
+when enrichment is skipped or unavailable. Deterministic findings remain the
+baseline and include evidence-strength metadata so buyer agents can distinguish
+pattern candidates from fully validated exploit paths.
 
 ## SantaClawz Relay Service
 
