@@ -118,6 +118,8 @@ const AGENT_RUNTIME_HEARTBEAT_MIN_TTL_SECONDS = 10;
 const AGENT_RUNTIME_HEARTBEAT_MAX_TTL_SECONDS = 300;
 export const PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS = 20_000;
 const AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS = integerEnv("CLAWZ_AGENT_HEARTBEAT_WRITE_MIN_INTERVAL_MS", 5000);
+const X402_PAYMENT_PAYLOAD_VAULT_MAX_RECORDS = 1000;
+const X402_PAYMENT_PAYLOAD_VAULT_RETENTION_MS = 48 * 60 * 60 * 1000;
 const HIRE_REQUEST_SCHEMA_VERSION = SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION;
 const HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0";
 const HIRE_INGRESS_TIMEOUT_MS = 10_000;
@@ -958,6 +960,23 @@ interface HireRequestRecord {
 interface PaymentLedgerFile {
   entries: PaymentLedgerEntry[];
   allTimeStats?: PaymentLedgerAllTimeStats;
+}
+
+interface X402PaymentPayloadVaultRecord {
+  paymentPayloadDigestSha256: string;
+  paymentPayload: Record<string, unknown>;
+  createdAtIso: string;
+  updatedAtIso: string;
+  agentId: string;
+  sessionId: string;
+  ledgerId?: string;
+  requestId?: string;
+  expiresAtIso?: string;
+}
+
+interface X402PaymentPayloadVaultFile {
+  schemaVersion: "santaclawz-x402-payment-payload-vault/1.0";
+  records: X402PaymentPayloadVaultRecord[];
 }
 
 interface PaymentLedgerAllTimeStats extends NonNullable<PaymentLedgerState["summary"]> {
@@ -2513,6 +2532,37 @@ function buildDefaultPaymentLedgerFile(): PaymentLedgerFile {
     entries: [],
     allTimeStats: buildDefaultPaymentLedgerAllTimeStats()
   };
+}
+
+function buildDefaultX402PaymentPayloadVaultFile(): X402PaymentPayloadVaultFile {
+  return {
+    schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
+    records: []
+  };
+}
+
+function pruneX402PaymentPayloadVaultRecords(
+  records: X402PaymentPayloadVaultRecord[],
+  nowMs = Date.now()
+): X402PaymentPayloadVaultRecord[] {
+  return records
+    .filter((record) => {
+      if (!record.paymentPayloadDigestSha256 || !record.paymentPayload || !record.agentId || !record.sessionId) {
+        return false;
+      }
+      const updatedAtMs = Date.parse(record.updatedAtIso);
+      if (!Number.isNaN(updatedAtMs) && nowMs - updatedAtMs > X402_PAYMENT_PAYLOAD_VAULT_RETENTION_MS) {
+        return false;
+      }
+      if (record.expiresAtIso) {
+        const expiresAtMs = Date.parse(record.expiresAtIso);
+        if (!Number.isNaN(expiresAtMs) && expiresAtMs + 60_000 < nowMs) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .slice(0, X402_PAYMENT_PAYLOAD_VAULT_MAX_RECORDS);
 }
 
 function buildDefaultPaymentLedgerAllTimeStats(): PaymentLedgerAllTimeStats {
@@ -4791,6 +4841,7 @@ export class ClawzControlPlane {
   private readonly activationLaneAttemptPath: string;
   private readonly jobCollaborationPath: string;
   private readonly paymentLedgerPath: string;
+  private readonly x402PaymentPayloadVaultPath: string;
   private readonly executionIntentPath: string;
   private readonly procurementIntentPath: string;
   private readonly hostedWorkspacePath: string;
@@ -4834,6 +4885,7 @@ export class ClawzControlPlane {
     this.activationLaneAttemptPath = path.join(baseDir, "state", "activation-lane-attempts.json");
     this.jobCollaborationPath = path.join(baseDir, "state", "job-collaboration.json");
     this.paymentLedgerPath = path.join(baseDir, "state", "payment-ledger.json");
+    this.x402PaymentPayloadVaultPath = path.join(baseDir, "state", "x402-payment-payload-vault.json");
     this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
     this.procurementIntentPath = path.join(baseDir, "state", "procurement-intents.json");
     this.hostedWorkspacePath = path.join(baseDir, "state", "hosted-workspaces.json");
@@ -5398,6 +5450,29 @@ export class ClawzControlPlane {
     await writeJsonFile(this.paymentLedgerPath, {
       entries: entries.slice(0, 2000),
       allTimeStats: this.buildPaymentLedgerAllTimeStats(file.allTimeStats, entries)
+    });
+  }
+
+  private async loadX402PaymentPayloadVaultFile(): Promise<X402PaymentPayloadVaultFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<X402PaymentPayloadVaultFile>(this.x402PaymentPayloadVaultPath);
+    if (file?.records) {
+      return {
+        schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
+        records: pruneX402PaymentPayloadVaultRecords(file.records)
+      };
+    }
+
+    const fallback = buildDefaultX402PaymentPayloadVaultFile();
+    await this.saveX402PaymentPayloadVaultFile(fallback);
+    return fallback;
+  }
+
+  private async saveX402PaymentPayloadVaultFile(file: X402PaymentPayloadVaultFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.x402PaymentPayloadVaultPath, {
+      schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
+      records: pruneX402PaymentPayloadVaultRecords(file.records)
     });
   }
 
@@ -7786,6 +7861,79 @@ export class ClawzControlPlane {
     return /timeout|temporarily unavailable|rate limit|429|502|503|504|nonce|already known|underpriced|settlement_pending/.test(text);
   }
 
+  async storeX402PaymentPayload(input: {
+    paymentPayloadDigestSha256: string;
+    paymentPayload: Record<string, unknown>;
+    agentId: string;
+    sessionId: string;
+    ledgerId?: string;
+    requestId?: string;
+    expiresAtIso?: string;
+  }): Promise<X402PaymentPayloadVaultRecord> {
+    assertSha256Hex(input.paymentPayloadDigestSha256, "x402 payment payload digest");
+    const nowIso = new Date().toISOString();
+    const file = await this.loadX402PaymentPayloadVaultFile();
+    const existing = file.records.find((record) => record.paymentPayloadDigestSha256 === input.paymentPayloadDigestSha256);
+    const record: X402PaymentPayloadVaultRecord = {
+      paymentPayloadDigestSha256: input.paymentPayloadDigestSha256,
+      paymentPayload: input.paymentPayload,
+      createdAtIso: existing?.createdAtIso ?? nowIso,
+      updatedAtIso: nowIso,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      ...(input.ledgerId ? { ledgerId: input.ledgerId } : existing?.ledgerId ? { ledgerId: existing.ledgerId } : {}),
+      ...(input.requestId ? { requestId: input.requestId } : existing?.requestId ? { requestId: existing.requestId } : {}),
+      ...(input.expiresAtIso ? { expiresAtIso: input.expiresAtIso } : existing?.expiresAtIso ? { expiresAtIso: existing.expiresAtIso } : {})
+    };
+    await this.saveX402PaymentPayloadVaultFile({
+      schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
+      records: [record, ...file.records.filter((candidate) => candidate.paymentPayloadDigestSha256 !== record.paymentPayloadDigestSha256)]
+    });
+    return record;
+  }
+
+  async getX402PaymentPayload(
+    paymentPayloadDigestSha256: string
+  ): Promise<X402PaymentPayloadVaultRecord | undefined> {
+    const trimmed = paymentPayloadDigestSha256.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    assertSha256Hex(trimmed, "x402 payment payload digest");
+    const record = (await this.loadX402PaymentPayloadVaultFile()).records.find(
+      (candidate) => candidate.paymentPayloadDigestSha256 === trimmed
+    );
+    if (!record) {
+      return undefined;
+    }
+    if (record.expiresAtIso) {
+      const expiresAtMs = Date.parse(record.expiresAtIso);
+      if (!Number.isNaN(expiresAtMs) && expiresAtMs + 60_000 < Date.now()) {
+        await this.deleteX402PaymentPayload(trimmed);
+        return undefined;
+      }
+    }
+    return record;
+  }
+
+  async deleteX402PaymentPayload(paymentPayloadDigestSha256: string): Promise<boolean> {
+    const trimmed = paymentPayloadDigestSha256.trim();
+    if (!trimmed) {
+      return false;
+    }
+    assertSha256Hex(trimmed, "x402 payment payload digest");
+    const file = await this.loadX402PaymentPayloadVaultFile();
+    const records = file.records.filter((record) => record.paymentPayloadDigestSha256 !== trimmed);
+    if (records.length === file.records.length) {
+      return false;
+    }
+    await this.saveX402PaymentPayloadVaultFile({
+      schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
+      records
+    });
+    return true;
+  }
+
   async listPaymentLedger(options: PaymentLedgerListOptions = {}): Promise<PaymentLedgerState> {
     return this.buildPaymentLedgerState(await this.loadPaymentLedgerFile(), options);
   }
@@ -7825,6 +7973,55 @@ export class ClawzControlPlane {
             : {})
         }
       : undefined;
+  }
+
+  async markPaymentLedgerSettlementFinalizer(input: {
+    ledgerId?: string;
+    status: "queued" | "running" | "failed";
+    errorMessage?: string;
+  }): Promise<PaymentLedgerEntry | undefined> {
+    if (!input.ledgerId) {
+      return undefined;
+    }
+    const file = await this.loadPaymentLedgerFile();
+    const index = file.entries.findIndex((entry) => entry.ledgerId === input.ledgerId);
+    if (index < 0) {
+      return undefined;
+    }
+    const existing = file.entries[index]!;
+    if (paymentLedgerStatusIsSettlementFinal(existing.paymentStatus)) {
+      return existing;
+    }
+    const nowIso = new Date().toISOString();
+    const settlementRetryable = existing.settlementRecovery?.settlementRetryable ?? true;
+    const attemptCount = input.status === "running"
+      ? (existing.settlementRecovery?.settlementFinalizerAttemptCount ?? 0) + 1
+      : existing.settlementRecovery?.settlementFinalizerAttemptCount;
+    const nextEntry: PaymentLedgerEntry = {
+      ...existing,
+      updatedAtIso: nowIso,
+      ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+      settlementRecovery: {
+        ...existing.settlementRecovery,
+        settlementRetryable,
+        canRetrySettlement: settlementRetryable,
+        ...(input.errorMessage
+          ? { settlementFailureReason: input.errorMessage }
+          : existing.settlementRecovery?.settlementFailureReason
+            ? { settlementFailureReason: existing.settlementRecovery.settlementFailureReason }
+            : {}),
+        settlementFinalizerStatus: input.status,
+        ...(typeof attemptCount === "number" ? { settlementFinalizerAttemptCount: attemptCount } : {}),
+        settlementFinalizerLastAttemptAtIso: nowIso,
+        nextSettlementAction: settlementRetryable ? "retry_settlement" : "manual_review",
+        retryEndpoint: settlementRetryEndpointForLedgerId(existing.ledgerId)
+      }
+    };
+    await this.savePaymentLedgerFile({
+      ...file,
+      entries: file.entries.map((entry, entryIndex) => entryIndex === index ? nextEntry : entry)
+    });
+    return nextEntry;
   }
 
   async recordPaymentLedgerSettlement(input: PaymentLedgerSettlementInput): Promise<PaymentLedgerEntry> {
@@ -7867,6 +8064,8 @@ export class ClawzControlPlane {
       ...(protocolFeeTxHash ? { protocolFeeTxHash } : {}),
       transactionHashes: nextTransactionHashes
     });
+    const nextPaymentStatus = mergePaymentLedgerStatus(existing?.paymentStatus, inferredPaymentStatus);
+    const settlementFinal = paymentLedgerStatusIsSettlementFinal(nextPaymentStatus);
     const ledgerId = existing?.ledgerId ?? `pay_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const nextEntry: PaymentLedgerEntry = {
       ledgerId,
@@ -7940,12 +8139,12 @@ export class ClawzControlPlane {
         : existing?.facilitatorResponseSummary
           ? { facilitatorResponseSummary: existing.facilitatorResponseSummary }
           : {}),
-      paymentStatus: mergePaymentLedgerStatus(existing?.paymentStatus, inferredPaymentStatus),
+      paymentStatus: nextPaymentStatus,
       executionStatus: existing?.executionStatus ?? "not_started",
       returnStatus: existing?.returnStatus ?? "none",
-      ...(input.errorCode ? { errorCode: input.errorCode } : existing?.errorCode ? { errorCode: existing.errorCode } : {}),
-      ...(input.errorMessage ? { errorMessage: input.errorMessage } : existing?.errorMessage ? { errorMessage: existing.errorMessage } : {}),
-      ...(typeof input.settlementRetryable === "boolean"
+      ...(!settlementFinal && input.errorCode ? { errorCode: input.errorCode } : !settlementFinal && existing?.errorCode ? { errorCode: existing.errorCode } : {}),
+      ...(!settlementFinal && input.errorMessage ? { errorMessage: input.errorMessage } : !settlementFinal && existing?.errorMessage ? { errorMessage: existing.errorMessage } : {}),
+      ...(!settlementFinal && typeof input.settlementRetryable === "boolean"
         ? {
             settlementRecovery: {
               settlementRetryable: input.settlementRetryable,
@@ -7955,7 +8154,7 @@ export class ClawzControlPlane {
               retryEndpoint: settlementRetryEndpointForLedgerId(ledgerId)
             }
           }
-        : existing?.settlementRecovery
+        : !settlementFinal && existing?.settlementRecovery
           ? { settlementRecovery: existing.settlementRecovery }
           : {})
     };
@@ -8105,6 +8304,11 @@ export class ClawzControlPlane {
         settlementRetryable: input.settlementRetryable,
         canRetrySettlement: input.settlementRetryable,
         settlementFailureReason: input.errorMessage,
+        settlementFinalizerStatus: "failed",
+        ...(typeof existing.settlementRecovery?.settlementFinalizerAttemptCount === "number"
+          ? { settlementFinalizerAttemptCount: existing.settlementRecovery.settlementFinalizerAttemptCount }
+          : {}),
+        settlementFinalizerLastAttemptAtIso: new Date().toISOString(),
         nextSettlementAction: input.settlementRetryable ? "retry_settlement" : "manual_review",
         retryEndpoint: settlementRetryEndpointForLedgerId(existing.ledgerId)
       }

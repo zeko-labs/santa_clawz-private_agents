@@ -1260,6 +1260,9 @@ export interface PaymentLedgerEntry {
     settlementRetryable: boolean;
     canRetrySettlement: boolean;
     settlementFailureReason?: string;
+    settlementFinalizerStatus?: "queued" | "running" | "failed";
+    settlementFinalizerAttemptCount?: number;
+    settlementFinalizerLastAttemptAtIso?: string;
     nextSettlementAction:
       | "none"
       | "retry_settlement"
