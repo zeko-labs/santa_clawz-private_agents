@@ -1426,6 +1426,78 @@ def audit_verdict(
     }
 
 
+def markdown_cell(value: Any) -> str:
+    text = str(value if value is not None else "")
+    text = text.replace("\n", " ").replace("|", "\\|").strip()
+    return text if text else "-"
+
+
+def markdown_table(rows: list[tuple[str, Any]]) -> list[str]:
+    lines = ["| Field | Value |", "|---|---|"]
+    for key, value in rows:
+        lines.append(f"| {markdown_cell(key)} | {markdown_cell(value)} |")
+    return lines
+
+
+def yes_no(value: Any) -> str:
+    return "yes" if bool(value) else "no"
+
+
+def finding_primary_location(finding: dict[str, Any]) -> str:
+    location = as_dict(as_list(finding.get("locations"))[0] if as_list(finding.get("locations")) else {})
+    if not location:
+        return "not available"
+    path = first_string(location.get("path"), default="unknown")
+    line = location.get("line")
+    return f"`{path}:{line}`" if line else f"`{path}`"
+
+
+def finding_evidence_summary(finding: dict[str, Any]) -> list[str]:
+    summaries: list[str] = []
+    for location in as_list(finding.get("locations"))[:3]:
+        if not isinstance(location, dict):
+            continue
+        path = first_string(location.get("path"), default="unknown")
+        line = location.get("line")
+        snippet = first_string(location.get("snippet"), default="")
+        snippet_words = snippet.split()
+        clipped = " ".join(snippet_words[:18])
+        if len(snippet_words) > 18:
+            clipped += " ..."
+        label = f"`{path}:{line}`" if line else f"`{path}`"
+        summaries.append(f"{label} matched deterministic evidence{f': {clipped}' if clipped else ''}.")
+    return summaries
+
+
+def semantic_review_projection(ai_insights: dict[str, Any]) -> dict[str, Any]:
+    status = str(ai_insights.get("status") or "skipped")
+    attempted = status != "skipped"
+    completed = status == "completed"
+    reason = first_string(ai_insights.get("reason"), default="")
+    error_code = ""
+    if reason:
+        normalized = re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_")
+        error_code = normalized[:80]
+    return {
+        "attempted": attempted,
+        "completed": completed,
+        "status": status,
+        "error": "" if completed else error_code,
+        "fallback": "deterministic_scan_completed" if not completed else "",
+        "impact": "" if completed else "model_triage_unavailable",
+    }
+
+
+def report_sections_projection(findings: dict[str, Any]) -> dict[str, Any]:
+    finding_count = len([item for item in as_list(findings.get("findings")) if isinstance(item, dict)])
+    return {
+        "human_markdown_findings_count": finding_count,
+        "json_findings_count": finding_count,
+        "markdown_complete": True,
+        "json_complete": True,
+    }
+
+
 def render_buyer_summary(
     normalized: dict[str, Any],
     findings: dict[str, Any],
@@ -1440,98 +1512,191 @@ def render_buyer_summary(
     memory_batch = as_dict(findings.get("memory_batch"))
     skipped = as_dict(target_summary.get("files_skipped"))
     skipped_total = sum(int(value or 0) for value in skipped.values())
+    semantic_review = semantic_review_projection(ai_insights)
+    returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
+    detected_surfaces = as_list(protocol_surface.get("detected"))
+    target_urls = as_list(target_summary.get("urls"))
+    primary_target = target_urls[0] if target_urls else "submitted context"
     lines = [
-        (
-            f"Verdict: {str(verdict.get('verdict', 'completed')).replace('_', ' ')} "
-            f"(confidence: {verdict.get('confidence', 'medium')})."
-        ),
+        "# Hosted Code Audit Report",
+        "",
+        "## Buyer Verdict",
+        "",
+        f"**{str(verdict.get('verdict', 'completed')).replace('_', ' ').title()}**",
+        "",
+        f"Confidence: **{str(verdict.get('confidence', 'medium')).title()}**",
+        "",
         str(verdict.get("recommended_next_action") or ""),
         "",
-        (
-            f"Memory-backed code audit completed. Returned {findings['finding_count']} "
-            f"of {findings.get('total_active_finding_count', findings['finding_count'])} "
-            f"{findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}-or-higher findings; "
-            f"highest severity: {findings['highest_severity']}; "
-            f"low-priority filtered: {findings.get('low_priority_filtered_count', 0)}; "
-            f"prior namespace runs: {memory_context.get('namespace_run_count', 0)}."
+        "## Run Metadata",
+        "",
+        *markdown_table(
+            [
+                ("Audit status", "completed"),
+                ("Execution mode", "standard_memory_backed_hosted_code_audit"),
+                ("Ruleset", target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION)),
+                ("Target", primary_target),
+                ("Findings returned", f"{findings.get('returned_finding_count', findings['finding_count'])} of {findings.get('total_active_finding_count', findings['finding_count'])} medium-or-higher"),
+                ("Total detected", findings.get("total_detected_finding_count", findings.get("total_active_finding_count", findings["finding_count"]))),
+                ("New vs repeated", f"{memory_batch.get('new_findings_returned', 0)} new, {memory_batch.get('repeated_findings_returned', 0)} repeated"),
+                ("Has more findings", yes_no(findings.get("has_more_findings"))),
+                ("Prior namespace runs", memory_context.get("namespace_run_count", 0)),
+                ("Delivery", "Inline Markdown + inline structured JSON"),
+            ]
         ),
-        (
-            f"This run returns only the first {findings.get('finding_limit', FINDING_LIMIT)} "
-            "medium-or-higher findings for this buyer/repo namespace."
-        ),
-        (
-            "Scan mode: hosted standard prioritized bounded scan with deterministic rules"
-            f"{' and private model enrichment' if OPENAI_ENABLED else ''}."
-        ),
-        f"Ruleset: {target_summary.get('ruleset_version', CODE_AUDIT_RULESET_VERSION)}.",
-        (
-            f"Memory batch: {memory_batch.get('new_findings_returned', 0)} new, "
-            f"{memory_batch.get('repeated_findings_returned', 0)} repeated; "
-            f"has more: {bool(memory_batch.get('has_more_findings'))}."
-        ),
-        (
-            f"Target materialization: {target_status}; files scanned: "
-            f"{target_summary.get('files_scanned', 0)} of {target_summary.get('files_considered', 0)} considered; "
-            f"skipped after filtering: {skipped_total}."
+        "",
+        "## Scan Scope",
+        "",
+        *markdown_table(
+            [
+                ("Target materialization", target_status),
+                ("Scan mode", f"deterministic rules{' + private model enrichment' if OPENAI_ENABLED else ''}"),
+                ("Files considered", target_summary.get("files_considered", 0)),
+                ("Files scanned", target_summary.get("files_scanned", 0)),
+                ("Skipped after filtering", skipped_total),
+                ("Unsupported path or extension", skipped.get("unsupported_path_or_extension", 0)),
+                ("File size limit", skipped.get("file_size_limit", 0)),
+                ("Scan truncated", yes_no(target_summary.get("scan_truncated", False))),
+            ]
         ),
     ]
-    detected_surfaces = as_list(protocol_surface.get("detected"))
-    if detected_surfaces:
-        lines.append(
-            "Protocol surfaces detected: "
-            + ", ".join(str(as_dict(item).get("label") or as_dict(item).get("surface")) for item in detected_surfaces[:5])
-            + "."
-        )
     if skipped_total:
-        lines.append(
-            "Skipped files by reason: "
-            + ", ".join(f"{key}={value}" for key, value in skipped.items() if int(value or 0) > 0)
-            + "."
+        lines.extend(
+            [
+                "",
+                "Skipped files by reason: "
+                + ", ".join(f"`{key}`={value}" for key, value in skipped.items() if int(value or 0) > 0)
+                + ".",
+            ]
         )
+    if detected_surfaces:
+        lines.extend(["", "## Protocol Surfaces Detected", ""])
+        for item in detected_surfaces[:8]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- **{item.get('label', item.get('surface'))}** ({item.get('hit_count', 0)} signal hits)")
+            for focus in as_list(item.get("audit_focus"))[:2]:
+                lines.append(f"  - {focus}")
+    else:
+        lines.extend(["", "## Protocol Surfaces Detected", "", "No SantaClawz/OpenClaw/x402/ZK-specific protocol surface was detected in the scanned material."])
+    if semantic_review["completed"] is False:
+        semantic_review_notice = (
+            "The deterministic scan completed and returned buyer-visible findings. Supplemental model review was unavailable."
+            if not semantic_review["attempted"]
+            else "The deterministic scan completed and returned buyer-visible findings. Supplemental model review did not complete."
+        )
+        lines.extend(
+            [
+                "",
+                "## Degraded Mode Notice",
+                "",
+                semantic_review_notice,
+                "",
+                *markdown_table(
+                    [
+                        ("Deterministic scan", "completed"),
+                        ("Memory/dedupe", "completed"),
+                        ("Supplemental model review", semantic_review["status"]),
+                        ("Fallback", semantic_review["fallback"]),
+                        ("Impact", semantic_review["impact"]),
+                    ]
+                ),
+            ]
+        )
+    elif ai_insights.get("status") == "completed":
+        model_items = [item for item in as_list(ai_insights.get("audit_insights")) if isinstance(item, dict)]
+        if model_items:
+            lines.extend(["", "## Supplemental Model Review", ""])
+            for item in model_items[:5]:
+                title = first_string(item.get("title"), default="Model insight")
+                severity = first_string(item.get("severity"), default="informational").upper()
+                recommendation = first_string(item.get("recommendation"), default="")
+                lines.append(f"- **{severity}:** {title}{f' - {recommendation}' if recommendation else ''}")
     if target_status == "failed":
-        lines.append("The requested source target could not be fetched, so the audit is scoped to the submitted prompt/context only.")
+        lines.extend(
+            [
+                "",
+                "## Target Fetch Notice",
+                "",
+                "The requested source target could not be fetched, so this audit is scoped to the submitted prompt/context only.",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Findings",
+            "",
+            (
+                f"This run returned {findings.get('returned_finding_count', findings['finding_count'])} "
+                f"of {findings.get('total_active_finding_count', findings['finding_count'])} "
+                f"{findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}-or-higher findings. "
+                f"Low-priority filtered: {findings.get('low_priority_filtered_count', 0)}."
+            ),
+        ]
+    )
     if findings.get("has_more_findings"):
         lines.append(str(findings.get("next_batch_hint") or "Run again with the same namespace to continue the finding batch."))
     else:
         lines.append(str(findings.get("completion_hint") or "All returned-scope findings have been returned."))
-    returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     if returned:
-        lines.extend(["", "Top returned findings:"])
-        for finding in returned[:5]:
-            location = as_dict(as_list(finding.get("locations"))[0] if as_list(finding.get("locations")) else {})
-            location_text = ""
-            if location:
-                location_text = f" ({location.get('path')}:{location.get('line')})"
-            novelty = "new" if finding.get("is_new_for_namespace") else "repeated"
+        for index, finding in enumerate(returned, start=1):
+            novelty = "New" if finding.get("is_new_for_namespace") else "Repeated"
             stable_id = finding.get("stable_id") or finding.get("id") or "finding"
             evidence = as_dict(finding.get("evidence_strength"))
-            lines.append(
-                f"- {stable_id} [{novelty}] {str(finding.get('severity', 'unknown')).upper()}: "
-                f"{finding.get('title', 'Finding')}{location_text}; "
-                f"evidence={evidence.get('classification', 'pattern_candidate')}/{evidence.get('confidence', 'medium')}"
+            lines.extend(
+                [
+                    "",
+                    f"### {index}. {stable_id} - {novelty} - {str(finding.get('severity', 'unknown')).title()}",
+                    "",
+                    f"**Title:** {finding.get('title', 'Finding')}",
+                    "",
+                    f"**Primary location:** {finding_primary_location(finding)}",
+                    "",
+                    f"**Evidence classification:** {evidence.get('classification', 'deterministic_pattern_candidate')} / {evidence.get('confidence', 'medium')}",
+                    "",
+                    f"**Reachability proven:** {yes_no(evidence.get('reachability_proven', False))}",
+                    "",
+                    f"**Matches:** {finding.get('match_count', 0)}",
+                    "",
+                    f"**Recommendation:** {finding.get('recommendation', '')}",
+                    "",
+                    "**Evidence summary:**",
+                ]
             )
+            summaries = finding_evidence_summary(finding)
+            if summaries:
+                for summary in summaries:
+                    lines.append(f"- {summary}")
+            else:
+                lines.append("- Raw evidence is available in the structured JSON below.")
+            buyer_note = evidence.get("buyer_note")
+            if buyer_note:
+                lines.extend(["", f"**Validation note:** {buyer_note}"])
+            lines.extend(["", "**Raw evidence:** see structured JSON below."])
     else:
-        lines.extend(
-            [
-                "",
-                "No medium-or-higher deterministic findings were returned in this batch.",
-            ]
-        )
-    if ai_insights.get("status") == "completed":
-        model_items = [item for item in as_list(ai_insights.get("audit_insights")) if isinstance(item, dict)]
-        if model_items:
-            lines.extend(["", "Supplemental model review:"])
-            for item in model_items[:3]:
-                title = first_string(item.get("title"), default="Model insight")
-                severity = first_string(item.get("severity"), default="informational").upper()
-                recommendation = first_string(item.get("recommendation"), default="")
-                lines.append(f"- {severity}: {title}{f' - {recommendation}' if recommendation else ''}")
-    elif ai_insights.get("status") in {"skipped", "error"}:
-        lines.append(f"Supplemental model review: {ai_insights.get('status')} ({ai_insights.get('reason', 'not available')}).")
+        lines.append("No medium-or-higher deterministic findings were returned in this batch.")
     lines.extend(
         [
             "",
-            f"Input digest: {normalized['text_digest_sha256']}.",
+            "## Delivery Surface",
+            "",
+            *markdown_table(
+                [
+                    ("Inline Markdown", "yes"),
+                    ("Inline structured JSON", "yes"),
+                    ("Downloadable artifact", "no"),
+                    ("Internal verified package", "yes"),
+                ]
+            ),
+            "",
+            "This fast hosted scan is inline-only. No downloadable artifact receipt is exposed for this run.",
+            "",
+            "## Structured Result JSON",
+            "",
+            "`code-audit-result.json` is included as the next inline buyer-visible output with the complete machine-readable result.",
+            "",
+            f"Input digest: `{normalized['text_digest_sha256']}`.",
+            "",
             "Buyer delivery includes inline Markdown and inline structured JSON. The full verified package is hashed internally; no downloadable artifact receipt is exposed unless SantaClawz artifact delivery is separately enabled.",
         ]
     )
@@ -1734,8 +1899,12 @@ def buyer_structured_result(
     verdict: dict[str, Any],
 ) -> dict[str, Any]:
     target_summary = compact_target_materialization(materialized)
+    target_urls = as_list(target_summary.get("urls"))
+    semantic_review = semantic_review_projection(ai_insights)
+    report_sections = report_sections_projection(findings)
     return {
         "schema_version": "code-audit-buyer-result/1.0",
+        "report_version": "hosted-code-audit-report/1.0",
         "audit_status": "completed",
         "execution_mode": "standard_memory_backed_hosted_code_audit",
         "request_id": normalized["request_id"],
@@ -1749,9 +1918,12 @@ def buyer_structured_result(
             "internal_verified_package": True,
         },
         "target": {
+            "type": "github_repo" if int(target_summary.get("github_target_count", 0) or 0) > 0 else "submitted_context",
+            "url": target_urls[0] if target_urls else "",
             "status": target_summary.get("status"),
-            "urls": as_list(target_summary.get("urls")),
+            "urls": target_urls,
             "github_target_count": target_summary.get("github_target_count", 0),
+            "resolved_commit": "",
         },
         "scan": {
             "mode": "hosted_standard_prioritized_bounded_scan",
@@ -1778,11 +1950,17 @@ def buyer_structured_result(
             "prioritized_notes": as_list(ai_insights.get("prioritized_notes"))[:8],
             "next_run_focus": ai_insights.get("next_run_focus"),
         },
+        "semantic_review": semantic_review,
+        "report_sections": report_sections,
         "protocol_surface": protocol_surface,
         "memory": {
             "namespace": as_dict(normalized.get("namespace")),
             "prior_namespace_runs": memory_context.get("namespace_run_count", 0),
+            "namespace_prior_runs": memory_context.get("namespace_run_count", 0),
             "known_finding_count": memory_context.get("known_finding_count", 0),
+            "new_finding_count": as_dict(findings.get("memory_batch")).get("new_findings_returned", 0),
+            "repeated_finding_count": as_dict(findings.get("memory_batch")).get("repeated_findings_returned", 0),
+            "has_more_findings": findings.get("has_more_findings"),
             **as_dict(findings.get("memory_batch")),
         },
         "batch": {

@@ -10,6 +10,7 @@ persistent disk:
 - public GitHub repository URL materialization from paid job context
 - top-10 medium-or-higher finding batches by default, so work and output stay bounded
 - buyer-visible verdict, evidence strength, and protocol-surface hints
+- human-readable report sections with run metadata, scan scope, degraded-mode notices, all returned findings, and delivery surface
 - finding fingerprints to avoid repeating stale findings
 - feedback for useful/noisy finding labels
 - bounded JSON memory files under the configured memory directory
@@ -124,6 +125,11 @@ The buyer-visible JSON explicitly marks supplemental model review as degraded
 when enrichment is skipped or unavailable. Deterministic findings remain the
 baseline and include evidence-strength metadata so buyer agents can distinguish
 pattern candidates from fully validated exploit paths.
+
+The inline Markdown is intentionally formatted as a small professional audit
+report rather than a terse log: it includes a title, run metadata table, scan
+scope table, protocol-surface hints, degraded-mode notice when model enrichment
+fails, every returned medium-or-higher finding, and a delivery-surface table.
 
 ## SantaClawz Relay Service
 
