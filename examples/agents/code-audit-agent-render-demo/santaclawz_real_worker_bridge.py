@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import html
 import io
 import json
 import os
@@ -56,6 +57,7 @@ MAX_MATERIALIZED_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MATERIALIZED_TEXT_CHARS"
 MAX_REPO_ARCHIVE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_ARCHIVE_BYTES", 30_000_000, minimum=1_000_000, maximum=100_000_000)
 MAX_REPO_FILES_SCANNED = env_int("CLAWZ_CODE_AUDIT_REPO_FILES", 400, minimum=10, maximum=1000)
 MAX_REPO_FILE_BYTES = env_int("CLAWZ_CODE_AUDIT_REPO_FILE_BYTES", 120000, minimum=2000, maximum=500000)
+MAX_GITHUB_TARGET_BYTES = env_int("CLAWZ_CODE_AUDIT_GITHUB_TARGET_BYTES", 500000, minimum=20000, maximum=2_000_000)
 MAX_MODEL_TEXT_CHARS = env_int("CLAWZ_CODE_AUDIT_MODEL_TEXT_CHARS", 24000, minimum=2000, maximum=60000)
 MAX_MEMORY_RUNS_PER_NAMESPACE = 40
 MAX_MEMORY_FINDINGS_PER_NAMESPACE = 200
@@ -177,9 +179,10 @@ SKIP_PATH_PARTS = {
 
 
 class WorkerError(Exception):
-    def __init__(self, message: str, status_code: int = 500) -> None:
+    def __init__(self, message: str, status_code: int = 500, code: str = "code_audit_worker_failed") -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 def now_iso() -> str:
@@ -302,31 +305,50 @@ def extract_urls(value: Any, *, depth: int = 0) -> list[str]:
     return deduped
 
 
-def parse_github_repo_url(url: str) -> dict[str, str] | None:
+def parse_github_target_url(url: str) -> dict[str, str] | None:
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
     if host not in {"github.com", "www.github.com"}:
         return None
+    if parsed.scheme != "https":
+        return None
     parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) < 2:
+    if not parts:
         return None
     owner = parts[0]
-    repo = parts[1]
+    repo = parts[1] if len(parts) >= 2 else ""
     if repo.endswith(".git"):
         repo = repo[:-4]
-    ref = ""
-    if len(parts) >= 4 and parts[2] in {"tree", "commit"}:
-        ref = "/".join(parts[3:])
-    if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or not re.match(r"^[A-Za-z0-9_.-]+$", repo):
+    if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or (repo and not re.match(r"^[A-Za-z0-9_.-]+$", repo)):
         return None
-    return {"owner": owner, "repo": repo, "ref": ref, "url": url}
+    target: dict[str, str] = {
+        "owner": owner,
+        "repo": repo,
+        "ref": "",
+        "path": "",
+        "materialized_as": "page_text",
+        "url": url,
+    }
+    if len(parts) == 2:
+        target["materialized_as"] = "repo_archive"
+        return target
+    if len(parts) < 3:
+        return target
+    action = parts[2]
+    if action in {"tree", "commit"} and len(parts) >= 4:
+        target["materialized_as"] = "repo_archive"
+        target["ref"] = "/".join(parts[3:])
+        return target
+    target["materialized_as"] = "page_text"
+    target["path"] = "/".join(parts[2:] if len(parts) >= 2 else parts)
+    return target
 
 
-def fetch_limited_bytes(url: str, *, max_bytes: int, timeout: int = 20) -> bytes:
+def fetch_limited_bytes(url: str, *, max_bytes: int, timeout: int = 20, accept: str = "application/zip,application/octet-stream,*/*") -> bytes:
     request = urllib.request.Request(
         url,
         headers={
-            "accept": "application/zip,application/octet-stream,*/*",
+            "accept": accept,
             "user-agent": "santaclawz-code-audit-agent/1.2",
         },
     )
@@ -339,9 +361,82 @@ def fetch_limited_bytes(url: str, *, max_bytes: int, timeout: int = 20) -> bytes
                 break
             total += len(chunk)
             if total > max_bytes:
-                raise WorkerError(f"repository archive exceeded {max_bytes} bytes", 413)
+                raise WorkerError(f"fetched GitHub target exceeded {max_bytes} bytes", 413)
             chunks.append(chunk)
     return b"".join(chunks)
+
+
+def decode_web_text(data: bytes) -> str:
+    return data.decode("utf-8", errors="replace")
+
+
+def html_to_text(value: str) -> str:
+    value = re.sub(r"(?is)<script\b[^>]*>.*?</script>", " ", value)
+    value = re.sub(r"(?is)<style\b[^>]*>.*?</style>", " ", value)
+    value = re.sub(r"(?s)<[^>]+>", " ", value)
+    value = html.unescape(value)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in value.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def materialize_github_page_target(target: dict[str, str]) -> dict[str, Any]:
+    errors: list[str] = []
+    try:
+        data = fetch_limited_bytes(
+            target["url"],
+            max_bytes=MAX_GITHUB_TARGET_BYTES,
+            accept="text/plain,text/html,application/json,*/*",
+        )
+        text = html_to_text(decode_web_text(data))
+    except urllib.error.HTTPError as exc:
+        errors.append(f"{target['url']} -> HTTP {exc.code}")
+        text = ""
+        data = b""
+    except Exception as exc:
+        errors.append(f"{target['url']} -> {str(exc)[:160]}")
+        text = ""
+        data = b""
+    skipped_counts = {
+        "unsupported_path_or_extension": 0,
+        "scan_file_limit": 0,
+        "file_size_limit": 0,
+        "binary_or_empty": 0 if text.strip() else 1,
+    }
+    files = []
+    if text.strip():
+        clipped = text[:MAX_GITHUB_TARGET_BYTES]
+        files.append(
+            {
+                "path": f"github-page-{short_digest(target['url'], 8)}.txt",
+                "bytes": len(clipped.encode("utf-8")),
+                "sha256": hashlib.sha256(clipped.encode("utf-8")).hexdigest(),
+                "line_count": clipped.count("\n") + 1,
+                "content": clipped,
+            }
+        )
+    return {
+        "kind": "github_page_text",
+        "materialized_as": "page_text",
+        "source_url": target["url"],
+        "fetch_url": target["url"],
+        "owner": target["owner"],
+        "repo": target["repo"],
+        "ref": target.get("ref", ""),
+        "path": target.get("path", ""),
+        "status": "materialized" if files else "failed",
+        "content_type": "text/html",
+        "fetched_bytes": len(data),
+        "scan_profile": CODE_AUDIT_SCAN_PROFILE,
+        "ruleset_version": CODE_AUDIT_RULESET_VERSION,
+        "files_seen": 1,
+        "files_considered": 1,
+        "files_scanned": len(files),
+        "files_skipped": skipped_counts,
+        "scan_truncated": len(text) > MAX_GITHUB_TARGET_BYTES,
+        "max_target_bytes": MAX_GITHUB_TARGET_BYTES,
+        "errors": errors[-5:],
+        "files": files,
+    }
 
 
 def github_archive_candidates(target: dict[str, str]) -> list[str]:
@@ -417,6 +512,10 @@ def decode_source_bytes(data: bytes) -> str:
 
 
 def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
+    materialized_as = target.get("materialized_as", "repo_archive")
+    if materialized_as == "page_text":
+        return materialize_github_page_target(target)
+
     errors: list[str] = []
     archive_bytes: bytes | None = None
     archive_url = ""
@@ -430,15 +529,10 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
         except Exception as exc:
             errors.append(f"{candidate} -> {str(exc)[:160]}")
     if archive_bytes is None:
-        return {
-            "kind": "github_repo_archive",
-            "source_url": target["url"],
-            "owner": target["owner"],
-            "repo": target["repo"],
-            "status": "failed",
-            "errors": errors[-5:],
-            "files": [],
-        }
+        page_target = {**target, "materialized_as": "page_text"}
+        page_result = materialize_github_page_target(page_target)
+        page_result["archive_errors"] = errors[-5:]
+        return page_result
 
     files: list[dict[str, Any]] = []
     considered = 0
@@ -487,10 +581,12 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
             )
     return {
         "kind": "github_repo_archive",
+        "materialized_as": materialized_as,
         "source_url": target["url"],
         "archive_url": archive_url,
         "owner": target["owner"],
         "repo": target["repo"],
+        "ref": target.get("ref", ""),
         "status": "materialized",
         "archive_bytes": len(archive_bytes),
         "scan_profile": CODE_AUDIT_SCAN_PROFILE,
@@ -510,10 +606,10 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
     github_targets: list[dict[str, str]] = []
     seen: set[str] = set()
     for url in urls:
-        target = parse_github_repo_url(url)
+        target = parse_github_target_url(url)
         if not target:
             continue
-        key = f"{target['owner']}/{target['repo']}@{target.get('ref', '')}"
+        key = f"{target['owner']}/{target['repo']}:{target.get('materialized_as', '')}:{target.get('ref', '')}:{target.get('path', '')}"
         if key in seen:
             continue
         seen.add(key)
@@ -523,11 +619,19 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
     status = "not_requested"
     if targets:
         status = "materialized" if files else "failed"
+    materialized_as_values = sorted(
+        {
+            str(target.get("materialized_as") or "page_text")
+            for target in targets
+            if isinstance(target, dict)
+        }
+    )
     return {
         "schema_version": "code-audit-target-materialization/1.0",
         "status": status,
         "urls": urls,
         "github_target_count": len(github_targets),
+        "github_materialized_as": materialized_as_values,
         "targets": [
             {
                 key: value
@@ -562,6 +666,44 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "scan_truncated": any(bool(target.get("scan_truncated")) for target in targets),
     }
+
+
+def require_public_github_target(materialized: dict[str, Any]) -> None:
+    urls = [str(url) for url in as_list(materialized.get("urls"))]
+    github_like_urls = [
+        url for url in urls
+        if urllib.parse.urlparse(url).netloc.lower() in {"github.com", "www.github.com"}
+    ]
+    github_target_count = int(materialized.get("github_target_count", 0) or 0)
+    if github_target_count <= 0:
+        if github_like_urls:
+            raise WorkerError(
+                "Hosted code audit requires a public https://github.com/... URL with a valid GitHub path.",
+                400,
+                "invalid_input",
+            )
+        raise WorkerError(
+            "Hosted code audit requires a public https://github.com/... URL. Inline snippets, prose, uploaded files, and non-GitHub URLs are invalid for this agent.",
+            400,
+            "missing_required_input",
+        )
+    if materialized.get("status") == "materialized" and int(materialized.get("files_scanned", 0) or 0) > 0:
+        return
+    errors = []
+    for target in as_list(materialized.get("targets")):
+        if isinstance(target, dict):
+            errors.extend(str(error) for error in as_list(target.get("errors")))
+    if any("exceeded" in error.lower() for error in errors):
+        raise WorkerError(
+            "The public GitHub target is too large for this hosted fixed-price audit. Use a smaller GitHub target or a custom deep-audit agent.",
+            413,
+            "input_too_large",
+        )
+    raise WorkerError(
+        "The provided GitHub URL could not be fetched or had no useful content to scan. Confirm it is public and reachable, then retry with a GitHub URL.",
+        422,
+        "input_unavailable",
+    )
 
 
 def nested_string(*values: Any, default: str = "") -> str:
@@ -599,10 +741,10 @@ def find_nested_string(value: Any, keys: set[str], *, depth: int = 0) -> str:
 
 def github_repo_id_from_payload(payload: dict[str, Any]) -> str:
     for url in extract_urls(payload):
-        target = parse_github_repo_url(url)
+        target = parse_github_target_url(url)
         if not target:
             continue
-        repo_id = f"github:{target['owner']}/{target['repo']}"
+        repo_id = f"github:{target['owner']}/{target['repo']}" if target.get("repo") else f"github:url:{short_digest(url, 16)}"
         if target.get("ref"):
             repo_id = f"{repo_id}@{target['ref']}"
         return repo_id
@@ -711,7 +853,7 @@ def normalize_request(payload: dict[str, Any], raw_body: str) -> dict[str, Any]:
         input_block.get("prompt"),
         payload.get("brief"),
         payload.get("prompt"),
-        default="Review the submitted code or technical material for security and correctness issues.",
+        default="Review the submitted public GitHub target for security and correctness issues.",
     )
     text_chunks = collect_text(payload)
     if not text_chunks:
@@ -1370,6 +1512,7 @@ def compact_target_materialization(materialized: dict[str, Any]) -> dict[str, An
         "scan_profile": materialized.get("scan_profile", CODE_AUDIT_SCAN_PROFILE),
         "ruleset_version": materialized.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         "github_target_count": materialized.get("github_target_count", 0),
+        "github_materialized_as": as_list(materialized.get("github_materialized_as")),
         "files_seen": materialized.get("files_seen", 0),
         "files_scanned": materialized.get("files_scanned", 0),
         "files_considered": materialized.get("files_considered", 0),
@@ -1413,7 +1556,7 @@ def audit_verdict(
         "confidence": confidence,
         "scope": "bounded_hosted_audit_pass",
         "scope_note": (
-            "This is a hosted fixed-price audit pass over materialized source and submitted context. "
+            "This is a hosted fixed-price audit pass over a materialized public GitHub target. "
             "It is stronger than a plain template response, but it is not a full manual audit."
         ),
         "recommended_next_action": recommended_next_action,
@@ -1516,7 +1659,8 @@ def render_buyer_summary(
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     detected_surfaces = as_list(protocol_surface.get("detected"))
     target_urls = as_list(target_summary.get("urls"))
-    primary_target = target_urls[0] if target_urls else "submitted context"
+    materialized_as = as_list(target_summary.get("github_materialized_as"))
+    primary_target = target_urls[0] if target_urls else "public GitHub URL"
     lines = [
         "# Hosted Code Audit Report",
         "",
@@ -1536,6 +1680,7 @@ def render_buyer_summary(
                 ("Execution mode", "standard_memory_backed_hosted_code_audit"),
                 ("Ruleset", target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION)),
                 ("Target", primary_target),
+                ("Materialized as", ", ".join(str(item) for item in materialized_as) or "github_url"),
                 ("Findings returned", f"{findings.get('returned_finding_count', findings['finding_count'])} of {findings.get('total_active_finding_count', findings['finding_count'])} medium-or-higher"),
                 ("Total detected", findings.get("total_detected_finding_count", findings.get("total_active_finding_count", findings["finding_count"]))),
                 ("New vs repeated", f"{memory_batch.get('new_findings_returned', 0)} new, {memory_batch.get('repeated_findings_returned', 0)} repeated"),
@@ -1618,7 +1763,7 @@ def render_buyer_summary(
                 "",
                 "## Target Fetch Notice",
                 "",
-                "The requested source target could not be fetched, so this audit is scoped to the submitted prompt/context only.",
+                "The requested source target could not be fetched, so this hosted agent rejects the job instead of auditing prompt text only.",
             ]
         )
     lines.extend(
@@ -1900,6 +2045,7 @@ def buyer_structured_result(
 ) -> dict[str, Any]:
     target_summary = compact_target_materialization(materialized)
     target_urls = as_list(target_summary.get("urls"))
+    materialized_as = as_list(target_summary.get("github_materialized_as"))
     semantic_review = semantic_review_projection(ai_insights)
     report_sections = report_sections_projection(findings)
     return {
@@ -1918,7 +2064,9 @@ def buyer_structured_result(
             "internal_verified_package": True,
         },
         "target": {
-            "type": "github_repo" if int(target_summary.get("github_target_count", 0) or 0) > 0 else "submitted_context",
+            "type": "github_url",
+            "materialized_as": materialized_as[0] if materialized_as else "",
+            "materialized_as_options": materialized_as,
             "url": target_urls[0] if target_urls else "",
             "status": target_summary.get("status"),
             "urls": target_urls,
@@ -2228,13 +2376,14 @@ def call_openai_for_insights(
 def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = normalize_request(payload, raw_body)
     created_at = now_iso()
+    materialized = materialize_external_targets(payload)
+    require_public_github_target(materialized)
     run_dir = DEFAULT_OUTPUT_ROOT / f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d-%H%M%S')}-{slug(normalized['request_id'])}"
     package_dir = run_dir / "output_package"
     package_dir.mkdir(parents=True, exist_ok=False)
 
     memory = load_memory()
     memory_context = compact_memory_context(memory, as_dict(normalized["namespace"]))
-    materialized = materialize_external_targets(payload)
     scan_units = scan_units_from_target(normalized, materialized)
     raw_findings = audit_units(scan_units)
     memory_ranked_findings = apply_memory_to_findings(raw_findings, memory, as_dict(normalized["namespace"]))
@@ -2521,7 +2670,7 @@ def log_event(event: dict[str, Any]) -> None:
     print(json.dumps(event, sort_keys=True), file=sys.stderr, flush=True)
 
 
-def failure_payload(message: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
+def failure_payload(message: str, status_code: int, request_id: str | None = None, code: str = "code_audit_worker_failed") -> dict[str, Any]:
     return {
         "schema_version": "santaclawz-return/1.0",
         "request_id": request_id,
@@ -2529,7 +2678,7 @@ def failure_payload(message: str, status_code: int, request_id: str | None = Non
         "return_channel": "santaclawz",
         "agent_private": True,
         "error": {
-            "code": "code_audit_worker_failed",
+            "code": code,
             "message": message,
             "status_code": status_code,
         },
@@ -2652,7 +2801,7 @@ class Handler(BaseHTTPRequestHandler):
             self.write_response(200, return_payload)
         except WorkerError as exc:
             log_event({"type": "code-audit-worker-failed", "request_id": request_id, "error": str(exc), "status_code": exc.status_code})
-            self.write_response(exc.status_code, failure_payload(str(exc), exc.status_code, request_id))
+            self.write_response(exc.status_code, failure_payload(str(exc), exc.status_code, request_id, exc.code))
         except Exception as exc:
             log_event({"type": "code-audit-worker-unhandled-error", "request_id": request_id, "error": str(exc), "trace": traceback.format_exc(limit=6)})
             self.write_response(500, failure_payload("unhandled code audit worker error", 500, request_id))

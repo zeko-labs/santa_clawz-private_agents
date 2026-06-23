@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "fs";
+import * as fsPromises from "node:fs/promises";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -2481,9 +2482,85 @@ function mergePaymentLedgerStatus(
   return candidateStatus;
 }
 
+const JSON_FILE_READ_CACHE_MAX_ENTRIES = Math.max(
+  4,
+  Math.trunc(Number(process.env.CLAWZ_JSON_FILE_READ_CACHE_MAX_ENTRIES ?? "24"))
+);
+const JSON_FILE_READ_CACHE_MAX_BYTES = Math.max(
+  1_000_000,
+  Math.trunc(Number(process.env.CLAWZ_JSON_FILE_READ_CACHE_MAX_BYTES ?? `${256 * 1024 * 1024}`))
+);
+
+type JsonFileReadCacheEntry = {
+  mtimeMs: number;
+  size: number;
+  value: unknown;
+  lastUsedAtMs: number;
+};
+
+const jsonFileReadCache = new Map<string, JsonFileReadCacheEntry>();
+const jsonFileReadInflight = new Map<string, Promise<unknown>>();
+
+function pruneJsonFileReadCache() {
+  while (jsonFileReadCache.size > JSON_FILE_READ_CACHE_MAX_ENTRIES) {
+    const oldest = [...jsonFileReadCache.entries()]
+      .sort((left, right) => left[1].lastUsedAtMs - right[1].lastUsedAtMs)[0]?.[0];
+    if (!oldest) {
+      break;
+    }
+    jsonFileReadCache.delete(oldest);
+  }
+
+  let totalBytes = [...jsonFileReadCache.values()].reduce((sum, entry) => sum + entry.size, 0);
+  while (totalBytes > JSON_FILE_READ_CACHE_MAX_BYTES && jsonFileReadCache.size > 1) {
+    const oldest = [...jsonFileReadCache.entries()]
+      .sort((left, right) => left[1].lastUsedAtMs - right[1].lastUsedAtMs)[0];
+    if (!oldest) {
+      break;
+    }
+    jsonFileReadCache.delete(oldest[0]);
+    totalBytes -= oldest[1].size;
+  }
+}
+
+function invalidateJsonFileReadCache(filePath: string) {
+  jsonFileReadCache.delete(filePath);
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
   try {
-    return JSON.parse(await readFile(filePath, "utf8")) as T;
+    const metadata = await (fsPromises as unknown as {
+      stat: (path: string) => Promise<{ mtimeMs: number; size: number }>;
+    }).stat(filePath);
+    const cached = jsonFileReadCache.get(filePath);
+    if (cached && cached.mtimeMs === metadata.mtimeMs && cached.size === metadata.size) {
+      cached.lastUsedAtMs = Date.now();
+      return cached.value as T;
+    }
+
+    const inflightKey = `${filePath}:${metadata.mtimeMs}:${metadata.size}`;
+    const existingInflight = jsonFileReadInflight.get(inflightKey);
+    if (existingInflight) {
+      return await existingInflight as T;
+    }
+
+    const readPromise = readFile(filePath, "utf8")
+      .then((contents) => {
+        const value = JSON.parse(contents) as T;
+        jsonFileReadCache.set(filePath, {
+          mtimeMs: metadata.mtimeMs,
+          size: Buffer.byteLength(contents, "utf8"),
+          value,
+          lastUsedAtMs: Date.now()
+        });
+        pruneJsonFileReadCache();
+        return value;
+      })
+      .finally(() => {
+        jsonFileReadInflight.delete(inflightKey);
+      });
+    jsonFileReadInflight.set(inflightKey, readPromise);
+    return await readPromise;
   } catch (error) {
     const maybeCode = error as { code?: string };
     if (maybeCode.code === "ENOENT") {
@@ -2494,10 +2571,12 @@ async function readJsonFile<T>(filePath: string): Promise<T | undefined> {
 }
 
 async function writeJsonFile(filePath: string, value: unknown) {
+  invalidateJsonFileReadCache(filePath);
   const tempPath = `${filePath}.${randomUUID()}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
   await rename(tempPath, filePath);
   await chmod(filePath, 0o600);
+  invalidateJsonFileReadCache(filePath);
 }
 
 function buildDefaultSponsorQueue(): SponsorQueueFile {

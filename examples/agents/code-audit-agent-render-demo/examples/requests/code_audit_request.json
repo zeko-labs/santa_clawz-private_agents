@@ -1,13 +1,7 @@
 {
   "request_id": "local-code-audit-smoke",
   "input": {
-    "title": "Review a small Python snippet",
-    "client_request": "Check this code for obvious security issues and return a proof-backed report.",
-    "files": [
-      {
-        "path": "example.py",
-        "content": "import subprocess\n\ndef run(user_input):\n    return subprocess.run('echo ' + user_input, shell=True, capture_output=True)\n"
-      }
-    ]
+    "title": "Audit a public GitHub URL",
+    "client_request": "Review this public GitHub URL for security and correctness issues: https://github.com/octocat/Spoon-Knife"
   }
 }

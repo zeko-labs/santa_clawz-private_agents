@@ -6,8 +6,8 @@ The web service is memory-backed when Render points its writable paths at a
 persistent disk:
 
 - optional OpenAI enrichment through `OPENAI_API_KEY`
-- durable buyer-scoped repo audit memory
-- public GitHub repository URL materialization from paid job context
+- durable buyer-scoped GitHub audit memory
+- required public GitHub URL materialization from paid job context
 - top-10 medium-or-higher finding batches by default, so work and output stay bounded
 - buyer-visible verdict, evidence strength, and protocol-surface hints
 - human-readable report sections with run metadata, scan scope, degraded-mode notices, all returned findings, and delivery surface
@@ -39,8 +39,9 @@ buyer/repo namespace until `all_findings_returned` is `true`. This keeps a
 single purchase readable while letting repeat runs go deeper instead of
 re-sending the same first findings.
 
-Audit memory is scoped first by buyer agent identity, then by repo. A different
-buyer agent scanning the same repo starts with a fresh memory namespace. If a
+Audit memory is scoped first by buyer agent identity, then by GitHub repo. A
+different buyer agent scanning the same repo or repo-linked target starts with
+a fresh memory namespace. If a
 paid request does not include a stable buyer/requester identity such as
 `requesterContact`, `buyerAgentId`, or `requester.id`, the worker falls back to
 an isolated per-request namespace instead of reusing repo memory by accident.
@@ -51,18 +52,24 @@ Output files have distinct jobs:
 
 - `audit_report.md`: human-readable audit report
 - `findings.json`: deterministic finding batch returned for this run
-- `target_materialization.json`: fetched target summary, source URL, file counts, and scan caps
+- `target_materialization.json`: fetched GitHub target summary, source URL, file counts, and scan caps
 - `protocol_surface.json`: SantaClawz/OpenClaw/x402/ZK surface hints that shaped audit focus
 - `memory_context.json`: private continuation/de-duplication context, not the audit report
 - `ai_insights.json`: optional OpenAI Responses API model review and audit guidance
 - `scope_summary.json`: hashes, namespace, and run metadata
 
-When the paid request includes a public GitHub URL through `jobContext.urls` or
-the prompt body, the hosted worker downloads the repository archive from
-GitHub, scans source-like files with bounded caps, and records how many files
-were considered and scanned. If the target cannot be fetched, the buyer-visible
-summary and report say that explicitly instead of silently returning a clean
-audit for only the URL string.
+Paid requests must include a public `https://github.com/...` URL through
+`jobContext.urls`, a structured request field, or the prompt body. Repo roots
+and refs are scanned as bounded repository archives; other GitHub paths are
+scanned as bounded page text. Inline snippets, prose-only requests, uploaded
+files, private GitHub targets, and non-GitHub URLs are invalid for this
+product. If the URL is missing, malformed, private, deleted, unreachable, too
+large, or has no useful content, the worker returns a typed buyer-actionable
+failure instead of running a misleading audit.
+
+For valid public GitHub targets, the hosted worker downloads the repository
+archive or bounded page text from GitHub, scans it with bounded caps, and
+records exactly what was considered and scanned.
 
 When OpenAI is enabled, the web service does not send the whole durable memory
 file to the model. It builds a targeted JSON context containing the current
