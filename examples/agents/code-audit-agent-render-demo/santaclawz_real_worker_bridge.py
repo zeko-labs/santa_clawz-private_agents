@@ -313,49 +313,34 @@ def parse_github_target_url(url: str) -> dict[str, str] | None:
     if parsed.scheme != "https":
         return None
     parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) < 2:
+    if not parts:
         return None
     owner = parts[0]
-    repo = parts[1]
+    repo = parts[1] if len(parts) >= 2 else ""
     if repo.endswith(".git"):
         repo = repo[:-4]
-    if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or not re.match(r"^[A-Za-z0-9_.-]+$", repo):
+    if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or (repo and not re.match(r"^[A-Za-z0-9_.-]+$", repo)):
         return None
     target: dict[str, str] = {
         "owner": owner,
         "repo": repo,
         "ref": "",
         "path": "",
-        "number": "",
-        "target_type": "repo",
+        "materialized_as": "page_text",
         "url": url,
     }
     if len(parts) == 2:
+        target["materialized_as"] = "repo_archive"
+        return target
+    if len(parts) < 3:
         return target
     action = parts[2]
     if action in {"tree", "commit"} and len(parts) >= 4:
-        target["target_type"] = action
+        target["materialized_as"] = "repo_archive"
         target["ref"] = "/".join(parts[3:])
         return target
-    if action == "blob" and len(parts) >= 5:
-        target["target_type"] = "blob"
-        target["ref"] = parts[3]
-        target["path"] = "/".join(parts[4:])
-        return target
-    if action == "pull" and len(parts) >= 4 and parts[3].isdigit():
-        target["target_type"] = "pull_request"
-        target["number"] = parts[3]
-        return target
-    if action in {"issues", "issue"} and len(parts) >= 4:
-        target["target_type"] = "issue"
-        target["number"] = parts[3]
-        return target
-    if action == "discussions" and len(parts) >= 4:
-        target["target_type"] = "discussion"
-        target["number"] = parts[3]
-        return target
-    target["target_type"] = "github_page"
-    target["path"] = "/".join(parts[2:])
+    target["materialized_as"] = "page_text"
+    target["path"] = "/".join(parts[2:] if len(parts) >= 2 else parts)
     return target
 
 
@@ -376,7 +361,7 @@ def fetch_limited_bytes(url: str, *, max_bytes: int, timeout: int = 20, accept: 
                 break
             total += len(chunk)
             if total > max_bytes:
-                raise WorkerError(f"repository archive exceeded {max_bytes} bytes", 413)
+                raise WorkerError(f"fetched GitHub target exceeded {max_bytes} bytes", 413)
             chunks.append(chunk)
     return b"".join(chunks)
 
@@ -394,31 +379,21 @@ def html_to_text(value: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def single_file_target(
-    target: dict[str, str],
-    *,
-    kind: str,
-    fetch_url: str,
-    path: str,
-    content_type: str,
-    html_page: bool = False,
-) -> dict[str, Any]:
+def materialize_github_page_target(target: dict[str, str]) -> dict[str, Any]:
     errors: list[str] = []
     try:
         data = fetch_limited_bytes(
-            fetch_url,
+            target["url"],
             max_bytes=MAX_GITHUB_TARGET_BYTES,
             accept="text/plain,text/html,application/json,*/*",
         )
-        text = decode_web_text(data)
-        if html_page:
-            text = html_to_text(text)
+        text = html_to_text(decode_web_text(data))
     except urllib.error.HTTPError as exc:
-        errors.append(f"{fetch_url} -> HTTP {exc.code}")
+        errors.append(f"{target['url']} -> HTTP {exc.code}")
         text = ""
         data = b""
     except Exception as exc:
-        errors.append(f"{fetch_url} -> {str(exc)[:160]}")
+        errors.append(f"{target['url']} -> {str(exc)[:160]}")
         text = ""
         data = b""
     skipped_counts = {
@@ -432,7 +407,7 @@ def single_file_target(
         clipped = text[:MAX_GITHUB_TARGET_BYTES]
         files.append(
             {
-                "path": path,
+                "path": f"github-page-{short_digest(target['url'], 8)}.txt",
                 "bytes": len(clipped.encode("utf-8")),
                 "sha256": hashlib.sha256(clipped.encode("utf-8")).hexdigest(),
                 "line_count": clipped.count("\n") + 1,
@@ -440,17 +415,16 @@ def single_file_target(
             }
         )
     return {
-        "kind": kind,
-        "target_type": target.get("target_type", "github_page"),
+        "kind": "github_page_text",
+        "materialized_as": "page_text",
         "source_url": target["url"],
-        "fetch_url": fetch_url,
+        "fetch_url": target["url"],
         "owner": target["owner"],
         "repo": target["repo"],
         "ref": target.get("ref", ""),
         "path": target.get("path", ""),
-        "number": target.get("number", ""),
         "status": "materialized" if files else "failed",
-        "content_type": content_type,
+        "content_type": "text/html",
         "fetched_bytes": len(data),
         "scan_profile": CODE_AUDIT_SCAN_PROFILE,
         "ruleset_version": CODE_AUDIT_RULESET_VERSION,
@@ -538,40 +512,9 @@ def decode_source_bytes(data: bytes) -> str:
 
 
 def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
-    target_type = target.get("target_type", "repo")
-    if target_type == "blob":
-        owner = urllib.parse.quote(target["owner"], safe="")
-        repo = urllib.parse.quote(target["repo"], safe="")
-        ref = urllib.parse.quote(target.get("ref", ""), safe="/")
-        path = urllib.parse.quote(target.get("path", ""), safe="/")
-        return single_file_target(
-            target,
-            kind="github_blob_file",
-            fetch_url=f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}",
-            path=target.get("path") or "github-blob.txt",
-            content_type="text/plain",
-        )
-    if target_type == "pull_request":
-        owner = urllib.parse.quote(target["owner"], safe="")
-        repo = urllib.parse.quote(target["repo"], safe="")
-        number = urllib.parse.quote(target.get("number", ""), safe="")
-        return single_file_target(
-            target,
-            kind="github_pull_request_diff",
-            fetch_url=f"https://github.com/{owner}/{repo}/pull/{number}.diff",
-            path=f"github-pull-{target.get('number', 'unknown')}.diff",
-            content_type="text/x-diff",
-        )
-    if target_type in {"issue", "discussion", "github_page"}:
-        safe_type = re.sub(r"[^a-z0-9_-]+", "-", target_type.lower()).strip("-") or "github-page"
-        return single_file_target(
-            target,
-            kind=f"github_{safe_type}_page",
-            fetch_url=target["url"],
-            path=f"{safe_type}-{target.get('number') or short_digest(target['url'], 8)}.txt",
-            content_type="text/html",
-            html_page=True,
-        )
+    materialized_as = target.get("materialized_as", "repo_archive")
+    if materialized_as == "page_text":
+        return materialize_github_page_target(target)
 
     errors: list[str] = []
     archive_bytes: bytes | None = None
@@ -586,17 +529,10 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
         except Exception as exc:
             errors.append(f"{candidate} -> {str(exc)[:160]}")
     if archive_bytes is None:
-        return {
-            "kind": "github_repo_archive",
-            "target_type": target_type,
-            "source_url": target["url"],
-            "owner": target["owner"],
-            "repo": target["repo"],
-            "ref": target.get("ref", ""),
-            "status": "failed",
-            "errors": errors[-5:],
-            "files": [],
-        }
+        page_target = {**target, "materialized_as": "page_text"}
+        page_result = materialize_github_page_target(page_target)
+        page_result["archive_errors"] = errors[-5:]
+        return page_result
 
     files: list[dict[str, Any]] = []
     considered = 0
@@ -645,7 +581,7 @@ def materialize_github_target(target: dict[str, str]) -> dict[str, Any]:
             )
     return {
         "kind": "github_repo_archive",
-        "target_type": target_type,
+        "materialized_as": materialized_as,
         "source_url": target["url"],
         "archive_url": archive_url,
         "owner": target["owner"],
@@ -673,7 +609,7 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
         target = parse_github_target_url(url)
         if not target:
             continue
-        key = f"{target['owner']}/{target['repo']}:{target.get('target_type', '')}:{target.get('ref', '')}:{target.get('path', '')}:{target.get('number', '')}"
+        key = f"{target['owner']}/{target['repo']}:{target.get('materialized_as', '')}:{target.get('ref', '')}:{target.get('path', '')}"
         if key in seen:
             continue
         seen.add(key)
@@ -683,12 +619,19 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
     status = "not_requested"
     if targets:
         status = "materialized" if files else "failed"
+    materialized_as_values = sorted(
+        {
+            str(target.get("materialized_as") or "page_text")
+            for target in targets
+            if isinstance(target, dict)
+        }
+    )
     return {
         "schema_version": "code-audit-target-materialization/1.0",
         "status": status,
         "urls": urls,
         "github_target_count": len(github_targets),
-        "github_target_types": sorted({target.get("target_type", "github_page") for target in github_targets}),
+        "github_materialized_as": materialized_as_values,
         "targets": [
             {
                 key: value
@@ -735,7 +678,7 @@ def require_public_github_target(materialized: dict[str, Any]) -> None:
     if github_target_count <= 0:
         if github_like_urls:
             raise WorkerError(
-                "Hosted code audit requires a public GitHub URL under a repository, such as https://github.com/owner/repo, a pull request, issue, or file URL.",
+                "Hosted code audit requires a public https://github.com/... URL with a valid GitHub path.",
                 400,
                 "invalid_input",
             )
@@ -801,7 +744,7 @@ def github_repo_id_from_payload(payload: dict[str, Any]) -> str:
         target = parse_github_target_url(url)
         if not target:
             continue
-        repo_id = f"github:{target['owner']}/{target['repo']}"
+        repo_id = f"github:{target['owner']}/{target['repo']}" if target.get("repo") else f"github:url:{short_digest(url, 16)}"
         if target.get("ref"):
             repo_id = f"{repo_id}@{target['ref']}"
         return repo_id
@@ -910,7 +853,7 @@ def normalize_request(payload: dict[str, Any], raw_body: str) -> dict[str, Any]:
         input_block.get("prompt"),
         payload.get("brief"),
         payload.get("prompt"),
-        default="Review the submitted code or technical material for security and correctness issues.",
+        default="Review the submitted public GitHub target for security and correctness issues.",
     )
     text_chunks = collect_text(payload)
     if not text_chunks:
@@ -1569,7 +1512,7 @@ def compact_target_materialization(materialized: dict[str, Any]) -> dict[str, An
         "scan_profile": materialized.get("scan_profile", CODE_AUDIT_SCAN_PROFILE),
         "ruleset_version": materialized.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         "github_target_count": materialized.get("github_target_count", 0),
-        "github_target_types": as_list(materialized.get("github_target_types")),
+        "github_materialized_as": as_list(materialized.get("github_materialized_as")),
         "files_seen": materialized.get("files_seen", 0),
         "files_scanned": materialized.get("files_scanned", 0),
         "files_considered": materialized.get("files_considered", 0),
@@ -1716,7 +1659,7 @@ def render_buyer_summary(
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     detected_surfaces = as_list(protocol_surface.get("detected"))
     target_urls = as_list(target_summary.get("urls"))
-    target_types = as_list(target_summary.get("github_target_types"))
+    materialized_as = as_list(target_summary.get("github_materialized_as"))
     primary_target = target_urls[0] if target_urls else "public GitHub URL"
     lines = [
         "# Hosted Code Audit Report",
@@ -1737,7 +1680,7 @@ def render_buyer_summary(
                 ("Execution mode", "standard_memory_backed_hosted_code_audit"),
                 ("Ruleset", target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION)),
                 ("Target", primary_target),
-                ("Target type", ", ".join(str(item) for item in target_types) or "github_url"),
+                ("Materialized as", ", ".join(str(item) for item in materialized_as) or "github_url"),
                 ("Findings returned", f"{findings.get('returned_finding_count', findings['finding_count'])} of {findings.get('total_active_finding_count', findings['finding_count'])} medium-or-higher"),
                 ("Total detected", findings.get("total_detected_finding_count", findings.get("total_active_finding_count", findings["finding_count"]))),
                 ("New vs repeated", f"{memory_batch.get('new_findings_returned', 0)} new, {memory_batch.get('repeated_findings_returned', 0)} repeated"),
@@ -2102,7 +2045,7 @@ def buyer_structured_result(
 ) -> dict[str, Any]:
     target_summary = compact_target_materialization(materialized)
     target_urls = as_list(target_summary.get("urls"))
-    target_types = as_list(target_summary.get("github_target_types"))
+    materialized_as = as_list(target_summary.get("github_materialized_as"))
     semantic_review = semantic_review_projection(ai_insights)
     report_sections = report_sections_projection(findings)
     return {
@@ -2121,8 +2064,9 @@ def buyer_structured_result(
             "internal_verified_package": True,
         },
         "target": {
-            "type": target_types[0] if target_types else "github_url",
-            "types": target_types,
+            "type": "github_url",
+            "materialized_as": materialized_as[0] if materialized_as else "",
+            "materialized_as_options": materialized_as,
             "url": target_urls[0] if target_urls else "",
             "status": target_summary.get("status"),
             "urls": target_urls,

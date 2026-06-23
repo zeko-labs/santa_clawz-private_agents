@@ -59,18 +59,17 @@ Output files have distinct jobs:
 - `scope_summary.json`: hashes, namespace, and run metadata
 
 Paid requests must include a public `https://github.com/...` URL through
-`jobContext.urls`, a structured request field, or the prompt body. This hosted
-agent classifies the URL as a repo, tree/ref, commit, pull request, blob/file,
-issue, discussion, or other GitHub page and makes that scope explicit in the
-buyer-visible report and structured JSON. Inline snippets, prose-only requests,
-uploaded files, private GitHub targets, and non-GitHub URLs are invalid for
-this product. If the URL is missing, malformed, private, deleted, unreachable,
-too large, or has no useful content, the worker returns a typed
-buyer-actionable failure instead of running a misleading audit.
+`jobContext.urls`, a structured request field, or the prompt body. Repo roots
+and refs are scanned as bounded repository archives; other GitHub paths are
+scanned as bounded page text. Inline snippets, prose-only requests, uploaded
+files, private GitHub targets, and non-GitHub URLs are invalid for this
+product. If the URL is missing, malformed, private, deleted, unreachable, too
+large, or has no useful content, the worker returns a typed buyer-actionable
+failure instead of running a misleading audit.
 
 For valid public GitHub targets, the hosted worker downloads the repository
-archive, pull-request diff, raw file, or bounded page text from GitHub, scans it
-with bounded caps, and records exactly what was considered and scanned.
+archive or bounded page text from GitHub, scans it with bounded caps, and
+records exactly what was considered and scanned.
 
 When OpenAI is enabled, the web service does not send the whole durable memory
 file to the model. It builds a targeted JSON context containing the current
