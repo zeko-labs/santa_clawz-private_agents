@@ -1,7 +1,7 @@
 {
   "request_id": "local-code-audit-smoke",
   "input": {
-    "title": "Audit a public GitHub repository",
-    "client_request": "Review this public GitHub repository for security and correctness issues: https://github.com/octocat/Spoon-Knife"
+    "title": "Audit a public GitHub URL",
+    "client_request": "Review this public GitHub URL for security and correctness issues: https://github.com/octocat/Spoon-Knife"
   }
 }
