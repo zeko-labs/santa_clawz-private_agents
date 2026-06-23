@@ -177,9 +177,10 @@ SKIP_PATH_PARTS = {
 
 
 class WorkerError(Exception):
-    def __init__(self, message: str, status_code: int = 500) -> None:
+    def __init__(self, message: str, status_code: int = 500, code: str = "code_audit_worker_failed") -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 def now_iso() -> str:
@@ -307,6 +308,8 @@ def parse_github_repo_url(url: str) -> dict[str, str] | None:
     host = parsed.netloc.lower()
     if host not in {"github.com", "www.github.com"}:
         return None
+    if parsed.scheme != "https":
+        return None
     parts = [part for part in parsed.path.split("/") if part]
     if len(parts) < 2:
         return None
@@ -315,8 +318,12 @@ def parse_github_repo_url(url: str) -> dict[str, str] | None:
     if repo.endswith(".git"):
         repo = repo[:-4]
     ref = ""
+    if len(parts) > 2 and parts[2] not in {"tree", "commit"}:
+        return None
     if len(parts) >= 4 and parts[2] in {"tree", "commit"}:
         ref = "/".join(parts[3:])
+    if len(parts) == 3:
+        return None
     if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or not re.match(r"^[A-Za-z0-9_.-]+$", repo):
         return None
     return {"owner": owner, "repo": repo, "ref": ref, "url": url}
@@ -562,6 +569,44 @@ def materialize_external_targets(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "scan_truncated": any(bool(target.get("scan_truncated")) for target in targets),
     }
+
+
+def require_public_github_repo_target(materialized: dict[str, Any]) -> None:
+    urls = [str(url) for url in as_list(materialized.get("urls"))]
+    github_like_urls = [
+        url for url in urls
+        if urllib.parse.urlparse(url).netloc.lower() in {"github.com", "www.github.com"}
+    ]
+    github_target_count = int(materialized.get("github_target_count", 0) or 0)
+    if github_target_count <= 0:
+        if github_like_urls:
+            raise WorkerError(
+                "Hosted code audit requires a GitHub repository URL like https://github.com/owner/repo. GitHub issue, pull request, blob, gist, or other non-repository URLs are invalid for this agent.",
+                400,
+                "invalid_input",
+            )
+        raise WorkerError(
+            "Hosted code audit requires a public GitHub repository URL like https://github.com/owner/repo. Inline snippets, prose, files, and non-GitHub URLs are invalid for this agent.",
+            400,
+            "missing_required_input",
+        )
+    if materialized.get("status") == "materialized" and int(materialized.get("files_scanned", 0) or 0) > 0:
+        return
+    errors = []
+    for target in as_list(materialized.get("targets")):
+        if isinstance(target, dict):
+            errors.extend(str(error) for error in as_list(target.get("errors")))
+    if any("exceeded" in error.lower() for error in errors):
+        raise WorkerError(
+            "The public GitHub repository archive is too large for this hosted fixed-price audit. Use a smaller repo/ref or a custom deep-audit agent.",
+            413,
+            "input_too_large",
+        )
+    raise WorkerError(
+        "The provided GitHub repository could not be fetched or had no supported source files to scan. Confirm it is public and reachable, then retry with a repository URL.",
+        422,
+        "input_unavailable",
+    )
 
 
 def nested_string(*values: Any, default: str = "") -> str:
@@ -1413,7 +1458,7 @@ def audit_verdict(
         "confidence": confidence,
         "scope": "bounded_hosted_audit_pass",
         "scope_note": (
-            "This is a hosted fixed-price audit pass over materialized source and submitted context. "
+            "This is a hosted fixed-price audit pass over a materialized public GitHub repository. "
             "It is stronger than a plain template response, but it is not a full manual audit."
         ),
         "recommended_next_action": recommended_next_action,
@@ -1516,7 +1561,7 @@ def render_buyer_summary(
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     detected_surfaces = as_list(protocol_surface.get("detected"))
     target_urls = as_list(target_summary.get("urls"))
-    primary_target = target_urls[0] if target_urls else "submitted context"
+    primary_target = target_urls[0] if target_urls else "public GitHub repository"
     lines = [
         "# Hosted Code Audit Report",
         "",
@@ -1618,7 +1663,7 @@ def render_buyer_summary(
                 "",
                 "## Target Fetch Notice",
                 "",
-                "The requested source target could not be fetched, so this audit is scoped to the submitted prompt/context only.",
+                "The requested source target could not be fetched, so this hosted agent rejects the job instead of auditing prompt text only.",
             ]
         )
     lines.extend(
@@ -2228,13 +2273,14 @@ def call_openai_for_insights(
 def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = normalize_request(payload, raw_body)
     created_at = now_iso()
+    materialized = materialize_external_targets(payload)
+    require_public_github_repo_target(materialized)
     run_dir = DEFAULT_OUTPUT_ROOT / f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d-%H%M%S')}-{slug(normalized['request_id'])}"
     package_dir = run_dir / "output_package"
     package_dir.mkdir(parents=True, exist_ok=False)
 
     memory = load_memory()
     memory_context = compact_memory_context(memory, as_dict(normalized["namespace"]))
-    materialized = materialize_external_targets(payload)
     scan_units = scan_units_from_target(normalized, materialized)
     raw_findings = audit_units(scan_units)
     memory_ranked_findings = apply_memory_to_findings(raw_findings, memory, as_dict(normalized["namespace"]))
@@ -2521,7 +2567,7 @@ def log_event(event: dict[str, Any]) -> None:
     print(json.dumps(event, sort_keys=True), file=sys.stderr, flush=True)
 
 
-def failure_payload(message: str, status_code: int, request_id: str | None = None) -> dict[str, Any]:
+def failure_payload(message: str, status_code: int, request_id: str | None = None, code: str = "code_audit_worker_failed") -> dict[str, Any]:
     return {
         "schema_version": "santaclawz-return/1.0",
         "request_id": request_id,
@@ -2529,7 +2575,7 @@ def failure_payload(message: str, status_code: int, request_id: str | None = Non
         "return_channel": "santaclawz",
         "agent_private": True,
         "error": {
-            "code": "code_audit_worker_failed",
+            "code": code,
             "message": message,
             "status_code": status_code,
         },
@@ -2652,7 +2698,7 @@ class Handler(BaseHTTPRequestHandler):
             self.write_response(200, return_payload)
         except WorkerError as exc:
             log_event({"type": "code-audit-worker-failed", "request_id": request_id, "error": str(exc), "status_code": exc.status_code})
-            self.write_response(exc.status_code, failure_payload(str(exc), exc.status_code, request_id))
+            self.write_response(exc.status_code, failure_payload(str(exc), exc.status_code, request_id, exc.code))
         except Exception as exc:
             log_event({"type": "code-audit-worker-unhandled-error", "request_id": request_id, "error": str(exc), "trace": traceback.format_exc(limit=6)})
             self.write_response(500, failure_payload("unhandled code audit worker error", 500, request_id))

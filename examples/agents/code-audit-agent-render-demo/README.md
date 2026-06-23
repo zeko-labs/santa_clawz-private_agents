@@ -7,7 +7,7 @@ persistent disk:
 
 - optional OpenAI enrichment through `OPENAI_API_KEY`
 - durable buyer-scoped repo audit memory
-- public GitHub repository URL materialization from paid job context
+- required public GitHub repository URL materialization from paid job context
 - top-10 medium-or-higher finding batches by default, so work and output stay bounded
 - buyer-visible verdict, evidence strength, and protocol-surface hints
 - human-readable report sections with run metadata, scan scope, degraded-mode notices, all returned findings, and delivery surface
@@ -57,12 +57,18 @@ Output files have distinct jobs:
 - `ai_insights.json`: optional OpenAI Responses API model review and audit guidance
 - `scope_summary.json`: hashes, namespace, and run metadata
 
-When the paid request includes a public GitHub URL through `jobContext.urls` or
-the prompt body, the hosted worker downloads the repository archive from
-GitHub, scans source-like files with bounded caps, and records how many files
-were considered and scanned. If the target cannot be fetched, the buyer-visible
-summary and report say that explicitly instead of silently returning a clean
-audit for only the URL string.
+Paid requests must include a public GitHub repository URL through
+`jobContext.urls`, a structured request field, or the prompt body. This hosted
+agent only accepts repository URLs such as `https://github.com/owner/repo` plus
+optional `tree` or `commit` refs. Inline snippets, prose-only requests, files,
+gists, issues, pull requests, blobs, private repositories, and non-GitHub URLs
+are invalid for this product. If the URL is missing, malformed, private,
+deleted, unreachable, too large, or has no supported source files, the worker
+returns a typed buyer-actionable failure instead of running a misleading audit.
+
+For valid public repositories, the hosted worker downloads the repository
+archive from GitHub, scans source-like files with bounded caps, and records how
+many files were considered and scanned.
 
 When OpenAI is enabled, the web service does not send the whole durable memory
 file to the model. It builds a targeted JSON context containing the current
