@@ -106,7 +106,7 @@ const CONSOLE_STATE_CACHE_TTL_MS = Math.max(
 );
 const CONSOLE_STATE_CACHE_MAX_ENTRIES = Math.max(
   10,
-  Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_MAX_ENTRIES ?? "120"))
+  Math.trunc(Number(process.env.CLAWZ_CONSOLE_STATE_CACHE_MAX_ENTRIES ?? "24"))
 );
 const PAYMENT_LEDGER_CACHE_TTL_MS = Math.max(
   0,
@@ -114,7 +114,7 @@ const PAYMENT_LEDGER_CACHE_TTL_MS = Math.max(
 );
 const PAYMENT_LEDGER_CACHE_MAX_ENTRIES = Math.max(
   10,
-  Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_MAX_ENTRIES ?? "80"))
+  Math.trunc(Number(process.env.CLAWZ_PAYMENT_LEDGER_CACHE_MAX_ENTRIES ?? "40"))
 );
 const ARTIFACT_DOWNLOAD_READ_BUDGET_MS = 5000;
 const X402_PLAN_COLD_READ_BUDGET_MS = 3000;
@@ -129,7 +129,7 @@ const PUBLIC_READ_CACHE_TTL_MS = Math.max(
 );
 const PUBLIC_READ_CACHE_MAX_ENTRIES = Math.max(
   10,
-  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_MAX_ENTRIES ?? "120"))
+  Math.trunc(Number(process.env.CLAWZ_PUBLIC_READ_CACHE_MAX_ENTRIES ?? "48"))
 );
 const HOT_READ_STALE_WHILE_REVALIDATE_MS = 60_000;
 const X402_PAYMENT_STATE_STALE_WHILE_REVALIDATE_MS = 15 * 60_000;
@@ -311,13 +311,9 @@ function clearConsoleStateCache() {
   publicMarketplaceSnapshotCacheEpoch += 1;
   publicReadCacheEpoch += 1;
   consoleStateCache.clear();
-  consoleStateInflight.clear();
   paymentLedgerCache.clear();
-  paymentLedgerInflight.clear();
   publicMarketplaceSnapshotCache.clear();
-  publicMarketplaceSnapshotInflight.clear();
   publicReadCache.clear();
-  publicReadInflight.clear();
 }
 
 function clearX402PlanCache() {
@@ -487,7 +483,7 @@ async function cachedHotRead<T>(input: {
     }
     return { payload: cached.payload as T, cacheStatus: "stale" };
   }
-  if (inflight && inflight.epoch === input.cacheEpoch) {
+  if (inflight) {
     return { payload: await inflight.promise as T, cacheStatus: "inflight" };
   }
   const payload = await launchHotReadRefresh(input);
