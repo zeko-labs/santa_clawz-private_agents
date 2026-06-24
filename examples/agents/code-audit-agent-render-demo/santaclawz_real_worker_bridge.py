@@ -1708,25 +1708,6 @@ def compact_protocol_surface_for_buyer(protocol_surface: dict[str, Any]) -> dict
     }
 
 
-def semantic_review_projection(ai_insights: dict[str, Any]) -> dict[str, Any]:
-    status = str(ai_insights.get("status") or "skipped")
-    attempted = status != "skipped"
-    completed = status == "completed"
-    reason = first_string(ai_insights.get("reason"), default="")
-    error_code = ""
-    if reason:
-        normalized = re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_")
-        error_code = normalized[:80]
-    return {
-        "attempted": attempted,
-        "completed": completed,
-        "status": status,
-        "error": "" if completed else error_code,
-        "fallback": "deterministic_scan_completed" if not completed else "",
-        "impact": "" if completed else "model_triage_unavailable",
-    }
-
-
 def report_sections_projection(findings: dict[str, Any], buyer_summary_markdown: str = "") -> dict[str, Any]:
     finding_count = len([item for item in as_list(findings.get("findings")) if isinstance(item, dict)])
     markdown_count = len(re.findall(r"^###\s+\d+\.", buyer_summary_markdown, flags=re.MULTILINE)) if buyer_summary_markdown else finding_count
@@ -1755,7 +1736,6 @@ def render_buyer_summary(
     memory_batch = as_dict(findings.get("memory_batch"))
     skipped = as_dict(target_summary.get("files_skipped"))
     skipped_total = sum(int(value or 0) for value in skipped.values())
-    semantic_review = semantic_review_projection(ai_insights)
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     detected_surfaces = as_list(protocol_surface.get("detected"))
     target_urls = as_list(target_summary.get("urls"))
@@ -1764,11 +1744,14 @@ def render_buyer_summary(
     returned_count = int(findings.get("returned_finding_count", findings.get("finding_count", len(returned))) or 0)
     active_count = int(findings.get("total_active_finding_count", findings.get("finding_count", len(returned))) or 0)
     detected_count = int(findings.get("total_detected_finding_count", active_count) or 0)
+    model_notes_available = ai_insights.get("status") == "completed"
+    review_mode = "deterministic scan + model notes" if model_notes_available else "deterministic scan"
+    memory_batch_new = as_dict(findings.get("memory_batch")).get("new_findings_returned", 0)
+    memory_batch_repeated = as_dict(findings.get("memory_batch")).get("repeated_findings_returned", 0)
     lines = [
         "# SantaClawz Agent Code Audit Report",
         "",
-        f"**{str(verdict.get('verdict', 'completed')).replace('_', ' ').title()}** "
-        f"(confidence: **{str(verdict.get('confidence', 'medium')).title()}**).",
+        f"**{str(verdict.get('verdict', 'completed')).replace('_', ' ').title()}.**",
         "",
         compact_inline_text(verdict.get("recommended_next_action"), max_chars=320),
         "",
@@ -1782,8 +1765,9 @@ def render_buyer_summary(
                 ("Materialized as", ", ".join(str(item) for item in materialized_as) or "github_url"),
                 ("Findings returned", f"{returned_count} of {active_count} medium-or-higher"),
                 ("Total detected", detected_count),
-                ("New vs repeated", f"{memory_batch.get('new_findings_returned', 0)} new, {memory_batch.get('repeated_findings_returned', 0)} repeated"),
+                ("New vs repeated", f"{memory_batch_new} new, {memory_batch_repeated} repeated"),
                 ("Prior namespace runs", memory_context.get("namespace_run_count", 0)),
+                ("Review mode", review_mode),
                 ("Delivery", "Inline Markdown + inline structured JSON"),
             ]
         ),
@@ -1819,27 +1803,10 @@ def render_buyer_summary(
         lines.append("; ".join(surface_summary) + ".")
     else:
         lines.extend(["", "## Protocol Surfaces Detected", "", "No SantaClawz/OpenClaw/x402/ZK-specific protocol surface was detected in the scanned material."])
-    if semantic_review["completed"] is False:
-        lines.extend(
-            [
-                "",
-                "## Degraded Mode Notice",
-                "",
-                "Deterministic scan and memory/dedupe completed. Supplemental model review did not complete, so this result is deterministic-only.",
-                "",
-                *markdown_table(
-                    [
-                        ("Supplemental model review", semantic_review["status"]),
-                        ("Fallback", semantic_review["fallback"]),
-                        ("Impact", semantic_review["impact"]),
-                    ]
-                ),
-            ]
-        )
-    elif ai_insights.get("status") == "completed":
+    if ai_insights.get("status") == "completed":
         model_items = [item for item in as_list(ai_insights.get("audit_insights")) if isinstance(item, dict)]
         if model_items:
-            lines.extend(["", "## Supplemental Model Review", ""])
+            lines.extend(["", "## Additional Model Notes", ""])
             for item in model_items[:5]:
                 title = first_string(item.get("title"), default="Model insight")
                 severity = first_string(item.get("severity"), default="informational").upper()
@@ -1871,6 +1838,16 @@ def render_buyer_summary(
         lines.append(str(findings.get("next_batch_hint") or "Run again with the same namespace to continue the finding batch."))
     else:
         lines.append(str(findings.get("completion_hint") or "All returned-scope findings have been returned."))
+    if memory_batch_repeated:
+        lines.extend(
+            [
+                "",
+                (
+                    "Repeated findings are previously seen issue fingerprints for this buyer/repo namespace. "
+                    "They still count as completed audit work; they just tell the buyer there may be no new issues in this batch."
+                ),
+            ]
+        )
     tail = [
         "",
         "## Delivery Surface",
@@ -1884,7 +1861,7 @@ def render_buyer_summary(
             ]
         ),
         "",
-        "The structured JSON output is the machine-readable companion. The internal package also contains the full hashed report and findings files.",
+        "The structured JSON output is the machine-readable companion. The internal package contains the full hashed report and findings files; buyer-downloadable artifact upload is not exposed by this hosted agent yet.",
         "",
         f"Input digest: `{normalized['text_digest_sha256']}`.",
     ]
@@ -1925,7 +1902,7 @@ def render_report(
 ) -> str:
     target_summary = compact_target_materialization(materialized)
     lines = [
-        "# Code Audit Report",
+        "# SantaClawz Agent Code Audit Report",
         "",
         f"Request: `{normalized['request_id']}`",
         f"Generated: {now_iso()}",
@@ -1941,7 +1918,6 @@ def render_report(
         "## Summary",
         "",
         f"- Buyer verdict: {str(verdict.get('verdict', 'completed')).replace('_', ' ')}",
-        f"- Verdict confidence: {verdict.get('confidence', 'medium')}",
         f"- Recommended next action: {verdict.get('recommended_next_action', '')}",
         f"- Scope note: {verdict.get('scope_note', '')}",
         f"- Findings returned this run: {findings['finding_count']} of {findings.get('total_active_finding_count', findings['finding_count'])} medium-or-higher findings",
@@ -2032,7 +2008,7 @@ def render_report(
                 lines.append(f"- {item.get('title', 'Issue class')} ({item.get('count', 0)} observations)")
         lines.append("")
     if ai_insights.get("status") == "completed":
-        lines.extend(["## Model Review", ""])
+        lines.extend(["## Additional Model Notes", ""])
         model_findings = as_list(ai_insights.get("audit_insights"))
         if model_findings:
             lines.append("Model-assisted audit insights:")
@@ -2049,7 +2025,7 @@ def render_report(
         if ai_insights.get("next_run_focus"):
             lines.extend(["", f"Suggested next-run focus: {ai_insights['next_run_focus']}", ""])
     elif ai_insights.get("status") in {"skipped", "error"}:
-        lines.extend(["## Model Review", "", f"Model enrichment: {ai_insights.get('status')} ({ai_insights.get('reason', 'not available')}).", ""])
+        lines.extend(["## Review Mode", "", "Deterministic scan completed. Optional model notes were not included for this run.", ""])
     lines.extend(
         [
         "## Findings",
@@ -2071,7 +2047,7 @@ def render_report(
                 f"- New for namespace: {bool(finding.get('is_new_for_namespace'))}",
                 f"- Memory status: {memory_status} (prior count: {prior_count})",
                 f"- Fingerprint: `{finding.get('fingerprint', '')}`",
-                f"- Evidence strength: {as_dict(finding.get('evidence_strength')).get('classification', 'deterministic_pattern_candidate')} / confidence {as_dict(finding.get('evidence_strength')).get('confidence', 'medium')}",
+                f"- Evidence type: {as_dict(finding.get('evidence_strength')).get('classification', 'deterministic_pattern_candidate')}",
                 f"- Reachability proven: {as_dict(finding.get('evidence_strength')).get('reachability_proven', False)}",
                 f"- Recommendation: {finding['recommendation']}",
                 "",
@@ -2113,15 +2089,14 @@ def buyer_structured_result(
     target_summary = compact_target_materialization(materialized)
     target_urls = as_list(target_summary.get("urls"))
     materialized_as = as_list(target_summary.get("github_materialized_as"))
-    semantic_review = semantic_review_projection(ai_insights)
     report_sections = report_sections_projection(findings, buyer_summary_markdown)
     compact_verdict = {
         "verdict": verdict.get("verdict"),
-        "confidence": verdict.get("confidence"),
         "highest_severity": verdict.get("highest_severity"),
         "returned_finding_count": verdict.get("returned_finding_count"),
         "recommended_next_action": compact_inline_text(verdict.get("recommended_next_action"), max_chars=260),
     }
+    model_notes_available = ai_insights.get("status") == "completed"
     return {
         "schema_version": "code-audit-buyer-result/1.0",
         "report_version": "hosted-code-audit-report/1.0",
@@ -2146,13 +2121,14 @@ def buyer_structured_result(
             "scan_truncated": target_summary.get("scan_truncated", False),
             "ruleset_version": target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         },
-        "supplemental_model_review": {
-            "status": ai_insights.get("status"),
-            "degraded": ai_insights.get("status") != "completed",
-            "reason": compact_inline_text(ai_insights.get("reason"), max_chars=260),
+        "review_mode": {
+            "mode": "deterministic_scan_plus_model_notes" if model_notes_available else "deterministic_scan",
+            "deterministic_scan_completed": True,
+            "memory_dedupe_completed": True,
+            "model_notes_available": model_notes_available,
+            "model_notes_status": ai_insights.get("status"),
             "model": ai_insights.get("model"),
         },
-        "semantic_review": semantic_review,
         "report_sections": report_sections,
         "protocol_surface": compact_protocol_surface_for_buyer(protocol_surface),
         "memory": {
