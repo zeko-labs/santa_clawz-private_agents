@@ -78,6 +78,8 @@ OPENAI_MODEL = os.environ.get(
 ).strip()
 OPENAI_ENABLE_VALUE = os.environ.get("CODE_AUDIT_USE_OPENAI", os.environ.get("CLAWZ_CODE_AUDIT_ENABLE_OPENAI", "true"))
 OPENAI_ENABLED = bool(OPENAI_API_KEY) and OPENAI_ENABLE_VALUE.lower() not in FALSE_ENV_VALUES
+OPENAI_REQUIRE_VALUE = os.environ.get("CODE_AUDIT_REQUIRE_OPENAI", os.environ.get("CLAWZ_CODE_AUDIT_REQUIRE_OPENAI", "true"))
+OPENAI_REQUIRED = OPENAI_REQUIRE_VALUE.lower() not in FALSE_ENV_VALUES
 STANDARD_AUDIT_DISCLAIMER = (
     "This agent output is intended to streamline and prioritize the audit process. "
     "It does not replace a formal security audit, independent verification, or "
@@ -1708,25 +1710,6 @@ def compact_protocol_surface_for_buyer(protocol_surface: dict[str, Any]) -> dict
     }
 
 
-def semantic_review_projection(ai_insights: dict[str, Any]) -> dict[str, Any]:
-    status = str(ai_insights.get("status") or "skipped")
-    attempted = status != "skipped"
-    completed = status == "completed"
-    reason = first_string(ai_insights.get("reason"), default="")
-    error_code = ""
-    if reason:
-        normalized = re.sub(r"[^a-z0-9]+", "_", reason.lower()).strip("_")
-        error_code = normalized[:80]
-    return {
-        "attempted": attempted,
-        "completed": completed,
-        "status": status,
-        "error": "" if completed else error_code,
-        "fallback": "deterministic_scan_completed" if not completed else "",
-        "impact": "" if completed else "model_triage_unavailable",
-    }
-
-
 def report_sections_projection(findings: dict[str, Any], buyer_summary_markdown: str = "") -> dict[str, Any]:
     finding_count = len([item for item in as_list(findings.get("findings")) if isinstance(item, dict)])
     markdown_count = len(re.findall(r"^###\s+\d+\.", buyer_summary_markdown, flags=re.MULTILINE)) if buyer_summary_markdown else finding_count
@@ -1755,7 +1738,6 @@ def render_buyer_summary(
     memory_batch = as_dict(findings.get("memory_batch"))
     skipped = as_dict(target_summary.get("files_skipped"))
     skipped_total = sum(int(value or 0) for value in skipped.values())
-    semantic_review = semantic_review_projection(ai_insights)
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
     detected_surfaces = as_list(protocol_surface.get("detected"))
     target_urls = as_list(target_summary.get("urls"))
@@ -1764,11 +1746,14 @@ def render_buyer_summary(
     returned_count = int(findings.get("returned_finding_count", findings.get("finding_count", len(returned))) or 0)
     active_count = int(findings.get("total_active_finding_count", findings.get("finding_count", len(returned))) or 0)
     detected_count = int(findings.get("total_detected_finding_count", active_count) or 0)
+    model_notes_available = ai_insights.get("status") == "completed"
+    review_mode = "OpenAI model audit + deterministic evidence checks" if model_notes_available else "OpenAI model audit unavailable"
+    memory_batch_new = as_dict(findings.get("memory_batch")).get("new_findings_returned", 0)
+    memory_batch_repeated = as_dict(findings.get("memory_batch")).get("repeated_findings_returned", 0)
     lines = [
         "# SantaClawz Agent Code Audit Report",
         "",
-        f"**{str(verdict.get('verdict', 'completed')).replace('_', ' ').title()}** "
-        f"(confidence: **{str(verdict.get('confidence', 'medium')).title()}**).",
+        f"**{str(verdict.get('verdict', 'completed')).replace('_', ' ').title()}.**",
         "",
         compact_inline_text(verdict.get("recommended_next_action"), max_chars=320),
         "",
@@ -1782,8 +1767,9 @@ def render_buyer_summary(
                 ("Materialized as", ", ".join(str(item) for item in materialized_as) or "github_url"),
                 ("Findings returned", f"{returned_count} of {active_count} medium-or-higher"),
                 ("Total detected", detected_count),
-                ("New vs repeated", f"{memory_batch.get('new_findings_returned', 0)} new, {memory_batch.get('repeated_findings_returned', 0)} repeated"),
+                ("New vs repeated", f"{memory_batch_new} new, {memory_batch_repeated} repeated"),
                 ("Prior namespace runs", memory_context.get("namespace_run_count", 0)),
+                ("Review mode", review_mode),
                 ("Delivery", "Inline Markdown + inline structured JSON"),
             ]
         ),
@@ -1793,7 +1779,7 @@ def render_buyer_summary(
         *markdown_table(
             [
                 ("Target materialization", target_status),
-                ("Scan mode", f"deterministic rules{' + private model enrichment' if OPENAI_ENABLED else ''}"),
+                ("Scan mode", review_mode),
                 ("Files considered", target_summary.get("files_considered", 0)),
                 ("Files scanned", target_summary.get("files_scanned", 0)),
                 ("Skipped after filtering", skipped_total),
@@ -1819,27 +1805,10 @@ def render_buyer_summary(
         lines.append("; ".join(surface_summary) + ".")
     else:
         lines.extend(["", "## Protocol Surfaces Detected", "", "No SantaClawz/OpenClaw/x402/ZK-specific protocol surface was detected in the scanned material."])
-    if semantic_review["completed"] is False:
-        lines.extend(
-            [
-                "",
-                "## Degraded Mode Notice",
-                "",
-                "Deterministic scan and memory/dedupe completed. Supplemental model review did not complete, so this result is deterministic-only.",
-                "",
-                *markdown_table(
-                    [
-                        ("Supplemental model review", semantic_review["status"]),
-                        ("Fallback", semantic_review["fallback"]),
-                        ("Impact", semantic_review["impact"]),
-                    ]
-                ),
-            ]
-        )
-    elif ai_insights.get("status") == "completed":
+    if ai_insights.get("status") == "completed":
         model_items = [item for item in as_list(ai_insights.get("audit_insights")) if isinstance(item, dict)]
         if model_items:
-            lines.extend(["", "## Supplemental Model Review", ""])
+            lines.extend(["", "## Additional Model Notes", ""])
             for item in model_items[:5]:
                 title = first_string(item.get("title"), default="Model insight")
                 severity = first_string(item.get("severity"), default="informational").upper()
@@ -1871,6 +1840,16 @@ def render_buyer_summary(
         lines.append(str(findings.get("next_batch_hint") or "Run again with the same namespace to continue the finding batch."))
     else:
         lines.append(str(findings.get("completion_hint") or "All returned-scope findings have been returned."))
+    if memory_batch_repeated:
+        lines.extend(
+            [
+                "",
+                (
+                    "Repeated findings are previously seen issue fingerprints for this buyer/repo namespace. "
+                    "They still count as completed audit work; they just tell the buyer there may be no new issues in this batch."
+                ),
+            ]
+        )
     tail = [
         "",
         "## Delivery Surface",
@@ -1884,7 +1863,7 @@ def render_buyer_summary(
             ]
         ),
         "",
-        "The structured JSON output is the machine-readable companion. The internal package also contains the full hashed report and findings files.",
+        "The structured JSON output is the machine-readable companion. The internal package contains the full hashed report and findings files; buyer-downloadable artifact upload is not exposed by this hosted agent yet.",
         "",
         f"Input digest: `{normalized['text_digest_sha256']}`.",
     ]
@@ -1925,7 +1904,7 @@ def render_report(
 ) -> str:
     target_summary = compact_target_materialization(materialized)
     lines = [
-        "# Code Audit Report",
+        "# SantaClawz Agent Code Audit Report",
         "",
         f"Request: `{normalized['request_id']}`",
         f"Generated: {now_iso()}",
@@ -1941,7 +1920,6 @@ def render_report(
         "## Summary",
         "",
         f"- Buyer verdict: {str(verdict.get('verdict', 'completed')).replace('_', ' ')}",
-        f"- Verdict confidence: {verdict.get('confidence', 'medium')}",
         f"- Recommended next action: {verdict.get('recommended_next_action', '')}",
         f"- Scope note: {verdict.get('scope_note', '')}",
         f"- Findings returned this run: {findings['finding_count']} of {findings.get('total_active_finding_count', findings['finding_count'])} medium-or-higher findings",
@@ -2032,7 +2010,7 @@ def render_report(
                 lines.append(f"- {item.get('title', 'Issue class')} ({item.get('count', 0)} observations)")
         lines.append("")
     if ai_insights.get("status") == "completed":
-        lines.extend(["## Model Review", ""])
+        lines.extend(["## Additional Model Notes", ""])
         model_findings = as_list(ai_insights.get("audit_insights"))
         if model_findings:
             lines.append("Model-assisted audit insights:")
@@ -2049,7 +2027,7 @@ def render_report(
         if ai_insights.get("next_run_focus"):
             lines.extend(["", f"Suggested next-run focus: {ai_insights['next_run_focus']}", ""])
     elif ai_insights.get("status") in {"skipped", "error"}:
-        lines.extend(["## Model Review", "", f"Model enrichment: {ai_insights.get('status')} ({ai_insights.get('reason', 'not available')}).", ""])
+        lines.extend(["## Review Mode", "", "OpenAI model audit was unavailable; deterministic evidence checks completed.", ""])
     lines.extend(
         [
         "## Findings",
@@ -2071,7 +2049,7 @@ def render_report(
                 f"- New for namespace: {bool(finding.get('is_new_for_namespace'))}",
                 f"- Memory status: {memory_status} (prior count: {prior_count})",
                 f"- Fingerprint: `{finding.get('fingerprint', '')}`",
-                f"- Evidence strength: {as_dict(finding.get('evidence_strength')).get('classification', 'deterministic_pattern_candidate')} / confidence {as_dict(finding.get('evidence_strength')).get('confidence', 'medium')}",
+                f"- Evidence type: {as_dict(finding.get('evidence_strength')).get('classification', 'deterministic_pattern_candidate')}",
                 f"- Reachability proven: {as_dict(finding.get('evidence_strength')).get('reachability_proven', False)}",
                 f"- Recommendation: {finding['recommendation']}",
                 "",
@@ -2113,15 +2091,14 @@ def buyer_structured_result(
     target_summary = compact_target_materialization(materialized)
     target_urls = as_list(target_summary.get("urls"))
     materialized_as = as_list(target_summary.get("github_materialized_as"))
-    semantic_review = semantic_review_projection(ai_insights)
     report_sections = report_sections_projection(findings, buyer_summary_markdown)
     compact_verdict = {
         "verdict": verdict.get("verdict"),
-        "confidence": verdict.get("confidence"),
         "highest_severity": verdict.get("highest_severity"),
         "returned_finding_count": verdict.get("returned_finding_count"),
         "recommended_next_action": compact_inline_text(verdict.get("recommended_next_action"), max_chars=260),
     }
+    model_notes_available = ai_insights.get("status") == "completed"
     return {
         "schema_version": "code-audit-buyer-result/1.0",
         "report_version": "hosted-code-audit-report/1.0",
@@ -2146,13 +2123,15 @@ def buyer_structured_result(
             "scan_truncated": target_summary.get("scan_truncated", False),
             "ruleset_version": target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         },
-        "supplemental_model_review": {
-            "status": ai_insights.get("status"),
-            "degraded": ai_insights.get("status") != "completed",
-            "reason": compact_inline_text(ai_insights.get("reason"), max_chars=260),
+        "review_mode": {
+            "mode": "openai_model_audit_plus_deterministic_evidence" if model_notes_available else "openai_model_audit_unavailable",
+            "openai_model_audit_completed": model_notes_available,
+            "openai_model_audit_required": OPENAI_REQUIRED,
+            "deterministic_evidence_checks_completed": True,
+            "memory_dedupe_completed": True,
+            "model_status": ai_insights.get("status"),
             "model": ai_insights.get("model"),
         },
-        "semantic_review": semantic_review,
         "report_sections": report_sections,
         "protocol_surface": compact_protocol_surface_for_buyer(protocol_surface),
         "memory": {
@@ -2405,6 +2384,18 @@ def call_openai_for_insights(
         }
 
 
+def assert_openai_model_audit_completed(ai_insights: dict[str, Any]) -> None:
+    if not OPENAI_REQUIRED or ai_insights.get("status") == "completed":
+        return
+    reason = first_string(ai_insights.get("reason"), default="OpenAI model audit did not complete.")
+    raise WorkerError(
+        "OpenAI model audit unavailable; this hosted code audit agent requires model intelligence before completing paid work. "
+        f"Reason: {reason}",
+        503,
+        "code_audit_model_unavailable",
+    )
+
+
 def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = normalize_request(payload, raw_body)
     created_at = now_iso()
@@ -2422,6 +2413,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
     findings = select_findings_for_delivery(memory_ranked_findings)
     protocol_surface = detect_protocol_surfaces(normalized, materialized, scan_units)
     ai_insights = call_openai_for_insights(normalized, findings, memory_context, materialized, scan_units, protocol_surface)
+    assert_openai_model_audit_completed(ai_insights)
     verdict = audit_verdict(findings, materialized, ai_insights, protocol_surface)
     report = render_report(normalized, findings, memory_context, ai_insights, materialized, protocol_surface, verdict)
     target_summary = compact_target_materialization(materialized)
@@ -2799,6 +2791,7 @@ class Handler(BaseHTTPRequestHandler):
                 "feedbackEndpoint": "/feedback",
                 "state": "memory-backed",
                 "usesModelSecrets": OPENAI_ENABLED,
+                "modelAuditRequired": OPENAI_REQUIRED,
                 "model": OPENAI_MODEL if OPENAI_ENABLED else None,
                 "outputRoot": str(DEFAULT_OUTPUT_ROOT),
                 "memoryRoot": str(DEFAULT_MEMORY_ROOT),
