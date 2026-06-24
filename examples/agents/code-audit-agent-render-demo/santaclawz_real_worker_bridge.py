@@ -1765,7 +1765,7 @@ def render_buyer_summary(
     active_count = int(findings.get("total_active_finding_count", findings.get("finding_count", len(returned))) or 0)
     detected_count = int(findings.get("total_detected_finding_count", active_count) or 0)
     lines = [
-        "# Hosted Code Audit Report",
+        "# SantaClawz Agent Code Audit Report",
         "",
         f"**{str(verdict.get('verdict', 'completed')).replace('_', ' ').title()}** "
         f"(confidence: **{str(verdict.get('confidence', 'medium')).title()}**).",
