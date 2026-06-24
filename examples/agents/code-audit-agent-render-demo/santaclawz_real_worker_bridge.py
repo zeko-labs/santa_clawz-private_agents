@@ -78,6 +78,8 @@ OPENAI_MODEL = os.environ.get(
 ).strip()
 OPENAI_ENABLE_VALUE = os.environ.get("CODE_AUDIT_USE_OPENAI", os.environ.get("CLAWZ_CODE_AUDIT_ENABLE_OPENAI", "true"))
 OPENAI_ENABLED = bool(OPENAI_API_KEY) and OPENAI_ENABLE_VALUE.lower() not in FALSE_ENV_VALUES
+OPENAI_REQUIRE_VALUE = os.environ.get("CODE_AUDIT_REQUIRE_OPENAI", os.environ.get("CLAWZ_CODE_AUDIT_REQUIRE_OPENAI", "true"))
+OPENAI_REQUIRED = OPENAI_REQUIRE_VALUE.lower() not in FALSE_ENV_VALUES
 STANDARD_AUDIT_DISCLAIMER = (
     "This agent output is intended to streamline and prioritize the audit process. "
     "It does not replace a formal security audit, independent verification, or "
@@ -1745,7 +1747,7 @@ def render_buyer_summary(
     active_count = int(findings.get("total_active_finding_count", findings.get("finding_count", len(returned))) or 0)
     detected_count = int(findings.get("total_detected_finding_count", active_count) or 0)
     model_notes_available = ai_insights.get("status") == "completed"
-    review_mode = "deterministic scan + model notes" if model_notes_available else "deterministic scan"
+    review_mode = "OpenAI model audit + deterministic evidence checks" if model_notes_available else "OpenAI model audit unavailable"
     memory_batch_new = as_dict(findings.get("memory_batch")).get("new_findings_returned", 0)
     memory_batch_repeated = as_dict(findings.get("memory_batch")).get("repeated_findings_returned", 0)
     lines = [
@@ -1777,7 +1779,7 @@ def render_buyer_summary(
         *markdown_table(
             [
                 ("Target materialization", target_status),
-                ("Scan mode", f"deterministic rules{' + private model enrichment' if OPENAI_ENABLED else ''}"),
+                ("Scan mode", review_mode),
                 ("Files considered", target_summary.get("files_considered", 0)),
                 ("Files scanned", target_summary.get("files_scanned", 0)),
                 ("Skipped after filtering", skipped_total),
@@ -2025,7 +2027,7 @@ def render_report(
         if ai_insights.get("next_run_focus"):
             lines.extend(["", f"Suggested next-run focus: {ai_insights['next_run_focus']}", ""])
     elif ai_insights.get("status") in {"skipped", "error"}:
-        lines.extend(["## Review Mode", "", "Deterministic scan completed. Optional model notes were not included for this run.", ""])
+        lines.extend(["## Review Mode", "", "OpenAI model audit was unavailable; deterministic evidence checks completed.", ""])
     lines.extend(
         [
         "## Findings",
@@ -2122,11 +2124,12 @@ def buyer_structured_result(
             "ruleset_version": target_summary.get("ruleset_version", CODE_AUDIT_RULESET_VERSION),
         },
         "review_mode": {
-            "mode": "deterministic_scan_plus_model_notes" if model_notes_available else "deterministic_scan",
-            "deterministic_scan_completed": True,
+            "mode": "openai_model_audit_plus_deterministic_evidence" if model_notes_available else "openai_model_audit_unavailable",
+            "openai_model_audit_completed": model_notes_available,
+            "openai_model_audit_required": OPENAI_REQUIRED,
+            "deterministic_evidence_checks_completed": True,
             "memory_dedupe_completed": True,
-            "model_notes_available": model_notes_available,
-            "model_notes_status": ai_insights.get("status"),
+            "model_status": ai_insights.get("status"),
             "model": ai_insights.get("model"),
         },
         "report_sections": report_sections,
@@ -2381,6 +2384,18 @@ def call_openai_for_insights(
         }
 
 
+def assert_openai_model_audit_completed(ai_insights: dict[str, Any]) -> None:
+    if not OPENAI_REQUIRED or ai_insights.get("status") == "completed":
+        return
+    reason = first_string(ai_insights.get("reason"), default="OpenAI model audit did not complete.")
+    raise WorkerError(
+        "OpenAI model audit unavailable; this hosted code audit agent requires model intelligence before completing paid work. "
+        f"Reason: {reason}",
+        503,
+        "code_audit_model_unavailable",
+    )
+
+
 def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = normalize_request(payload, raw_body)
     created_at = now_iso()
@@ -2398,6 +2413,7 @@ def run_worker(payload: dict[str, Any], raw_body: str) -> tuple[dict[str, Any], 
     findings = select_findings_for_delivery(memory_ranked_findings)
     protocol_surface = detect_protocol_surfaces(normalized, materialized, scan_units)
     ai_insights = call_openai_for_insights(normalized, findings, memory_context, materialized, scan_units, protocol_surface)
+    assert_openai_model_audit_completed(ai_insights)
     verdict = audit_verdict(findings, materialized, ai_insights, protocol_surface)
     report = render_report(normalized, findings, memory_context, ai_insights, materialized, protocol_surface, verdict)
     target_summary = compact_target_materialization(materialized)
@@ -2775,6 +2791,7 @@ class Handler(BaseHTTPRequestHandler):
                 "feedbackEndpoint": "/feedback",
                 "state": "memory-backed",
                 "usesModelSecrets": OPENAI_ENABLED,
+                "modelAuditRequired": OPENAI_REQUIRED,
                 "model": OPENAI_MODEL if OPENAI_ENABLED else None,
                 "outputRoot": str(DEFAULT_OUTPUT_ROOT),
                 "memoryRoot": str(DEFAULT_MEMORY_ROOT),
