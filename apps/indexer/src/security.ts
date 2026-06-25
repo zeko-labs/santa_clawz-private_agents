@@ -121,6 +121,10 @@ function isPublicReadPath(pathname: string, method: string, config: SecurityConf
     return true;
   }
 
+  if ((method === "GET" || method === "POST") && pathname.startsWith("/api/concierge/v1/")) {
+    return true;
+  }
+
   if (
     method === "GET" &&
     (
@@ -373,7 +377,7 @@ export function applyBaseSecurityHeaders(
 
   response.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, authorization, payment-signature, x-api-key, x-clawz-admin-key, x-santaclawz-activation-lane-key, x-santaclawz-workshop-token, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
+    "content-type, authorization, payment-signature, x-api-key, x-clawz-admin-key, x-santaclawz-concierge-key, x-concierge-api-key, x-santaclawz-activation-lane-key, x-santaclawz-workshop-token, x-clawz-artifact-filename, x-clawz-artifact-content-type, x-request-id"
   );
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }

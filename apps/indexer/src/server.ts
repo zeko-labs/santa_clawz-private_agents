@@ -59,6 +59,15 @@ import {
   type UpsertHostedWorkspaceRunOptions
 } from "./control-plane.js";
 import { ArtifactSafetyError, ArtifactScanUnavailableError, ArtifactStore } from "./artifact-store.js";
+import {
+  authenticateConciergeIntegrator,
+  conciergeAgentSummary,
+  conciergeIntegratorsFromEnv,
+  createConciergeSession,
+  parseConciergeMarketplaceTags,
+  publicConciergeIntegrator,
+  verifyConciergeSession
+} from "./concierge.js";
 import { buildAgentProofBundle, buildDiscoveryDocument, buildMcpToolDefinitions } from "./interop.js";
 import {
   apiAuthMiddleware,
@@ -1086,6 +1095,19 @@ type BuyerRouterPlanBody = {
   marketplaceTags?: unknown;
   selectedAgentId?: unknown;
 };
+type ConciergePlanBody = {
+  taskPrompt?: unknown;
+  buyerWallet?: unknown;
+  budgetUsd?: unknown;
+  maxUsd?: unknown;
+  privacyLane?: unknown;
+  marketplaceTags?: unknown;
+  selectedAgentId?: unknown;
+};
+type ConciergeCheckoutBody = {
+  sessionToken?: unknown;
+  selectedAgentId?: unknown;
+};
 type HostedWorkspaceEmailCodeBody = {
   orgName?: unknown;
   workspaceDomain?: unknown;
@@ -1179,12 +1201,46 @@ function activationLaneTokenHeader(request: IndexerRequest) {
   return optionalString(request.header("x-santaclawz-activation-lane-key")) ?? bearerTokenHeader(request);
 }
 
+function conciergeApiKeyHeader(request: IndexerRequest) {
+  return (
+    optionalString(request.header("x-santaclawz-concierge-key")) ??
+    optionalString(request.header("x-concierge-api-key")) ??
+    bearerTokenHeader(request)
+  );
+}
+
+function requireConciergeAccess(request: IndexerRequest, response: IndexerResponse) {
+  const apiKey = conciergeApiKeyHeader(request);
+  const origin = optionalString(request.header("origin"));
+  const result = authenticateConciergeIntegrator({
+    ...(apiKey ? { apiKey } : {}),
+    ...(origin ? { origin } : {}),
+    integrators: conciergeIntegratorsFromEnv()
+  });
+  if (!result.ok) {
+    response.status(result.status).json({
+      ok: false,
+      code: result.code,
+      error: result.error
+    });
+    return undefined;
+  }
+  return result.integrator;
+}
+
 function workspaceSessionTokenHeader(request: IndexerRequest) {
   return optionalString(request.header("x-santaclawz-workspace-session")) ?? bearerTokenHeader(request);
 }
 
 function activationLaneToken() {
   return optionalString(process.env.CLAWZ_ACTIVATION_LANE_TOKEN ?? process.env.CLAWZ_AGENT_JOB_PACK_ACTIVATION_TOKEN);
+}
+
+function assertConciergeUsdAmount(value: string, context: string) {
+  const trimmed = value.trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(trimmed)) {
+    throw new Error(`${context} must be a USD decimal string with up to 6 decimal places.`);
+  }
 }
 
 function requireActivationLaneAccess(request: IndexerRequest, response: IndexerResponse) {
@@ -2608,6 +2664,16 @@ function getBaseUrl(request: IndexerRequest): string {
   const protocol = typeof forwardedProto === "string" && forwardedProto.length > 0 ? forwardedProto : "http";
   const host = request.header("host") ?? "127.0.0.1";
   return `${protocol}://${host}`;
+}
+
+function getPublicWebBaseUrl(request: IndexerRequest): string {
+  const configured = optionalString(process.env.CLAWZ_PUBLIC_WEB_BASE_URL ?? process.env.CLAWZ_WEB_BASE_URL);
+  if (configured) {
+    return configured.replace(/\/+$/u, "");
+  }
+  return getBaseUrl(request)
+    .replace("://api.santaclawz.ai", "://www.santaclawz.ai")
+    .replace("://relay.santaclawz.ai", "://www.santaclawz.ai");
 }
 
 async function buildInteropSnapshot(request: IndexerRequest) {
@@ -7776,6 +7842,214 @@ app.get("/api/workspaces/runs/:runId", route(async (request, response) => {
   } catch (error) {
     response.status(403).json({
       error: error instanceof Error ? error.message : "Unable to load workspace run."
+    });
+  }
+}));
+
+app.get("/api/concierge/v1/me", route(async (request, response) => {
+  const integrator = requireConciergeAccess(request, response);
+  if (!integrator) {
+    return;
+  }
+  response.json({
+    schemaVersion: "santaclawz-concierge-integrator/1.0",
+    ok: true,
+    integrator: publicConciergeIntegrator(integrator)
+  });
+}));
+
+app.get("/api/concierge/v1/agents", route(async (request, response) => {
+  const integrator = requireConciergeAccess(request, response);
+  if (!integrator) {
+    return;
+  }
+  const apiBase = getBaseUrl(request);
+  const webBase = getPublicWebBaseUrl(request);
+  const query = queryString(request.query, "q")?.toLowerCase();
+  const requestedLimit = queryString(request.query, "limit");
+  const limit = Math.min(
+    integrator.maxCandidates,
+    Math.max(1, Number.isFinite(Number(requestedLimit)) ? Number.parseInt(requestedLimit ?? "", 10) : integrator.maxCandidates)
+  );
+  const agents = (await controlPlane.listRegisteredAgents())
+    .filter((agent) => !agent.archivedAtIso && agent.published)
+    .filter((agent) => {
+      if (!query) {
+        return true;
+      }
+      const searchable = [
+        agent.agentId,
+        agent.agentName,
+        agent.headline,
+        agent.representedPrincipal,
+        agent.serviceKey,
+        ...(agent.marketplaceTags.capabilities ?? []),
+        ...(agent.marketplaceTags.domains ?? []),
+        ...(agent.marketplaceTags.inputTypes ?? []),
+        ...(agent.marketplaceTags.outputTypes ?? []),
+        ...(agent.marketplaceTags.tools ?? []),
+        ...(agent.marketplaceTags.runtimes ?? [])
+      ].join(" ").toLowerCase();
+      return searchable.includes(query);
+    })
+    .sort((left, right) => {
+      const leftPreferred = integrator.preferredAgentIds.includes(left.agentId) ? 1 : 0;
+      const rightPreferred = integrator.preferredAgentIds.includes(right.agentId) ? 1 : 0;
+      if (leftPreferred !== rightPreferred) return rightPreferred - leftPreferred;
+      const leftHireable = left.paidJobsEnabled || left.quoteReady ? 1 : 0;
+      const rightHireable = right.paidJobsEnabled || right.quoteReady ? 1 : 0;
+      if (leftHireable !== rightHireable) return rightHireable - leftHireable;
+      const leftLive = left.runtimeStatus === "live" ? 1 : 0;
+      const rightLive = right.runtimeStatus === "live" ? 1 : 0;
+      if (leftLive !== rightLive) return rightLive - leftLive;
+      return (right.jobActivityStats?.completedJobCount ?? 0) - (left.jobActivityStats?.completedJobCount ?? 0);
+    })
+    .slice(0, limit)
+    .map((agent) => conciergeAgentSummary(apiBase, agent, integrator.preferredAgentIds, webBase));
+
+  response.json({
+    schemaVersion: "santaclawz-concierge-agent-discovery/1.0",
+    ok: true,
+    generatedAtIso: new Date().toISOString(),
+    integrator: publicConciergeIntegrator(integrator),
+    agents,
+    nextAction: "Create a signed Concierge plan, then use checkout to hand the buyer into the existing SantaClawz x402 hire flow."
+  });
+}));
+
+app.post("/api/concierge/v1/plan", route(async (request, response) => {
+  try {
+    const integrator = requireConciergeAccess(request, response);
+    if (!integrator) {
+      return;
+    }
+    const value = isRecord(request.body) ? request.body as ConciergePlanBody : {};
+    const taskPrompt = optionalString(value.taskPrompt) ?? "";
+    if (!taskPrompt) {
+      response.status(400).json({ ok: false, code: "concierge_task_prompt_required", error: "taskPrompt is required." });
+      return;
+    }
+    if (taskPrompt.length > integrator.maxRequestChars) {
+      response.status(400).json({
+        ok: false,
+        code: "concierge_task_prompt_too_long",
+        error: `taskPrompt must be ${integrator.maxRequestChars} characters or less.`
+      });
+      return;
+    }
+    const budgetUsd = optionalString(value.budgetUsd ?? value.maxUsd);
+    if (budgetUsd) {
+      assertConciergeUsdAmount(budgetUsd, "Concierge budgetUsd");
+    }
+    const selectedAgentId = optionalString(value.selectedAgentId);
+    const marketplaceTags = parseConciergeMarketplaceTags(value.marketplaceTags);
+    const route = await controlPlane.createBuyerRouterPlan({
+      taskPrompt,
+      buyerMode: "human",
+      ...(budgetUsd ? { budgetUsd } : {}),
+      ...(value.privacyLane === "private" || value.privacyLane === "proof-only" || value.privacyLane === "public-summary"
+        ? { privacyLane: value.privacyLane }
+        : {}),
+      ...(marketplaceTags ? { marketplaceTags } : {}),
+      ...(selectedAgentId ? { selectedAgentId } : {}),
+      ...(integrator.routerAgentId ? { routerAgentId: integrator.routerAgentId } : {})
+    });
+    const candidateAgentIds = route.plan.candidateAgents.map((candidate) => candidate.agentId).slice(0, integrator.maxCandidates);
+    const sessionSelectedAgentId = selectedAgentId ?? candidateAgentIds[0];
+    const signedSession = createConciergeSession({
+      integrator,
+      taskPrompt,
+      routePlanDigestSha256: route.plan.routePlanDigestSha256,
+      candidateAgentIds,
+      ...(optionalString(value.buyerWallet) ? { buyerWallet: optionalString(value.buyerWallet)! } : {}),
+      ...(sessionSelectedAgentId ? { selectedAgentId: sessionSelectedAgentId } : {}),
+      ...(budgetUsd ? { maxUsd: budgetUsd } : {})
+    });
+    response.json({
+      schemaVersion: "santaclawz-concierge-plan/1.0",
+      ok: true,
+      integrator: publicConciergeIntegrator(integrator),
+      plan: route.plan,
+      routerMessage: route.routerMessage,
+      ...(route.routingAnchor ? { routingAnchor: route.routingAnchor } : {}),
+      conciergeSession: signedSession,
+      paymentModel: signedSession.payload.paymentModel,
+      nextAction: "Call /api/concierge/v1/checkout with this session token and the selected agent."
+    });
+  } catch (error) {
+    response.status(400).json({
+      ok: false,
+      code: "concierge_plan_failed",
+      error: error instanceof Error ? error.message : "Unable to create Concierge plan."
+    });
+  }
+}));
+
+app.post("/api/concierge/v1/checkout", route(async (request, response) => {
+  try {
+    const integrator = requireConciergeAccess(request, response);
+    if (!integrator) {
+      return;
+    }
+    const value = isRecord(request.body) ? request.body as ConciergeCheckoutBody : {};
+    const sessionToken = optionalString(value.sessionToken);
+    if (!sessionToken) {
+      response.status(400).json({ ok: false, code: "concierge_session_required", error: "sessionToken is required." });
+      return;
+    }
+    const session = verifyConciergeSession(sessionToken);
+    if (session.integratorId !== integrator.integratorId) {
+      response.status(403).json({ ok: false, code: "concierge_session_integrator_mismatch", error: "Concierge session does not belong to this integrator." });
+      return;
+    }
+    const selectedAgentId = optionalString(value.selectedAgentId) ?? session.selectedAgentId ?? session.candidateAgentIds[0];
+    if (!selectedAgentId) {
+      response.status(400).json({ ok: false, code: "concierge_agent_required", error: "selectedAgentId is required." });
+      return;
+    }
+    if (!session.candidateAgentIds.includes(selectedAgentId) && !session.preferredAgentIds.includes(selectedAgentId)) {
+      response.status(403).json({
+        ok: false,
+        code: "concierge_agent_not_in_session",
+        error: "Selected agent is not part of this Concierge session."
+      });
+      return;
+    }
+    const apiBase = getBaseUrl(request);
+    const webBase = getPublicWebBaseUrl(request);
+    const { plan } = await buildX402PlanFromOptions(apiBase, { agentId: selectedAgentId });
+    const selectedAgent = (await controlPlane.listRegisteredAgents()).find((agent) => agent.agentId === selectedAgentId);
+    response.json({
+      schemaVersion: "santaclawz-concierge-checkout/1.0",
+      ok: true,
+      integrator: publicConciergeIntegrator(integrator),
+      conciergeSession: {
+        payload: session,
+        token: sessionToken
+      },
+      selectedAgent: selectedAgent ? conciergeAgentSummary(apiBase, selectedAgent, integrator.preferredAgentIds, webBase) : { agentId: selectedAgentId },
+      x402Plan: plan,
+      endpoints: {
+        hire: `${apiBase}/api/agents/${encodeURIComponent(selectedAgentId)}/hire`,
+        x402Plan: `${apiBase}/api/agents/${encodeURIComponent(selectedAgentId)}/x402-plan`,
+        profile: `${webBase}/agent/${encodeURIComponent(selectedAgentId)}`
+      },
+      paymentModel: session.paymentModel,
+      paymentInstructions: {
+        buyerWalletPaysSellerDirectly: true,
+        integratorFeeIncludedInX402: false,
+        note: "Concierge V1 uses subscription access for the frontend. The buyer signs the existing SantaClawz x402 payment directly to the selected seller/protocol fee path."
+      },
+      nextAction:
+        plan.pricingMode === "quote-required"
+          ? "Submit quote intake to the hire endpoint, then pay the returned quote intent if accepted."
+          : "Use the x402 plan/hire endpoint to request payment, sign from the buyer Base wallet, then submit the same payload to execute."
+    });
+  } catch (error) {
+    response.status(400).json({
+      ok: false,
+      code: "concierge_checkout_failed",
+      error: error instanceof Error ? error.message : "Unable to create Concierge checkout."
     });
   }
 }));
