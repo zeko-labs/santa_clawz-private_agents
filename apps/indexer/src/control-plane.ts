@@ -6135,10 +6135,14 @@ export class ClawzControlPlane {
     return sessionId;
   }
 
+  private sessionHasRegisteredAgentAuthority(state: ConsolePersistenceState, sessionId: string) {
+    return Boolean(state.ingressSecretsBySession[sessionId]);
+  }
+
   private hasAdminAccess(state: ConsolePersistenceState, sessionId: string, adminKey?: string) {
     const record = state.adminKeysBySession[sessionId];
     if (!record) {
-      return true;
+      return !this.sessionHasRegisteredAgentAuthority(state, sessionId);
     }
 
     const normalizedAdminKey = typeof adminKey === "string" ? adminKey.trim() : "";
@@ -6152,13 +6156,14 @@ export class ClawzControlPlane {
     issuedAdminKey?: string
   ): ConsoleStateResponse["adminAccess"] {
     const record = state.adminKeysBySession[sessionId];
+    const requiresAdminRecord = this.sessionHasRegisteredAgentAuthority(state, sessionId);
     const normalizedAdminKey = typeof adminKey === "string" ? adminKey.trim() : "";
     const hasAdminAccess =
-      !record ||
-      (normalizedAdminKey.length > 0 && timingSafeEqualHex(record.keyHash, adminKeyHash(normalizedAdminKey)));
+      (!record && !requiresAdminRecord) ||
+      Boolean(record && normalizedAdminKey.length > 0 && timingSafeEqualHex(record.keyHash, adminKeyHash(normalizedAdminKey)));
 
     return {
-      requiresAdminKey: Boolean(record),
+      requiresAdminKey: Boolean(record) || requiresAdminRecord,
       hasAdminAccess,
       ...(record?.keyHint ? { keyHint: record.keyHint } : {}),
       ...(issuedAdminKey ? { issuedAdminKey } : {})
@@ -6186,6 +6191,9 @@ export class ClawzControlPlane {
   private assertAdminAccess(state: ConsolePersistenceState, sessionId: string, adminKey?: string) {
     const record = state.adminKeysBySession[sessionId];
     if (!record) {
+      if (this.sessionHasRegisteredAgentAuthority(state, sessionId)) {
+        throw new Error("Admin key required to manage this registered agent.");
+      }
       return;
     }
 
