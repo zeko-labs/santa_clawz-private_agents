@@ -1632,34 +1632,6 @@ def compact_evidence_summary(finding: dict[str, Any]) -> str:
     return "Structured evidence is included in the JSON result."
 
 
-def render_buyer_finding_section(index: int, finding: dict[str, Any]) -> list[str]:
-    novelty = "New" if finding.get("is_new_for_namespace") else "Repeated"
-    stable_id = finding.get("stable_id") or finding.get("id") or "finding"
-    evidence = as_dict(finding.get("evidence_strength"))
-    buyer_note = compact_inline_text(evidence.get("buyer_note"), max_chars=220)
-    lines = [
-        "",
-        f"### {index}. {stable_id} - {novelty} - {str(finding.get('severity', 'unknown')).title()}",
-        "",
-        f"**Title:** {compact_inline_text(finding.get('title', 'Finding'), max_chars=180)}",
-        "",
-        f"**Primary location:** {finding_primary_location(finding)}",
-        "",
-        f"**Evidence:** {compact_evidence_summary(finding)}",
-        "",
-        f"**Recommendation:** {compact_inline_text(finding.get('recommendation', ''), max_chars=260)}",
-        "",
-        (
-            f"**Classification:** {evidence.get('classification', 'deterministic_pattern_candidate')} / "
-            f"{evidence.get('confidence', 'medium')}; reachability proven: {yes_no(evidence.get('reachability_proven', False))}; "
-            f"matches: {finding.get('match_count', 0)}."
-        ),
-    ]
-    if buyer_note:
-        lines.extend(["", f"**Validation note:** {buyer_note}"])
-    return lines
-
-
 def compact_location_for_buyer(location: Any) -> dict[str, Any]:
     item = as_dict(location)
     output: dict[str, Any] = {
@@ -1713,14 +1685,16 @@ def compact_protocol_surface_for_buyer(protocol_surface: dict[str, Any]) -> dict
 def report_sections_projection(findings: dict[str, Any], buyer_summary_markdown: str = "") -> dict[str, Any]:
     finding_count = len([item for item in as_list(findings.get("findings")) if isinstance(item, dict)])
     markdown_count = len(re.findall(r"^###\s+\d+\.", buyer_summary_markdown, flags=re.MULTILINE)) if buyer_summary_markdown else finding_count
-    markdown_complete = markdown_count == finding_count
     return {
+        "human_markdown_mode": "executive_summary",
         "human_markdown_findings_count": markdown_count,
         "human_markdown_expected_findings_count": finding_count,
         "json_findings_count": finding_count,
-        "markdown_complete": markdown_complete,
+        "markdown_complete": True,
+        "markdown_carries_full_findings": False,
         "markdown_inline_limit_chars": BUYER_VISIBLE_TEXT_SOFT_LIMIT,
         "json_complete": True,
+        "finding_source_of_truth": "inline_structured_json",
     }
 
 
@@ -1735,7 +1709,6 @@ def render_buyer_summary(
 ) -> str:
     target_summary = compact_target_materialization(materialized)
     target_status = str(target_summary.get("status") or "not_requested")
-    memory_batch = as_dict(findings.get("memory_batch"))
     skipped = as_dict(target_summary.get("files_skipped"))
     skipped_total = sum(int(value or 0) for value in skipped.values())
     returned = [finding for finding in as_list(findings.get("findings")) if isinstance(finding, dict)]
@@ -1832,7 +1805,8 @@ def render_buyer_summary(
                 f"This run returned {returned_count} "
                 f"of {active_count} "
                 f"{findings.get('returned_severity_threshold', RETURNED_SEVERITY_THRESHOLD)}-or-higher findings. "
-                f"Low-priority filtered: {findings.get('low_priority_filtered_count', 0)}."
+                f"Low-priority filtered: {findings.get('low_priority_filtered_count', 0)}. "
+                "The inline structured JSON is the complete returned finding record."
             ),
         ]
     )
@@ -1850,45 +1824,44 @@ def render_buyer_summary(
                 ),
             ]
         )
+    if returned:
+        lines.extend(["", "## Top Risks", ""])
+        for index, finding in enumerate(returned[:3], start=1):
+            lines.append(
+                f"{index}. **{str(finding.get('severity', 'unknown')).title()}** "
+                f"`{finding.get('stable_id') or finding.get('id')}` - "
+                f"{compact_inline_text(finding.get('title', 'Finding'), max_chars=160)}"
+            )
+        if len(returned) > 3:
+            lines.append(f"{len(returned) - 3} additional returned findings are included in the inline structured JSON.")
+    else:
+        lines.extend(["", "## Top Risks", "", "No medium-or-higher findings were returned in this batch."])
+    lines.extend(
+        [
+            "",
+            "## Next Action",
+            "",
+            compact_inline_text(verdict.get("recommended_next_action"), max_chars=420)
+            or "Review the inline structured JSON and triage any returned findings.",
+        ]
+    )
     tail = [
         "",
         "## Delivery Surface",
         "",
         *markdown_table(
             [
-                ("Inline Markdown", "yes"),
-                ("Inline structured JSON", "yes"),
+                ("Inline Markdown", "executive summary"),
+                ("Inline structured JSON", "complete returned finding batch"),
                 ("Downloadable artifact", "no"),
                 ("Internal verified package", "yes"),
             ]
         ),
         "",
-        "The structured JSON output is the machine-readable companion. The internal package contains the full hashed report and findings files; buyer-downloadable artifact upload is not exposed by this hosted agent yet.",
+        "Use the inline structured JSON for all returned finding IDs, locations, evidence summaries, hashes, and batch metadata.",
         "",
         f"Input digest: `{normalized['text_digest_sha256']}`.",
     ]
-    included = 0
-    if returned:
-        for index, finding in enumerate(returned, start=1):
-            section = render_buyer_finding_section(index, finding)
-            projected = "\n".join([*lines, *section, *tail])
-            if len(projected) <= BUYER_VISIBLE_TEXT_SOFT_LIMIT or included == 0:
-                lines.extend(section)
-                included += 1
-                continue
-            break
-        if included < len(returned):
-            lines.extend(
-                [
-                    "",
-                    (
-                        f"**Inline Markdown note:** {included} of {len(returned)} findings fit in the buyer-visible "
-                        "Markdown envelope. The structured JSON companion and internal package carry the returned batch."
-                    ),
-                ]
-            )
-    else:
-        lines.append("No medium-or-higher deterministic findings were returned in this batch.")
     lines.extend(tail)
     return "\n".join(lines)
 
@@ -2035,7 +2008,7 @@ def render_report(
         ]
     )
     if not findings["findings"]:
-        lines.append("No medium-or-higher deterministic findings were returned in this batch.")
+        lines.append("No medium-or-higher findings were returned in this batch.")
     for finding in findings["findings"]:
         memory_status = as_dict(finding.get("memory")).get("status", "new")
         prior_count = as_dict(finding.get("memory")).get("prior_count", 0)
