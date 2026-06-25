@@ -1635,6 +1635,7 @@ export interface CreateBuyerRouterPlanOptions {
   privacyLane?: "private" | "proof-only" | "public-summary";
   marketplaceTags?: Partial<MarketplaceWorkTags>;
   selectedAgentId?: string;
+  routerAgentId?: string;
 }
 
 export interface SubmitProcurementBidOptions {
@@ -12361,7 +12362,23 @@ export class ClawzControlPlane {
     return `buy_${Buffer.from(createHmac("sha256", secret).update(idempotencyKey.trim()).digest("hex"), "hex").toString("base64url")}`;
   }
 
-  private jobPackRouterSession(state: ConsolePersistenceState): { sessionId: string; agentId: string } | undefined {
+  private jobPackRouterSession(state: ConsolePersistenceState, preferredAgentId?: string): { sessionId: string; agentId: string } | undefined {
+    if (preferredAgentId?.trim()) {
+      const preferred = preferredAgentId.trim();
+      for (const [sessionId, profile] of Object.entries(state.profilesBySession)) {
+        if (state.deletedAgentRegistrationsBySession[sessionId]) {
+          continue;
+        }
+        const agentId = this.agentIdForSession(state, sessionId);
+        if (agentId === preferred) {
+          return { sessionId, agentId };
+        }
+        const serviceKey = enrolledServiceKeyForAgent(state.ingressSecretsBySession[sessionId], profile, agentId);
+        if (serviceKey === preferred || serviceKeyForAgent(profile, agentId) === preferred) {
+          return { sessionId, agentId };
+        }
+      }
+    }
     for (const [sessionId, profile] of Object.entries(state.profilesBySession)) {
       if (state.deletedAgentRegistrationsBySession[sessionId]) {
         continue;
@@ -12415,7 +12432,7 @@ export class ClawzControlPlane {
     }
     const agents = await this.listRegisteredAgents();
     const state = await this.loadState();
-    const router = this.jobPackRouterSession(state);
+    const router = this.jobPackRouterSession(state, options.routerAgentId);
     const { plan, requestedTags, routerMessage } = buildJobPackBuyerRoutePlan({
       taskPrompt,
       agents,

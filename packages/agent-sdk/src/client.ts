@@ -8,6 +8,7 @@ import {
   type AgentPricingMode,
   type AgentReferencePriceUnit,
   type AgentProfileState,
+  type MarketplaceWorkTags,
   type SantaClawzJobContext,
   summarizeAgentProofBundle,
   type AgentX402Plan,
@@ -83,6 +84,7 @@ export interface ClawzAgentClientOptions {
   fetchImpl?: typeof fetch;
   adminKey?: string;
   workshopAccessToken?: string;
+  conciergeApiKey?: string;
 }
 
 export interface ClawzProofQuery {
@@ -383,6 +385,67 @@ export interface ClawzProcurementAcceptResponse extends Record<string, unknown> 
   };
 }
 
+export interface ClawzConciergePlanInput {
+  taskPrompt: string;
+  buyerWallet?: string;
+  budgetUsd?: string;
+  maxUsd?: string;
+  privacyLane?: "private" | "proof-only" | "public-summary";
+  marketplaceTags?: Partial<MarketplaceWorkTags>;
+  selectedAgentId?: string;
+}
+
+export interface ClawzConciergeCheckoutInput {
+  sessionToken: string;
+  selectedAgentId?: string;
+}
+
+export interface ClawzConciergeIntegratorResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-concierge-integrator/1.0";
+  ok: true;
+  integrator: Record<string, unknown> & { integratorId: string; integratorName: string };
+}
+
+export interface ClawzConciergeAgentDiscoveryResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-concierge-agent-discovery/1.0";
+  ok: true;
+  generatedAtIso: string;
+  integrator: Record<string, unknown> & { integratorId: string; integratorName: string };
+  agents: Array<Record<string, unknown> & { agentId: string; agentName: string }>;
+}
+
+export interface ClawzConciergePlanResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-concierge-plan/1.0";
+  ok: true;
+  integrator: Record<string, unknown> & { integratorId: string; integratorName: string };
+  plan: Record<string, unknown> & {
+    routePlanDigestSha256: string;
+    candidateAgents: Array<Record<string, unknown> & { agentId: string }>;
+  };
+  conciergeSession: {
+    payload: Record<string, unknown> & { sessionId: string; expiresAtIso: string };
+    signature: string;
+    token: string;
+  };
+}
+
+export interface ClawzConciergeCheckoutResponse extends Record<string, unknown> {
+  schemaVersion: "santaclawz-concierge-checkout/1.0";
+  ok: true;
+  integrator: Record<string, unknown> & { integratorId: string; integratorName: string };
+  conciergeSession: {
+    payload: Record<string, unknown> & { sessionId: string; expiresAtIso: string };
+    token: string;
+  };
+  selectedAgent: Record<string, unknown> & { agentId: string };
+  x402Plan: AgentX402Plan;
+  endpoints: {
+    hire: string;
+    x402Plan: string;
+    profile: string;
+  };
+}
+
 export interface ClawzProcurementHireHandoffInput {
   acceptedBid: ClawzProcurementAcceptResponse;
   paymentPayload?: Record<string, unknown>;
@@ -596,12 +659,14 @@ export class ClawzAgentClient {
   private readonly fetchImpl: typeof fetch;
   private readonly adminKey: string | undefined;
   private readonly workshopAccessToken: string | undefined;
+  private readonly conciergeApiKey: string | undefined;
 
   constructor(options: ClawzAgentClientOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.adminKey = options.adminKey?.trim() ? options.adminKey.trim() : undefined;
     this.workshopAccessToken = options.workshopAccessToken?.trim() ? options.workshopAccessToken.trim() : undefined;
+    this.conciergeApiKey = options.conciergeApiKey?.trim() ? options.conciergeApiKey.trim() : undefined;
   }
 
   private async readJson<T>(url: string, init?: RequestInit, retryContext: RetryablePlatformContext = {}): Promise<T> {
@@ -706,6 +771,15 @@ export class ClawzAgentClient {
     );
   }
 
+  private conciergeHeaders(): Record<string, string> {
+    if (!this.conciergeApiKey) {
+      throw new Error("Concierge SDK calls require conciergeApiKey.");
+    }
+    return {
+      "x-santaclawz-concierge-key": this.conciergeApiKey
+    };
+  }
+
   private async callMcp<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
     const payload = await this.postJson<JsonRpcResponse<T>>("/mcp", {
       jsonrpc: "2.0",
@@ -765,6 +839,39 @@ export class ClawzAgentClient {
         ...(input.sessionId ? { sessionId: input.sessionId } : {})
       })
     );
+  }
+
+  async getConciergeIntegrator(): Promise<ClawzConciergeIntegratorResponse> {
+    return this.readJson<ClawzConciergeIntegratorResponse>(
+      withQuery(this.baseUrl, "/api/concierge/v1/me"),
+      {
+        headers: this.conciergeHeaders()
+      }
+    );
+  }
+
+  async listConciergeAgents(input: { q?: string; limit?: number } = {}): Promise<ClawzConciergeAgentDiscoveryResponse> {
+    return this.readJson<ClawzConciergeAgentDiscoveryResponse>(
+      withQuery(this.baseUrl, "/api/concierge/v1/agents", {
+        ...(input.q ? { q: input.q } : {}),
+        ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
+      }),
+      {
+        headers: this.conciergeHeaders()
+      }
+    );
+  }
+
+  async createConciergePlan(input: ClawzConciergePlanInput): Promise<ClawzConciergePlanResponse> {
+    return this.postJson<ClawzConciergePlanResponse>("/api/concierge/v1/plan", input, {
+      headers: this.conciergeHeaders()
+    });
+  }
+
+  async createConciergeCheckout(input: ClawzConciergeCheckoutInput): Promise<ClawzConciergeCheckoutResponse> {
+    return this.postJson<ClawzConciergeCheckoutResponse>("/api/concierge/v1/checkout", input, {
+      headers: this.conciergeHeaders()
+    });
   }
 
   async submitHireRequest(input: ClawzHireRequestInput): Promise<HireRequestReceipt> {
