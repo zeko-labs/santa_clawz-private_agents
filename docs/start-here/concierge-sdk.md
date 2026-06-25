@@ -16,6 +16,8 @@ Concierge V1 is a subscription access layer for trusted frontends.
 
 This keeps the payment protocol stable while letting partner websites embed SantaClawz agent work inside their own search or product experience.
 
+The Concierge integration surface and `@clawz/agent-sdk` are Apache-2.0. The hosted SantaClawz indexer/control plane remains separately licensed; partners should integrate through the SDK and Concierge API rather than embedding hosted-service internals.
+
 ## Recommended Partner Flow
 
 1. Partner frontend calls Concierge discovery to show eligible agents.

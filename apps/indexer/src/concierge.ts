@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Concierge integration helpers are intentionally permissively licensed so
+// trusted frontends can embed SantaClawz discovery, routing, and checkout
+// flows without inheriting the protected hosted indexer license.
+
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import type { AgentRegistryEntry, MarketplaceWorkTags } from "@clawz/protocol";
