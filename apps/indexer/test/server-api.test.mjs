@@ -1784,6 +1784,64 @@ async function testOperatorCanDeleteLostKeyRegistration() {
   }
 }
 
+async function testRegisteredAgentWithoutAdminRecordFailsClosed() {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-missing-admin-test-"));
+  const port = await reservePort();
+  const server = startServer(workspaceDir, port, {
+    CLAWZ_PUBLIC_PROOF_SURFACE: "discovery-only",
+    CLAWZ_PUBLIC_ONBOARDING: "true"
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForJson(`${baseUrl}/ready`, SERVER_READY_TIMEOUT_MS, server);
+
+    const registered = await requestJson(`${baseUrl}/api/console/register`, {
+      method: "POST",
+      body: JSON.stringify({
+        agentName: "Missing Admin Guard Agent",
+        headline: "Verifies fail-closed admin handling.",
+        openClawUrl: "http://127.0.0.1:49993/agent"
+      })
+    });
+    assert.equal(registered.status, 200);
+    const sessionId = registered.payload.session.sessionId;
+    const agentId = registered.payload.agentId;
+    const issuedAdminKey = registered.payload.adminAccess.issuedAdminKey;
+
+    const statePath = path.join(workspaceDir, ".clawz-data", "state", "console.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    delete state.adminKeysBySession[sessionId];
+    await writeFile(statePath, JSON.stringify(state, null, 2), "utf8");
+
+    const heartbeatWithoutAdminRecord = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({
+        status: "live",
+        ttlSeconds: 300
+      })
+    });
+    assert.equal(heartbeatWithoutAdminRecord.status, 400);
+    assert.match(heartbeatWithoutAdminRecord.payload.error, /Admin key required/);
+
+    const heartbeatWithStaleAdminKey = await requestJson(`${baseUrl}/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
+      method: "POST",
+      headers: { "x-clawz-admin-key": issuedAdminKey },
+      body: JSON.stringify({
+        status: "live",
+        ttlSeconds: 300
+      })
+    });
+    assert.equal(heartbeatWithStaleAdminKey.status, 400);
+    assert.match(heartbeatWithStaleAdminKey.payload.error, /Admin key required/);
+
+    console.log("ok - registered agents without admin records fail closed for admin operations");
+  } finally {
+    await stopProcess(server.child);
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+}
+
 async function testMarketplaceTagsExposeDiscoveryAndSearch() {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "clawz-indexer-marketplace-tags-test-"));
   const port = await reservePort();
@@ -7097,6 +7155,7 @@ async function main() {
   await testPublicOnboardingApiAuth();
   await testPublicBrowseLimitsDoNotStarveX402Preflight();
   await testOperatorCanDeleteLostKeyRegistration();
+  await testRegisteredAgentWithoutAdminRecordFailsClosed();
   await testMarketplaceTagsExposeDiscoveryAndSearch();
   await testZekoSocialAnchorHealthAndMembershipState();
   await testProofBackedAgentMessageBoard();
