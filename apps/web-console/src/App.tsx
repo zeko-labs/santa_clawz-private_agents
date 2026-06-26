@@ -140,7 +140,6 @@ const WORKSHOP_COPY =
   "Give your agents a private space to coordinate and deliver work with full accountability.";
 const WORKSHOP_MOBILE_TITLE = "Coordinate team agents";
 const WORKSHOP_DRAFT_STORAGE_KEY = "santaclawz.workshop.draft.v1";
-const EXPLORE_TOPIC_FALLBACKS = ["pricing", "proofs", "jobs", "swarm"];
 const SOCIAL_LINKS = [
   { label: "X", href: "https://x.com/santaclawz_ai", icon: "x" },
   { label: "Discord", href: "https://discord.gg/FGcu6tJDzH", icon: "discord" },
@@ -148,7 +147,7 @@ const SOCIAL_LINKS = [
 ] as const;
 // Reusable top-of-site announcement. Set enabled to false for the normal site chrome.
 const SITE_ANNOUNCEMENT: SiteAnnouncement = {
-  enabled: true,
+  enabled: false,
   title: "SantaClawz protocol v1.1 is live",
   message: "Paid lifecycle state machine for buyer safety, seller credit, and platform reconciliation.",
   href: "https://github.com/zeko-labs/santa_clawz-private_agents/blob/main/docs/releases/protocol-v1.1.md",
@@ -4636,9 +4635,6 @@ export function App() {
         }))
       : [])
   ].sort((left, right) => timestampValue(right.occurredAtIso) - timestampValue(left.occurredAtIso));
-  const boardTopicTags = Array.from(
-    new Set(filteredBoardMessages.flatMap((message) => message.topicTags))
-  ).slice(0, 8);
   const sortedExploreAgents = [...filteredRegistry]
     .sort((left, right) => {
       const rightCompletedJobs = right.completionScore?.completedJobCount ?? -1;
@@ -4828,11 +4824,6 @@ export function App() {
     : STARTER_AGENT_ID
       ? buildPublicAgentUrl(STARTER_AGENT_ID)
       : null;
-  const starterAgentName = starterAgent?.agentName ?? "agent_job_pack";
-  const starterAgentPrice = starterAgentPriceLabel(starterAgent);
-  const starterAgentExploreName = "agent_job_pack";
-  const starterAgentExplorePrice =
-    starterAgent?.pricingMode === "fixed-exact" && starterAgent.fixedAmountUsd ? `$${starterAgent.fixedAmountUsd}` : "$0.25";
   const ownershipChallengePreview =
     issuedOwnershipChallenge?.challengeResponseJson ??
     (state.ownership.status === "challenge-issued"
@@ -5089,7 +5080,7 @@ export function App() {
                   <h2>Start a team coordination run</h2>
                 </div>
                 <a className="field-help-link register-flow-guide-link" href={WORKSHOP_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                  Admin runbook
+                  Admin guide &gt;&gt;
                 </a>
               </div>
 
@@ -6524,47 +6515,6 @@ export function App() {
                     />
                   </label>
 
-                  <div className="explore-topic-panel explore-topic-list-panel">
-                    <span className="eyebrow">Topics</span>
-                    <div className="explore-topic-chip-row">
-                      {(boardTopicTags.length > 0 ? boardTopicTags : EXPLORE_TOPIC_FALLBACKS).map((tag) => (
-                        <button
-                          key={`topic-${tag}`}
-                          type="button"
-                          className={`explore-topic-chip${normalizedExploreQuery === tag.toLowerCase() ? " active" : ""}`}
-                          aria-pressed={normalizedExploreQuery === tag.toLowerCase()}
-                          onClick={() => {
-                            setExploreQuery(tag);
-                            setSelectedExploreFilter(null);
-                            setExploreAgentPage(1);
-                          }}
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <article className="explore-starter-mini-card explore-mobile-hidden">
-                    <p className="eyebrow">Starter agent</p>
-                    <strong>{starterAgentExploreName}</strong>
-                    <span>{starterAgentExplorePrice} for buyer, seller, and activation tests.</span>
-                    {starterAgent ? (
-                      <button
-                        type="button"
-                        className="inline-link-button"
-                        onClick={() => {
-                          showAgentProfile(starterAgent.agentId);
-                        }}
-                      >
-                        Open starter agent &gt;&gt;
-                      </button>
-                    ) : starterAgentProfileUrl ? (
-                      <a className="inline-link-button" href={starterAgentProfileUrl}>
-                        Open starter agent &gt;&gt;
-                      </a>
-                    ) : null}
-                  </article>
                 </aside>
 
                 <div className="explore-feed-column panel explore-panel">
@@ -6604,7 +6554,7 @@ export function App() {
                         </div>
                         <div className="explore-section-actions">
                           <a className="explore-buyer-tip-link" href={BUYER_AGENT_GUIDE_URL} target="_blank" rel="noreferrer">
-                            Buyer agent tips &gt;&gt;
+                            Buyer agent guide &gt;&gt;
                           </a>
                           {pendingExploreUpdateCount > 0 && selectedExploreFilter !== "agents" ? (
                             <button
