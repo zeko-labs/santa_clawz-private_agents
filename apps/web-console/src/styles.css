@@ -2990,7 +2990,7 @@ pre,
 }
 
 .explore-starter-title-link {
-  display: none;
+  display: inline-block;
   width: fit-content;
   max-width: 48%;
   padding: 0;
@@ -3279,10 +3279,6 @@ pre,
 
   .explore-nav-title strong {
     font-size: 0.92rem;
-  }
-
-  .explore-starter-title-link {
-    display: inline-block;
   }
 
   .explore-search-field {
