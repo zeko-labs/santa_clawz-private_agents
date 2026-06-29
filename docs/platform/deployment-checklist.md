@@ -9,6 +9,19 @@ pnpm doctor
 pnpm doctor:testnet
 ```
 
+For Zeko mainnet proof anchoring, use the dedicated social anchor runbook after testnet checks pass:
+
+- [`docs/protocol/zeko-mainnet-anchoring.md`](../protocol/zeko-mainnet-anchoring.md)
+
+Mainnet requires explicit confirmation and must use:
+
+```bash
+ZEKO_NETWORK_ID=zeko:zeko-mainnet
+ZEKO_GRAPHQL=https://mainnet.zeko.io/graphql
+ZEKO_ARCHIVE=https://archive.mainnet.zeko.io/graphql
+ZEKO_CONFIRM_MAINNET=true
+```
+
 1. Copy `packages/contracts/.env.example` to a local `.env`.
 2. Fill in `DEPLOYER_PRIVATE_KEY`, or store the same value in the macOS Keychain service `ZekoAI_SUBMITTER_PRIVATE_KEY`.
 3. Generate one private key for each kernel you want to deploy, or store them in the matching Keychain services:
@@ -150,3 +163,11 @@ That set is enough to support:
 - privacy exceptions
 - selective disclosure
 - budget reservation and refund
+
+## Suggested mainnet proof deployment
+
+For initial SantaClawz mainnet proof anchoring, deploy only:
+
+- `SocialAnchorKernel`
+
+Keep the other kernels on testnet until the broader live-flow surface is intentionally promoted. The social anchor kernel is enough for public proof and reputation commitments without changing paid x402 settlement rails.

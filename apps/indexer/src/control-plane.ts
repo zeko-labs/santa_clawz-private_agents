@@ -2980,17 +2980,36 @@ function titleForSocialAnchorKind(kind: SocialAnchorCandidateKind) {
   }
 }
 
-function isMainnetNetwork(deployment: Pick<ZekoDeploymentState, "networkId" | "mode">): boolean {
-  const networkId = deployment.networkId.toLowerCase();
-  if (deployment.mode === "local-runtime" || deployment.mode === "planned-testnet" || deployment.mode === "testnet-live") {
-    return false;
-  }
+function networkIdValueLooksMainnet(value: unknown): boolean {
+  const networkId = String(value ?? "").toLowerCase();
   return networkId.includes("mainnet") && !networkId.includes("testnet");
 }
 
+function zekoDeploymentMode(input: {
+  hasLiveContracts: boolean;
+  hasConfiguredEndpoint: boolean;
+  networkId: string;
+}): ZekoDeploymentState["mode"] {
+  const isMainnet = networkIdValueLooksMainnet(input.networkId);
+  if (input.hasLiveContracts) {
+    return isMainnet ? "mainnet-live" : "testnet-live";
+  }
+  if (input.hasConfiguredEndpoint) {
+    return isMainnet ? "planned-mainnet" : "planned-testnet";
+  }
+  return "local-runtime";
+}
+
+function isMainnetNetwork(deployment: Pick<ZekoDeploymentState, "networkId" | "mode">): boolean {
+  return (
+    deployment.mode === "mainnet-live" ||
+    deployment.mode === "planned-mainnet" ||
+    networkIdValueLooksMainnet(deployment.networkId)
+  );
+}
+
 function networkIdLooksMainnet(deployment: Pick<ZekoDeploymentState, "networkId">): boolean {
-  const networkId = (process.env.CLAWZ_NETWORK_ID ?? process.env.ZEKO_NETWORK_ID ?? deployment.networkId).toLowerCase();
-  return networkId.includes("mainnet") && !networkId.includes("testnet");
+  return networkIdValueLooksMainnet(process.env.CLAWZ_NETWORK_ID ?? process.env.ZEKO_NETWORK_ID ?? deployment.networkId);
 }
 
 function normalizePublicModerationText(value: string): string {
@@ -8592,12 +8611,26 @@ export class ClawzControlPlane {
           ? "ClawZ is running with durable local tenant keys, wrapped-key persistence, and sealed blob manifests by default. For regulated deployments, switch the same interface boundary to external-kms-backed mode."
           : "ClawZ is running in explicit in-memory privacy mode for isolated testing. Durable local or external KMS-backed key storage should back any real operator or testnet environment.";
 
+    const networkId = manifest?.networkId ?? process.env.ZEKO_NETWORK_ID ?? "testnet";
+    const defaultGraphqlEndpoint = networkIdValueLooksMainnet(networkId)
+      ? "https://mainnet.zeko.io/graphql"
+      : "https://testnet.zeko.io/graphql";
+    const defaultArchiveEndpoint = networkIdValueLooksMainnet(networkId)
+      ? "https://archive.mainnet.zeko.io/graphql"
+      : "https://archive.testnet.zeko.io/graphql";
+    const graphqlEndpoint = manifest?.mina ?? process.env.ZEKO_GRAPHQL ?? defaultGraphqlEndpoint;
+    const archiveEndpoint = manifest?.archive ?? process.env.ZEKO_ARCHIVE ?? defaultArchiveEndpoint;
+
     return {
       chain: "zeko",
-      networkId: manifest?.networkId ?? process.env.ZEKO_NETWORK_ID ?? "testnet",
-      mode: hasLiveContracts ? "testnet-live" : process.env.ZEKO_GRAPHQL ? "planned-testnet" : "local-runtime",
-      graphqlEndpoint: manifest?.mina ?? process.env.ZEKO_GRAPHQL ?? "https://testnet.zeko.io/graphql",
-      archiveEndpoint: manifest?.archive ?? process.env.ZEKO_ARCHIVE ?? "https://archive.testnet.zeko.io/graphql",
+      networkId,
+      mode: zekoDeploymentMode({
+        hasLiveContracts,
+        hasConfiguredEndpoint: Boolean(manifest?.mina ?? process.env.ZEKO_GRAPHQL ?? manifest?.networkId ?? process.env.ZEKO_NETWORK_ID),
+        networkId
+      }),
+      graphqlEndpoint,
+      archiveEndpoint,
       ...(typeof manifest?.deployer === "string" ? { deployerPublicKey: manifest.deployer } : {}),
       ...(typeof manifest?.generatedAt === "string" ? { generatedAtIso: manifest.generatedAt } : {}),
       contracts,

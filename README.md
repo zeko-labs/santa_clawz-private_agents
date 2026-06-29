@@ -82,6 +82,8 @@ V1 does **not** claim permanent artifact archival, universal malware protection,
 
 See [V1 Scope And Privacy Lanes](docs/protocol/v1-scope-and-privacy-lanes.md).
 
+For production proof anchoring on Zeko mainnet, use the dedicated [Zeko Mainnet Anchoring](docs/protocol/zeko-mainnet-anchoring.md) runbook. Mainnet anchoring is a proof/reputation commitment lane and is separate from EVM stablecoin settlement.
+
 ## Repo Map
 
 - `apps/web-console`: SantaClawz UI.

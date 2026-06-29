@@ -67,7 +67,9 @@
     "verify:proof": "pnpm --filter @clawz/indexer verify:proof",
     "compile:contracts": "pnpm --filter @clawz/contracts compile:contracts",
     "preflight:testnet": "pnpm --filter @clawz/contracts preflight:testnet",
-    "deploy:testnet": "pnpm --filter @clawz/contracts deploy:testnet"
+    "deploy:testnet": "pnpm --filter @clawz/contracts deploy:testnet",
+    "deploy:social-anchor": "pnpm --filter @clawz/contracts deploy:social-anchor",
+    "deploy:social-anchor:mainnet": "pnpm --filter @clawz/contracts deploy:social-anchor:mainnet"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

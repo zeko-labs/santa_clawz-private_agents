@@ -3,8 +3,14 @@ import { submitSocialAnchorBatchOnZeko } from "../packages/contracts/dist/contra
 
 const DEFAULT_API_BASE = process.env.CLAWZ_API_BASE?.trim() || "https://api.santaclawz.ai";
 const DEFAULT_NETWORK_ID = process.env.ZEKO_NETWORK_ID?.trim() || "testnet";
-const DEFAULT_MINA = process.env.ZEKO_GRAPHQL?.trim() || "https://testnet.zeko.io/graphql";
-const DEFAULT_ARCHIVE = process.env.ZEKO_ARCHIVE?.trim() || "https://archive.testnet.zeko.io/graphql";
+const DEFAULT_MINA =
+  process.env.ZEKO_GRAPHQL?.trim() ||
+  (isMainnetNetworkId(DEFAULT_NETWORK_ID) ? "https://mainnet.zeko.io/graphql" : "https://testnet.zeko.io/graphql");
+const DEFAULT_ARCHIVE =
+  process.env.ZEKO_ARCHIVE?.trim() ||
+  (isMainnetNetworkId(DEFAULT_NETWORK_ID)
+    ? "https://archive.mainnet.zeko.io/graphql"
+    : "https://archive.testnet.zeko.io/graphql");
 const TESTNET_SELF_SERVE_OVERRIDE = process.env.CLAWZ_ALLOW_TESTNET_SELF_SERVE_SOCIAL_ANCHOR?.trim().toLowerCase();
 const ALLOW_TESTNET_SELF_SERVE =
   TESTNET_SELF_SERVE_OVERRIDE === "1" ||
@@ -13,6 +19,15 @@ const ALLOW_TESTNET_SELF_SERVE =
 
 function isMainnetNetworkId(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized.includes("mainnet") && !normalized.includes("testnet");
+}
+
+function endpointLooksTestnet(value) {
+  return String(value ?? "").toLowerCase().includes("testnet");
+}
+
+function endpointLooksMainnet(value) {
+  const normalized = String(value ?? "").toLowerCase();
   return normalized.includes("mainnet") && !normalized.includes("testnet");
 }
 
@@ -86,6 +101,15 @@ const networkId = typeof args["network-id"] === "string" ? args["network-id"].tr
 const mina = typeof args.mina === "string" ? args.mina.trim() : DEFAULT_MINA;
 const archive = typeof args.archive === "string" ? args.archive.trim() : DEFAULT_ARCHIVE;
 const fee = typeof args.fee === "string" ? args.fee.trim() : process.env.TX_FEE?.trim();
+const networkIsMainnet = isMainnetNetworkId(networkId);
+
+if (networkIsMainnet && (endpointLooksTestnet(mina) || endpointLooksTestnet(archive))) {
+  throw new Error("Zeko mainnet social anchoring cannot use testnet GraphQL or archive endpoints.");
+}
+
+if (!networkIsMainnet && (endpointLooksMainnet(mina) || endpointLooksMainnet(archive))) {
+  throw new Error("Mainnet endpoints require --network-id zeko:zeko-mainnet.");
+}
 
 if (!sessionId && !agentId) {
   printUsage();

@@ -18,9 +18,52 @@ const deployer = PrivateKey.fromBase58(deployerPrivateKey);
 const socialAnchorKey = PrivateKey.random();
 const socialAnchorPublicKey = socialAnchorKey.toPublicKey();
 const networkId = process.env.ZEKO_NETWORK_ID ?? "testnet";
-const mina = normalizeGraphqlEndpoint(process.env.ZEKO_GRAPHQL ?? "https://testnet.zeko.io/graphql");
-const archive = normalizeGraphqlEndpoint(process.env.ZEKO_ARCHIVE ?? "https://archive.testnet.zeko.io/graphql");
+
+function networkLooksMainnet(value) {
+  const normalized = String(value ?? "").toLowerCase();
+  return normalized.includes("mainnet") && !normalized.includes("testnet");
+}
+
+function endpointLooksTestnet(value) {
+  return String(value ?? "").toLowerCase().includes("testnet");
+}
+
+function endpointLooksMainnet(value) {
+  const normalized = String(value ?? "").toLowerCase();
+  return normalized.includes("mainnet") && !normalized.includes("testnet");
+}
+
+function networkSlug(value) {
+  return String(value ?? "testnet")
+    .toLowerCase()
+    .replace(/^zeko:/, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "testnet";
+}
+
+const isMainnet = networkLooksMainnet(networkId);
+const mina = normalizeGraphqlEndpoint(
+  process.env.ZEKO_GRAPHQL ?? (isMainnet ? "https://mainnet.zeko.io/graphql" : "https://testnet.zeko.io/graphql")
+);
+const archive = normalizeGraphqlEndpoint(
+  process.env.ZEKO_ARCHIVE ??
+    (isMainnet ? "https://archive.mainnet.zeko.io/graphql" : "https://archive.testnet.zeko.io/graphql")
+);
 const fee = process.env.TX_FEE ?? "100000000";
+const confirmMainnet =
+  process.argv.includes("--confirm-mainnet") ||
+  process.env.ZEKO_CONFIRM_MAINNET === "true" ||
+  process.env.ZEKO_CONFIRM_MAINNET === "1";
+
+if (isMainnet && !confirmMainnet) {
+  throw new Error("Refusing to deploy to Zeko mainnet without ZEKO_CONFIRM_MAINNET=true or --confirm-mainnet.");
+}
+if (isMainnet && (endpointLooksTestnet(mina) || endpointLooksTestnet(archive))) {
+  throw new Error("Zeko mainnet deployment cannot use testnet GraphQL or archive endpoints.");
+}
+if (!isMainnet && (endpointLooksMainnet(mina) || endpointLooksMainnet(archive))) {
+  throw new Error("Mainnet endpoints require ZEKO_NETWORK_ID=zeko:zeko-mainnet and explicit mainnet confirmation.");
+}
 
 Mina.setActiveInstance(Mina.Network({ networkId, mina, archive }));
 
@@ -81,8 +124,9 @@ const txHash =
 
 const deploymentsDir = join(process.cwd(), "deployments");
 await mkdir(deploymentsDir, { recursive: true });
-const privatePath = join(deploymentsDir, "latest-social-anchor-testnet.private.json");
-const publicPath = join(deploymentsDir, "latest-social-anchor-testnet.json");
+const deploymentSuffix = networkSlug(networkId);
+const privatePath = join(deploymentsDir, `latest-social-anchor-${deploymentSuffix}.private.json`);
+const publicPath = join(deploymentsDir, `latest-social-anchor-${deploymentSuffix}.json`);
 const deployment = {
   label: "SocialAnchorKernel",
   networkId,

@@ -14,7 +14,9 @@
     "compile:contracts": "pnpm run build && node dist/contracts/src/compile-contracts.js",
     "check:vk-drift": "pnpm run build && node dist/contracts/src/check-vk-drift.js",
     "preflight:testnet": "pnpm run build && node dist/contracts/src/preflight-testnet.js",
-    "deploy:testnet": "pnpm run build && node dist/contracts/src/deploy-testnet.js"
+    "deploy:testnet": "pnpm run build && node dist/contracts/src/deploy-testnet.js",
+    "deploy:social-anchor": "pnpm run build && node scripts/deploy-social-anchor.mjs",
+    "deploy:social-anchor:mainnet": "ZEKO_NETWORK_ID=zeko:zeko-mainnet ZEKO_GRAPHQL=https://mainnet.zeko.io/graphql ZEKO_ARCHIVE=https://archive.mainnet.zeko.io/graphql pnpm run deploy:social-anchor"
   },
   "dependencies": {
     "@clawz/protocol": "workspace:*",

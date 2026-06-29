@@ -62,6 +62,12 @@ const FLOW_CHOICES: Array<{
 ];
 
 function formatMode(mode: ZekoDeploymentState["mode"]) {
+  if (mode === "mainnet-live") {
+    return "Live mainnet";
+  }
+  if (mode === "planned-mainnet") {
+    return "Planned mainnet";
+  }
   if (mode === "testnet-live") {
     return "Live testnet";
   }
@@ -114,7 +120,7 @@ export function ZekoRailCard({
   const [refundAmountMina, setRefundAmountMina] = useState("0.05");
   const [revocationReason, setRevocationReason] = useState("governed-review-window-expired");
 
-  const canRunFlow = deployment.mode === "testnet-live";
+  const canRunFlow = deployment.mode === "testnet-live" || deployment.mode === "mainnet-live";
   const latestStep = liveFlow.steps.at(-1);
   const recentSteps = liveFlow.steps.slice(-2).reverse();
   const isRunning =

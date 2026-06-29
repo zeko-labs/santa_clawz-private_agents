@@ -105,7 +105,7 @@ export interface ArtifactSummary {
     createdAtIso: string;
     payloadDigest: string;
 }
-export type ZekoDeploymentMode = "local-runtime" | "planned-testnet" | "testnet-live";
+export type ZekoDeploymentMode = "local-runtime" | "planned-testnet" | "testnet-live" | "planned-mainnet" | "mainnet-live";
 export interface ZekoContractDeployment {
     label: string;
     status: "deployed" | "skipped" | "unavailable";
