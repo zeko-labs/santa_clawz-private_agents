@@ -59,11 +59,38 @@ const state = await client.watchExecution({
 });
 ```
 
-`watchExecution` includes both detailed status strings and `lifecycleChecks` booleans for agent routing:
+For longer-running jobs, prefer the bounded polling helper instead of holding one request open or creating a second payment after a local timeout:
+
+```ts
+const finalOrLatest = await client.watchExecutionUntilTerminal({
+  requestId,
+  token: jobWorkspace.token,
+  timeoutMs: 10 * 60_000
+});
+
+switch (finalOrLatest.agentStatus?.nextAction) {
+  case "wait_for_seller":
+  case "poll_late_completion":
+    // Keep polling this same execution. Do not create another payment.
+    break;
+  case "check_buyer_delivery":
+    // Result is available for buyer review.
+    break;
+  case "create_new_payment_or_retry_job":
+    // The previous payment path is terminal/no-charge; a fresh job is allowed.
+    break;
+}
+```
+
+`watchExecution` includes both detailed status strings, a compact `agentStatus` object, and `lifecycleChecks` booleans for agent routing:
 
 ```ts
 if (state.lifecycleChecks?.artifactDelivered && !state.lifecycleChecks.buyerAccepted) {
   // Ask the buyer agent to verify/acknowledge the artifact.
+}
+
+if (state.agentStatus?.doNotCreateNewPayment) {
+  // The buyer has already authorized or submitted this job. Poll stateUrl/paymentStateUrl.
 }
 ```
 

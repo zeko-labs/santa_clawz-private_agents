@@ -7520,6 +7520,69 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
     const stateProjectionUpdatedAtIso = new Date().toISOString();
     const ledgerUpdatedAtIso = latestLedger?.updatedAtIso;
     const sourceFreshnessMs = sourceFreshnessMsFromIso(ledgerUpdatedAtIso, stateProjectionUpdatedAtIso);
+    const lifecycleTerminal = protocolLifecycle.terminal || buyerAccepted || hasFailure || expiredAuthorizationNoChargeTerminal;
+    const agentStatusState = buyerAccepted
+      ? "result_accepted"
+      : buyerDeliveryAvailable
+        ? "result_ready"
+        : returnVerified
+          ? "seller_completed_delivery_pending"
+          : acceptedPendingResult
+            ? "seller_acknowledged_result_pending"
+            : hasFailure
+              ? "needs_attention"
+              : agentStarted
+                ? "agent_working"
+                : paymentStatus === "settled" || paymentStatus === "authorized"
+                  ? "payment_sent"
+                  : "waiting_for_payment";
+    const agentStatusNextAction = buyerAccepted
+      ? "done"
+      : expiredAuthorizationNoChargeTerminal
+        ? "create_new_payment_or_retry_job"
+        : buyerDeliveryAvailable
+          ? "check_buyer_delivery"
+          : returnVerified
+            ? "check_buyer_delivery"
+            : acceptedPendingResult
+              ? executionRetrySafety.payloadRetryRejected
+                ? "poll_state_or_escalate_payment_recovery"
+                : "poll_late_completion"
+              : hasFailure
+                ? "escalate_or_retry_new_job_if_safe"
+                : agentStarted
+                  ? "wait_for_seller"
+                  : paymentStatus === "settled" || paymentStatus === "authorized"
+                    ? "wait_for_relay"
+                    : "wait_for_payment";
+    const agentStatusHumanSummary = buyerAccepted
+      ? "Result accepted."
+      : expiredAuthorizationNoChargeTerminal
+        ? "Payment authorization expired without charge; a new job/payment may be created if still needed."
+        : buyerDeliveryAvailable
+          ? "Result is ready for buyer review."
+          : returnVerified
+            ? "Seller completed the work; buyer delivery is still being reconciled."
+            : acceptedPendingResult
+              ? "Seller worker acknowledged the job; keep polling for late completion before retrying payment."
+              : hasFailure
+                ? "This execution needs attention."
+                : agentStarted
+                  ? "Agent is working; keep polling status with backoff."
+                  : paymentStatus === "settled" || paymentStatus === "authorized"
+                    ? "Payment is recorded; waiting for relay or seller execution."
+                    : "Waiting for payment.";
+    const agentStatusPollRecommended =
+      !lifecycleTerminal &&
+      agentStatusNextAction !== "check_buyer_delivery" &&
+      agentStatusNextAction !== "escalate_or_retry_new_job_if_safe";
+    const agentStatusRecommendedPollIntervalMs = lifecycleTerminal
+      ? 0
+      : acceptedPendingResult
+        ? 30_000
+        : agentStarted
+          ? 10_000
+          : 3_000;
     response.json({
       schemaVersion: "santaclawz-execution-state/1.0",
       ok: true,
@@ -7585,6 +7648,17 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
                       : paymentStatus === "authorized"
                         ? "payment_authorized"
                         : "created",
+      agentStatus: {
+        state: agentStatusState,
+        nextAction: agentStatusNextAction,
+        humanSummary: agentStatusHumanSummary,
+        terminal: lifecycleTerminal,
+        safeToCreateNewPayment: expiredAuthorizationNoChargeTerminal,
+        doNotCreateNewPayment: !expiredAuthorizationNoChargeTerminal && (paymentStatus === "authorized" || paymentStatus === "settled" || acceptedPendingResult),
+        pollRecommended: agentStatusPollRecommended,
+        recommendedPollIntervalMs: agentStatusRecommendedPollIntervalMs,
+        maxRecommendedPollIntervalMs: 60_000
+      },
       lifecycle: {
         paymentStatus,
         settlementStatus,
@@ -7627,7 +7701,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         buyerVerified,
         buyerAccepted,
         failed: hasFailure,
-        terminal: protocolLifecycle.terminal || buyerAccepted || hasFailure || expiredAuthorizationNoChargeTerminal,
+        terminal: lifecycleTerminal,
         protocolTerminal: protocolLifecycle.terminal,
         ...(expiredAuthorizationNoChargeTerminal ? { paymentPathTerminal: true } : {})
       },

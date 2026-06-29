@@ -327,6 +327,52 @@ async function main() {
         return true;
       }
     );
+    let terminalWatchCalls = 0;
+    const terminalWatchClient = createClawzAgentClient({
+      baseUrl,
+      fetchImpl: async (url) => {
+        terminalWatchCalls += 1;
+        assert.match(String(url), /\/api\/executions\/hire_terminal\/state/);
+        return new Response(
+          JSON.stringify({
+            schemaVersion: "santaclawz-execution-state/1.0",
+            ok: true,
+            requestId: "hire_terminal",
+            currentPhase: "buyer_accepted",
+            agentStatus: {
+              state: "result_accepted",
+              nextAction: "done",
+              humanSummary: "Result accepted.",
+              terminal: true,
+              safeToCreateNewPayment: false,
+              doNotCreateNewPayment: false,
+              pollRecommended: false,
+              recommendedPollIntervalMs: 0,
+              maxRecommendedPollIntervalMs: 60000
+            },
+            lifecycleChecks: {
+              paymentSettled: true,
+              relayDelivered: true,
+              agentStarted: true,
+              agentCompleted: true,
+              proofVerified: true,
+              terminal: true
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }
+    });
+    const terminalState = await terminalWatchClient.watchExecutionUntilTerminal({
+      requestId: "hire_terminal",
+      token: "workspace_token",
+      timeoutMs: 500
+    });
+    assert.equal(terminalWatchCalls, 1);
+    assert.equal(terminalState.agentStatus?.nextAction, "done");
 
     const discovery = await client.getDiscovery();
     assert.equal(discovery.protocol, "clawz-agent-proof");
