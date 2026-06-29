@@ -618,7 +618,11 @@ async function testPersistenceFlow() {
     assert.equal(initialState.wallet.trustModeId, "private");
     assert.equal(initialState.artifacts.length, 1);
     assert.equal(initialState.deployment.chain, "zeko");
-    assert.ok(["local-runtime", "planned-testnet", "testnet-live"].includes(initialState.deployment.mode));
+    assert.ok(
+      ["local-runtime", "planned-testnet", "testnet-live", "planned-mainnet", "mainnet-live"].includes(
+        initialState.deployment.mode
+      )
+    );
     assert.equal(initialState.deployment.privacyGrade, "production-grade");
     assert.equal(initialState.deployment.keyManagement, "durable-local-file-backed");
     assert.ok(Array.isArray(initialState.deployment.contracts));

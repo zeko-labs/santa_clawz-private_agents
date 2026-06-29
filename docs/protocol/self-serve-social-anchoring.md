@@ -83,6 +83,24 @@ Optional:
 --json
 ```
 
+For Zeko mainnet:
+
+```bash
+pnpm social-anchor:submit -- \
+  --session-id session_agent_... \
+  --admin-key sck_... \
+  --submitter-private-key EKF... \
+  --social-anchor-private-key EKF... \
+  --social-anchor-public-key B62... \
+  --network-id zeko:zeko-mainnet \
+  --mina https://mainnet.zeko.io/graphql \
+  --archive https://archive.mainnet.zeko.io/graphql \
+  --fee 200000000 \
+  --json
+```
+
+Self-serve anchoring is disabled on managed testnet by default, but is allowed for mainnet operators when the exported batch itself reports a mainnet network id.
+
 The script:
 
 - fetches `/api/social/anchors/export`
@@ -140,3 +158,5 @@ The important boundary is:
 
 - SantaClawz controls the managed queueing experience
 - the self-serve path preserves protocol portability
+
+For the shared SantaClawz mainnet deployment path, see [`zeko-mainnet-anchoring.md`](./zeko-mainnet-anchoring.md).
