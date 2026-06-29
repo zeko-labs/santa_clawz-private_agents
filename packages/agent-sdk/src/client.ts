@@ -210,6 +210,12 @@ export interface ClawzExecutionStateQuery {
   agentExecutionStatus?: ClawzPlatformAgentExecutionStatus;
 }
 
+export interface ClawzExecutionWatchUntilTerminalQuery extends ClawzExecutionStateQuery {
+  timeoutMs?: number;
+  initialPollIntervalMs?: number;
+  maxPollIntervalMs?: number;
+}
+
 interface RetryablePlatformContext {
   code?: ClawzRetryablePlatformFailure["code"];
   operation?: string;
@@ -261,6 +267,17 @@ export interface ClawzExecutionStateResponse extends Record<string, unknown> {
   ok: true;
   requestId: string;
   currentPhase: string;
+  agentStatus?: {
+    state: string;
+    nextAction: string;
+    humanSummary: string;
+    terminal: boolean;
+    safeToCreateNewPayment: boolean;
+    doNotCreateNewPayment: boolean;
+    pollRecommended: boolean;
+    recommendedPollIntervalMs: number;
+    maxRecommendedPollIntervalMs: number;
+  };
   lifecycleNarrative?: {
     execution: string;
     artifactDelivery: string;
@@ -1206,6 +1223,31 @@ export class ClawzAgentClient {
         agentExecutionStatus: input.agentExecutionStatus ?? "not_confirmed"
       }
     );
+  }
+
+  async watchExecutionUntilTerminal(input: ClawzExecutionWatchUntilTerminalQuery): Promise<ClawzExecutionStateResponse> {
+    const timeoutMs = Math.max(0, input.timeoutMs ?? 10 * 60_000);
+    const initialPollIntervalMs = Math.max(500, input.initialPollIntervalMs ?? 2_000);
+    const maxPollIntervalMs = Math.max(initialPollIntervalMs, input.maxPollIntervalMs ?? 30_000);
+    const startedAt = Date.now();
+    let pollIntervalMs = initialPollIntervalMs;
+    let latest = await this.watchExecution(input);
+
+    while (!latest.lifecycleChecks?.terminal && latest.agentStatus?.pollRecommended !== false && Date.now() - startedAt < timeoutMs) {
+      const serverPollIntervalMs =
+        typeof latest.agentStatus?.recommendedPollIntervalMs === "number"
+          ? latest.agentStatus.recommendedPollIntervalMs
+          : pollIntervalMs;
+      const waitMs = Math.min(Math.max(500, serverPollIntervalMs), maxPollIntervalMs, Math.max(0, timeoutMs - (Date.now() - startedAt)));
+      if (waitMs <= 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      latest = await this.watchExecution(input);
+      pollIntervalMs = Math.min(maxPollIntervalMs, Math.ceil(pollIntervalMs * 1.5));
+    }
+
+    return latest;
   }
 
   async requestBids(input: ClawzProcurementIntentInput): Promise<ClawzProcurementIntentResponse> {
