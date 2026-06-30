@@ -36,6 +36,7 @@ import {
   type SantaClawzContextRequirements,
   type SantaClawzJobContext,
   type SantaClawzJobPrivacyPreference,
+  type SantaClawzAgentSavedByType,
   type SocialAnchorCandidateKind,
   type SantaClawzQuoteAcceptanceWalletProof,
   reduceSantaClawzPaidLifecycle,
@@ -1151,6 +1152,10 @@ type ProcurementAcceptBody = {
   bidId?: unknown;
   token?: unknown;
 };
+type AgentSavedSignalBody = {
+  savedByType?: unknown;
+  savedByHash?: unknown;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1162,6 +1167,36 @@ function isLiveFlowKind(value: string): value is LiveFlowKind {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function savedByTypeFromBody(value: unknown): SantaClawzAgentSavedByType {
+  const savedByType = optionalString(value);
+  if (savedByType === "human" || savedByType === "agent" || savedByType === "app") {
+    return savedByType;
+  }
+  throw new Error("savedByType must be human, agent, or app.");
+}
+
+function agentSavedSignalResponse(result: Awaited<ReturnType<ClawzControlPlane["recordAgentSavedSignal"]>>) {
+  return {
+    schemaVersion: "santaclawz-agent-saved-signal-response/0.1",
+    ok: true,
+    saved: result.saved,
+    created: result.created,
+    signal: {
+      signalId: result.signal.signalId,
+      schemaVersion: result.signal.schemaVersion,
+      agentId: result.signal.agentId,
+      platformId: result.signal.platformId,
+      savedByType: result.signal.savedByType,
+      active: result.signal.active,
+      createdAtIso: result.signal.createdAtIso,
+      updatedAtIso: result.signal.updatedAtIso,
+      ...(result.signal.removedAtIso ? { removedAtIso: result.signal.removedAtIso } : {})
+    },
+    publicExposure: "not_exposed",
+    rankingImpact: "none"
+  };
 }
 
 function queryString(query: unknown, key: string): string | undefined {
@@ -8124,6 +8159,60 @@ app.post("/api/concierge/v1/checkout", route(async (request, response) => {
       ok: false,
       code: "concierge_checkout_failed",
       error: error instanceof Error ? error.message : "Unable to create Concierge checkout."
+    });
+  }
+}));
+
+app.post("/api/integrations/:platformId/agents/:agentId/saved", route(async (request, response) => {
+  try {
+    const platformId = request.params.platformId;
+    const agentId = request.params.agentId;
+    const value = isRecord(request.body) ? request.body as AgentSavedSignalBody : {};
+    if (!platformId || !agentId) {
+      response.status(400).json({ ok: false, code: "agent_saved_signal_missing_target", error: "platformId and agentId are required." });
+      return;
+    }
+    const result = await controlPlane.recordAgentSavedSignal({
+      platformId,
+      agentId,
+      savedByType: savedByTypeFromBody(value.savedByType),
+      savedByHash: optionalString(value.savedByHash) ?? ""
+    });
+    response.json(agentSavedSignalResponse(result));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to record saved signal.";
+    const unknownAgent = /^Unknown agent:/.test(message);
+    response.status(unknownAgent ? 404 : 400).json({
+      ok: false,
+      code: unknownAgent ? "agent_not_found" : "agent_saved_signal_invalid",
+      error: message
+    });
+  }
+}));
+
+app.delete("/api/integrations/:platformId/agents/:agentId/saved", route(async (request, response) => {
+  try {
+    const platformId = request.params.platformId;
+    const agentId = request.params.agentId;
+    const value = isRecord(request.body) ? request.body as AgentSavedSignalBody : {};
+    if (!platformId || !agentId) {
+      response.status(400).json({ ok: false, code: "agent_saved_signal_missing_target", error: "platformId and agentId are required." });
+      return;
+    }
+    const result = await controlPlane.removeAgentSavedSignal({
+      platformId,
+      agentId,
+      savedByType: savedByTypeFromBody(value.savedByType),
+      savedByHash: optionalString(value.savedByHash) ?? ""
+    });
+    response.json(agentSavedSignalResponse(result));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to remove saved signal.";
+    const unknownAgent = /^Unknown agent:/.test(message);
+    response.status(unknownAgent ? 404 : 400).json({
+      ok: false,
+      code: unknownAgent ? "agent_not_found" : "agent_saved_signal_invalid",
+      error: message
     });
   }
 }));

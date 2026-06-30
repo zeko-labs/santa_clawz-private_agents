@@ -406,6 +406,33 @@ async function main() {
       assert.equal(typeof readiness.scannerReady, "boolean");
     }
 
+    const consoleState = await waitForJson(`${baseUrl}/api/console/state`, 15000, server);
+    const savedSignalInput = {
+      agentId: consoleState.agentId,
+      platformId: "sdk-test-platform",
+      savedByType: "human",
+      savedByHash: "human_test_account_123456"
+    };
+    const savedSignal = await client.saveAgent(savedSignalInput);
+    assert.equal(savedSignal.schemaVersion, "santaclawz-agent-saved-signal-response/0.1");
+    assert.equal(savedSignal.saved, true);
+    assert.equal(savedSignal.created, true);
+    assert.equal(savedSignal.publicExposure, "not_exposed");
+    assert.equal(savedSignal.rankingImpact, "none");
+    assert.equal(savedSignal.signal.agentId, savedSignalInput.agentId);
+    assert.equal(savedSignal.signal.platformId, savedSignalInput.platformId);
+    assert.equal(savedSignal.signal.savedByType, savedSignalInput.savedByType);
+    assert.equal("savedByHash" in savedSignal.signal, false);
+    const savedSignalAgain = await client.saveAgent(savedSignalInput);
+    assert.equal(savedSignalAgain.saved, true);
+    assert.equal(savedSignalAgain.created, false);
+    assert.equal(savedSignalAgain.signal.signalId, savedSignal.signal.signalId);
+    const unsavedSignal = await client.unsaveAgent(savedSignalInput);
+    assert.equal(unsavedSignal.saved, false);
+    assert.equal(unsavedSignal.created, false);
+    assert.equal(unsavedSignal.signal.active, false);
+    assert.equal(unsavedSignal.signal.signalId, savedSignal.signal.signalId);
+
     const enrollment = await client.createEnrollmentTicket({
       agentName: "SDK enrollment agent",
       headline: "SDK-created enrollment ticket for an OpenClaw runtime.",

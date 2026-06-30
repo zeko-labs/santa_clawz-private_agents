@@ -10,6 +10,7 @@ import {
   type AgentProfileState,
   type MarketplaceWorkTags,
   type SantaClawzJobContext,
+  type SantaClawzAgentSavedByType,
   summarizeAgentProofBundle,
   type AgentX402Plan,
   type AgentProofVerificationReport,
@@ -201,6 +202,13 @@ export interface ClawzAgentSearchQuery {
   limit?: number;
 }
 
+export interface ClawzAgentSavedSignalInput {
+  agentId: string;
+  platformId: string;
+  savedByType: SantaClawzAgentSavedByType;
+  savedByHash: string;
+}
+
 export interface ClawzExecutionStateQuery {
   requestId: string;
   token?: string;
@@ -260,6 +268,26 @@ export interface ClawzAgentReadinessResponse extends Record<string, unknown> {
     bodyMaxBytes?: number;
   };
   scannerReady: boolean;
+}
+
+export interface ClawzAgentSavedSignalResponse {
+  schemaVersion: "santaclawz-agent-saved-signal-response/0.1";
+  ok: true;
+  saved: boolean;
+  created: boolean;
+  signal: {
+    signalId: string;
+    schemaVersion: "santaclawz-agent-saved-signal/0.1";
+    agentId: string;
+    platformId: string;
+    savedByType: SantaClawzAgentSavedByType;
+    active: boolean;
+    createdAtIso: string;
+    updatedAtIso: string;
+    removedAtIso?: string;
+  };
+  publicExposure: "not_exposed";
+  rankingImpact: "none";
 }
 
 export interface ClawzExecutionStateResponse extends Record<string, unknown> {
@@ -954,6 +982,42 @@ export class ClawzAgentClient {
         ...(input.tag ? { tag: input.tag } : {}),
         ...(typeof input.limit === "number" ? { limit: String(input.limit) } : {})
       })
+    );
+  }
+
+  async saveAgent(input: ClawzAgentSavedSignalInput): Promise<ClawzAgentSavedSignalResponse> {
+    const agentId = input.agentId.trim();
+    const platformId = input.platformId.trim();
+    if (!agentId || !platformId) {
+      throw new Error("saveAgent requires agentId and platformId.");
+    }
+    return this.postJson<ClawzAgentSavedSignalResponse>(
+      `/api/integrations/${encodeURIComponent(platformId)}/agents/${encodeURIComponent(agentId)}/saved`,
+      {
+        savedByType: input.savedByType,
+        savedByHash: input.savedByHash
+      }
+    );
+  }
+
+  async unsaveAgent(input: ClawzAgentSavedSignalInput): Promise<ClawzAgentSavedSignalResponse> {
+    const agentId = input.agentId.trim();
+    const platformId = input.platformId.trim();
+    if (!agentId || !platformId) {
+      throw new Error("unsaveAgent requires agentId and platformId.");
+    }
+    return this.readJson<ClawzAgentSavedSignalResponse>(
+      withQuery(this.baseUrl, `/api/integrations/${encodeURIComponent(platformId)}/agents/${encodeURIComponent(agentId)}/saved`),
+      {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          savedByType: input.savedByType,
+          savedByHash: input.savedByHash
+        })
+      }
     );
   }
 

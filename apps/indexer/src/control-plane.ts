@@ -15,12 +15,14 @@ import {
 import { createTenantKeyBroker, type TenantKeyBrokerRuntimeDescriptor, TenantKeyBroker } from "@clawz/key-broker";
 import {
   SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION,
+  SANTACLAWZ_AGENT_SAVED_SIGNAL_SCHEMA_VERSION,
   SANTACLAWZ_QUOTE_ACCEPTANCE_WALLET_PROOF_SCHEME,
   assertValidSantaClawzHireServiceIdentity,
   assertValidSantaClawzHirePolicy,
   buildSantaClawzQuoteAcceptanceMessage,
   buildJobPackBuyerRoutePlan,
   canonicalDigest,
+  normalizeSantaClawzAgentSavedSignalInput,
   paymentStatusForHireRequest,
   type AgentPaymentRail,
   type AgentRuntimeHeartbeatState,
@@ -87,6 +89,8 @@ import {
   type SocialAnchorQueueState,
   type SantaClawzQuoteAcceptanceWalletProof,
   type SantaClawzArtifactDeliveryPreference,
+  type SantaClawzAgentSavedSignalInput,
+  type SantaClawzAgentSavedSignalRecord,
   type SantaClawzContextFailureCode,
   type SantaClawzContextInputField,
   type SantaClawzContextRequirements,
@@ -121,6 +125,7 @@ export const PAID_EXECUTION_HEARTBEAT_MIN_FRESH_MS = 20_000;
 const AGENT_RUNTIME_HEARTBEAT_WRITE_MIN_INTERVAL_MS = integerEnv("CLAWZ_AGENT_HEARTBEAT_WRITE_MIN_INTERVAL_MS", 5000);
 const X402_PAYMENT_PAYLOAD_VAULT_MAX_RECORDS = 1000;
 const X402_PAYMENT_PAYLOAD_VAULT_RETENTION_MS = 48 * 60 * 60 * 1000;
+const AGENT_SAVED_SIGNAL_RETAIN_LIMIT = 50_000;
 const HIRE_REQUEST_SCHEMA_VERSION = SANTACLAWZ_HIRE_REQUEST_SCHEMA_VERSION;
 const HIRE_RETURN_SCHEMA_VERSION = "santaclawz-return/1.0";
 const HIRE_INGRESS_TIMEOUT_MS = 10_000;
@@ -980,6 +985,11 @@ interface X402PaymentPayloadVaultFile {
   records: X402PaymentPayloadVaultRecord[];
 }
 
+export interface AgentSavedSignalFile {
+  schemaVersion: "santaclawz-agent-saved-signals/0.1";
+  records: SantaClawzAgentSavedSignalRecord[];
+}
+
 interface PaymentLedgerAllTimeStats extends NonNullable<PaymentLedgerState["summary"]> {
   countedPaymentKeys: string[];
 }
@@ -1607,6 +1617,13 @@ export interface UpsertHostedWorkspaceRunOptions {
   toolTouchpoints?: string[];
   manifest?: unknown;
   procurementIntentId?: string;
+}
+
+export interface RecordAgentSavedSignalResult {
+  ok: true;
+  saved: boolean;
+  created: boolean;
+  signal: SantaClawzAgentSavedSignalRecord;
 }
 
 export interface CreateProcurementIntentOptions {
@@ -2617,6 +2634,13 @@ function buildDefaultPaymentLedgerFile(): PaymentLedgerFile {
 function buildDefaultX402PaymentPayloadVaultFile(): X402PaymentPayloadVaultFile {
   return {
     schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
+    records: []
+  };
+}
+
+function buildDefaultAgentSavedSignalFile(): AgentSavedSignalFile {
+  return {
+    schemaVersion: "santaclawz-agent-saved-signals/0.1",
     records: []
   };
 }
@@ -4941,6 +4965,7 @@ export class ClawzControlPlane {
   private readonly jobCollaborationPath: string;
   private readonly paymentLedgerPath: string;
   private readonly x402PaymentPayloadVaultPath: string;
+  private readonly agentSavedSignalPath: string;
   private readonly executionIntentPath: string;
   private readonly procurementIntentPath: string;
   private readonly hostedWorkspacePath: string;
@@ -4960,6 +4985,7 @@ export class ClawzControlPlane {
   private agentBoardMutationLock: Promise<void> = Promise.resolve();
   private socialAnchorQueueMutationLock: Promise<void> = Promise.resolve();
   private publicActivitySummaryMutationLock: Promise<void> = Promise.resolve();
+  private agentSavedSignalMutationLock: Promise<void> = Promise.resolve();
   private relayRuntimeStatusProvider: RelayRuntimeStatusProvider | undefined;
   private relayHireDeliveryHandler: RelayHireDeliveryHandler | undefined;
 
@@ -4985,6 +5011,7 @@ export class ClawzControlPlane {
     this.jobCollaborationPath = path.join(baseDir, "state", "job-collaboration.json");
     this.paymentLedgerPath = path.join(baseDir, "state", "payment-ledger.json");
     this.x402PaymentPayloadVaultPath = path.join(baseDir, "state", "x402-payment-payload-vault.json");
+    this.agentSavedSignalPath = path.join(baseDir, "state", "agent-saved-signals.json");
     this.executionIntentPath = path.join(baseDir, "state", "execution-intents.json");
     this.procurementIntentPath = path.join(baseDir, "state", "procurement-intents.json");
     this.hostedWorkspacePath = path.join(baseDir, "state", "hosted-workspaces.json");
@@ -5507,6 +5534,99 @@ export class ClawzControlPlane {
     return record;
   }
 
+  private agentSavedSignalId(input: SantaClawzAgentSavedSignalInput): string {
+    return `saved_${canonicalDigest(input).sha256Hex.slice(0, 24)}`;
+  }
+
+  async recordAgentSavedSignal(input: SantaClawzAgentSavedSignalInput): Promise<RecordAgentSavedSignalResult> {
+    const normalized = normalizeSantaClawzAgentSavedSignalInput(input);
+    const state = await this.loadState();
+    this.assertKnownAgentId(state, normalized.agentId);
+    const signalId = this.agentSavedSignalId(normalized);
+    const nowIso = new Date().toISOString();
+
+    return this.withAgentSavedSignalMutationLock(async () => {
+      const file = await this.loadAgentSavedSignalFile();
+      const existing = file.records.find((record) => record.signalId === signalId);
+      const existingWithoutRemovedAtIso = existing
+        ? (({ removedAtIso: _removedAtIso, ...record }) => record)(existing)
+        : undefined;
+      const signal: SantaClawzAgentSavedSignalRecord = existing
+        ? {
+            ...existingWithoutRemovedAtIso,
+            ...normalized,
+            schemaVersion: SANTACLAWZ_AGENT_SAVED_SIGNAL_SCHEMA_VERSION,
+            signalId,
+            active: true,
+            createdAtIso: existing.createdAtIso,
+            updatedAtIso: nowIso
+          }
+        : {
+            schemaVersion: SANTACLAWZ_AGENT_SAVED_SIGNAL_SCHEMA_VERSION,
+            signalId,
+            ...normalized,
+            active: true,
+            createdAtIso: nowIso,
+            updatedAtIso: nowIso
+          };
+
+      await this.saveAgentSavedSignalFile({
+        schemaVersion: "santaclawz-agent-saved-signals/0.1",
+        records: [signal, ...file.records.filter((record) => record.signalId !== signalId)]
+      });
+
+      return {
+        ok: true,
+        saved: true,
+        created: !existing,
+        signal
+      };
+    });
+  }
+
+  async removeAgentSavedSignal(input: SantaClawzAgentSavedSignalInput): Promise<RecordAgentSavedSignalResult> {
+    const normalized = normalizeSantaClawzAgentSavedSignalInput(input);
+    const state = await this.loadState();
+    this.assertKnownAgentId(state, normalized.agentId);
+    const signalId = this.agentSavedSignalId(normalized);
+    const nowIso = new Date().toISOString();
+
+    return this.withAgentSavedSignalMutationLock(async () => {
+      const file = await this.loadAgentSavedSignalFile();
+      const existing = file.records.find((record) => record.signalId === signalId);
+      const signal: SantaClawzAgentSavedSignalRecord = existing
+        ? {
+            ...existing,
+            ...normalized,
+            schemaVersion: SANTACLAWZ_AGENT_SAVED_SIGNAL_SCHEMA_VERSION,
+            active: false,
+            updatedAtIso: nowIso,
+            removedAtIso: nowIso
+          }
+        : {
+            schemaVersion: SANTACLAWZ_AGENT_SAVED_SIGNAL_SCHEMA_VERSION,
+            signalId,
+            ...normalized,
+            active: false,
+            createdAtIso: nowIso,
+            updatedAtIso: nowIso,
+            removedAtIso: nowIso
+          };
+
+      await this.saveAgentSavedSignalFile({
+        schemaVersion: "santaclawz-agent-saved-signals/0.1",
+        records: [signal, ...file.records.filter((record) => record.signalId !== signalId)]
+      });
+
+      return {
+        ok: true,
+        saved: false,
+        created: false,
+        signal
+      };
+    });
+  }
+
   private async loadJobCollaborationFile(): Promise<JobCollaborationFile> {
     await this.ensureDirs();
     const file = await readJsonFile<JobCollaborationFile>(this.jobCollaborationPath);
@@ -5572,6 +5692,33 @@ export class ClawzControlPlane {
     await writeJsonFile(this.x402PaymentPayloadVaultPath, {
       schemaVersion: "santaclawz-x402-payment-payload-vault/1.0",
       records: pruneX402PaymentPayloadVaultRecords(file.records)
+    });
+  }
+
+  private async loadAgentSavedSignalFile(): Promise<AgentSavedSignalFile> {
+    await this.ensureDirs();
+    const file = await readJsonFile<AgentSavedSignalFile>(this.agentSavedSignalPath);
+    if (file?.schemaVersion === "santaclawz-agent-saved-signals/0.1" && Array.isArray(file.records)) {
+      return {
+        schemaVersion: "santaclawz-agent-saved-signals/0.1",
+        records: file.records
+          .filter((record) => record.signalId && record.agentId && record.platformId && record.savedByHash)
+          .slice(0, AGENT_SAVED_SIGNAL_RETAIN_LIMIT)
+      };
+    }
+
+    const fallback = buildDefaultAgentSavedSignalFile();
+    await this.saveAgentSavedSignalFile(fallback);
+    return fallback;
+  }
+
+  private async saveAgentSavedSignalFile(file: AgentSavedSignalFile) {
+    await this.ensureDirs();
+    await writeJsonFile(this.agentSavedSignalPath, {
+      schemaVersion: "santaclawz-agent-saved-signals/0.1",
+      records: file.records
+        .sort((left, right) => right.updatedAtIso.localeCompare(left.updatedAtIso))
+        .slice(0, AGENT_SAVED_SIGNAL_RETAIN_LIMIT)
     });
   }
 
@@ -5802,6 +5949,20 @@ export class ClawzControlPlane {
     const previous = this.publicActivitySummaryMutationLock;
     let release: () => void = () => {};
     this.publicActivitySummaryMutationLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await mutation();
+    } finally {
+      release();
+    }
+  }
+
+  private async withAgentSavedSignalMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
+    const previous = this.agentSavedSignalMutationLock;
+    let release: () => void = () => {};
+    this.agentSavedSignalMutationLock = new Promise<void>((resolve) => {
       release = resolve;
     });
     await previous;
@@ -6131,6 +6292,14 @@ export class ClawzControlPlane {
     return Object.entries(state.agentIdsBySession).find(
       ([sessionId, value]) => !state.deletedAgentRegistrationsBySession[sessionId] && value === agentId
     )?.[0];
+  }
+
+  private assertKnownAgentId(state: ConsolePersistenceState, agentId: string): string {
+    const sessionId = this.resolveSessionIdFromAgentId(state, agentId);
+    if (!sessionId) {
+      throw new Error(`Unknown agent: ${agentId}`);
+    }
+    return sessionId;
   }
 
   private resolveOwnedSessionId(
