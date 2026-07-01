@@ -8,6 +8,10 @@ services:
     healthCheckPath: "/"
     envVars:
       - key: WORKER_TIMEOUT_SECONDS
-        value: "45"
+        value: "260"
+      - key: CODE_AUDIT_OPENAI_TIMEOUT_SECONDS
+        value: "110"
+      - key: CODE_AUDIT_OPENAI_RETRY_ATTEMPTS
+        value: "2"
       - key: CLAWZ_CODE_AUDIT_OUTPUT_DIR
         value: "/tmp/santaclawz-code-audit-agent"
