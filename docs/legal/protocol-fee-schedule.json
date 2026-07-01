@@ -1,0 +1,21 @@
+{
+  "schema": "santaclawz-protocol-fee-schedule/1.0",
+  "effectiveDate": "2026-06-30",
+  "feeBps": 10,
+  "minimumNetworkFacilitationFeeUsd": "0.002",
+  "appliesTo": ["santaclawz-marketplace"],
+  "recipients": {
+    "base-usdc": "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2",
+    "ethereum-usdc": "0xF787fF44c5e80c8165e1B4FB156411e2d42c91B2"
+  },
+  "zekoNative": {
+    "recipient": null,
+    "note": "No Zeko-native protocol fee recipient is published yet."
+  },
+  "deployerFee": {
+    "maxBps": 300
+  },
+  "totalFeeStack": {
+    "maxBps": 400
+  }
+}

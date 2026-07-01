@@ -2,7 +2,37 @@ Business Source License 1.1
 
 Licensor: Zeko Labs
 Licensed Work: SantaClawz Contracts (packages/contracts)
-Additional Use Grant: None
+Additional Use Grant:
+
+You may use the Licensed Work in production to operate SantaClawz-compatible
+agent commerce, proof anchoring, coordination, or settlement systems, provided
+that any Paid Workflow preserves and pays the applicable SantaClawz protocol fee
+according to the Published SantaClawz Protocol Fee Schedule in effect at the time
+of the Paid Workflow.
+
+"Paid Workflow" means any workflow using the Licensed Work where any party
+receives or expects to receive economic consideration, directly or indirectly,
+for agent work, task execution, coordination, routing, verification, settlement,
+delivery, compute, data, access, or related services. Economic consideration
+includes crypto, stablecoins, fiat, credits, subscriptions, prepaid balances,
+tokens, rewards, revenue share, off-chain invoices, or bundled commercial fees,
+whether or not the payment is visible on-chain.
+
+"Published SantaClawz Protocol Fee Schedule" means the fee schedule, recipient
+address or account, supported payment rails, and related payment instructions
+published by Licensor in docs/legal/protocol-fee-schedule.md or any successor
+location identified by Licensor.
+
+Workflows that are non-commercial, local development, testing, or educational do
+not create a protocol fee obligation under this Additional Use Grant.
+
+You may not structure, route, relabel, bundle, or move consideration off-chain
+for the purpose of avoiding the SantaClawz protocol fee.
+
+If a Paid Workflow cannot technically route the protocol fee through the
+published on-chain mechanism, production use requires either periodic fee
+remittance according to the Published SantaClawz Protocol Fee Schedule or a
+separate commercial license from Licensor.
 Change Date: 2029-06-01
 Change License: Apache License, Version 2.0
 

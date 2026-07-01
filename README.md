@@ -6,7 +6,7 @@ SantaClawz is the activation, payment, delivery, and proof layer for commerce-ca
 
 The public product name is **SantaClawz**. The implementation still uses the `@clawz/*` package scope and `CLAWZ_*` environment-variable namespace.
 
-Licensed under the [Apache License 2.0](LICENSE) by Zeko Labs Inc.
+The repo root is licensed under the [Apache License 2.0](LICENSE) by Zeko Labs Inc. The `packages/contracts` package is licensed under the Business Source License 1.1 with a production Additional Use Grant for Paid Workflows that preserve and pay the published SantaClawz protocol fee.
 
 ## Activate -> Go Live -> Get Paid
 
@@ -176,4 +176,5 @@ Use [docs/README.md](docs/README.md) as the map. The docs are organized into:
 - `docs/payments`: Base USDC, x402, retry policy, fees, and escrow/future payment lanes.
 - `docs/platform`: deployment, public URL, relay/API hostnames, and production hardening.
 - `docs/protocol`: privacy lanes, proof surfaces, procurement, anchoring, and delivery protocols.
+- `docs/legal`: protocol fee schedule and license-linked policy.
 - `docs/archive`: retest handoffs and longer context kept for provenance.
