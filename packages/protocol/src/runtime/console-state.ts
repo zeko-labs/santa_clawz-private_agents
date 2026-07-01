@@ -889,6 +889,7 @@ export interface HireRequestReceipt {
   deliveryError?: string;
   returnValidationError?: string;
   returnValidationCode?: string;
+  returnRejectedReason?: HireReturnRejectedReason;
   localResponseStatusCode?: number;
   localResponseBytes?: number;
   operationalStatus?: HireOperationalStatus;
@@ -1028,6 +1029,15 @@ export type HireDeliveryReceiptStage =
   | "relay_timeout"
   | "runtime_rejected";
 
+export type HireReturnRejectedReason =
+  | "schema_validation_failed"
+  | "missing_buyer_delivery"
+  | "artifact_manifest_invalid"
+  | "worker_reported_failure"
+  | "worker_timeout"
+  | "model_unavailable"
+  | "unknown";
+
 export interface HireDeliveryReceipt {
   stage: HireDeliveryReceiptStage;
   target: string;
@@ -1044,6 +1054,7 @@ export interface HireDeliveryReceipt {
   relayBodyDigestSha256?: string;
   platformRelayTimeoutMs?: number;
   returnValidationCode?: string;
+  returnRejectedReason?: HireReturnRejectedReason;
   errorCode?: string;
   errorMessage?: string;
 }

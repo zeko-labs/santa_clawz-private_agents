@@ -62,6 +62,7 @@ import {
   type HireDeliveryReceipt,
   type HireRelayTraceStep,
   type HireRequestReceipt,
+  type HireReturnRejectedReason,
   type SponsorQueueJob,
   type SponsorQueueState,
   TRUST_MODE_PRESETS,
@@ -387,6 +388,41 @@ class HireReturnValidationError extends Error {
     super(message);
     this.name = "HireReturnValidationError";
   }
+}
+
+function classifyHireReturnRejectedReason(input: {
+  error?: unknown;
+  validationCode?: string;
+  validationMessage?: string;
+  statusCode?: number;
+}): HireReturnRejectedReason {
+  const errorMessage = input.error instanceof Error ? input.error.message : input.error ? String(input.error) : "";
+  const code = `${input.validationCode ?? stringPropertyFromError(input.error, "code") ?? ""}`.toLowerCase();
+  const message = `${input.validationMessage ?? errorMessage}`.toLowerCase();
+  const combined = `${code} ${message}`;
+  if (
+    code === "buyer_delivery_required" ||
+    code === "verified_output_required" ||
+    /buyer[-_\s]?visible|buyer delivery|required.*delivery|artifact_manifest_url/.test(combined)
+  ) {
+    return "missing_buyer_delivery";
+  }
+  if (/artifact|manifest|bundle|deliverable/.test(combined)) {
+    return "artifact_manifest_invalid";
+  }
+  if (/openai|model audit unavailable|model_unavailable|model unavailable|read operation timed out/.test(combined)) {
+    return "model_unavailable";
+  }
+  if (/timeout|timed out/.test(combined) || input.statusCode === 408 || input.statusCode === 504) {
+    return "worker_timeout";
+  }
+  if (/worker reported failure|runtime reported failure|status.*failed|failure_code/.test(combined)) {
+    return "worker_reported_failure";
+  }
+  if (input.error instanceof HireReturnValidationError || /schema|santaclawz return|verified_output|json|parse/.test(combined)) {
+    return "schema_validation_failed";
+  }
+  return "unknown";
 }
 
 interface OwnershipChallengeIssueResult {
@@ -952,6 +988,7 @@ interface HireRequestRecord {
   deliveryError?: string;
   returnValidationError?: string;
   returnValidationCode?: string;
+  returnRejectedReason?: HireReturnRejectedReason;
   localResponseStatusCode?: number;
   localResponseBytes?: number;
   operationalStatus?: HireRequestReceipt["operationalStatus"];
@@ -7340,6 +7377,13 @@ export class ClawzControlPlane {
       if (signedRequest.requestKind !== "paid_execution") {
         throw error;
       }
+      const returnValidationCode = error instanceof HireReturnValidationError ? error.code : "return_schema_rejected";
+      const returnRejectedReason = classifyHireReturnRejectedReason({
+        error,
+        validationCode: returnValidationCode,
+        validationMessage: validationError,
+        statusCode: response.status
+      });
       return {
         requestAccepted: true as const,
         deliveryFailed: true as const,
@@ -7359,7 +7403,8 @@ export class ClawzControlPlane {
           ...(relayResponse?.workerResponseDigestSha256 ? { workerResponseDigestSha256: relayResponse.workerResponseDigestSha256 } : {}),
           ...(relayResponse?.relayBodyBytes !== undefined ? { relayBodyBytes: relayResponse.relayBodyBytes } : {}),
           ...(relayResponse?.relayBodyDigestSha256 ? { relayBodyDigestSha256: relayResponse.relayBodyDigestSha256 } : {}),
-          returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+          returnValidationCode,
+          returnRejectedReason,
           errorMessage: validationError
         }),
         requestKind: signedRequest.requestKind,
@@ -7368,7 +7413,8 @@ export class ClawzControlPlane {
         responseStatusCode: response.status,
         responseBytes,
         returnValidationError: validationError,
-        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+        returnValidationCode,
+        returnRejectedReason,
         ...(relayResponse?.relayTrace ? { relayTrace: relayResponse.relayTrace } : {})
       };
     }
@@ -7425,6 +7471,7 @@ export class ClawzControlPlane {
     relayBodyDigestSha256?: string;
     platformRelayTimeoutMs?: number;
     returnValidationCode?: string;
+    returnRejectedReason?: HireReturnRejectedReason;
     errorCode?: string;
     errorMessage?: string;
   }): HireDeliveryReceipt {
@@ -7444,6 +7491,7 @@ export class ClawzControlPlane {
       ...(input.relayBodyDigestSha256 ? { relayBodyDigestSha256: input.relayBodyDigestSha256 } : {}),
       ...(typeof input.platformRelayTimeoutMs === "number" ? { platformRelayTimeoutMs: input.platformRelayTimeoutMs } : {}),
       ...(input.returnValidationCode ? { returnValidationCode: input.returnValidationCode } : {}),
+      ...(input.returnRejectedReason ? { returnRejectedReason: input.returnRejectedReason } : {}),
       ...(input.errorCode ? { errorCode: input.errorCode } : {}),
       ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 500) } : {})
     };
@@ -14483,6 +14531,10 @@ export class ClawzControlPlane {
       "returnValidationCode" in ingressDelivery && typeof ingressDelivery.returnValidationCode === "string"
         ? ingressDelivery.returnValidationCode
         : undefined;
+    const returnRejectedReason =
+      "returnRejectedReason" in ingressDelivery && typeof ingressDelivery.returnRejectedReason === "string"
+        ? ingressDelivery.returnRejectedReason as HireReturnRejectedReason
+        : undefined;
     const deliveryError =
       "deliveryError" in ingressDelivery && typeof ingressDelivery.deliveryError === "string"
         ? ingressDelivery.deliveryError
@@ -14523,12 +14575,29 @@ export class ClawzControlPlane {
       const paidDeliveryErrorMessage = buyerDeliveryMissing
         ? "Paid execution completed with proof metadata but no buyer-visible delivery. Include verified_output.buyer_visible_outputs[] for readable text or verified_output.artifact_manifest_url for artifact delivery."
         : "Paid execution completed without a verified buyer delivery package. Production paid jobs require buyer-visible output or an artifact manifest, files produced, checks performed, and a verification manifest.";
+      const paidReturnRejectedReason = classifyHireReturnRejectedReason({
+        validationCode: paidDeliveryErrorCode,
+        validationMessage: paidDeliveryErrorMessage
+      });
+      const paidDeliveryReceipt: HireDeliveryReceipt = {
+        ...(deliveryReceipt ?? this.buildHireDeliveryReceipt({
+          stage: "return_rejected",
+          target: options.agentId,
+          requestId
+        })),
+        stage: "return_rejected",
+        occurredAtIso: new Date().toISOString(),
+        returnValidationCode: paidDeliveryErrorCode,
+        returnRejectedReason: paidReturnRejectedReason,
+        errorCode: paidDeliveryErrorCode,
+        errorMessage: paidDeliveryErrorMessage.slice(0, 500)
+      };
       await this.updatePaymentLedgerExecution({
         ...(paymentAuthorization.ledgerId ? { ledgerId: paymentAuthorization.ledgerId } : {}),
         hireRequestId: requestId,
         executionStatus: "failed",
         returnStatus: "rejected",
-        ...(deliveryReceipt ? { deliveryReceipt } : {}),
+        deliveryReceipt: paidDeliveryReceipt,
         errorCode: paidDeliveryErrorCode,
         errorMessage: paidDeliveryErrorMessage
       });
@@ -14572,6 +14641,7 @@ export class ClawzControlPlane {
       ...(deliveryError ? { deliveryError } : {}),
       ...(returnValidationError ? { returnValidationError } : {}),
       ...(returnValidationCode ? { returnValidationCode } : {}),
+      ...(returnRejectedReason ? { returnRejectedReason } : {}),
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
@@ -14810,6 +14880,7 @@ export class ClawzControlPlane {
       ...(deliveryError ? { deliveryError } : {}),
       ...(returnValidationError ? { returnValidationError } : {}),
       ...(returnValidationCode ? { returnValidationCode } : {}),
+      ...(returnRejectedReason ? { returnRejectedReason } : {}),
       ...(typeof ingressResponseStatusCode === "number" ? { localResponseStatusCode: ingressResponseStatusCode } : {}),
       ...(typeof ingressResponseBytes === "number" ? { localResponseBytes: ingressResponseBytes } : {}),
       operationalStatus,
@@ -14829,6 +14900,7 @@ export class ClawzControlPlane {
         ...(typeof ingressResponseBytes === "number" ? { responseBytes: ingressResponseBytes } : {}),
         ...(returnValidationError ? { returnValidationError } : {}),
         ...(returnValidationCode ? { returnValidationCode } : {}),
+        ...(returnRejectedReason ? { returnRejectedReason } : {}),
         signatureHeader: "X-SantaClawz-Signature"
       },
       ...(ingressProtocolReturn ? { protocolReturn: ingressProtocolReturn } : {}),
@@ -15305,6 +15377,13 @@ export class ClawzControlPlane {
       });
     } catch (error) {
       const validationError = error instanceof Error ? error.message : "Agent runtime returned an invalid response.";
+      const returnValidationCode = error instanceof HireReturnValidationError ? error.code : "return_schema_rejected";
+      const returnRejectedReason = classifyHireReturnRejectedReason({
+        error,
+        validationCode: returnValidationCode,
+        validationMessage: validationError,
+        statusCode: responseStatus
+      });
       const deliveryReceipt = this.buildHireDeliveryReceipt({
         stage: "return_rejected",
         target: existing.deliveryTarget,
@@ -15318,7 +15397,8 @@ export class ClawzControlPlane {
         ...(options.workerResponseDigestSha256 ? { workerResponseDigestSha256: options.workerResponseDigestSha256 } : {}),
         ...(options.relayBodyBytes !== undefined ? { relayBodyBytes: options.relayBodyBytes } : {}),
         ...(options.relayBodyDigestSha256 ? { relayBodyDigestSha256: options.relayBodyDigestSha256 } : {}),
-        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+        returnValidationCode,
+        returnRejectedReason,
         errorMessage: validationError
       });
       const file = await this.loadHireRequestFile();
@@ -15331,7 +15411,8 @@ export class ClawzControlPlane {
         status: "failed",
         deliveryStatus: "return_rejected",
         returnValidationError: validationError,
-        returnValidationCode: error instanceof HireReturnValidationError ? error.code : "return_schema_rejected",
+        returnValidationCode,
+        returnRejectedReason,
         localResponseStatusCode: responseStatus,
         localResponseBytes: responseBytes,
         deliveryReceipt,
