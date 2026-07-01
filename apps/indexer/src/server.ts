@@ -25,6 +25,7 @@ import {
   type ConsoleStateResponse,
   type ExecutionIntentSettlementModel,
   type ExecutionIntentStatus,
+  type HireDeliveryReceipt,
   type HireRelayTraceStep,
   type MarketplaceWorkTags,
   type PaymentLedgerEntry,
@@ -4065,6 +4066,36 @@ function x402SettlementTelemetry(input: {
   };
 }
 
+function buildReturnRejectionDiagnostics(input: {
+  hireRequest?: {
+    returnRejectedReason?: string;
+    returnValidationCode?: string;
+    returnValidationError?: string;
+    deliveryReceipt?: HireDeliveryReceipt;
+  } | undefined;
+  latestLedger?: Pick<PaymentLedgerEntry, "returnStatus" | "errorCode" | "errorMessage" | "deliveryReceipt"> | undefined;
+}) {
+  const receipt = input.hireRequest?.deliveryReceipt?.stage === "return_rejected"
+    ? input.hireRequest.deliveryReceipt
+    : input.latestLedger?.deliveryReceipt?.stage === "return_rejected"
+      ? input.latestLedger.deliveryReceipt
+      : undefined;
+  const reason = input.hireRequest?.returnRejectedReason ?? receipt?.returnRejectedReason;
+  const code = input.hireRequest?.returnValidationCode ?? receipt?.returnValidationCode ?? input.latestLedger?.errorCode;
+  const message = input.hireRequest?.returnValidationError ?? receipt?.errorMessage ?? input.latestLedger?.errorMessage;
+  if (!reason && !code && !message && input.latestLedger?.returnStatus !== "rejected") {
+    return undefined;
+  }
+  return {
+    reason: reason ?? "unknown",
+    ...(code ? { code } : {}),
+    ...(message ? { message: message.slice(0, 500) } : {}),
+    buyerAction: "retry_new_job_after_fix",
+    sellerAction: "fix_return_package_and_rerun",
+    safeToRetrySamePaymentPayload: false
+  };
+}
+
 async function buildX402PaymentStateResponse(input: {
   apiBase: string;
   ledgerId?: string;
@@ -4180,6 +4211,9 @@ async function buildX402PaymentStateResponse(input: {
       : hireRequest?.protocolReturn?.verifiedOutput || latestLedger?.returnStatus === "accepted"
         ? "return_validated"
         : "not_started";
+  const returnRejection = paymentStateProofStatus === "return_rejected"
+    ? buildReturnRejectionDiagnostics({ hireRequest, latestLedger })
+    : undefined;
   const paymentStateRelayDeliveryStatus =
     hireRequest?.operationalStatus?.relayDeliveryStatus ?? hireRequest?.deliveryStatus ?? "not_attempted";
   const paymentStateAgentExecutionStatus =
@@ -4373,6 +4407,7 @@ async function buildX402PaymentStateResponse(input: {
     settlementStatus: paymentStateSettlementStatus,
     ...(intent ? { intent } : {}),
     ...(canonicalExecution ? { execution: canonicalExecution } : {}),
+    ...(returnRejection ? { returnRejection } : {}),
     retryResume: {
       safeToRetrySamePayload: canonicalSafeToRetrySamePayload,
       safeToCreateNewPayment,
@@ -7333,6 +7368,9 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
             ? "anchored_or_attested"
             : "return_validated"
           : "not_started";
+    const returnRejection = proofStatus === "return_rejected"
+      ? buildReturnRejectionDiagnostics({ hireRequest, latestLedger })
+      : undefined;
     const verifiedOutput = hireRequest.protocolReturn?.verifiedOutput;
     const artifactDelivered =
       Boolean(verifiedOutput?.artifactManifestUrl) ||
@@ -7700,6 +7738,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         relayDeliveryStatus,
         agentExecutionStatus,
         proofStatus,
+        ...(returnRejection ? { returnRejection } : {}),
         sellerExecutionCompleted: returnVerified,
         buyerComplete,
         buyerCompletionStatus,
@@ -7722,6 +7761,7 @@ app.get("/api/executions/:requestId/state", route(async (request, response) => {
         narrative: lifecycleNarrative
       },
       relayTrace: hireRequest.relayTrace ?? [],
+      ...(returnRejection ? { returnRejection } : {}),
       lifecycleNarrative,
       lifecycleChecks: {
         paymentSettled,
