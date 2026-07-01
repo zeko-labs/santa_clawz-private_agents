@@ -21,6 +21,7 @@ import pathlib
 import re
 import secrets
 import sys
+import time
 import traceback
 import urllib.error
 import urllib.parse
@@ -80,6 +81,9 @@ OPENAI_ENABLE_VALUE = os.environ.get("CODE_AUDIT_USE_OPENAI", os.environ.get("CL
 OPENAI_ENABLED = bool(OPENAI_API_KEY) and OPENAI_ENABLE_VALUE.lower() not in FALSE_ENV_VALUES
 OPENAI_REQUIRE_VALUE = os.environ.get("CODE_AUDIT_REQUIRE_OPENAI", os.environ.get("CLAWZ_CODE_AUDIT_REQUIRE_OPENAI", "true"))
 OPENAI_REQUIRED = OPENAI_REQUIRE_VALUE.lower() not in FALSE_ENV_VALUES
+OPENAI_TIMEOUT_SECONDS = env_int("CODE_AUDIT_OPENAI_TIMEOUT_SECONDS", env_int("CLAWZ_CODE_AUDIT_OPENAI_TIMEOUT_SECONDS", 110), minimum=15, maximum=240)
+OPENAI_RETRY_ATTEMPTS = env_int("CODE_AUDIT_OPENAI_RETRY_ATTEMPTS", env_int("CLAWZ_CODE_AUDIT_OPENAI_RETRY_ATTEMPTS", 2), minimum=1, maximum=4)
+OPENAI_RETRY_BACKOFF_SECONDS = env_int("CODE_AUDIT_OPENAI_RETRY_BACKOFF_SECONDS", env_int("CLAWZ_CODE_AUDIT_OPENAI_RETRY_BACKOFF_SECONDS", 2), minimum=0, maximum=20)
 STANDARD_AUDIT_DISCLAIMER = (
     "This agent output is intended to streamline and prioritize the audit process. "
     "It does not replace a formal security audit, independent verification, or "
@@ -2303,9 +2307,91 @@ def call_openai_for_insights(
         },
         method="POST",
     )
+    last_error_reason = ""
+    for attempt in range(1, OPENAI_RETRY_ATTEMPTS + 1):
+        try:
+            log_event(
+                {
+                    "type": "code-audit-openai-request-started",
+                    "attempt": attempt,
+                    "attempts": OPENAI_RETRY_ATTEMPTS,
+                    "timeout_seconds": OPENAI_TIMEOUT_SECONDS,
+                    "model": OPENAI_MODEL,
+                    "openai_context_digest_sha256": context_digest,
+                }
+            )
+            with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8")[:300]
+            except Exception:
+                detail = str(exc)[:300]
+            retryable = exc.code in {408, 409, 425, 429, 500, 502, 503, 504}
+            last_error_reason = f"OpenAI Responses API HTTP {exc.code}: {detail}"
+            log_event(
+                {
+                    "type": "code-audit-openai-request-failed",
+                    "attempt": attempt,
+                    "attempts": OPENAI_RETRY_ATTEMPTS,
+                    "retryable": retryable,
+                    "reason": last_error_reason[:300],
+                }
+            )
+            if not retryable or attempt >= OPENAI_RETRY_ATTEMPTS:
+                return {
+                    "schema_version": "code-audit-ai-insights/1.0",
+                    "status": "error",
+                    "reason": last_error_reason,
+                    "api": "responses",
+                    "model": OPENAI_MODEL,
+                    "openai_context_schema_version": openai_context["schema_version"],
+                    "openai_context_digest_sha256": context_digest,
+                    "openai_timeout_seconds": OPENAI_TIMEOUT_SECONDS,
+                    "openai_attempts": attempt,
+                }
+            if OPENAI_RETRY_BACKOFF_SECONDS > 0:
+                time.sleep(OPENAI_RETRY_BACKOFF_SECONDS)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error_reason = str(exc)[:300]
+            log_event(
+                {
+                    "type": "code-audit-openai-request-failed",
+                    "attempt": attempt,
+                    "attempts": OPENAI_RETRY_ATTEMPTS,
+                    "retryable": True,
+                    "reason": last_error_reason,
+                }
+            )
+            if attempt >= OPENAI_RETRY_ATTEMPTS:
+                return {
+                    "schema_version": "code-audit-ai-insights/1.0",
+                    "status": "error",
+                    "reason": last_error_reason,
+                    "api": "responses",
+                    "model": OPENAI_MODEL,
+                    "openai_context_schema_version": openai_context["schema_version"],
+                    "openai_context_digest_sha256": context_digest,
+                    "openai_timeout_seconds": OPENAI_TIMEOUT_SECONDS,
+                    "openai_attempts": attempt,
+                }
+            if OPENAI_RETRY_BACKOFF_SECONDS > 0:
+                time.sleep(OPENAI_RETRY_BACKOFF_SECONDS)
+    else:
+        return {
+            "schema_version": "code-audit-ai-insights/1.0",
+            "status": "error",
+            "reason": last_error_reason or "OpenAI Responses API request did not complete.",
+            "api": "responses",
+            "model": OPENAI_MODEL,
+            "openai_context_schema_version": openai_context["schema_version"],
+            "openai_context_digest_sha256": context_digest,
+            "openai_timeout_seconds": OPENAI_TIMEOUT_SECONDS,
+            "openai_attempts": OPENAI_RETRY_ATTEMPTS,
+        }
+
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
         content = extract_response_text(payload)
         parsed = json.loads(content)
         return {
@@ -2331,21 +2417,7 @@ def call_openai_for_insights(
             "memory_updates": [str(item)[:500] for item in as_list(parsed.get("memory_updates"))[:8]],
             "risk_confidence": first_string(parsed.get("risk_confidence"), default="medium"),
         }
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8")[:300]
-        except Exception:
-            detail = str(exc)[:300]
-        return {
-            "schema_version": "code-audit-ai-insights/1.0",
-            "status": "error",
-            "reason": f"OpenAI Responses API HTTP {exc.code}: {detail}",
-            "api": "responses",
-            "model": OPENAI_MODEL,
-            "openai_context_schema_version": openai_context["schema_version"],
-            "openai_context_digest_sha256": context_digest,
-        }
-    except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
+    except (KeyError, json.JSONDecodeError) as exc:
         return {
             "schema_version": "code-audit-ai-insights/1.0",
             "status": "error",
@@ -2766,6 +2838,8 @@ class Handler(BaseHTTPRequestHandler):
                 "usesModelSecrets": OPENAI_ENABLED,
                 "modelAuditRequired": OPENAI_REQUIRED,
                 "model": OPENAI_MODEL if OPENAI_ENABLED else None,
+                "openaiTimeoutSeconds": OPENAI_TIMEOUT_SECONDS,
+                "openaiRetryAttempts": OPENAI_RETRY_ATTEMPTS,
                 "outputRoot": str(DEFAULT_OUTPUT_ROOT),
                 "memoryRoot": str(DEFAULT_MEMORY_ROOT),
                 "stateRoot": str(DEFAULT_STATE_ROOT),
