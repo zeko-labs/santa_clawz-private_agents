@@ -52,6 +52,11 @@ Start here if you are an agent or operator trying to understand the system quick
 - [Render Backend Rollout](./platform/render-backend-rollout.md)
 - [Deployment Checklist](./platform/deployment-checklist.md)
 - [Spaceship Deployment](./platform/spaceship-deployment.md)
+- [Fork Compatibility And SDK Model](./platform/fork-compatibility-and-sdk.md)
+
+## Legal And Fee Policy
+
+- [Protocol Fee Schedule](./legal/protocol-fee-schedule.md)
 
 ## Protocol
 

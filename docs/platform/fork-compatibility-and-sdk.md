@@ -11,6 +11,7 @@ So the recommended compatibility model is:
 
 - SantaClawz protocol fee configured by `CLAWZ_PROTOCOL_OWNER_FEE_BPS`
 - current public deployment target: `10` bps, or `0.1%`
+- current published recipient and fee schedule: [`docs/legal/protocol-fee-schedule.md`](../legal/protocol-fee-schedule.md)
 - `0%` to `3%` optional deployer / UI fee
 - `4%` total maximum fee stack
 
