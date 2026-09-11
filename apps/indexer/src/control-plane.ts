@@ -7198,8 +7198,13 @@ export class ClawzControlPlane {
         reject("SantaClawz verified_output must include verification_manifest.");
       }
       const verificationManifestRecord = verificationManifest as Record<string, unknown>;
+      const inputDigestSha256 = assertStringValue(
+        verificationManifestRecord,
+        "input_digest_sha256",
+        "SantaClawz verification_manifest"
+      );
       assertSha256Hex(
-        assertStringValue(verificationManifestRecord, "input_digest_sha256", "SantaClawz verification_manifest"),
+        inputDigestSha256,
         "SantaClawz verification_manifest input_digest_sha256"
       );
       if (!Array.isArray(verificationManifestRecord.checks_performed)) {
@@ -7257,25 +7262,58 @@ export class ClawzControlPlane {
         /^[a-f0-9]{64}$/i.test(verifiedOutputRecord.artifact_bundle_digest_sha256)
           ? verifiedOutputRecord.artifact_bundle_digest_sha256.toLowerCase()
           : undefined;
+      const manifestHashEntries = isRecord(verificationManifestRecord.file_hashes)
+        ? Object.entries(verificationManifestRecord.file_hashes)
+        : filesProduced
+            .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+            .map((entry) => [entry.name, entry.sha256]);
+      const manifestFileHashes = Object.fromEntries(
+        manifestHashEntries
+          .filter(([name, digest]) => typeof name === "string" && name.trim().length > 0 && typeof digest === "string" && /^[a-f0-9]{64}$/i.test(digest))
+          .map(([name, digest]) => [String(name).trim(), String(digest).toLowerCase()])
+          .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
+      );
+      const packageHashVerified = Object.keys(manifestFileHashes).length === deliverableCount
+        && deliverables.every((deliverable) => {
+          if (!isRecord(deliverable)) return false;
+          const name = typeof deliverable.name === "string" ? deliverable.name.trim() : "";
+          const digest = typeof deliverable.sha256 === "string" ? deliverable.sha256.toLowerCase() : "";
+          return Boolean(name) && manifestFileHashes[name] === digest;
+        })
+        && sha256Hex(JSON.stringify(manifestFileHashes)) === packageHash.toLowerCase();
       const buyerVisibleOutputs = Array.isArray(verifiedOutputRecord.buyer_visible_outputs)
         ? verifiedOutputRecord.buyer_visible_outputs
             .filter((entry): entry is Record<string, unknown> => isRecord(entry))
             .slice(0, 10)
-            .map((entry, index) => ({
-              name:
-                typeof entry.name === "string" && entry.name.trim().length > 0
-                  ? entry.name.trim().slice(0, 240)
-                  : `output-${index + 1}`,
-              ...(typeof entry.content_type === "string" && entry.content_type.trim().length > 0
-                ? { contentType: entry.content_type.trim().slice(0, 120) }
-                : {}),
-              ...(typeof entry.text === "string" && entry.text.trim().length > 0
-                ? { text: entry.text.slice(0, 8000) }
-                : {}),
-              ...(typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/i.test(entry.sha256)
-                ? { sha256: entry.sha256.toLowerCase() }
-                : {})
-            }))
+            .map((entry, index) => {
+              const name = typeof entry.name === "string" && entry.name.trim().length > 0
+                ? entry.name.trim().slice(0, 240)
+                : `output-${index + 1}`;
+              const text = typeof entry.text === "string" && entry.text.length > 0 ? entry.text : undefined;
+              const declaredHash = typeof entry.sha256 === "string" && /^[a-f0-9]{64}$/i.test(entry.sha256)
+                ? entry.sha256.toLowerCase()
+                : undefined;
+              if (text && (!declaredHash || sha256Hex(text) !== declaredHash)) {
+                reject(`SantaClawz buyer-visible output ${name} hash does not match its text.`, "return_output_hash_mismatch");
+              }
+              return {
+                name,
+                ...(typeof entry.content_type === "string" && entry.content_type.trim().length > 0
+                  ? { contentType: entry.content_type.trim().slice(0, 120) }
+                  : {}),
+                ...(text ? { text } : {}),
+                ...(declaredHash ? { sha256: declaredHash } : {})
+              };
+            })
+        : undefined;
+      const buyerOutputHashes = Object.fromEntries(
+        (buyerVisibleOutputs ?? [])
+          .filter((entry) => entry.text && entry.sha256)
+          .map((entry) => [entry.name, entry.sha256!])
+          .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
+      );
+      const buyerOutputBundleDigestSha256 = Object.keys(buyerOutputHashes).length > 0
+        ? sha256Hex(JSON.stringify(buyerOutputHashes))
         : undefined;
       const buyerDeliveryPresent = verifiedOutputHasBuyerDelivery({
         ...(artifactManifestUrl ? { artifactManifestUrl } : {}),
@@ -7301,6 +7339,9 @@ export class ClawzControlPlane {
         digestSha256,
         verifiedOutput: {
           packageHash,
+          inputDigestSha256: inputDigestSha256.toLowerCase(),
+          packageHashVerified,
+          ...(buyerOutputBundleDigestSha256 ? { buyerOutputBundleDigestSha256 } : {}),
           deliverableCount,
           filesProducedCount,
           checksPerformedCount,

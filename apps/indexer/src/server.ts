@@ -6486,7 +6486,7 @@ app.get("/api/agents/:agentId/ready", route(async (request, response) => {
       controlPlane.getAgentRuntimeAvailability({ agentId, verifyReachability: verifyAvailability }),
       artifactStore.scannerHealth()
     ]);
-    const plan = (await buildX402PlanFromOptions(baseUrl, { agentId })).plan;
+    const plan = buildAgentX402Plan({ baseUrl, consoleState });
     const pricingMode = consoleState.profile.paymentProfile.pricingMode;
     const quoteReady = consoleState.paymentProfileReady && pricingMode === "quote-required";
     const paidExecutionProven = paidExecutionProvenFromReadiness(consoleState.readiness);

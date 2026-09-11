@@ -453,7 +453,17 @@ function normalizeDeliverables(value) {
 
 function normalizeVerificationManifest(value, fallbackInputDigest, deliverables) {
   const manifest = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const filesProduced = stringArray(manifest.files_produced);
+  const filesProduced = Array.isArray(manifest.files_produced)
+    ? manifest.files_produced
+        .map((entry) => {
+          if (typeof entry === "string" && entry.trim()) return entry.trim();
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+          const name = optionalString(entry.name, 240);
+          const sha256 = normalizeSha256(entry.sha256, "");
+          return name && sha256 ? { name, sha256 } : null;
+        })
+        .filter(Boolean)
+    : [];
   return {
     schema_version: typeof manifest.schema_version === "string" ? manifest.schema_version : "santaclawz-verification-manifest/1.0",
     ...(typeof manifest.request_id === "string" ? { request_id: manifest.request_id.slice(0, 160) } : {}),
@@ -481,7 +491,10 @@ function normalizeBuyerVisibleOutputs(value) {
     .map((entry, index) => {
       const name = optionalString(entry.name, 240) || `output-${index + 1}`;
       const contentType = optionalString(entry.content_type, 120);
-      const text = optionalString(entry.text, 8000);
+      const text = typeof entry.text === "string" && entry.text.trim() ? entry.text : undefined;
+      if (text && Buffer.byteLength(text, "utf8") > 96 * 1024) {
+        throw new Error(`buyer-visible output ${name} exceeds the inline output limit; use artifact delivery.`);
+      }
       const sha256 = normalizeSha256(entry.sha256, "");
       return {
         name,

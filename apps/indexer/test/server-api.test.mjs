@@ -5734,6 +5734,10 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
       name: `job-pack-artifact-${String(index + 1).padStart(2, "0")}.json`,
       sha256: createHash("sha256").update(`job-pack-artifact-${index + 1}`).digest("hex")
     }));
+    const fileHashes = Object.fromEntries(deliverables.map((entry) => [entry.name, entry.sha256]));
+    const packageHash = createHash("sha256").update(JSON.stringify(fileHashes)).digest("hex");
+    const longJsonOutput = `${JSON.stringify({ findings: Array.from({ length: 700 }, (_, index) => ({ id: index, detail: "verified finding" })) })}\n`;
+    const summaryOutput = "Large relay return compacted with buyer-readable summary.";
     ingress.setNextProtocolReturnFactory(({ requestId }) => ({
       schema_version: "santaclawz-return/1.0",
       request_id: requestId,
@@ -5741,12 +5745,12 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
       agent_private: true,
       noisy_worker_trace: "x".repeat(9000),
       verified_output: {
-        package_hash: "d".repeat(64),
+        package_hash: packageHash,
         hash_algorithm: "sha256",
         verification_manifest: {
           input_digest_sha256: "e".repeat(64),
           checks_performed: ["worker_completed", "manifest_verified", "deliverables_hashed"],
-          files_produced: deliverables.map((deliverable) => deliverable.name),
+          files_produced: deliverables,
           blocked_suspicious_instructions: []
         },
 	        deliverables,
@@ -5754,8 +5758,14 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
 	          {
 	            name: "compacted-summary.md",
 	            content_type: "text/markdown",
-	            text: "Large relay return compacted with buyer-readable summary.",
-	            sha256: "f".repeat(64)
+	            text: summaryOutput,
+	            sha256: createHash("sha256").update(summaryOutput).digest("hex")
+	          },
+	          {
+	            name: "code-audit-result.json",
+	            content_type: "application/json",
+	            text: longJsonOutput,
+	            sha256: createHash("sha256").update(longJsonOutput).digest("hex")
 	          }
 	        ]
 	      }
@@ -5768,7 +5778,7 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
         requesterContact: "buyer@example.com"
       })
     });
-    assert.equal(hire.status, 200);
+    assert.equal(hire.status, 200, JSON.stringify(hire.payload));
     assert.equal(hire.payload.status, "completed");
     assert.equal(hire.payload.deliveryStatus, "forwarded");
     assert.equal(hire.payload.operationalStatus.relayDeliveryStatus, "forwarded");
@@ -5787,6 +5797,9 @@ async function testOfficialRelayNormalizesLargeWorkerResponses() {
       `${baseUrl}/api/executions/${encodeURIComponent(hire.payload.requestId)}/state?token=${encodeURIComponent(hire.payload.jobWorkspace.token)}`
     );
     assert.equal(executionState.status, 200);
+    assert.equal(executionState.payload.delivery.protocolVerifiedOutput.packageHashVerified, true);
+    assert.equal(executionState.payload.delivery.protocolVerifiedOutput.buyerVisibleOutputs[1].text, longJsonOutput);
+    assert.ok(executionState.payload.delivery.protocolVerifiedOutput.buyerVisibleOutputs[1].text.length > 8000);
     assert.equal(executionState.payload.relayTrace.some((entry) => entry.step === "worker_ack" && entry.status === "completed"), true);
     assert.match(relayLogs.stderr.join(""), /"relayPayloadBytes":[4-9][0-9]{3}/);
     assert.match(relayLogs.stderr.join(""), /relay_worker_request_received/);
@@ -7208,6 +7221,10 @@ async function testPaidLifecycleReducerInvariants() {
 }
 
 async function main() {
+  if (process.env.CLAWZ_INDEXER_TEST_FOCUS === "official-relay-large-return") {
+    await testOfficialRelayNormalizesLargeWorkerResponses();
+    return;
+  }
   await testPersistenceFlow();
   await testMalformedEventFlow();
   await testFocusedInteropSessionFlow();

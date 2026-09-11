@@ -949,6 +949,9 @@ export interface HireRequestReceipt {
     };
     verifiedOutput?: {
       packageHash: string;
+      inputDigestSha256?: string;
+      packageHashVerified?: boolean;
+      buyerOutputBundleDigestSha256?: string;
       deliverableCount: number;
       filesProducedCount?: number;
       checksPerformedCount?: number;
