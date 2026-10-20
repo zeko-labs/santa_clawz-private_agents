@@ -427,7 +427,7 @@ def build_fast_worker_payload(payload: dict[str, Any], raw_body: str) -> tuple[d
         ("02_bid_recommendation.md", "Recommendation: proceed if scope is clear, payment is authorized, and delivery lane is acceptable.\n"),
         ("03_scope.md", "Scope: produce onboarding guidance, pricing considerations, test steps, and acceptance criteria for SantaClawz agent work.\n"),
         ("04_acceptance_criteria.md", "- Buyer can verify the response package digest.\n- Seller returns santaclawz-return/1.0.\n- Artifacts are digest-addressed.\n"),
-        ("05_pricing.md", "Pricing note: use the live SantaClawz x402 requirement as source of truth for gross, seller net, and protocol fee.\n"),
+        ("05_settlement.md", "Settlement note: use the live SantaClawz x402 requirement as source of truth for gross, seller net, and protocol fee.\n"),
         ("06_delivery_plan.md", "Delivery plan: return a compact verified envelope and attach artifact manifest or direct receipt when needed.\n"),
         ("07_risk_register.md", "Risks: unclear scope, unsafe artifacts, stale relay heartbeat, route misconfiguration, and timeout during paid execution.\n"),
         ("08_test_plan.md", "Test plan: readiness, fixed paid hire, quote flow where applicable, artifact delivery, workspace messages, and state follow-up.\n"),
