@@ -6,7 +6,9 @@ SantaClawz is the activation, payment, delivery, and proof layer for commerce-ca
 
 The public product name is **SantaClawz**. The implementation still uses the `@clawz/*` package scope and `CLAWZ_*` environment-variable namespace.
 
-The repository contains both Apache-2.0 adoption-layer materials and protected Agent Protocol Bundle implementation code licensed under BUSL-1.1 with the Zeko Additional Use Grant. See [LICENSING.md](./LICENSING.md).
+All original Zeko-authored code, documentation, schemas, examples, tests,
+scripts, and deployment materials in this repository are licensed under the
+Apache License, Version 2.0. See [LICENSING.md](./LICENSING.md).
 
 ## Activate -> Go Live -> Get Paid
 
@@ -179,43 +181,9 @@ Use [docs/README.md](docs/README.md) as the map. The docs are organized into:
 - `docs/legal`: runtime protocol fee schedule and commercial context.
 - `docs/archive`: retest handoffs and longer context kept for provenance.
 
-## Licensing And Commercial Terms
+## License
 
-SantaClawz is part of the Zeko Agent Protocol Bundle. Protected
-product/protocol-layer code is licensed under BUSL-1.1 with the Zeko Additional
-Use Grant.
-Adoption-layer materials, including public SDKs, adapters, connector examples,
-wrapper templates, schemas, and integration surfaces, may be Apache-2.0 or MIT
-where expressly marked.
-
-The current Change Date for protected components is 2030-07-17, and the Change
-License is Apache License, Version 2.0. Non-production/testnet use is free under
-the Additional Use Grant. Independent Agent Protocol Bundle production
-deployments are covered by the self-serve commercial deployment license. The
-current published self-serve fee is $0/year, subject to the pricing schedule in
-[PRICING.md](./PRICING.md).
-
-Using the Official Zeko Network or official Zeko-operated or Zeko-authorized
-Agent Protocol Bundle services does not require a separate commercial
-deployment license; users and integrators pay the ordinary network, service,
-usage, transaction, marketplace, gas, prover, bridge, or similar fees applicable
-to those official deployments.
-
-Standard self-serve pricing is published in [PRICING.md](./PRICING.md):
-
-- Protocol Layer Production Deployments: $0/year per production rollup under
-  the current published self-serve pricing.
-- Independent Agent Protocol Deployments: $0/year per deploying legal entity
-  per Deployment Network under the current published self-serve pricing.
-
-Current self-serve pricing is subject to change by a successor pricing schedule,
-ecosystem exception, enterprise agreement, foundation agreement, or other
-written authorization published or approved by Zeko Labs.
-
-The self-serve commercial deployment license covers license rights only.
-Managed deployment, enterprise support, compliance review, SLAs, custom
-integrations, and dedicated infrastructure are separate commercial services.
-
-See [LICENSING.md](./LICENSING.md),
-[LICENSES/ZEKO-ADDITIONAL-USE-GRANT.md](./LICENSES/ZEKO-ADDITIONAL-USE-GRANT.md),
-[COMMERCIAL-TERMS.md](./COMMERCIAL-TERMS.md), and [PRICING.md](./PRICING.md).
+All original Zeko-authored material in this repository is licensed under the
+Apache License, Version 2.0. Third-party and upstream-derived components retain
+the license notices that accompany those components. See [LICENSE](./LICENSE),
+[LICENSING.md](./LICENSING.md), and [NOTICE](./NOTICE).
